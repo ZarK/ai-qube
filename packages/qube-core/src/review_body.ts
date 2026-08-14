@@ -538,8 +538,17 @@ export function findingWithPublishedAnchor(finding: ReviewFinding, span: ReviewA
   };
 }
 
+function stripPairedMarkdown(value: string): string {
+  return value
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])/g, "$1");
+}
+
 function normalizeFindingIdentityText(value: string): string {
-  return value.replace(/[*_`]+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return stripPairedMarkdown(value).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 export function reviewFindingFingerprint(finding: ReviewFinding): string {
@@ -558,13 +567,18 @@ export function reviewFindingMarker(finding: ReviewFinding): string {
   return `<!-- ${FINDING_MARKER_PREFIX}:${reviewFindingFingerprint(finding)} -->`;
 }
 
-const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package |[A-Za-z_$][\w$]*\([^)]*\)\s*;?)|=>|[{}]/;
+const IDENTIFIER = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`;
+const CODE_SHAPE = new RegExp(
+  String.raw`(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package )|${IDENTIFIER}\s*=(?!=)|${IDENTIFIER}\([^)]*\)\s*;?|=>|[{}]`,
+);
+const ENGLISH_REVIEW_LEAD = /^(please|do not|don't|consider|rewrite|set|use|add|remove|change|update|make|keep|put|move|rename|treat)\b/i;
 
 export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed === "") return false;
+  if (ENGLISH_REVIEW_LEAD.test(trimmed)) return false;
   const lines = trimmed.split(/\n/).map((line) => line.trim()).filter((line) => line !== "");
-  const sentenceLine = (line: string): boolean => /^[A-Z][\s\S]*[.!?]$/.test(line);
+  const sentenceLine = (line: string): boolean => /^[A-Za-z][\s\S]*[.!?]$/.test(line) && /\s/.test(line);
   if (lines.length > 0 && lines.every(sentenceLine)) return false;
   return CODE_SHAPE.test(trimmed);
 }
@@ -612,26 +626,28 @@ function withheldSuggestionReason(input: { readonly anchored: boolean; readonly 
   return safety.reason ?? "no committable suggestion: withheld";
 }
 
+function findingFixPromptItem(
+  input: { readonly laneId: string; readonly finding: ReviewFinding },
+  profile: ReviewRenderCapabilityProfile,
+): string {
+  const location = input.finding.location;
+  return location
+    ? `In ${location.path}${location.line ? ` around lines ${location.line}-${location.endLine ?? location.line}` : ""}, ${sanitize(profile, input.finding.message)}`
+    : sanitize(profile, input.finding.message);
+}
+
 export function renderFindingFixPrompt(
   input: { readonly laneId: string; readonly finding: ReviewFinding },
   profile: ReviewRenderCapabilityProfile = GITHUB_REVIEW_RENDER_PROFILE,
 ): string {
-  const location = input.finding.location;
-  const where = location
-    ? `In ${location.path}${location.line ? ` around lines ${location.line}-${location.endLine ?? location.line}` : ""}, ${sanitize(profile, input.finding.message)}`
-    : sanitize(profile, input.finding.message);
-  return [
-    UNTRUSTED_FIX_GUARDRAIL,
-    "",
-    where,
-  ].join("\n");
+  return [UNTRUSTED_FIX_GUARDRAIL, "", findingFixPromptItem(input, profile)].join("\n");
 }
 
 export function renderAggregatedFixPrompt(
   findings: readonly ReviewFindingRenderRow[],
   profile: ReviewRenderCapabilityProfile = GITHUB_REVIEW_RENDER_PROFILE,
 ): string {
-  const items = findings.map((row) => renderFindingFixPrompt({ laneId: row.laneId, finding: row.finding }, profile));
+  const items = findings.map((row) => findingFixPromptItem({ laneId: row.laneId, finding: row.finding }, profile));
   const body = items.length === 0 ? "No findings require a fix prompt." : items.join("\n\n");
   return wrapCollapsed(profile, "Fix prompt for agents", ["```", UNTRUSTED_FIX_GUARDRAIL, "", body, "```"].join("\n"));
 }

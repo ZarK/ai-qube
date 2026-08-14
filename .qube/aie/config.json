@@ -211,15 +211,16 @@
           "runner": "local-host",
           "rereview": "delta",
           "route": {
-            "host": "codex",
+            "host": "grok",
             "tier": "review",
             "timeoutSeconds": 900,
-            "maxTurns": 8
+            "maxTurns": 16
           }
         }
       ],
       "agents": [],
       "localAgents": [
+        "grok",
         "codex"
       ],
       "waitMinutes": 0,
@@ -240,15 +241,15 @@
         "synthesis": {}
       },
       "route": {
-        "host": "codex",
+        "host": "grok",
         "tier": "review",
         "timeoutSeconds": 900,
-        "maxTurns": 8
+        "maxTurns": 16
       },
       "failover": {
         "faults": 1,
         "route": {
-          "host": "grok",
+          "host": "codex",
           "tier": "review",
           "timeoutSeconds": 900,
           "maxTurns": 16

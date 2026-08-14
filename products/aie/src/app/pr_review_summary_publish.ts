@@ -37,7 +37,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function loadPriorRoundDelta(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[]): ReviewRoundDeltaInput | undefined {
+export const MAX_PRIOR_REVIEW_HEADS = 32;
+const REVIEW_HEAD_SEGMENT = /^[a-f0-9]{7,64}$/i;
+
+export function isPriorReviewHeadSegment(name: string, currentSeg: string): boolean {
+  return name !== currentSeg && !name.includes('..') && REVIEW_HEAD_SEGMENT.test(name);
+}
+
+export function loadPriorRoundDelta(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[]): ReviewRoundDeltaInput | undefined {
   const prDir = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
   try {
     verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], prDir);
@@ -46,24 +53,32 @@ function loadPriorRoundDelta(repoRoot: string, issueNumber: number, prNumber: nu
     return undefined;
   }
   const currentSeg = safeHeadSegment(headSha);
-  let newest: { name: string; mtime: number } | null = null;
+  let names: string[];
   try {
-    for (const entry of readdirSync(prDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === currentSeg || entry.name.includes('..')) continue;
-      const path = join(prDir, entry.name);
-      try {
-        verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
-        const stats = lstatSync(path);
-        if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
-        if (!newest || stats.mtimeMs > newest.mtime) newest = { name: entry.name, mtime: stats.mtimeMs };
-      } catch {
-        // Skip unreadable sibling head directories.
-      }
-    }
+    names = readdirSync(prDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && isPriorReviewHeadSegment(entry.name, currentSeg))
+      .map((entry) => entry.name);
   } catch {
     return undefined;
   }
+  if (names.length === 0 || names.length > MAX_PRIOR_REVIEW_HEADS) return undefined;
+  let newest: { name: string; mtime: number } | null = null;
+  for (const name of names) {
+    const path = join(prDir, name);
+    try {
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
+      if (!newest || stats.mtimeMs > newest.mtime) newest = { name, mtime: stats.mtimeMs };
+    } catch {
+      // Skip unreadable sibling head directories.
+    }
+  }
   if (!newest) return undefined;
+  try {
+    verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], join(prDir, newest.name));
+  } catch {
+    return undefined;
+  }
   const keys: string[] = [];
   for (const laneId of expectedLanes) {
     const evidencePath = join(prDir, newest.name, `${laneId}.json`);

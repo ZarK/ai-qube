@@ -90,7 +90,7 @@ export function parseGrokModelCatalog(output: string): string[] | null {
   if (headerIndex === -1) return null;
   const models: string[] = [];
   for (const line of lines.slice(headerIndex + 1)) {
-    const match = /^\s*\*?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
+    const match = /^\s*[-*]?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
     if (!match) {
       if (line.trim() === '') continue;
       break;
@@ -180,18 +180,46 @@ function jsonObjectSequence(text: string): string[] | null {
   return objects.length > 0 ? objects : null;
 }
 
-function parseGrokOutput(stdout: string): ReviewHostParsedEnvelope | null {
+function parseGrokEnvelopeRecord(stdout: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(stdout);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    if (typeof record.text !== 'string') return null;
-    const objects = jsonObjectSequence(record.text);
-    const usage = readHostUsage(record.usage) ?? readHostUsage(record.tokenUsage) ?? (isRecord(record.tokens) ? readHostUsage(record.tokens) : undefined);
-    return objects ? { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId: typeof record.sessionId === 'string' ? record.sessionId : null, ...(usage ? { usage } : {}) } : null;
+    if (isRecord(value)) return value;
   } catch {
-    return null;
+    // Grok may emit JSONL even when --output-format json is implied.
   }
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const value: unknown = JSON.parse(lines[index]);
+      if (isRecord(value)) return value;
+    } catch {
+      // Keep scanning toward the final event.
+    }
+  }
+  return null;
+}
+
+function grokTextPayload(record: Record<string, unknown>): string | null {
+  if (typeof record.text === 'string' && record.text.trim() !== '') return record.text;
+  if (isRecord(record.text)) return JSON.stringify(record.text);
+  if (typeof record.recommendation === 'string' || typeof record.status === 'string') return JSON.stringify(record);
+  return null;
+}
+
+function parseGrokOutput(stdout: string): ReviewHostParsedEnvelope | null {
+  const record = parseGrokEnvelopeRecord(stdout.trim());
+  if (!record) return null;
+  const payload = grokTextPayload(record);
+  if (!payload) return null;
+  const objects = jsonObjectSequence(payload);
+  if (!objects) return null;
+  const sessionId = typeof record.sessionId === 'string'
+    ? record.sessionId
+    : typeof record.session_id === 'string'
+      ? record.session_id
+      : null;
+  const usage = readHostUsage(record.usage) ?? readHostUsage(record.tokenUsage) ?? (isRecord(record.tokens) ? readHostUsage(record.tokens) : undefined);
+  return { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId, ...(usage ? { usage } : {}) };
 }
 
 const FULL_CAPABILITIES: ReviewHostCapabilities = { structuredOutput: true, readOnlySandbox: true };

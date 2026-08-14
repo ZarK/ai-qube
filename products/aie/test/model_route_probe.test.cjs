@@ -8,17 +8,18 @@ const { registerReviewHostAdapterForTests, resetReviewHostAdaptersForTests } = r
 const GROK_MODELS_OUTPUT = [
   'You are logged in with grok.com.',
   '',
-  'Default model: grok-4.5',
+  'Default model: grok-4.6',
   '',
   'Available models:',
-  '  * grok-4.5 (default)',
+  '  * grok-4.6 (default)',
+  '  - grok-4.5',
   '  grok-4-mini',
   '',
 ].join('\n');
 
 describe('model route probe', () => {
   it('parses the grok model catalog into model ids', () => {
-    assert.deepEqual(parseGrokModelCatalog(GROK_MODELS_OUTPUT), ['grok-4.5', 'grok-4-mini']);
+    assert.deepEqual(parseGrokModelCatalog(GROK_MODELS_OUTPUT), ['grok-4.6', 'grok-4.5', 'grok-4-mini']);
     assert.equal(parseGrokModelCatalog('no catalog here'), null);
     assert.equal(parseGrokModelCatalog('Available models:\n'), null);
   });
