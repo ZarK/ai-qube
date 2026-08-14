@@ -17,6 +17,7 @@ import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
+import { formatPermutationDoctor, runPermutationDoctor } from "./permutation_doctor.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
@@ -1496,12 +1497,13 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     env: environment.env,
     mode: offline ? "offline" : "live",
   });
+  const permutationPromise = runPermutationDoctor(environment.cwd);
   const workflowPromise = collectWorkflowReadiness(offline, environment);
   const continuationPromise = collectContinuationHealth(offline, environment);
   const hosts = probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline });
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const [connections, workflow, continuation] = await Promise.all([connectionsPromise, workflowPromise, continuationPromise]);
+    const [connections, permutation, workflow, continuation] = await Promise.all([connectionsPromise, permutationPromise, workflowPromise, continuationPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0
       ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
@@ -1514,6 +1516,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         workflow,
         continuation,
         hosts,
+        permutation,
         connectionStatus: connections.status,
         connections,
       };
@@ -1522,11 +1525,12 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const [connections, quality, workflow, continuation] = await Promise.all([
+  const [connections, permutation, quality, workflow, continuation] = await Promise.all([
     connectionsPromise,
+    permutationPromise,
     dispatchCommandCaptured(planned.dispatch),
     workflowPromise,
     continuationPromise,
@@ -1554,6 +1558,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
       workflow,
       continuation,
       hosts,
+      permutation,
       connectionStatus: connections.status,
       connections,
     };
@@ -1561,7 +1566,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
 }
