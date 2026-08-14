@@ -419,6 +419,9 @@ function splitVariadicArgv(
     }
 
     if (token === "--") {
+      if (consumedFixedPositionals >= fixedPositionalCount) {
+        values.push(token);
+      }
       for (const rest of argv.slice(index + 1)) {
         if (consumedFixedPositionals < fixedPositionalCount) {
           parserArgv.push(rest);
