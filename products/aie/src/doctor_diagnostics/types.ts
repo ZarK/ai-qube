@@ -137,6 +137,8 @@ export interface DoctorToolAvailability {
   command: string;
   available: boolean;
   required: boolean;
+  state: 'available' | 'missing' | 'present-but-failing';
+  resolvedPath: string | null;
   nextAction: string | null;
 }
 

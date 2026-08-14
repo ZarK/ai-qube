@@ -2,9 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { delimiter, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
@@ -1151,3 +1151,79 @@ describe('review session locks', () => {
     assert.equal(bypassed.checks.find(check => check.name === 'review-lock').skipped, true);
   });
 });
+
+describe('doctor executable lookup', () => {
+  it('reports a working agent-browser as available without which on PATH', () => {
+    const fixture = createLookupFixture('agent-browser', 0);
+    try {
+      const config = getDefaults();
+      config.manualUiAudit = true;
+      const readiness = buildGateReadinessDiagnostics(config, fixture.options);
+      assert.equal(readiness.audit.agentBrowser.available, true);
+      assert.equal(readiness.audit.agentBrowser.state, 'available');
+      assert.ok(readiness.audit.agentBrowser.resolvedPath);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it('reports a present but failing agent-browser as present-but-failing, not missing', () => {
+    const fixture = createLookupFixture('agent-browser', 7);
+    try {
+      const config = getDefaults();
+      config.manualUiAudit = true;
+      const readiness = buildGateReadinessDiagnostics(config, fixture.options);
+      assert.equal(readiness.audit.agentBrowser.available, false);
+      assert.equal(readiness.audit.agentBrowser.state, 'present-but-failing');
+      assert.notEqual(readiness.audit.agentBrowser.state, 'missing');
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it('reports a missing agent-browser as missing when PATH has no which', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'aie-doctor-empty-path-'));
+    try {
+      const config = getDefaults();
+      config.manualUiAudit = true;
+      const readiness = buildGateReadinessDiagnostics(config, {
+        ghAuthenticated: false,
+        env: process.platform === 'win32'
+          ? { OS: 'Windows_NT', PATH: empty, PATHEXT: '.CMD;.EXE' }
+          : { PATH: empty },
+        platform: process.platform,
+        pathDelimiter: delimiter,
+      });
+      assert.equal(readiness.audit.agentBrowser.available, false);
+      assert.equal(readiness.audit.agentBrowser.state, 'missing');
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
+function createLookupFixture(command, exitCode) {
+  const bin = mkdtempSync(join(tmpdir(), 'aie-doctor-lookup-'));
+  const windows = process.platform === 'win32';
+  const file = join(bin, windows ? `${command}.cmd` : command);
+  if (windows) {
+    writeFileSync(file, `@echo off\r\nexit /b ${exitCode}\r\n`);
+  } else {
+    writeFileSync(file, `#!/bin/sh\nexit ${exitCode}\n`);
+    chmodSync(file, 0o755);
+  }
+  return {
+    bin,
+    options: {
+      ghAuthenticated: false,
+      env: windows
+        ? { OS: 'Windows_NT', PATH: bin, PATHEXT: '.CMD;.EXE' }
+        : { PATH: bin },
+      platform: process.platform,
+      pathDelimiter: delimiter,
+    },
+    cleanup() {
+      rmSync(bin, { recursive: true, force: true });
+    },
+  };
+}

@@ -22,6 +22,16 @@ export {
 } from "./autoresearch.js";
 export type { JsonObject, JsonValue } from "./json_value.js";
 export type {
+  ExecutableLookup,
+  ExecutableLookupReason,
+  ExecutableLookupStatus,
+  ExecutableProbeResult,
+  ExecutableProbeStatus,
+  ProbeExecutableOptions,
+  ResolveExecutableOptions,
+} from "./executable.js";
+export { executableExistsOnPath, probeExecutable, resolveExecutable } from "./executable.js";
+export type {
   ConnectionAuthMethod,
   ConnectionBasicAuth,
   ConnectionCommandProbe,

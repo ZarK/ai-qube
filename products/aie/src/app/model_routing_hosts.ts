@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { executableExistsOnPath } from '@tjalve/qube-core';
 
 import {
   detectInstalledRoutingHosts,
@@ -7,18 +7,7 @@ import {
 } from '../core/model_routing.js';
 
 export function commandExistsOnPath(command: string): boolean {
-  const locator = process.platform === 'win32' ? 'where.exe' : 'which';
-  try {
-    const result = execFileSync(locator, [command], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return result.split(/\r?\n/).some(line => line.trim() !== '');
-  } catch {
-    return false;
-  }
+  return executableExistsOnPath(command);
 }
 
 export function detectInstalledRoutingHostsOnPath(

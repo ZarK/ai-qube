@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { resolveExecutable } from '@tjalve/qube-core';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
@@ -90,13 +91,7 @@ function sanitizedDiagnostic(value: string): string {
 }
 
 function findOnPathSync(name: string): string | null {
-  const locator = process.platform === 'win32' ? 'where.exe' : 'which';
-  try {
-    const result = execFileSync(locator, [name], { encoding: 'utf8', timeout: 10_000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    return result.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null;
-  } catch {
-    return null;
-  }
+  return resolveExecutable(name).resolvedPath;
 }
 
 async function findOnPath(name: string): Promise<string | null> {
