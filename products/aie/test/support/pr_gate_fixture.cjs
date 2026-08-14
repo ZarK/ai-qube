@@ -625,6 +625,19 @@ function makePrExec(options = {}) {
     if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
       return { args, exitCode: 0, stdout: '', stderr: '' };
     }
+    if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+\/dismissals$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PUT') {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ dismiss: args[1], ...payload });
+      const reviewId = Number(args[1].split('/')[5]);
+      currentPr = {
+        ...currentPr,
+        reviews: (currentPr.reviews || []).map(review => review.id === reviewId ? { ...review, state: 'DISMISSED' } : review),
+        latestReviews: (currentPr.latestReviews || []).map(review => review.id === reviewId ? { ...review, state: 'DISMISSED' } : review),
+      };
+      if (prViews.length > 0) prViews[0] = currentPr;
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: reviewId, state: 'DISMISSED' }), stderr: '' };
+    }
     if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PUT') {
       const inputIndex = args.indexOf('--input');
       const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};

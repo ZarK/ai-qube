@@ -599,10 +599,13 @@ function writeLocalReviewPublishEvidence(input: {
   prNumber: number;
   headSha: string;
   result: ReviewForgeLocalReviewPublishResult;
+  lanes?: readonly { lane: string; status: string; failure?: string | null }[];
+  roundSummary?: { status: string; failure?: string | null } | null;
 }): string[] {
   if (input.result.status === 'disabled') return [];
   const written: string[] = [];
-  for (const issueNumber of input.issueNumbers) {
+  const issueNumbers = input.issueNumbers.length > 0 ? input.issueNumbers : [0];
+  for (const issueNumber of issueNumbers) {
     const directory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(input.prNumber), safeSegment(input.headSha));
     mkdirSync(directory, { recursive: true });
     const path = join(directory, 'publish.json');
@@ -618,6 +621,8 @@ function writeLocalReviewPublishEvidence(input: {
       url: input.result.url,
       failure: input.result.failure,
       nextAction: input.result.nextAction,
+      lanes: input.lanes ?? [],
+      roundSummary: input.roundSummary ?? null,
       recordedAt: new Date().toISOString(),
     }, null, 2)}\n`);
     written.push(path);
@@ -866,10 +871,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // arbiter of failure: a transient streamed failure is cleared when the
   // batch retry lands the same lane, so it can never poison the result.
   const streamedFailuresByLane = new Map<string, string>();
+  const streamedPublishedLanes = new Set<string>();
+  const publishLaneOutcomes: { lane: string; status: string; failure?: string | null }[] = [];
   let streamingDisclosed = false;
   const streamLanePublish = !dryRun && routedFocuses.length > 0 && !sessionLockBlocksExecution
     ? async (lane: LocalReviewLaneRun): Promise<void> => {
         if (lane.status !== 'completed' || !lane.route) return;
+        const laneKey = `${lane.issueNumber} ${lane.lane}`;
         try {
           const laneEvidence = readCurrentHeadLaneEvidence(repoRoot, lane.issueNumber, options.prNumber, finalSnapshot.pr.headRefOid, lane.lane);
           if (!laneEvidence || (laneEvidence.status !== 'passed' && laneEvidence.status !== 'failed' && laneEvidence.status !== 'needs-work')) return;
@@ -882,9 +890,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) return;
           const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
           const publishFailure = prReviewPublishFailureMessage(published);
-          if (publishFailure) streamedFailuresByLane.set(`${lane.issueNumber} ${lane.lane}`, `${lane.lane}: ${publishFailure}`);
+          if (publishFailure) {
+            streamedFailuresByLane.set(laneKey, `${lane.lane}: ${publishFailure}`);
+            publishLaneOutcomes.push({ lane: lane.lane, status: 'failed', failure: publishFailure });
+          } else {
+            streamedPublishedLanes.add(laneKey);
+            publishLaneOutcomes.push({ lane: lane.lane, status: published.publish.status, failure: null });
+          }
         } catch (error: unknown) {
-          streamedFailuresByLane.set(`${lane.issueNumber} ${lane.lane}`, `${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+          streamedFailuresByLane.set(laneKey, `${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+          publishLaneOutcomes.push({ lane: lane.lane, status: 'failed', failure: error instanceof Error ? error.message : String(error) });
         }
       }
     : undefined;
@@ -969,6 +984,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       actions = await applyReviewPlan(provider, firstPlan);
       actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
       localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' };
+      for (const evidence of localReview.evidence) {
+        for (const lane of evidence.lanes) publishLaneOutcomes.push({ lane: lane.id, status: 'skipped', failure: null });
+      }
       finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
     } else if (publishableLanes.length === 0) {
       // No terminal lane evidence exists yet; nothing publishes and no
@@ -999,10 +1017,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           let skipMatchedCount = 0;
           for (const { evidence, lane } of publishableLanes) {
             try {
+              const laneKey = `${evidence.issueNumber} ${lane.id}`;
+              if (streamedPublishedLanes.has(laneKey)) {
+                streamedFailuresByLane.delete(laneKey);
+                skipMatchedCount += 1;
+                continue;
+              }
               // The batch outcome supersedes any streamed attempt for this
               // lane, so a lane never reports twice and a transient streamed
               // failure cannot poison a later batch success.
-              streamedFailuresByLane.delete(`${evidence.issueNumber} ${lane.id}`);
+              streamedFailuresByLane.delete(laneKey);
               if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
               // The expected set is the declared active focus set for this
               // head, never the subset that happened to produce evidence: a
@@ -1012,13 +1036,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
               const publishFailure = prReviewPublishFailureMessage(published);
               if (publishFailure) {
                 publishUnavailable.push(`${lane.id}: ${publishFailure}`);
+                publishLaneOutcomes.push({ lane: lane.id, status: 'failed', failure: publishFailure });
               } else {
                 if (published.publish.status === 'published') publishedCount += 1;
                 else skipMatchedCount += 1;
                 if (published.publish.url) publishedUrls.push(published.publish.url);
+                publishLaneOutcomes.push({ lane: lane.id, status: published.publish.status, failure: null });
               }
             } catch (error: unknown) {
               publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+              publishLaneOutcomes.push({ lane: lane.id, status: 'failed', failure: error instanceof Error ? error.message : String(error) });
             }
           }
           publishUnavailable.push(...streamedFailuresByLane.values());
@@ -1040,9 +1067,24 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // published. A failure here never fails the gate, since per-lane provider
   // markers remain authoritative.
   let roundSummary: import('../providers/review_forge_provider.js').ReviewForgeRoundSummaryPublishResult | null = null;
-  if (!dryRun && !sessionLockBlocksExecution && localReviewPublish.status === 'published') {
-    const issueNumberForSummary = localReview.evidence.find(entry => entry.issueNumber !== null)?.issueNumber ?? null;
-    if (issueNumberForSummary !== null) {
+  const shouldPublishRoundSummary = !dryRun && !sessionLockBlocksExecution
+    && (localReviewPublish.status === 'published'
+      || localReviewPublish.status === 'failed'
+      || (localReviewPublish.status === 'skipped' && localReview.status === 'passed')
+      || finalSnapshot.closingIssueNumbers.length === 0);
+  if (shouldPublishRoundSummary) {
+    const issueNumberForSummary = localReview.evidence.find(entry => typeof entry.issueNumber === 'number' && entry.issueNumber > 0)?.issueNumber ?? null;
+    if (issueNumberForSummary === null) {
+      roundSummary = {
+        status: 'failed',
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        failure: 'No resolvable issue number was available for the round summary.',
+        nextAction: 'Link a closing issue or pass an issue number, then rerun the PR gate so the round summary can publish.',
+      };
+    } else {
       try {
         const providerReuseLanesForSummary = localReview.evidence.flatMap(evidence => evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id));
         const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
@@ -1057,7 +1099,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           changedPaths: summaryDeltaPaths,
           nitCap: config.reviewNitCap,
         });
-        roundSummary = summaryPublished.publish;
+        const failedLaneNames = [...new Set(publishLaneOutcomes.filter(entry => entry.status === 'failed').map(entry => entry.lane))];
+        roundSummary = failedLaneNames.length > 0
+          ? {
+              ...summaryPublished.publish,
+              nextAction: `${summaryPublished.publish.nextAction ?? 'Round summary published.'} Failed lane publish: ${failedLaneNames.join(', ')}.`,
+            }
+          : summaryPublished.publish;
       } catch (error: unknown) {
         roundSummary = {
           status: 'failed',
@@ -1077,6 +1125,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     const carriedPublishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
       for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
+        if (streamedPublishedLanes.has(`${evidence.issueNumber} ${lane.id}`)) continue;
         try {
           // The same declared active set as the fresh-lane loop: every marker
           // at one head must agree on the round's expected lane set.
@@ -1160,6 +1209,17 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
           : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
   };
+  if (!dryRun) {
+    writeLocalReviewPublishEvidence({
+      repoRoot,
+      issueNumbers: finalSnapshot.closingIssueNumbers,
+      prNumber: options.prNumber,
+      headSha: finalSnapshot.pr.headRefOid,
+      result: localReviewPublish,
+      lanes: publishLaneOutcomes,
+      roundSummary: roundSummary ? { status: roundSummary.status, failure: roundSummary.failure ?? null } : null,
+    });
+  }
   return {
     ok: true,
     command: 'pr gate',

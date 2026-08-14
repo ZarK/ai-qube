@@ -138,6 +138,79 @@ describe('GitHub round summary publish', () => {
     assert.ok(commentPost, 'expected a POST to create the issue comment fallback');
   });
 
+  it('dismisses prior-head request-changes reviews when a new head publishes', async () => {
+    const priorReview = {
+      id: 888,
+      author: { login: 'executor' },
+      body: 'prior request-changes',
+      state: 'CHANGES_REQUESTED',
+      url: 'https://github.com/example/repo/pull/12#pullrequestreview-888',
+      commit: { oid: 'prior111' },
+    };
+    const fixture = makePrExec({
+      prViews: [basePr({ headRefOid: 'new222', reviews: [priorReview], latestReviews: [priorReview] })],
+      pullReviews: [priorReview],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const newRender = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(newRender, { headSha: 'new222', round: 'round-new' }));
+
+    assert.equal(result.status, 'published');
+    const dismissal = fixture.events.find(event => event.includes('/reviews/888/dismissals') && event.includes('--method PUT'));
+    assert.ok(dismissal, 'expected the prior-head request-changes review to be dismissed');
+    const payload = fixture.reviewPayloads.find(entry => entry.dismiss);
+    assert.match(String(payload?.message ?? ''), /Superseded by head new222/);
+  });
+
+  it('still publishes the current-head summary when prior-head dismissal fails', async () => {
+    const priorReview = {
+      id: 888,
+      author: { login: 'executor' },
+      body: 'prior request-changes',
+      state: 'CHANGES_REQUESTED',
+      url: 'https://github.com/example/repo/pull/12#pullrequestreview-888',
+      commit: { oid: 'prior111' },
+    };
+    const fixture = makePrExec({
+      prViews: [basePr({ headRefOid: 'new222', reviews: [priorReview], latestReviews: [priorReview] })],
+      pullReviews: [priorReview],
+    });
+    const exec = async (args) => {
+      if (typeof args[1] === 'string' && args[1].includes('/reviews/888/dismissals')) {
+        return { args, exitCode: 1, stdout: '', stderr: 'dismissal unavailable' };
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+    const newRender = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(newRender, { headSha: 'new222', round: 'round-new' }));
+
+    assert.equal(result.status, 'published');
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.ok(reviewPost, 'the current-head summary must still publish when dismissal fails');
+  });
+
+  it('fails closed when the prior-review list fetch throws', async () => {
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const exec = async (args) => {
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'GET') {
+        throw new Error('review list unavailable');
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /review list unavailable/);
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPost, undefined, 'a failed prior-review fetch must not create a review');
+  });
+
   it('reports a planned dry run without mutating GitHub', async () => {
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
     const fixture = makePrExec({ prViews: [basePr()] });
@@ -148,5 +221,78 @@ describe('GitHub round summary publish', () => {
     assert.equal(result.status, 'planned');
     const mutatingCall = fixture.events.find(event => event.includes('--method POST') || event.includes('--method PUT') || event.includes('--method PATCH'));
     assert.equal(mutatingCall, undefined, 'a dry run must not mutate GitHub');
+  });
+});
+
+describe('GitHub lane review publish fail-closed', () => {
+  function lanePublishInput(overrides = {}) {
+    return {
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'issue-compliance',
+      expectedLanes: ['issue-compliance'],
+      round: 'round-1',
+      profile: 'local-focused',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'ok',
+      findings: [],
+      completeness: 'inspected',
+      evidencePath: '.qube/aie/reviews/93/12/abc123/issue-compliance.json',
+      ...overrides,
+    };
+  }
+
+  it('fails closed when github-app identity cannot resolve the bot login', async () => {
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({
+      exec: fixture.exec,
+      publisher: {
+        mode: 'github-app',
+        githubApp: { appId: '99', installationId: '1001', privateKeyPath: 'C:\\missing\\review-app.pem' },
+      },
+    });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest(lanePublishInput());
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /bot login|private key|unresolved/i);
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPost, undefined);
+  });
+
+  it('fails closed when the prior-review list fetch throws during lane publish', async () => {
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const exec = async (args) => {
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'GET') {
+        throw new Error('review list unavailable');
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest(lanePublishInput());
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /review list unavailable/);
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPost, undefined);
+  });
+
+  it('skip-matches a second same-head lane publish instead of creating another review', async () => {
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const input = lanePublishInput();
+
+    const first = await provider.publishLaneReviewFeedbackForPullRequest(input);
+    const second = await provider.publishLaneReviewFeedbackForPullRequest(input);
+
+    assert.equal(first.status, 'published');
+    assert.ok(second.status === 'skipped' || second.status === 'published');
+    const reviewPosts = fixture.events.filter(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPosts.length, 1, 'two same-head publishes must not create a second review event');
   });
 });
