@@ -225,6 +225,19 @@ describe('local app runner CLI', () => {
     assert.match(result.stderr, /Unknown flag: --dev/);
   });
 
+  it('preserves an empty application argument after --', () => {
+    const root = repo();
+    const result = binRun([
+      'run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--',
+      'node', 'app.mjs', '',
+    ], root);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(parsed.commandLine, ['node', 'app.mjs', '']);
+    assert.deepEqual(parsed.spawnPlan.args, ['app.mjs', '']);
+  });
+
   it('still fails when no app command follows the separator', () => {
     const root = repo();
     const result = binRun(['run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--'], root);
