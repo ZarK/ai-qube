@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { detectInstalledRoutingHostsOnPath, resolveModelRouting, validateConfig, type ModelRoutingResolution } from "@tjalve/aie";
+import { validateConfig } from "@tjalve/aie";
+import { detectInstalledRoutingHostsOnPath } from "./model_routing_local.js";
 
 interface CapabilityObservation {
   readonly role: "work" | "review" | "ci";
@@ -36,7 +37,25 @@ export interface PermutationDoctorResult {
 export interface ModelRoutingDoctorResult {
   readonly status: "ok" | "missing" | "invalid" | "unavailable";
   readonly summary: string;
-  readonly resolution: ModelRoutingResolution | null;
+  readonly resolution: {
+    readonly primary: { readonly id: string };
+    readonly substitutions: readonly { readonly from: string; readonly to: string; readonly reason: string }[];
+    readonly routes: {
+      readonly "mechanical-implementation": { readonly selected: { readonly id: string }; readonly preferred: string; readonly substitutions: readonly unknown[] };
+      readonly "exploration-investigation": { readonly selected: { readonly id: string }; readonly preferred: string; readonly substitutions: readonly unknown[] };
+      readonly "synthesis-judgment": { readonly selected: { readonly id: string }; readonly preferred: string; readonly substitutions: readonly unknown[] };
+      readonly "independent-review": { readonly reviewTier: string; readonly model: string | null };
+    };
+  } | null;
+}
+
+type ResolvedModelRouting = NonNullable<ModelRoutingDoctorResult["resolution"]>;
+
+async function loadResolveModelRouting(): Promise<((policy: unknown, reviewModels: unknown, installed: readonly string[]) => ResolvedModelRouting) | undefined> {
+  const imported = await import("@tjalve/aie") as {
+    resolveModelRouting?: (policy: unknown, reviewModels: unknown, installed: readonly string[]) => ResolvedModelRouting;
+  };
+  return typeof imported.resolveModelRouting === "function" ? imported.resolveModelRouting : undefined;
 }
 
 export async function runModelRoutingDoctor(
@@ -57,8 +76,14 @@ export async function runModelRoutingDoctor(
   if (!validated.ok || !validated.config) {
     return { status: "invalid", summary: "Executor config is invalid; model routing cannot be resolved.", resolution: null };
   }
+  const resolveModelRouting = await loadResolveModelRouting();
+  const routing = (validated.config as { modelRouting?: unknown }).modelRouting;
+  const reviewModels = (validated.config as { reviewModels?: unknown }).reviewModels;
+  if (!resolveModelRouting || !routing || !reviewModels) {
+    return { status: "missing", summary: "This Executor package does not export model routing.", resolution: null };
+  }
   const installed = detectInstalledRoutingHostsOnPath(lookup);
-  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, installed);
+  const resolution = resolveModelRouting(routing, reviewModels, installed);
   if (installed.length === 0) {
     return {
       status: "unavailable",

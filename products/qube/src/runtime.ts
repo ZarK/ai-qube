@@ -11,7 +11,7 @@ import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mut
 import { promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
-import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "@tjalve/aie";
+import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "./model_routing_local.js";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
 import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
