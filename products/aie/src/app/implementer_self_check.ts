@@ -4,6 +4,7 @@ import type { Config } from '../config/index.js';
 import type { LocalReviewLaneId } from '../local_review_evidence.js';
 import type { IssueChecklistSummary } from './issue_checklist.js';
 import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS, pathsTouchPatterns } from '../review_focus.js';
+import { formatImplementerLearningsLines, selectImplementerLearnings, type ImplementerLearningsSection } from '../implementer_learnings.js';
 import { selectRiskCards } from '../risk_cards/index.js';
 
 export interface SelfCheckLane {
@@ -38,9 +39,10 @@ export interface ImplementerSelfCheck {
   requirements: SelfCheckRequirement[];
   lanes: SelfCheckLane[];
   riskCards: SelfCheckCard[];
+  repoLearnings: ImplementerLearningsSection;
 }
 
-export const SELF_CHECK_INSTRUCTION = 'For each requirement line, lane digest, and risk card below, either confirm the implementation already covers it or fix it now; do not spawn reviewers with known gaps.';
+export const SELF_CHECK_INSTRUCTION = 'For each requirement line, lane digest, risk card, and repo-configured learning below, either confirm the implementation already covers it or fix it now; do not spawn reviewers with known gaps.';
 
 const REQUIREMENT_STOPWORDS = new Set(['about', 'after', 'against', 'before', 'between', 'cannot', 'could', 'current', 'every', 'first', 'gates', 'never', 'other', 'should', 'still', 'their', 'there', 'these', 'those', 'through', 'under', 'when', 'where', 'which', 'while', 'with', 'without', 'would']);
 
@@ -170,8 +172,9 @@ export function buildImplementerSelfCheck(input: { config: Config; changedPaths:
   // PR text must have no input surface here. Issue-text activation is the start/view brief's job.
   const riskCards = selectRiskCards({ paths: input.changedPaths })
     .map(card => ({ id: card.id, title: card.title, implementerFace: card.implementerFace.trim() }));
+  const repoLearnings = selectImplementerLearnings({ repoRoot: input.repoRoot, paths: input.changedPaths });
   const requirements = buildRequirementSelfCheck({ issueChecklists: input.issueChecklists ?? [], prBody: input.prBody, repoRoot: input.repoRoot });
-  return { instruction: SELF_CHECK_INSTRUCTION, requirements, lanes, riskCards };
+  return { instruction: SELF_CHECK_INSTRUCTION, requirements, lanes, riskCards, repoLearnings };
 }
 
 export function formatImplementerSelfCheck(selfCheck: ImplementerSelfCheck): string[] {
@@ -198,5 +201,6 @@ export function formatImplementerSelfCheck(selfCheck: ImplementerSelfCheck): str
       lines.push(`    ${card.implementerFace}`);
     }
   }
+  lines.push(...formatImplementerLearningsLines(selfCheck.repoLearnings));
   return lines;
 }

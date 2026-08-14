@@ -16,6 +16,19 @@ function configWith(lanes) {
   return config;
 }
 
+function missingLearnings() {
+  return {
+    status: 'missing',
+    summary: 'No Executor learnings file was found; no repo-configured implementer guidance is available.',
+    trust: 'repo-doc',
+    source: 'repo-configured',
+    fragmentId: 'repo-configured/review-learnings',
+    sha256: null,
+    entries: [],
+    omitted: 0,
+  };
+}
+
 describe('implementer self-check', () => {
   it('renders a single-lane plan snapshot', () => {
     const selfCheck = buildImplementerSelfCheck({
@@ -32,6 +45,7 @@ describe('implementer self-check', () => {
         reason: 'required for every head',
       }],
       riskCards: [],
+      repoLearnings: missingLearnings(),
     });
     assert.deepEqual(formatImplementerSelfCheck(selfCheck), [
       'Implementer self-check (before spawning reviewers):',
@@ -39,6 +53,7 @@ describe('implementer self-check', () => {
       '  Planned lanes:',
       '  - code-quality (activated; required for every head): Correct, maintainable code with no dead, duplicated, or speculative logic.',
       '  Changed-path risk cards: none activated.',
+      '  Repo-configured learnings (repo-doc; not built-in policy): none matching.',
     ]);
   });
 
@@ -66,6 +81,7 @@ describe('implementer self-check', () => {
         { lane: 'concurrency-resource', digest: 'Races, deadlocks, leaked resources, and cross-process interference.', activated: false, reason: 'did not activate: matched changed paths but was displaced by the active-focus cap' },
       ],
       riskCards: [],
+      repoLearnings: missingLearnings(),
     });
     assert.deepEqual(formatImplementerSelfCheck(selfCheck), [
       'Implementer self-check (before spawning reviewers):',
@@ -78,6 +94,7 @@ describe('implementer self-check', () => {
       '  - error-observability (activated; changed paths matched its patterns): Loud failures with actionable messages and no swallowed errors.',
       '  - concurrency-resource (inactive; did not activate: matched changed paths but was displaced by the active-focus cap): Races, deadlocks, leaked resources, and cross-process interference.',
       '  Changed-path risk cards: none activated.',
+      '  Repo-configured learnings (repo-doc; not built-in policy): none matching.',
     ]);
   });
 

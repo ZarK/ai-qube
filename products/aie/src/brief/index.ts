@@ -5,6 +5,8 @@ export type {
   BriefMatrix,
   BriefMatrixDimension,
   BriefObligation,
+  BriefRepoLearning,
+  BriefRepoLearnings,
   BriefRiskCard,
   ImplementationBrief,
   VerificationKind,

@@ -90,7 +90,7 @@ describe('view service', () => {
     const briefIndex = human.indexOf('Implementation brief:');
     assert.ok(briefIndex > human.indexOf('Checklist:'));
     assert.ok(briefIndex < human.indexOf('Branch:'));
-    const order = ['Obligations:', 'Behavior matrix', 'Risk cards', 'Expected review lanes', 'Negative cases', 'Open ambiguities'];
+    const order = ['Obligations:', 'Behavior matrix', 'Risk cards', 'Repo-configured learnings', 'Expected review lanes', 'Negative cases', 'Open ambiguities'];
     let cursor = briefIndex;
     for (const section of order) {
       const sectionIndex = human.indexOf(section, cursor);

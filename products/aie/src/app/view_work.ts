@@ -76,7 +76,7 @@ export async function runViewService(options: { issueNumber: number; context: Li
     dependency: { declaredBlockers: blockerNumbers, openBlockers: openBlockers.map(blocker => blocker.number), unresolvedBlockers: unresolvedBlockers.map(blocker => blocker.number), blockers, dependents },
     checklist: { total: checklist.total, checked: checklist.completed, unchecked, items },
     branch: { suggested, current: currentBranch, matches: currentBranch !== null && currentBranch === suggested },
-    brief: buildImplementationBrief({ title: item.title, body: item.body, config: context.config, layout: await loadLayoutSnapshot(context) }),
+    brief: buildImplementationBrief({ title: item.title, body: item.body, config: context.config, layout: await loadLayoutSnapshot(context), repoRoot: context.cwd }),
     warnings,
     recommendedAction: recommendedAction(issueNumber, status, unresolvedBlockers, hasOtherInProgress),
   };
