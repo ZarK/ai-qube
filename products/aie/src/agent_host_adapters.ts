@@ -71,6 +71,7 @@ export interface AgentHostProfile {
 
 export interface AgentHostAdapterMetadata {
   readonly id: AgentHostId;
+  readonly displayName: string;
   readonly packageName: string | null;
   readonly installed: boolean;
   readonly instructionPaths: readonly string[];
@@ -253,11 +254,19 @@ const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
-  Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
-  Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
-  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
-  Object.freeze({ id: 'grok-build', packageName: null, installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'opencode', displayName: 'OpenCode', packageName: '@tjalve/qube-adapter-opencode', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'codex', displayName: 'Codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'claude-code', displayName: 'Claude Code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'grok-build', displayName: 'Grok Build', packageName: null, installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
 ]);
+
+export function reviewerDisplayName(hostId: string | null | undefined): string {
+  const raw = typeof hostId === 'string' ? hostId.trim() : '';
+  if (raw === '') return 'unknown-host';
+  const registryId = raw === 'grok' ? 'grok-build' : raw;
+  const adapter = ADAPTERS.find(item => item.id === registryId);
+  return adapter?.displayName ?? raw;
+}
 
 let cachedCodexProfile: AgentHostProfile | null | undefined;
 let cachedClaudeCodeProfile: AgentHostProfile | null | undefined;

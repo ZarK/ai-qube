@@ -14,6 +14,7 @@ import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { loadReviewLearningsFragment } from '../review_learnings.js';
+import { reviewerDisplayName } from '../agent_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeKind, type ReviewScopeSelection } from './review_delta_scope.js';
 
 const execFileAsync = promisify(execFile);
@@ -1378,8 +1379,8 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   mkdirTrustedStoreSync(directory, { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
-  const reviewerId = adapter === 'local-host' ? lane.runnerProvenance?.host ?? 'codex' : 'local-command';
-  const reviewerName = reviewerId === 'codex' ? 'Codex' : reviewerId === 'grok' ? 'Grok' : reviewerId;
+  const reviewerId = adapter === 'local-host' ? (lane.runnerProvenance?.host?.trim() || 'unknown-host') : 'local-command';
+  const reviewerName = adapter === 'local-host' ? reviewerDisplayName(reviewerId) : 'local-command';
   const body = {
     version: 1,
     issueNumber,

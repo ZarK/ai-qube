@@ -913,7 +913,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok'));
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
     const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
-    assert.deepEqual(writtenLane.reviewer, { id: 'grok', name: 'Grok', adapterKind: 'local' });
+    assert.deepEqual(writtenLane.reviewer, { id: 'grok', name: 'Grok Build', adapterKind: 'local' });
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
     // Streaming publication: a validated lane's mutation may interleave with
