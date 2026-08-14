@@ -984,6 +984,29 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     }
   });
 
+  it("reports modelRouting decisions and substitutions in doctor JSON", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-model-routing-doctor-"));
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-model-routing-quality-"));
+    createQualityDoctorShim(qualityRoot);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+    const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.ok(parsed.modelRouting);
+    assert.ok(["ok", "missing", "invalid"].includes(parsed.modelRouting.status));
+    if (parsed.modelRouting.resolution) {
+      assert.equal(parsed.modelRouting.resolution.routes["independent-review"].reviewTier, "review");
+      assert.ok(Array.isArray(parsed.modelRouting.resolution.substitutions));
+    }
+  });
+
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-doctor-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-packages-"));
@@ -3259,6 +3282,21 @@ describe("qube init composer orchestrator", () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.equal(parsed.aie[0].ok, false);
+  });
+
+  it("refuses an uninstalled modelRouting host during init", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-routing-init-"));
+    const result = runCli([
+      "init", ".",
+      "--host", "claude-code",
+      "--yes",
+      "--json",
+      "--primary-host", "opencode",
+      "--primary-model", "default",
+    ], { cwd, env: { PATH: "" } });
+    assert.notEqual(result.status, 0);
+    const parsed = result.stdout.trim() ? JSON.parse(result.stdout) : { error: result.stderr };
+    assert.match(String(parsed.error ?? result.stderr), /not installed/i);
   });
 
   it("blocks JSON init prompts unless flags or safe defaults are supplied", () => {

@@ -1,5 +1,13 @@
 import type { RuntimeCommandContext } from '@tjalve/qube-cli/runtime';
 import type { InitPolicyOptions } from './init/index.js';
+import {
+  assertInstalledRoutingHost,
+  buildModelRoutingFromSelections,
+  detectInstalledRoutingHosts,
+  isModelRoutingHost,
+  parseHostModel,
+  type ModelRoutingHostId,
+} from './core/model_routing.js';
 import { numberFlag, stringFlag, stringListFlag } from './runtime_result.js';
 
 function readBooleanFlag(context: RuntimeCommandContext, name: string): boolean | undefined {
@@ -60,7 +68,53 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
   addMilestonePolicy(context, policy);
   addInstructionPolicy(context, policy);
   addSupplyChainPolicy(context, policy);
+  addModelRoutingPolicy(context, policy);
   return policy;
+}
+
+function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolicyOptions): void {
+  const primaryHost = stringFlag(context, 'primary-host');
+  const primaryModel = stringFlag(context, 'primary-model');
+  const mechanical = stringFlag(context, 'route-mechanical-implementation');
+  const exploration = stringFlag(context, 'route-exploration-investigation');
+  const synthesis = stringFlag(context, 'route-synthesis-judgment');
+  const independent = stringFlag(context, 'route-independent-review');
+  if (primaryHost === undefined && primaryModel === undefined && mechanical === undefined && exploration === undefined && synthesis === undefined && independent === undefined) {
+    return;
+  }
+  if (!primaryHost || !primaryModel || !isModelRoutingHost(primaryHost)) {
+    throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, or grok.');
+  }
+  const installed = detectInstalledRoutingHosts();
+  assertInstalledRoutingHost(primaryHost, installed);
+  const parsedMechanical = parseOptionalHostModel(mechanical, 'route-mechanical-implementation', installed);
+  const parsedExploration = parseOptionalHostModel(exploration, 'route-exploration-investigation', installed);
+  const parsedSynthesis = parseOptionalHostModel(synthesis, 'route-synthesis-judgment', installed);
+  if (independent !== undefined && independent !== 'review' && independent !== 'economy' && independent !== 'synthesis') {
+    throw new Error('--route-independent-review must be review, economy, or synthesis.');
+  }
+  policy.modelRouting = buildModelRoutingFromSelections({
+    primaryHost,
+    primaryModel,
+    mechanical: parsedMechanical,
+    exploration: parsedExploration,
+    synthesis: parsedSynthesis,
+    independentReviewTier: independent === 'review' || independent === 'economy' || independent === 'synthesis' ? independent : 'review',
+  });
+}
+
+function parseOptionalHostModel(
+  value: string | undefined,
+  flag: string,
+  installed: readonly ModelRoutingHostId[],
+): { host: ModelRoutingHostId; model: string } | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseHostModel(value);
+  if (!parsed) {
+    throw new Error(`--${flag} must be host:model using an installed host: codex, claude-code, opencode, or grok.`);
+  }
+  assertInstalledRoutingHost(parsed.host, installed);
+  return parsed;
 }
 
 function addMilestonePolicy(context: RuntimeCommandContext, policy: InitPolicyOptions): void {

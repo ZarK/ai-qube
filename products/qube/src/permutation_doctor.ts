@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { validateConfig } from "@tjalve/aie";
+import { detectInstalledRoutingHosts, resolveModelRouting, validateConfig, type ModelRoutingResolution } from "@tjalve/aie";
 
 interface CapabilityObservation {
   readonly role: "work" | "review" | "ci";
@@ -31,6 +31,51 @@ export interface PermutationDoctorResult {
   readonly review: PermutationRoleSummary | null;
   readonly ci: PermutationRoleSummary | null;
   readonly missing: readonly CapabilityObservation[];
+}
+
+export interface ModelRoutingDoctorResult {
+  readonly status: "ok" | "missing" | "invalid";
+  readonly summary: string;
+  readonly resolution: ModelRoutingResolution | null;
+}
+
+export async function runModelRoutingDoctor(cwd: string): Promise<ModelRoutingDoctorResult> {
+  const configPath = path.join(cwd, ".qube", "aie", "config.json");
+  if (!existsSync(configPath)) {
+    return { status: "missing", summary: "No Executor config was found; model routing cannot be resolved.", resolution: null };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return { status: "invalid", summary: "Executor config is malformed JSON; model routing cannot be resolved.", resolution: null };
+  }
+  const validated = validateConfig(raw);
+  if (!validated.ok || !validated.config) {
+    return { status: "invalid", summary: "Executor config is invalid; model routing cannot be resolved.", resolution: null };
+  }
+  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, detectInstalledRoutingHosts());
+  const substitutions = resolution.substitutions.length;
+  return {
+    status: "ok",
+    summary: substitutions === 0
+      ? `Active modelRouting primary is ${resolution.primary.id}.`
+      : `Active modelRouting primary is ${resolution.primary.id} with ${substitutions} substitution(s).`,
+    resolution,
+  };
+}
+
+export function formatModelRoutingDoctor(result: ModelRoutingDoctorResult): string {
+  const lines = ["Model routing:", `- ${result.status}: ${result.summary}`];
+  if (result.resolution) {
+    for (const routeClass of ["mechanical-implementation", "exploration-investigation", "synthesis-judgment"] as const) {
+      const route = result.resolution.routes[routeClass];
+      lines.push(`- ${routeClass}: ${route.selected.id}${route.substitutions.length > 0 ? ` (substituted from ${route.preferred})` : ""}`);
+    }
+    const review = result.resolution.routes["independent-review"];
+    lines.push(`- independent-review: reviewModels.${review.reviewTier}${review.model ? ` -> ${review.model}` : ""}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export async function runPermutationDoctor(cwd: string): Promise<PermutationDoctorResult> {

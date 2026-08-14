@@ -1,4 +1,5 @@
 import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { ModelRoutingPolicy } from '../core/model_routing.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
@@ -221,6 +222,7 @@ export interface ConfigFilePolicy {
   instructions: InstructionConfig;
   migration: MigrationConfig;
   supplyChain: SupplyChainConfig;
+  modelRouting: ModelRoutingPolicy;
 }
 
 export interface ConfigFileShape {
@@ -260,6 +262,7 @@ export interface Config extends ConfigFileShape {
   reviewCarryForwardPublish: 'note' | 'none';
   reviewNitCap: number;
   reviewModels: ReviewModelsPolicy;
+  modelRouting: ModelRoutingPolicy;
   reviewRoute: ReviewRoutePolicy | null;
   reviewFailover: ReviewFailoverPolicy | null;
   opencodeCommandAlias: boolean;

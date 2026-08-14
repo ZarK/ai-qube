@@ -3,6 +3,16 @@ import { isRegisteredReviewHost, listReviewHostIds } from '../app/review_host_ad
 import { defaultCarryForwardContext, defaultLaneModelTier } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelTierId, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import {
+  defaultModelRoutingPolicy,
+  isModelRoutingHost,
+  isValidCatalogId,
+  isValidModelId,
+  type DelegatedModelRouteBinding,
+  type IndependentReviewRouteBinding,
+  type ModelCatalogEntry,
+  type ModelRoutingPolicy,
+} from '../core/model_routing.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -1121,7 +1131,7 @@ function readPolicy(value: unknown, defaultValue: ConfigFilePolicy, errors: Vali
     errors.push({ kind: 'invalid', path: 'policy', message: 'policy must be an object' });
     return cloneConfigFile(DEFAULT_CONFIG_FILE).policy;
   }
-  rejectUnknownKeys(value, ['labels', 'milestoneOrdering', 'branch', 'lifecycle', 'shipping', 'reviews', 'gates', 'audit', 'instructions', 'migration', 'supplyChain'], 'policy', errors);
+  rejectUnknownKeys(value, ['labels', 'milestoneOrdering', 'branch', 'lifecycle', 'shipping', 'reviews', 'gates', 'audit', 'instructions', 'migration', 'supplyChain', 'modelRouting'], 'policy', errors);
   return {
     labels: readLabels(value.labels, defaultValue.labels, errors),
     milestoneOrdering: readMilestoneOrdering(value.milestoneOrdering, defaultValue.milestoneOrdering, errors),
@@ -1134,7 +1144,153 @@ function readPolicy(value: unknown, defaultValue: ConfigFilePolicy, errors: Vali
     instructions: readInstructions(value.instructions, defaultValue.instructions, errors),
     migration: readMigration(value.migration, defaultValue.migration, errors),
     supplyChain: readSupplyChain(value.supplyChain, defaultValue.supplyChain, errors),
+    modelRouting: readModelRouting(value.modelRouting, defaultValue.modelRouting, errors),
   };
+}
+
+function readModelRouting(value: unknown, defaultValue: ModelRoutingPolicy, errors: ValidationError[]): ModelRoutingPolicy {
+  if (value === undefined) return defaultValue;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path: 'policy.modelRouting', message: 'policy.modelRouting must be an object with primary, catalog, and routes' });
+    return defaultValue;
+  }
+  rejectUnknownKeys(value, ['primary', 'catalog', 'routes'], 'policy.modelRouting', errors);
+  const catalog = readModelCatalog(value.catalog, errors);
+  const catalogIds = new Set(catalog.map(entry => entry.id));
+  const primary = typeof value.primary === 'string' ? value.primary.trim() : '';
+  if (!isValidCatalogId(primary) || !catalogIds.has(primary)) {
+    errors.push({ kind: 'invalid', path: 'policy.modelRouting.primary', message: 'policy.modelRouting.primary must be a catalog id' });
+  }
+  if (!isPlainObject(value.routes)) {
+    errors.push({ kind: 'invalid', path: 'policy.modelRouting.routes', message: 'policy.modelRouting.routes must be an object' });
+    return { primary: primary || defaultValue.primary, catalog, routes: defaultValue.routes };
+  }
+  rejectUnknownKeys(value.routes, ['mechanical-implementation', 'exploration-investigation', 'independent-review', 'synthesis-judgment'], 'policy.modelRouting.routes', errors);
+  return {
+    primary: catalogIds.has(primary) ? primary : defaultValue.primary,
+    catalog,
+    routes: {
+      'mechanical-implementation': readDelegatedRoute(value.routes['mechanical-implementation'], 'mechanical-implementation', catalogIds, primary || defaultValue.primary, errors),
+      'exploration-investigation': readDelegatedRoute(value.routes['exploration-investigation'], 'exploration-investigation', catalogIds, primary || defaultValue.primary, errors),
+      'independent-review': readIndependentReviewRoute(value.routes['independent-review'], errors),
+      'synthesis-judgment': readDelegatedRoute(value.routes['synthesis-judgment'], 'synthesis-judgment', catalogIds, primary || defaultValue.primary, errors),
+    },
+  };
+}
+
+function readModelCatalog(value: unknown, errors: ValidationError[]): ModelCatalogEntry[] {
+  if (value === undefined) return [...defaultModelRoutingPolicy().catalog];
+  if (!Array.isArray(value)) {
+    errors.push({ kind: 'invalid', path: 'policy.modelRouting.catalog', message: 'policy.modelRouting.catalog must be an array of model entries' });
+    return [...defaultModelRoutingPolicy().catalog];
+  }
+  const catalog: ModelCatalogEntry[] = [];
+  const seen = new Set<string>();
+  value.forEach((entry, index) => {
+    const path = `policy.modelRouting.catalog[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+      return;
+    }
+    rejectUnknownKeys(entry, ['id', 'host', 'transport', 'costRank', 'notes'], path, errors);
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    if (!isValidCatalogId(id)) {
+      errors.push({ kind: 'invalid', path: `${path}.id`, message: `${path}.id must be a catalog identifier` });
+      return;
+    }
+    if (seen.has(id)) {
+      errors.push({ kind: 'duplicate', path: `${path}.id`, message: `${path}.id ${id} is duplicated` });
+      return;
+    }
+    const host = String(entry.host ?? '');
+    if (!isModelRoutingHost(host)) {
+      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok'].join(', ')}` });
+      return;
+    }
+    if (entry.transport !== 'cli' && entry.transport !== 'host') {
+      errors.push({ kind: 'invalid', path: `${path}.transport`, message: `${path}.transport must be "cli" or "host"` });
+      return;
+    }
+    if (typeof entry.costRank !== 'number' || !Number.isFinite(entry.costRank)) {
+      errors.push({ kind: 'invalid', path: `${path}.costRank`, message: `${path}.costRank must be a number` });
+      return;
+    }
+    const notes = typeof entry.notes === 'string' ? entry.notes.trim() : '';
+    if (notes === '') {
+      errors.push({ kind: 'invalid', path: `${path}.notes`, message: `${path}.notes must be a non-empty string` });
+      return;
+    }
+    if (!isValidModelId(id.split(':').slice(1).join(':') || id)) {
+      errors.push({ kind: 'invalid', path: `${path}.id`, message: `${path}.id must include a model identifier` });
+    }
+    seen.add(id);
+    catalog.push({
+      id,
+      host,
+      transport: entry.transport,
+      costRank: entry.costRank,
+      notes,
+    });
+  });
+  return catalog;
+}
+
+function readDelegatedRoute(
+  value: unknown,
+  routeClass: 'mechanical-implementation' | 'exploration-investigation' | 'synthesis-judgment',
+  catalogIds: Set<string>,
+  primary: string,
+  errors: ValidationError[],
+): DelegatedModelRouteBinding {
+  const path = `policy.modelRouting.routes.${routeClass}`;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object with preferred and fallback` });
+    return { preferred: primary, fallback: [primary] };
+  }
+  rejectUnknownKeys(value, ['preferred', 'fallback'], path, errors);
+  if ('reviewTier' in value) {
+    errors.push({ kind: 'invalid', path, message: `${path} must not select reviewModels; only independent-review may reference a review tier` });
+  }
+  const preferred = typeof value.preferred === 'string' ? value.preferred.trim() : '';
+  if (!catalogIds.has(preferred)) {
+    errors.push({ kind: 'invalid', path: `${path}.preferred`, message: `${path}.preferred must be a catalog id` });
+  }
+  const fallback = Array.isArray(value.fallback) && value.fallback.every(item => typeof item === 'string')
+    ? value.fallback.map(item => item.trim())
+    : null;
+  if (!fallback) {
+    errors.push({ kind: 'invalid', path: `${path}.fallback`, message: `${path}.fallback must be an array of catalog ids` });
+    return { preferred: catalogIds.has(preferred) ? preferred : primary, fallback: [primary] };
+  }
+  for (const [index, id] of fallback.entries()) {
+    if (!catalogIds.has(id)) {
+      errors.push({ kind: 'invalid', path: `${path}.fallback[${index}]`, message: `${path}.fallback[${index}] must be a catalog id` });
+    }
+  }
+  if (fallback[fallback.length - 1] !== primary) {
+    errors.push({ kind: 'invalid', path: `${path}.fallback`, message: `${path}.fallback must end at the primary catalog id` });
+  }
+  return {
+    preferred: catalogIds.has(preferred) ? preferred : primary,
+    fallback,
+  };
+}
+
+function readIndependentReviewRoute(value: unknown, errors: ValidationError[]): IndependentReviewRouteBinding {
+  const path = 'policy.modelRouting.routes.independent-review';
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object with reviewTier` });
+    return { reviewTier: 'review' };
+  }
+  rejectUnknownKeys(value, ['reviewTier'], path, errors);
+  if ('preferred' in value || 'fallback' in value) {
+    errors.push({ kind: 'invalid', path, message: `${path} must reference policy.reviews.models through reviewTier and must not duplicate model selection` });
+  }
+  if (value.reviewTier !== 'review' && value.reviewTier !== 'economy' && value.reviewTier !== 'synthesis') {
+    errors.push({ kind: 'invalid', path: `${path}.reviewTier`, message: `${path}.reviewTier must be "review", "economy", or "synthesis"` });
+    return { reviewTier: 'review' };
+  }
+  return { reviewTier: value.reviewTier };
 }
 
 export function validateConfig(raw: unknown): ConfigValidationResult {

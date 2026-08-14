@@ -4,6 +4,7 @@ import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GU
 import { getAgentDescriptor } from './agent_descriptors.js';
 import type { ReviewModelHostId } from './core/policy.js';
 import { resolveReviewModelTier } from './app/local_review_runner_support.js';
+import { delegatedHosts, type ModelRoutingHostId, type ModelRoutingPolicy } from './core/model_routing.js';
 import { ECONOMY_REVIEW_CATALOG, type EconomyReviewCatalogAgent } from './review_catalog.js';
 
 export type InitTool = AgentHostId;
@@ -332,6 +333,20 @@ function renderTodoRequirementLines(config: Config, hosts: AgentHostProfile[]): 
   ];
 }
 
+function renderModelRoutingLines(config: Config): string[] {
+  const routing = config.modelRouting;
+  const independent = routing.routes['independent-review'].reviewTier;
+  return [
+    `Configured modelRouting primary is \`${routing.primary}\`.`,
+    'Delegate mechanical-implementation to its preferred cheaper model when that host CLI is installed; if the output does not meet the bar, escalate along the fallback chain without user intervention and end at the primary model.',
+    'Delegate exploration-investigation the same way: preferred model first, then the configured fallback chain, then the primary model.',
+    'Keep synthesis-judgment on its preferred model or the primary model. Do not silently inherit an all-in-one cheaper model.',
+    `Independent-review uses reviewModels tier \`${independent}\` and must not duplicate review model selection in modelRouting.`,
+    'Wrapper runner agents exist only for non-primary hosts. Spawn them with a self-contained prompt; do not assume the primary host can reach that model natively.',
+    'Routing substitutions must appear in JSON output. Do not treat a fallback as the originally requested model.',
+  ];
+}
+
 function renderHostCapabilityLines(config: Config, hosts: AgentHostProfile[]): string[] {
   const routedReview = routedLocalReviewEnabled(config);
   return hosts.map(host => {
@@ -537,6 +552,10 @@ Host capability profile:
 
 ${renderBulletList(renderHostCapabilityLines(config, hosts))}
 
+Model routing:
+
+${renderBulletList(renderModelRoutingLines(config))}
+
 Stop conditions:
 
 ${renderBulletList(renderStopLines(config))}
@@ -722,6 +741,68 @@ tools:
 ${modelLines}---
 
 ${renderEconomyAgentInstructions(agent)}
+`;
+}
+
+export function renderModelRoutingRunnerFiles(config: Config): Array<{
+  id: string;
+  relativePath: string;
+  body: string;
+  description: string;
+  host: ModelRoutingHostId;
+}> {
+  const hosts = delegatedHosts(config.modelRouting);
+  return hosts.map(host => ({
+    id: `${host}-route-runner`,
+    relativePath: routeRunnerPath(host),
+    body: renderRouteRunner(host, config.modelRouting),
+    description: `Wrapper runner for delegated modelRouting classes on ${host}.`,
+    host,
+  }));
+}
+
+function routeRunnerPath(host: ModelRoutingHostId): string {
+  if (host === 'codex') return '.codex/agents/qube-route-runner.toml';
+  if (host === 'claude-code') return '.claude/agents/qube-route-runner.md';
+  if (host === 'opencode') return '.opencode/agent/qube-route-runner.md';
+  return '.grok/agents/qube-route-runner.md';
+}
+
+function renderRouteRunner(host: ModelRoutingHostId, routing: ModelRoutingPolicy): string {
+  const classes = (['mechanical-implementation', 'exploration-investigation', 'synthesis-judgment'] as const)
+    .filter(routeClass => routing.catalog.find(entry => entry.id === routing.routes[routeClass].preferred)?.host === host
+      || routing.routes[routeClass].fallback.some(id => routing.catalog.find(entry => entry.id === id)?.host === host));
+  const instructions = `You are a QUBE wrapper runner for delegated coding work on the ${host} CLI.
+
+Run only the self-contained prompt the primary host gives you. Do not ask the user to restate the task. Complete the requested route class, then return a concise result the primary host can judge.
+
+If the result does not meet the bar, say so explicitly so the primary host can escalate along the configured modelRouting fallback chain and finish on the primary model. Do not invent a different model or host.
+
+Configured delegated classes for this runner: ${classes.join(', ') || 'none'}.
+Independent-review stays on reviewModels and is not handled by this runner.`;
+  if (host === 'codex') {
+    return `name = "qube-route-runner"
+description = "Wrapper runner for delegated QUBE modelRouting classes."
+developer_instructions = """
+${instructions}
+"""
+`;
+  }
+  if (host === 'opencode') {
+    return `---
+description: Wrapper runner for delegated QUBE modelRouting classes.
+mode: subagent
+---
+
+${instructions}
+`;
+  }
+  return `---
+name: qube-route-runner
+description: Wrapper runner for delegated QUBE modelRouting classes.
+---
+
+${instructions}
 `;
 }
 
