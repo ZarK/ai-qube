@@ -24,6 +24,7 @@ export interface CombinationSuiteOptions {
   readonly createProvisioner: (providerId: LiveSuiteProvider, context: LiveSuiteContext) => ProviderProvisioner;
   readonly env?: NodeJS.ProcessEnv;
   readonly config?: Readonly<Record<string, Record<string, unknown>>>;
+  readonly probe?: (adapter: QubeAdapterContract) => Promise<{ readonly status: "pass" | "fail" | "unverified"; readonly summary: string }>;
   readonly probeGithub?: () => Promise<{ readonly ok: boolean; readonly workIds: readonly string[] }>;
 }
 
@@ -87,15 +88,30 @@ export async function runLiveCombination(
           : "skipped: no live credentials",
       });
     }
+    if (!options.probe) {
+      return combinationResult({
+        status: "skipped",
+        reason: "no-live-credentials",
+        summary: "skipped: no live credentials",
+      });
+    }
+    const probed = await options.probe(adapter);
+    if (probed.status !== "pass") {
+      return combinationResult({
+        status: "failed",
+        reason: probed.status === "fail" ? "probe-failed" : "probe-unverified",
+        summary: probed.summary,
+      });
+    }
     const result = await runProvisionerLifecycle({
       adapter,
       createProvisioner: context => options.createProvisioner(providerId, context),
       probe: async () => ({
         adapterId: adapter.id,
         probeId: adapter.connection?.probe.id ?? "probe",
-        status: "pass",
+        status: probed.status,
         authMethod: adapter.connection?.authMethod ?? "token-env",
-        summary: `${adapter.id} combination probe`,
+        summary: probed.summary,
         verifyCommand: adapter.connection?.probe.verifyCommand ?? "qube doctor --json",
         readOnly: true,
       }),
