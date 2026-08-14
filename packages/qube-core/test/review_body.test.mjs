@@ -6,7 +6,9 @@ import {
   DEGRADED_REVIEW_RENDER_PROFILE,
   DEGRADED_TRANSPORT_LABEL,
   GITHUB_REVIEW_RENDER_PROFILE,
+  UNTRUSTED_FIX_GUARDRAIL,
   classifyReviewLaneState,
+  clipReviewAnchorSpan,
   computeReviewRoundDelta,
   isSelfAuthoredReviewBody,
   renderInlineReviewComment,
@@ -14,6 +16,7 @@ import {
   renderLaneReviewBody,
   renderRoundReviewBody,
   renderVerdictSentence,
+  reviewFindingFingerprint,
   reviewFindingKey,
   suggestionFenceSafety,
   truncatedVisibleReviewProse,
@@ -130,7 +133,8 @@ describe("renderRoundReviewBody", () => {
     const notes = render.body.slice(render.body.indexOf("<summary>Lane notes</summary>"));
     assert.equal(notes.includes("Parser truncates nested status history"), false);
     assert.match(notes, /Inspected the delta/);
-    assert.equal(render.body.split("Parser truncates nested status history").length - 1, 1);
+    const table = render.body.slice(0, render.body.indexOf("<summary>Fix prompt for agents</summary>"));
+    assert.equal(table.split("Parser truncates nested status history").length - 1, 1);
   });
 
   it("states each finding once and keeps finding text out of collapsed lane notes", () => {
@@ -149,8 +153,9 @@ describe("renderRoundReviewBody", () => {
       findings: [row],
       transport: "review-api",
     });
-    const first = render.body.indexOf("Unique finding claim stays in the table");
-    const last = render.body.lastIndexOf("Unique finding claim stays in the table");
+    const table = render.body.slice(0, render.body.indexOf("<summary>Fix prompt for agents</summary>"));
+    const first = table.indexOf("Unique finding claim stays in the table");
+    const last = table.lastIndexOf("Unique finding claim stays in the table");
     assert.equal(first, last);
     const notesStart = render.body.indexOf("<summary>Lane notes</summary>");
     assert.ok(notesStart > 0);
@@ -274,7 +279,10 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
       finding: finding({ message: "Use const.", location: { path: "src/a.ts", line: 5, side: "destination" }, suggestion: "const x = 1;" }),
     });
     assert.match(safe, /\*\*Use const\.\*\*/);
+    assert.match(safe, /advisory \| code-quality/);
     assert.match(safe, /```suggestion\nconst x = 1;\n```/);
+    assert.match(safe, /<!-- qube-finding:v1:/);
+    assert.match(safe, new RegExp(UNTRUSTED_FIX_GUARDRAIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(suggestionFenceSafety({
       anchored: false,
       finding: finding({ suggestion: "const x = 1;" }),
@@ -282,9 +290,39 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     const unsafe = renderInlineReviewComment({
       laneId: "code-quality",
       anchored: false,
-      finding: finding({ message: "Use const.", suggestion: "const x = 1;" }),
+      finding: finding({ message: "Use const.", suggestion: "Rewrite this in clearer English." }),
     });
     assert.doesNotMatch(unsafe, /```suggestion/);
+    assert.match(unsafe, /no committable suggestion:/);
+  });
+
+  it("never puts prose in a suggestion fence", () => {
+    const safety = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Please rewrite this function more clearly.",
+      }),
+    });
+    assert.equal(safety.safe, false);
+    assert.match(safety.reason ?? "", /prose/);
+  });
+
+  it("clips published selections to ten lines and keeps a stable fingerprint", () => {
+    const wide = finding({
+      message: "  The parser   truncates.  ",
+      location: { path: "src/a.ts", line: 10, endLine: 40, side: "destination" },
+    });
+    const span = clipReviewAnchorSpan(wide);
+    assert.equal(span?.line, 10);
+    assert.equal(span?.endLine, 19);
+    assert.equal(span?.clipped, true);
+    const first = reviewFindingFingerprint(wide);
+    const second = reviewFindingFingerprint(finding({
+      message: "The parser truncates.",
+      location: { path: "src/a.ts", line: 10, endLine: 40, side: "destination" },
+    }));
+    assert.equal(first, second);
   });
 });
 

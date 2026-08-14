@@ -34,6 +34,7 @@ import {
   type ReviewItemKey,
   GITHUB_REVIEW_RENDER_PROFILE,
   DEGRADED_REVIEW_RENDER_PROFILE,
+  clipReviewAnchorSpan,
   isSelfAuthoredReviewBody,
   renderInlineReviewComment,
   renderLaneReviewBody,
@@ -1158,15 +1159,17 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
 
 function inlineFindingComment(location: ReviewFinding['location'], body: string): JsonObject | null {
   if (!location || typeof location.line !== 'number') return null;
+  const span = clipReviewAnchorSpan({ id: 'anchor', severity: 'advisory', message: 'anchor', location });
+  if (!span) return null;
   const side = location.side === 'source' ? 'LEFT' : 'RIGHT';
   const comment: Record<string, JsonValue> = {
     path: normalizeDiffPath(location.path),
-    line: location.endLine ?? location.line,
+    line: span.endLine,
     side,
     body,
   };
-  if (location.endLine && location.endLine !== location.line) {
-    comment.start_line = location.line;
+  if (span.endLine !== span.line) {
+    comment.start_line = span.line;
     comment.start_side = side;
   }
   return comment;
