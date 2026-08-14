@@ -455,10 +455,65 @@ describe('init service', () => {
     assert.match(agents, /apply all blocking fixes in one commit, then run one re-review round/);
     assert.match(agents, /never open a new issue for a residual advisory/);
     assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
+    assert.match(agents, /Three review modes remain available: remote provider reviews, native host-local subagents with pinned review-tier models, and routed isolated model hosts/);
     assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
     assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
     assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
     assert.doesNotMatch(reviewAgent, /model = /);
+  });
+
+  it('pins the Codex review model in native review-focus assets while routed review is enabled', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = {
+      review: {
+        grok: { model: 'grok-4.5', effort: null },
+        codex: { model: 'gpt-5.5-codex', effort: 'high' },
+      },
+      economy: {},
+      synthesis: {},
+    };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(reviewAgent, /model = "gpt-5\.5-codex"/);
+    assert.match(reviewAgent, /model_reasoning_effort = "high"/);
+  });
+
+  it('keeps native review assets pinned after the routed route is removed', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = {
+      review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } },
+      economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } },
+      synthesis: {},
+    };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    assert.equal((await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo })).ok, true);
+
+    delete config.policy.reviews.route;
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
+    assert.equal(result.ok, true);
+    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(reviewAgent, /model = "gpt-5\.5-codex"/);
+    assert.match(reviewAgent, /model_reasoning_effort = "high"/);
+    assert.match(explorer, /model = "gpt-5\.5-mini"/);
+    assert.match(explorer, /model_reasoning_effort = "low"/);
   });
 
   it('renders review-focus agents with tier models and effort for Claude Code and OpenCode hosts', async () => {

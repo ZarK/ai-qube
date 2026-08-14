@@ -10,7 +10,7 @@ import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_e
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
@@ -426,7 +426,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     expectedAdapter: runner,
     requiredCommand: command,
     expectedModelTier: plannedLaneModelTier(config, lane),
-    expectedHost: runner === 'local-host' ? (resolveModelReviewPlan(config, lane)?.host ?? 'codex') : null,
+    expectedHost: runner === 'local-host' ? (resolveModelReviewPlan(config, lane)?.host ?? configuredReviewModelHost(config)) : null,
   });
   if (decision.source) {
     deltaTriage.push({
@@ -542,10 +542,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const riskCardCoverageAreas = activatedRiskCards.map(card => card.id);
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
+  const reviewHost = configuredReviewModelHost(config);
   const modelTiers = {
-    review: resolveReviewModelTier(config.reviewModels, 'review', 'codex'),
-    economy: resolveReviewModelTier(config.reviewModels, 'economy', 'codex'),
-    synthesis: resolveReviewModelTier(config.reviewModels, 'synthesis', 'codex'),
+    review: resolveReviewModelTier(config.reviewModels, 'review', reviewHost),
+    economy: resolveReviewModelTier(config.reviewModels, 'economy', reviewHost),
+    synthesis: resolveReviewModelTier(config.reviewModels, 'synthesis', reviewHost),
   };
   const economyCatalog: EconomyCatalogTierResolution[] = ECONOMY_REVIEW_CATALOG.map(agent => ({
     name: agent.name,
