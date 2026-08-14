@@ -6,6 +6,9 @@ status comment, and the publisher identity. GitHub is the reference forge.
 Other forges consume the same renderer through declared capability profiles and
 degrade explicitly, never silently.
 
+See also the visual design report with rendered before/after mockups:
+[QUBE Review Redesign](./qube-review-surfaces-visual.html).
+
 ## Current state (audit, 2026-08-14)
 
 Evidence from merged pull requests #505, #509, #511, and #512 on this
