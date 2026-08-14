@@ -12,7 +12,7 @@ Use this workflow when a provider API response changes and an offline fixture no
 
 1. Run the live provisioner suite for that provider.
 2. If verify fails because the recorded payload changed, capture the live JSON next to the existing fixture.
-3. Run `node scripts/refresh-testkit-fixtures.mjs check packages/qube-testkit/<fixture>`.
+3. Run `node scripts/refresh-testkit-fixtures.mjs check <fixture-relative-to-packages/qube-testkit>`, for example `package.json`.
 4. Review the digest. If the change is expected, run the same command with `write` to record the digest.
 5. Re-run the offline fixture suite. A provider API drift must show as a fixture or digest mismatch, not as a silent production success.
 
