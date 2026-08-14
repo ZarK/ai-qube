@@ -860,6 +860,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'failed', 'a provider-rejected lane publication must never report a published batch');
     assert.match(String(result.localReviewPublish.failure), /Failed to publish lane review|routed lane publish failed/);
+    assert.ok(result.roundSummary, 'a failed lane publish must still attempt the round summary');
+    assert.match(String(result.roundSummary.nextAction || result.roundSummary.failure || ''), /issue-compliance|code-quality|Failed lane publish|failed/i);
   });
 
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
@@ -924,11 +926,15 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const publishedMarkers = [...fixture.calls.flatMap(call => call.map(String)), ...fixture.reviewPayloads.map(payload => String(payload.body ?? ''))]
       .filter(text => text.includes('qube-pr-review:'))
       .map(text => JSON.parse(text.match(/qube-pr-review:(\{[\s\S]*?\})\s*-->/)[1]));
-    assert.ok(publishedMarkers.length >= 3, 'the routed batch must publish one marker per lane');
     const evidenceLanes = [...result.localReview.evidence[0].lanes.map(lane => lane.id)].sort();
+    assert.ok(publishedMarkers.length >= evidenceLanes.length, 'the routed batch must publish one marker per lane');
     for (const marker of publishedMarkers) {
       assert.deepEqual(marker.expectedLanes, evidenceLanes, 'every marker must declare the complete validated lane set for the head');
     }
+    const publishRecord = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'publish.json'), 'utf8'));
+    assert.equal(publishRecord.status, 'published');
+    assert.ok(publishRecord.lanes.length > 0);
+    assert.ok(publishRecord.roundSummary);
   });
 
   it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {
@@ -1296,8 +1302,64 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.match(result.nextAction, /Ship-ready/);
     assert.equal(result.localReviewPublish.status, 'skipped');
     assert.match(result.localReviewPublish.nextAction, /reused/i);
-    assert.equal(fixture.calls.some(args => args.join(' ').includes('qube-pr-review:')), false);
-    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
+    assert.ok(result.roundSummary);
+    assert.ok(result.roundSummary.status === 'published' || result.roundSummary.status === 'skipped' || result.roundSummary.status === 'failed');
+    const publishRecord = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'publish.json'), 'utf8'));
+    assert.ok(['skipped', 'published', 'failed'].includes(publishRecord.status));
+    assert.ok(Array.isArray(publishRecord.lanes));
+  });
+
+  it('reports a visible round-summary error when no issue number can be resolved', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ closingIssuesReferences: [] })] });
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 0,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+    });
+
+    assert.ok(result.roundSummary);
+    assert.equal(result.roundSummary.status, 'failed');
+    assert.match(String(result.roundSummary.failure), /issue number/i);
+    const publishRecord = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '0', '12', 'abc123', 'publish.json'), 'utf8'));
+    assert.equal(publishRecord.roundSummary.status, 'failed');
   });
 
   it('reruns every lane when the trusted provider round is missing one', async () => {

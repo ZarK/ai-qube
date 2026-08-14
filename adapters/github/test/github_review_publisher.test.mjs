@@ -120,6 +120,64 @@ describe('github review publisher', () => {
     assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');
   });
 
+  it('does not use the installation account login when bot identity is missing', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'alice',
+      }),
+      fetchTokenIdentity: async () => ({ login: null, type: null }),
+    });
+
+    assert.equal(resolved.identity.login, null);
+    assert.equal(resolved.identity.formalEventCapability, false);
+    assert.match(resolved.identity.fallbackReason ?? '', /did not resolve the bot login/i);
+  });
+
+  it('does not fall back to the installation account when /installation omits app_slug', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'alice',
+      }),
+      exec: async (args) => {
+        if (args.includes('installation')) {
+          return {
+            args,
+            exitCode: 0,
+            stdout: JSON.stringify({ account: { login: 'alice', type: 'User' } }),
+            stderr: '',
+          };
+        }
+        return { args, exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    assert.equal(resolved.identity.login, null);
+    assert.equal(resolved.identity.formalEventCapability, false);
+    assert.match(resolved.identity.fallbackReason ?? '', /did not resolve the bot login/i);
+  });
+
   it('prefers app slug bot identity over installation target account login', async () => {
     process.env.QUBE_TEST_APP_KEY = privateKey;
     const resolved = await resolveGitHubReviewPublisher({

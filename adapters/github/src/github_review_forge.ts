@@ -1011,6 +1011,19 @@ function reviewAuthor(review: RawReview): string {
   return actorName(review.author ?? review.user);
 }
 
+function unresolvedAppPublisherReason(publisher: ResolvedGitHubReviewPublisher): string | null {
+  if (publisher.identity.mode === 'github-app' && !publisher.identity.login) {
+    return publisher.identity.fallbackReason
+      ?? 'GitHub App publisher identity lookup did not resolve the bot login; formal review events are withheld.';
+  }
+  return null;
+}
+
+function trustedPublisherLogin(publisher: ResolvedGitHubReviewPublisher, fallbackLogin: string | null): string | null {
+  if (publisher.identity.mode === 'github-app') return publisher.identity.login;
+  return publisher.identity.login ?? fallbackLogin;
+}
+
 function reviewEvent(recommendation: GitHubLocalReviewRecommendation): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' {
   if (recommendation === 'approve') return 'APPROVE';
   if (recommendation === 'request-changes') return 'REQUEST_CHANGES';
@@ -1920,7 +1933,36 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         mint: true,
       });
       if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
-      trustedMarkerAuthor = publisher.identity.login ?? await this.currentLogin();
+      const identityFailure = unresolvedAppPublisherReason(publisher);
+      if (identityFailure) {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: plannedBody.runId,
+          marker: plannedBody.marker,
+          body: plannedBody.body,
+          publishKind: 'pull-request-review',
+          inlineCommentCount: plannedBody.inlineCommentCount,
+          bodyFindingCount: plannedBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: identityFailure,
+          nextAction: `Resolve the GitHub App bot login, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+        });
+      }
+      trustedMarkerAuthor = trustedPublisherLogin(publisher, await this.currentLogin()) ?? '';
+      if (trustedMarkerAuthor === '') {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: plannedBody.runId,
+          marker: plannedBody.marker,
+          body: plannedBody.body,
+          publishKind: 'pull-request-review',
+          inlineCommentCount: plannedBody.inlineCommentCount,
+          bodyFindingCount: plannedBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: 'Publisher identity login is unresolved; formal review events are withheld.',
+          nextAction: `Resolve the publisher login, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+        });
+      }
     } catch (error: unknown) {
       return localReviewPublishResult({
         status: 'failed',
@@ -1988,7 +2030,24 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     // changed content updates the existing marker in place instead of
     // appending a second one (exact duplicates already skip-matched above).
     // An update failure fails closed rather than creating round noise.
-    const existingRoundReview = (await this.getPullRequestReviews(repositoryName, input.prNumber).catch(() => [] as RawReview[]))
+    let existingReviews: RawReview[];
+    try {
+      existingReviews = await this.getPullRequestReviews(repositoryName, input.prNumber);
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId: plannedBody.runId,
+        marker: plannedBody.marker,
+        body: plannedBody.body,
+        publishKind: 'pull-request-review',
+        inlineCommentCount: plannedBody.inlineCommentCount,
+        bodyFindingCount: plannedBody.bodyFindingCount,
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub review list access, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`. A failed prior-review fetch does not create a new review event.`,
+      });
+    }
+    const existingRoundReview = existingReviews
       .find(review => review.id !== undefined && review.id !== null
         && authorIsTrusted(reviewAuthor(review), trustedMarkerAuthor)
         && sameRoundLaneMetadata(parseLaneReviewMetadata(review.body), input));
@@ -2104,6 +2163,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         cleanupReviewPayload(payloadPath);
       }
     }
+
+    await this.dismissSupersededRequestChanges({
+      repositoryName,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      reviews: existingReviews,
+      trustedMarkerAuthor,
+      ghOptions,
+    });
 
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
@@ -2333,7 +2401,28 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         mint: true,
       });
       if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
-      trustedMarkerAuthor = publisher.identity.login ?? await this.currentLogin();
+      const identityFailure = unresolvedAppPublisherReason(publisher);
+      if (identityFailure) {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisher: publisher.identity,
+          failure: identityFailure,
+          nextAction: `Resolve the GitHub App bot login, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      }
+      trustedMarkerAuthor = trustedPublisherLogin(publisher, await this.currentLogin()) ?? '';
+      if (trustedMarkerAuthor === '') {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisher: publisher.identity,
+          failure: 'Publisher identity login is unresolved; formal review events are withheld.',
+          nextAction: `Resolve the publisher login, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      }
     } catch (error: unknown) {
       return roundSummaryPublishResult({
         status: 'failed',
@@ -2360,6 +2449,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         nextAction: `Rerun the round summary publish for #${input.prNumber} without --dry-run to publish the provider-visible round summary.`,
       });
     }
+
+    await this.dismissSupersededRequestChanges({
+      repositoryName,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      reviews,
+      trustedMarkerAuthor,
+      ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
+    });
 
     const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
     const live = existingRecords.filter(record => record.superseded !== true && record.prNumber === input.prNumber);
@@ -2767,6 +2865,40 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     ensureGhSuccess(`gh api pull review comments for PR ${prNumber}`, result);
     const parsed = parseGhJson<RawReviewComment[] | RawReviewComment[][]>(result.stdout, `gh api pull review comments for PR ${prNumber}`, isRawReviewCommentArray);
     return parsed.flat();
+  }
+
+  private async dismissSupersededRequestChanges(input: {
+    repositoryName: string;
+    prNumber: number;
+    headSha: string;
+    reviews: readonly RawReview[];
+    trustedMarkerAuthor: string;
+    ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
+  }): Promise<void> {
+    for (const review of input.reviews) {
+      if (review.state !== 'CHANGES_REQUESTED') continue;
+      if (review.id === undefined || review.id === null) continue;
+      if (!authorIsTrusted(reviewAuthor(review), input.trustedMarkerAuthor)) continue;
+      const metadata = parseLaneReviewMetadata(review.body);
+      const reviewHead = typeof metadata?.head === 'string' ? metadata.head : review.commit?.oid ?? '';
+      if (reviewHead === '' || reviewHead === input.headSha) continue;
+      const payloadPath = reviewPayloadPath({ message: `Superseded by head ${input.headSha}.`, event: 'DISMISS' });
+      try {
+        const result = await runGh([
+          'api',
+          `repos/${input.repositoryName}/pulls/${input.prNumber}/reviews/${String(review.id)}/dismissals`,
+          '--method',
+          'PUT',
+          '--input',
+          payloadPath,
+        ], input.ghOptions);
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr || result.stdout || 'gh api review dismissal failed');
+        }
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
   }
 
   private async getPullRequestReviews(repoName: string, prNumber: number): Promise<RawReview[]> {

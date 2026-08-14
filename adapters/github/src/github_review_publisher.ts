@@ -275,9 +275,10 @@ async function fetchInstallationIdentity(
     // account (user/org). Prefer app_slug for the bot actor login.
     const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug.trim() : '';
     if (slug !== '') return { login: `${slug}[bot]`, type: 'Bot' };
-    const account = isRecord(parsed.account) ? parsed.account : null;
-    const accountLogin = account && typeof account.login === 'string' ? account.login : null;
-    return { login: accountLogin, type: 'Bot' };
+    // Never use the installation target account login. That login cannot
+    // match the bot's own review events, so using it as trustedMarkerAuthor
+    // fails open and duplicates every republish.
+    return { login: null, type: null };
   } catch {
     return { login: null, type: null };
   }
@@ -515,7 +516,24 @@ export async function resolveGitHubReviewPublisher(
       const identityLookup = options.fetchTokenIdentity
         ? await options.fetchTokenIdentity(minted.token)
         : await fetchInstallationIdentity(minted.token, options.cwd, options.exec, probeLimits);
-      const login = normalizeLogin(identityLookup.login ?? minted.accountLogin ?? null);
+      const login = normalizeLogin(identityLookup.login ?? null);
+      if (!login) {
+        return {
+          accessToken: minted.token,
+          identity: finalizeIdentity({
+            mode: 'github-app',
+            identityClass: 'github-app-installation',
+            login: null,
+            permissionStatus: 'unknown',
+            formalEventCapability: false,
+            credentialVerified: false,
+            fallbackReason: 'GitHub App publisher identity lookup did not resolve the bot login; formal review events are withheld.',
+            publishTransport: 'issue-comment',
+            authSource: 'github-app-installation',
+            prAuthorLogin: options.prAuthorLogin,
+          }),
+        };
+      }
       const hasPermission = installationHasReviewPermission(minted.permissions);
 
       return {
@@ -526,7 +544,7 @@ export async function resolveGitHubReviewPublisher(
           login,
           permissionStatus: hasPermission ? 'ok' : 'missing',
           formalEventCapability: hasPermission,
-          credentialVerified: Boolean(login),
+          credentialVerified: true,
           fallbackReason: hasPermission
             ? null
             : 'GitHub App installation lacks pull_requests write permission; formal review events are unavailable.',
