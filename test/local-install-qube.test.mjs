@@ -12,6 +12,7 @@ import {
   bindInstallInterruptCleanup,
   cleanupGeneratedInstallArtifacts,
   handleInstallInterrupt,
+  listGeneratedTarballs,
   parseLocalInstallArgs,
   resolveInsideRoot,
   runLocalQubeInstall,
@@ -53,6 +54,15 @@ describe("source-checkout QUBE install", () => {
       assert.deepEqual(first.components.resolvedCommands, ["qube", "aib", "aie", "aiu", "aiq"]);
       assert.equal(path.basename(first.coreModule), "qube-core");
       assert.equal(first.components.ok, true);
+      assert.deepEqual(
+        first.components.componentVersions.map(row => `${row.command}@${row.packageVersion}`),
+        ["qube@0.0.0", "aib@0.0.0", "aie@0.0.0", "aiu@0.0.0", "aiq@0.0.0"]
+      );
+      for (const command of ["qube", "aib", "aie", "aiu", "aiq"]) {
+        const row = first.components.components.find(item => item.command === command);
+        assert.ok(row, command);
+        assert.equal(row.packageVersion, "0.0.0", command);
+      }
       assert.match(readTrackedStatus(fixture.root), /^$/);
       assert.equal(existsTarball(fixture.root), false);
 
@@ -93,10 +103,9 @@ describe("source-checkout QUBE install", () => {
     }
   });
 
-  it("restores rewritten manifests and deletes generated tarballs after an injected build failure", async () => {
+  it("restores rewritten manifests after an injected build failure", async () => {
     const fixture = await createFixture();
     try {
-      writeFileSync(path.join(fixture.qubeDir, "tjalve-qube-9.9.9.tgz"), "leftover\n");
       const original = readFileUtf8(path.join(fixture.qubeDir, "package.json"));
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
@@ -110,6 +119,25 @@ describe("source-checkout QUBE install", () => {
       assert.equal(readFileUtf8(path.join(fixture.qubeDir, "package.json")), original);
       assert.equal(existsTarball(fixture.root), false);
       assert.match(readTrackedStatus(fixture.root), /^$/);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("keeps a pre-existing tarball that the installer did not create", async () => {
+    const fixture = await createFixture();
+    try {
+      const leftover = path.join(fixture.qubeDir, "tjalve-qube-user.tgz");
+      writeFileSync(leftover, "keep\n");
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: path.join(fixture.root, "prefix"),
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(readFileUtf8(leftover), "keep\n");
+      assert.deepEqual(result.cleaned.removedTarballs, []);
     } finally {
       await fixture.cleanup();
     }
@@ -131,6 +159,45 @@ describe("source-checkout QUBE install", () => {
       assert.equal(readFileUtf8(path.join(fixture.qubeDir, "package.json")), original);
       assert.equal(existsTarball(fixture.root), false);
       assert.match(readTrackedStatus(fixture.root), /^$/);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("fails when a selected component version does not match the checkout", async () => {
+    const fixture = await createFixture();
+    try {
+      const aibManifestPath = path.join(fixture.root, "products", "aib", "package.json");
+      const manifest = JSON.parse(readFileUtf8(aibManifestPath));
+      manifest.version = "9.9.9";
+      writeFileSync(aibManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: path.join(fixture.root, "prefix"),
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "version-mismatch");
+      assert.match(result.error, /aib/);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("fails when a selected component --help does not exit 0", async () => {
+    const fixture = await createFixture();
+    try {
+      writeFileSync(path.join(fixture.root, "products", "aib", "bin", "run"), "#!/usr/bin/env node\nprocess.exit(2);\n");
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: path.join(fixture.root, "prefix"),
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "verify-failed");
+      assert.match(result.error, /aib/);
     } finally {
       await fixture.cleanup();
     }
@@ -179,15 +246,38 @@ describe("source-checkout QUBE install", () => {
     try {
       const packageJsonPath = path.join(fixture.qubeDir, "package.json");
       const original = readFileUtf8(packageJsonPath);
+      const leftover = path.join(fixture.qubeDir, "tjalve-qube-user.tgz");
+      writeFileSync(leftover, "keep\n");
+      const preserveTarballs = new Set(listGeneratedTarballs(fixture.root));
       writeFileSync(`${packageJsonPath}.publish-backup`, original);
       writeFileSync(packageJsonPath, `${JSON.stringify({ ...JSON.parse(original), _localInstallRewrite: true }, null, 2)}\n`);
       writeFileSync(path.join(fixture.qubeDir, "tjalve-qube-0.0.0.tgz"), "not-a-tarball\n");
-      handleInstallInterrupt(() => cleanupGeneratedInstallArtifacts(fixture.root), "SIGTERM");
+      handleInstallInterrupt(() => cleanupGeneratedInstallArtifacts(fixture.root, preserveTarballs), "SIGTERM");
       assert.equal(readFileUtf8(packageJsonPath), original);
-      assert.equal(existsTarball(fixture.root), false);
+      assert.equal(readFileUtf8(leftover), "keep\n");
+      assert.equal(existsSync(path.join(fixture.qubeDir, "tjalve-qube-0.0.0.tgz")), false);
       assert.equal(existsSync(`${packageJsonPath}.publish-backup`), false);
     } finally {
       await fixture.cleanup();
+    }
+  });
+
+  it("treats a restore script that reports restored:false as failure", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "qube-local-install-restore-false-"));
+    try {
+      const qubeDir = path.join(root, "products", "qube");
+      mkdirSync(path.join(root, "scripts"), { recursive: true });
+      mkdirSync(qubeDir, { recursive: true });
+      const packageJsonPath = path.join(qubeDir, "package.json");
+      writeFileSync(packageJsonPath, `${JSON.stringify({ name: "@tjalve/qube", version: "0.0.0" }, null, 2)}\n`);
+      writeFileSync(`${packageJsonPath}.publish-backup`, readFileUtf8(packageJsonPath));
+      writeFileSync(
+        path.join(root, "scripts", "restore-publish-dependencies.mjs"),
+        "process.stdout.write(JSON.stringify({ ok: true, restored: false }) + '\\n');\n"
+      );
+      assert.throws(() => cleanupGeneratedInstallArtifacts(root), { reasonCode: "restore-failed" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -323,7 +413,13 @@ function componentsBinSource() {
 const payload = {
   ok: true,
   command: "components",
-  components: [{ id: "composer", command: "qube", packageName: "@tjalve/qube", packageVersion: "0.0.0" }]
+  components: [
+    { id: "composer", command: "qube", packageName: "@tjalve/qube", packageVersion: "0.0.0" },
+    { id: "aib", command: "aib", packageName: "@tjalve/aib", packageVersion: "0.0.0" },
+    { id: "aie", command: "aie", packageName: "@tjalve/aie", packageVersion: "0.0.0" },
+    { id: "aiu", command: "aiu", packageName: "@tjalve/aiu", packageVersion: "0.0.0" },
+    { id: "aiq", command: "aiq", packageName: "@tjalve/aiq", packageVersion: "0.0.0" }
+  ]
 };
 if (process.argv.slice(2).includes("components")) {
   process.stdout.write(JSON.stringify(payload) + "\\n");

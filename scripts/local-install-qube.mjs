@@ -116,40 +116,83 @@ export function prefixBinDir(prefix) {
   return path.join(prefix, "bin");
 }
 
-export function cleanupGeneratedInstallArtifacts(repoRoot) {
-  const restoredManifests = [];
-  const removedTarballs = [];
+export function listGeneratedTarballs(repoRoot) {
+  const found = [];
   for (const relativeDir of CLEANUP_PACKAGE_DIRS) {
     const dir = path.join(repoRoot, relativeDir);
     if (!existsSync(dir) || !lstatSync(dir).isDirectory()) continue;
     if (escapesRoot(repoRoot, dir)) continue;
-    const restoreScript = path.join(repoRoot, "scripts", "restore-publish-dependencies.mjs");
-    const packageJsonPath = path.join(dir, "package.json");
-    const backupPath = `${packageJsonPath}.publish-backup`;
-    if (existsSync(backupPath) && !escapesRoot(repoRoot, backupPath)) {
-      if (existsSync(restoreScript)) {
-        const restored = spawnSync(process.execPath, [restoreScript, packageJsonPath], {
-          cwd: repoRoot,
-          encoding: "utf8",
-        });
-        if (restored.status !== 0) {
-          throw Object.assign(
-            new Error(restored.stderr.trim() || `Failed to restore ${packageJsonPath}.`),
-            { reasonCode: "restore-failed" }
-          );
-        }
-      } else if (existsSync(packageJsonPath)) {
-        writeFileSync(packageJsonPath, readFileSync(backupPath));
-        unlinkSync(backupPath);
-      }
-      restoredManifests.push(relativeDir);
-    }
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isFile() || !TARBALL_NAME.test(entry.name)) continue;
       const tarballPath = path.join(dir, entry.name);
       if (escapesRoot(repoRoot, tarballPath)) continue;
+      found.push(path.join(relativeDir, entry.name));
+    }
+  }
+  return found;
+}
+
+function parseRestorePayload(stdout) {
+  const lines = String(stdout ?? "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      return JSON.parse(lines[index]);
+    } catch {
+      // Keep scanning for the last JSON object.
+    }
+  }
+  return null;
+}
+
+function restorePublishManifest(repoRoot, packageJsonPath) {
+  const restoreScript = path.join(repoRoot, "scripts", "restore-publish-dependencies.mjs");
+  const backupPath = `${packageJsonPath}.publish-backup`;
+  if (!existsSync(backupPath) || escapesRoot(repoRoot, backupPath)) return false;
+  if (existsSync(restoreScript)) {
+    const restored = spawnSync(process.execPath, [restoreScript, packageJsonPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    const payload = parseRestorePayload(restored.stdout);
+    if (restored.status !== 0 || payload?.ok !== true || payload?.restored !== true) {
+      throw Object.assign(
+        new Error((restored.stderr ?? "").trim() || `Failed to restore ${packageJsonPath}.`),
+        { reasonCode: "restore-failed" }
+      );
+    }
+    return true;
+  }
+  if (existsSync(packageJsonPath)) {
+    writeFileSync(packageJsonPath, readFileSync(backupPath));
+    unlinkSync(backupPath);
+    return true;
+  }
+  return false;
+}
+
+export function cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs = new Set()) {
+  const restoredManifests = [];
+  const removedTarballs = [];
+  const preserved = preserveTarballs instanceof Set ? preserveTarballs : new Set(preserveTarballs);
+  for (const relativeDir of CLEANUP_PACKAGE_DIRS) {
+    const dir = path.join(repoRoot, relativeDir);
+    if (!existsSync(dir) || !lstatSync(dir).isDirectory()) continue;
+    if (escapesRoot(repoRoot, dir)) continue;
+    const packageJsonPath = path.join(dir, "package.json");
+    if (restorePublishManifest(repoRoot, packageJsonPath)) {
+      restoredManifests.push(relativeDir);
+    }
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !TARBALL_NAME.test(entry.name)) continue;
+      const relativeTarball = path.join(relativeDir, entry.name);
+      if (preserved.has(relativeTarball)) continue;
+      const tarballPath = path.join(dir, entry.name);
+      if (escapesRoot(repoRoot, tarballPath)) continue;
       unlinkSync(tarballPath);
-      removedTarballs.push(path.join(relativeDir, entry.name));
+      removedTarballs.push(relativeTarball);
     }
   }
   return { restoredManifests, removedTarballs };
@@ -355,12 +398,47 @@ function verifyCommandOnPath(command, childPath, cwd, binDir) {
     timeout: 30_000,
     windowsHide: true,
   });
-  if (invoked.status !== 0 && invoked.status !== 2) {
+  if (invoked.status !== 0) {
     throw Object.assign(
       new Error((invoked.stderr ?? "").trim() || (invoked.stdout ?? "").trim() || `${command} --help failed in a fresh shell.`),
       { reasonCode: "verify-failed", command }
     );
   }
+}
+
+function verifyComponentVersions(repoRoot, envelope) {
+  const rows = Array.isArray(envelope.components) ? envelope.components : [];
+  const checked = [];
+  for (const component of COMPONENT_LINKS) {
+    const packageDir = assertSourcePathSafe(repoRoot, component.packageDir, component.id);
+    const manifestPath = path.join(packageDir, "package.json");
+    if (!existsSync(manifestPath)) {
+      throw Object.assign(new Error(`Missing ${component.id} package.json.`), {
+        reasonCode: "version-mismatch",
+        command: component.command,
+      });
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const row = rows.find(item =>
+      item?.packageName === manifest.name
+      || item?.command === component.command
+      || item?.id === component.id
+    );
+    if (!row) {
+      throw Object.assign(
+        new Error(`Installed composer did not report ${component.command} in the components envelope.`),
+        { reasonCode: "version-mismatch", command: component.command }
+      );
+    }
+    if (!row.packageVersion || row.packageVersion !== manifest.version) {
+      throw Object.assign(
+        new Error(`Installed ${component.command} version does not match the checkout.`),
+        { reasonCode: "version-mismatch", command: component.command }
+      );
+    }
+    checked.push({ command: component.command, packageName: manifest.name, packageVersion: manifest.version });
+  }
+  return checked;
 }
 
 function verifyFreshShell(prefix, repoRoot, qubeScriptPath, commands) {
@@ -413,13 +491,7 @@ function verifyFreshShell(prefix, repoRoot, qubeScriptPath, commands) {
       reasonCode: "verify-failed",
     });
   }
-  const qubeManifest = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8"));
-  const qubeRow = parsed.components.find(row => row.packageName === "@tjalve/qube" || row.id === "composer" || row.command === "qube");
-  if (qubeRow?.packageVersion && qubeRow.packageVersion !== qubeManifest.version) {
-    throw Object.assign(new Error("Installed qube version does not match the checkout."), {
-      reasonCode: "version-mismatch",
-    });
-  }
+  parsed.componentVersions = verifyComponentVersions(repoRoot, parsed);
   const resolvedCommands = [];
   for (const command of commands) {
     verifyCommandOnPath(command, childPath, cwd, binDir);
@@ -436,6 +508,7 @@ export async function runLocalQubeInstall(input = {}) {
   const startedGit = trackedGitStatus(repoRoot);
   let lock;
   let detachSignals;
+  let preserveTarballs = new Set();
   const report = {
     ok: false,
     command: "install:qube:local",
@@ -445,11 +518,12 @@ export async function runLocalQubeInstall(input = {}) {
     cleaned: { restoredManifests: [], removedTarballs: [] },
   };
   const interruptCleanup = () => {
-    report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot);
+    report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs);
     lock?.release();
   };
   try {
     lock = acquireInstallLock(repoRoot, lockDir);
+    preserveTarballs = new Set(listGeneratedTarballs(repoRoot));
     detachSignals = bindInstallInterruptCleanup(interruptCleanup);
     if (input.injectFailure === "build" || input.injectFailure === "pack") {
       const qubeDir = assertSourcePathSafe(repoRoot, "products/qube", "qube package");
@@ -496,7 +570,7 @@ export async function runLocalQubeInstall(input = {}) {
     }
     report.coreModule = resolveWorkspaceCore(repoRoot, qubePackageDir);
     report.components = verifyFreshShell(prefix, repoRoot, qubeScriptPath, report.linked);
-    report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot);
+    report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs);
     const finishedGit = trackedGitStatus(repoRoot);
     if (finishedGit !== startedGit) {
       throw Object.assign(new Error("Local install left tracked files dirty."), { reasonCode: "dirty-worktree" });
@@ -505,7 +579,7 @@ export async function runLocalQubeInstall(input = {}) {
     return report;
   } catch (error) {
     try {
-      report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot);
+      report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs);
     } catch {
       // Keep the original failure. Cleanup errors must not hide it.
     }
