@@ -11,6 +11,7 @@ const { getDefaults } = require('../dist/config/index.js');
 const {
   buildGitHubAppSetupGuidance,
   buildTokenSetupGuidance,
+  normalizeReviewAvatarUrl,
   runReviewDoctor,
 } = require('../dist/review_setup.js');
 const { runReviewSetup } = require('../dist/runtime_review_setup.js');
@@ -80,6 +81,7 @@ describe('review publisher setup guidance', () => {
     const guidance = `${JSON.stringify(buildGitHubAppSetupGuidance())}\n${JSON.stringify(buildTokenSetupGuidance())}`;
     assert.match(guidance, /Review compute remains host-run through local agents\/subagents/);
     assert.match(guidance, /Never send host\/subagent credentials to GitHub/);
+    assert.match(guidance, /Do not rename the app/);
     assert.doesNotMatch(guidance, /QUBE hosts review compute|upload host\/subagent credentials/i);
   });
 });
@@ -240,6 +242,7 @@ describe('review publisher doctor', () => {
     assert.equal(ready.probe.repository.status, 'ok');
     assert.equal(ready.probe.repository.repository, 'owner/repository');
     assert.equal(ready.probe.repository.pullRequestPermission, 'write');
+    assert.equal(ready.probe.avatar.status, 'not-run');
     assert.equal(ready.formalEventCapability, true);
     assert.doesNotMatch(JSON.stringify(ready), /ghp_|github_pat_|BEGIN PRIVATE KEY/);
 
@@ -431,6 +434,7 @@ describe('review publisher doctor', () => {
     });
 
     assert.equal(result.probe.attempted, false);
+    assert.equal(result.probe.avatar.status, 'not-run');
     assert.equal(result.permissionStatus, 'unknown');
     assert.notEqual(result.permissionStatus, 'missing');
     assert.match(result.nextAction, /without --no-probe|credential is available/i);
@@ -516,5 +520,114 @@ describe('review publisher doctor', () => {
     assert.notEqual(doctor.readiness, 'unconfigured');
     assert.deepEqual(doctor.missingFields, []);
     assert.equal(doctor.secretReferences.privateKeyEnv, 'QUBE_REVIEW_PUBLISHER_PRIVATE_KEY');
+    assert.equal(doctor.probe.avatar.status, 'not-run');
+  });
+});
+
+describe('review publisher avatar doctor', () => {
+  function githubAppConfig() {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'github-app',
+      githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_REVIEW_APP_KEY' },
+    };
+    return config;
+  }
+
+  it('strips avatar query strings before comparing identities', () => {
+    assert.equal(
+      normalizeReviewAvatarUrl('https://avatars.githubusercontent.com/in/4573671?v=4'),
+      'https://avatars.githubusercontent.com/in/4573671',
+    );
+    assert.equal(
+      normalizeReviewAvatarUrl('https://avatars.githubusercontent.com/u/39051?v=4'),
+      'https://avatars.githubusercontent.com/u/39051',
+    );
+    assert.equal(normalizeReviewAvatarUrl('not a url'), null);
+  });
+
+  it('warns when the github-app avatar falls back to the repository owner avatar', async () => {
+    const result = await runReviewDoctor({
+      config: githubAppConfig(),
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      probePublisherAvatar: async () => ({
+        botAvatarUrl: 'https://avatars.githubusercontent.com/u/39051?v=4',
+        ownerAvatarUrl: 'https://avatars.githubusercontent.com/u/39051?s=200',
+      }),
+    });
+    assert.equal(result.readiness, 'ready');
+    assert.equal(result.probe.avatar.status, 'warning');
+    assert.equal(result.probe.avatar.ownerFallback, true);
+    assert.equal(result.probe.avatar.botAvatarUrl, 'https://avatars.githubusercontent.com/u/39051');
+    assert.equal(result.probe.avatar.ownerAvatarUrl, 'https://avatars.githubusercontent.com/u/39051');
+    assert.match(result.nextAction, /GitHub App display settings/);
+    assert.match(result.nextAction, /Do not rename the app/);
+    assert.doesNotMatch(result.nextAction, /rename the app to/);
+  });
+
+  it('passes the avatar diagnostic when the bot and owner avatars differ', async () => {
+    const result = await runReviewDoctor({
+      config: githubAppConfig(),
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      probePublisherAvatar: async () => ({
+        botAvatarUrl: 'https://avatars.githubusercontent.com/in/4573671?v=4',
+        ownerAvatarUrl: 'https://avatars.githubusercontent.com/u/39051?v=4',
+      }),
+    });
+    assert.equal(result.readiness, 'ready');
+    assert.equal(result.probe.avatar.status, 'ok');
+    assert.equal(result.probe.avatar.ownerFallback, false);
+    assert.match(result.nextAction, /Publisher is ready/);
+  });
+
+  it('keeps avatar status unknown when a github-app avatar field cannot be read', async () => {
+    const result = await runReviewDoctor({
+      config: githubAppConfig(),
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      probePublisherAvatar: async () => ({
+        botAvatarUrl: null,
+        ownerAvatarUrl: 'https://avatars.githubusercontent.com/u/39051?v=4',
+      }),
+    });
+    assert.equal(result.readiness, 'ready');
+    assert.equal(result.probe.avatar.status, 'unknown');
+    assert.equal(result.probe.avatar.ownerFallback, null);
+    assert.notEqual(result.probe.avatar.status, 'ok');
+    assert.match(result.nextAction, /could not be compared/);
+  });
+
+  it('does not run the avatar diagnostic for token publishers or --no-probe', async () => {
+    const tokenConfig = getDefaults();
+    tokenConfig.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    const token = await runReviewDoctor({
+      config: tokenConfig,
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      probePublisherAvatar: async () => {
+        throw new Error('token publishers must not probe avatars');
+      },
+    });
+    assert.equal(token.probe.avatar.status, 'not-run');
+
+    const skipped = await runReviewDoctor({
+      config: githubAppConfig(),
+      resolvePublisher: readyResolver,
+      mintProbe: false,
+      probePublisherAvatar: async () => {
+        throw new Error('--no-probe must not probe avatars');
+      },
+    });
+    assert.equal(skipped.probe.avatar.status, 'not-run');
+    assert.equal(skipped.login, 'review-app[bot]');
   });
 });

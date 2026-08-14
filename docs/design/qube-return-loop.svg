@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title description">
+  <title id="title">QUBE return loop</title>
+  <desc id="description">Quality, Umpire, Bootstrap, and Executor appear in QUBE order along a route that returns from E to Q.</desc>
+  <rect width="1200" height="520" rx="32" fill="#0C1113"/>
+
+  <text x="64" y="72" fill="#F2F0E8" font-family="Geologica, Arial, sans-serif" font-size="30" font-weight="650">
+    Four flows. One living loop.
+  </text>
+
+  <path d="M152 252H1048C1097 252 1136 291 1136 340V346C1136 387 1103 420 1062 420H138C97 420 64 387 64 346V326C64 285 97 252 138 252H152"
+        fill="none" stroke="#F2F0E8" stroke-opacity=".24" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M112 252H208" fill="none" stroke="#64C3CF" stroke-width="12" stroke-linecap="square"/>
+  <path d="M402 252H498" fill="none" stroke="#F1B55B" stroke-width="12" stroke-linecap="square"/>
+  <path d="M692 252H788" fill="none" stroke="#B99AE7" stroke-width="12" stroke-linecap="square"/>
+  <path d="M982 252H1078" fill="none" stroke="#F47A86" stroke-width="12" stroke-linecap="square"/>
+
+  <g font-family="Geologica, Arial, sans-serif" text-anchor="middle">
+    <g transform="translate(160 0)">
+      <text y="225" fill="#64C3CF" font-size="132" font-weight="750">Q</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Quality</text>
+      <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Set the standard</text>
+    </g>
+    <g transform="translate(450 0)">
+      <text y="225" fill="#F1B55B" font-size="132" font-weight="750">U</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Umpire</text>
+      <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Test the decision</text>
+    </g>
+    <g transform="translate(740 0)">
+      <text y="225" fill="#B99AE7" font-size="132" font-weight="750">B</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Bootstrap</text>
+      <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Create the foundation</text>
+    </g>
+    <g transform="translate(1030 0)">
+      <text y="225" fill="#F47A86" font-size="132" font-weight="750">E</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Executor</text>
+      <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Finish the work</text>
+    </g>
+  </g>
+
+  <path d="M580 414v12M620 414v12" stroke="#F2F0E8" stroke-opacity=".7" stroke-width="5"/>
+  <text x="600" y="472" fill="#A7B0B2" font-family="Atkinson Hyperlegible Next, Atkinson Hyperlegible, Arial, sans-serif" font-size="18" text-anchor="middle">
+    No prescribed first step
+  </text>
+</svg>
