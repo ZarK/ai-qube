@@ -14,6 +14,7 @@ import {
   handleInstallInterrupt,
   listGeneratedTarballs,
   parseLocalInstallArgs,
+  quotePosixShellArg,
   resolveInsideRoot,
   runLocalQubeInstall,
 } from "../scripts/local-install-qube.mjs";
@@ -37,6 +38,12 @@ describe("source-checkout QUBE install", () => {
     assert.throws(() => resolveInsideRoot(repoRoot, path.resolve(os.tmpdir(), "outside"), "repo-root"), {
       reasonCode: "path-escape",
     });
+  });
+
+  it("quotes POSIX shim paths so shell metacharacters stay literal", () => {
+    const quoted = quotePosixShellArg("/tmp/$(touch /tmp/pwn)/repo/bin/run");
+    assert.equal(quoted, "'/tmp/$(touch /tmp/pwn)/repo/bin/run'");
+    assert.equal(quotePosixShellArg("/tmp/it's/bin"), `'/tmp/it'\\''s/bin'`);
   });
 
   it("installs a fixture checkout without packing and keeps git clean", async () => {
@@ -159,6 +166,25 @@ describe("source-checkout QUBE install", () => {
       assert.equal(readFileUtf8(path.join(fixture.qubeDir, "package.json")), original);
       assert.equal(existsTarball(fixture.root), false);
       assert.match(readTrackedStatus(fixture.root), /^$/);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("fails when a selected component envelope row has the wrong package identity", async () => {
+    const fixture = await createFixture();
+    try {
+      const qubeBin = path.join(fixture.qubeDir, "bin", "run");
+      writeFileSync(qubeBin, `#!/usr/bin/env node\n${componentsBinSource().replace('"@tjalve/aib"', '"@wrong/aib"')}`);
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: path.join(fixture.root, "prefix"),
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "version-mismatch");
+      assert.match(result.error, /aib/);
     } finally {
       await fixture.cleanup();
     }
@@ -310,6 +336,27 @@ describe("source-checkout QUBE install", () => {
     } finally {
       lock.release();
       await fixture.cleanup();
+    }
+  });
+
+  it("cleanup does not follow a package.json symlink out of the checkout", { skip: process.platform === "win32" }, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "qube-local-install-manifest-symlink-"));
+    const outside = mkdtempSync(path.join(os.tmpdir(), "qube-local-install-manifest-target-"));
+    try {
+      const qubeDir = path.join(root, "products", "qube");
+      mkdirSync(qubeDir, { recursive: true });
+      const outsideFile = path.join(outside, "package.json");
+      writeFileSync(outsideFile, `${JSON.stringify({ name: "secret", version: "1.0.0" }, null, 2)}\n`);
+      symlinkSync(outsideFile, path.join(qubeDir, "package.json"));
+      writeFileSync(
+        path.join(qubeDir, "package.json.publish-backup"),
+        `${JSON.stringify({ name: "@tjalve/qube", version: "0.0.0" }, null, 2)}\n`
+      );
+      assert.throws(() => cleanupGeneratedInstallArtifacts(root), { reasonCode: "path-escape" });
+      assert.match(readFileUtf8(outsideFile), /secret/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 

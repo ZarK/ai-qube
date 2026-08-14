@@ -147,10 +147,30 @@ function parseRestorePayload(stdout) {
   return null;
 }
 
+function assertCheckoutRegularFile(repoRoot, candidate, label) {
+  if (escapesRoot(repoRoot, candidate)) {
+    throw Object.assign(new Error(`${label} resolves outside the repository root.`), { reasonCode: "path-escape" });
+  }
+  if (!existsSync(candidate)) return candidate;
+  if (lstatSync(candidate).isSymbolicLink()) {
+    throw Object.assign(new Error(`${label} is a symlink.`), { reasonCode: "path-escape" });
+  }
+  if (escapesRoot(repoRoot, candidate)) {
+    throw Object.assign(new Error(`${label} resolves outside the repository root.`), { reasonCode: "path-escape" });
+  }
+  return candidate;
+}
+
 function restorePublishManifest(repoRoot, packageJsonPath) {
   const restoreScript = path.join(repoRoot, "scripts", "restore-publish-dependencies.mjs");
   const backupPath = `${packageJsonPath}.publish-backup`;
-  if (!existsSync(backupPath) || escapesRoot(repoRoot, backupPath)) return false;
+  if (!existsSync(backupPath)) return false;
+  assertCheckoutRegularFile(repoRoot, backupPath, "publish backup");
+  if (existsSync(packageJsonPath)) {
+    assertCheckoutRegularFile(repoRoot, packageJsonPath, "package.json");
+  } else if (escapesRoot(repoRoot, packageJsonPath)) {
+    throw Object.assign(new Error("package.json resolves outside the repository root."), { reasonCode: "path-escape" });
+  }
   if (existsSync(restoreScript)) {
     const restored = spawnSync(process.execPath, [restoreScript, packageJsonPath], {
       cwd: repoRoot,
@@ -242,13 +262,17 @@ export function acquireInstallLock(repoRoot, lockDir = os.tmpdir()) {
   }
 }
 
+export function quotePosixShellArg(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 function writeBinShim(binDir, command, scriptPath) {
   mkdirSync(binDir, { recursive: true });
   const unixPath = path.join(binDir, command);
   const windowsPath = path.join(binDir, `${command}.cmd`);
   const unixBody = [
     "#!/bin/sh",
-    `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} "$@"`,
+    `exec ${quotePosixShellArg(process.execPath)} ${quotePosixShellArg(scriptPath)} "$@"`,
     "",
   ].join("\n");
   writeFileSync(unixPath, unixBody);
@@ -420,9 +444,7 @@ function verifyComponentVersions(repoRoot, envelope) {
     }
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const row = rows.find(item =>
-      item?.packageName === manifest.name
-      || item?.command === component.command
-      || item?.id === component.id
+      item?.packageName === manifest.name && item?.command === component.command
     );
     if (!row) {
       throw Object.assign(
