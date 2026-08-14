@@ -249,6 +249,8 @@ export function createPassingPackument(
     readonly integrity?: string;
     readonly tarballHost?: string;
     readonly omitAttestations?: boolean;
+    readonly omitDistTags?: boolean;
+    readonly distTags?: Readonly<Record<string, string | undefined>>;
     readonly subjectDigest?: string;
     readonly attestationPredicateType?: string;
   } = {},
@@ -260,7 +262,7 @@ export function createPassingPackument(
   const publishedAt = options.publishedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   return {
     name,
-    "dist-tags": { latest: version },
+    ...(options.omitDistTags === true ? {} : { "dist-tags": options.distTags ?? { latest: version } }),
     time: { [version]: publishedAt },
     versions: {
       [version]: {
@@ -335,6 +337,10 @@ async function verifyOnePackage(pkg: InstallPackageRef, options: RegistryGateOpt
   if (packument.name !== pkg.name) {
     return plannedCheck(pkg.name, pkg.version, "unverified-identity", `${pkg.name}@${pkg.version} packument name does not match the requested package.`, ageDaysRequired);
   }
+  const distTagError = distTagIdentityError(pkg, packument);
+  if (distTagError) {
+    return plannedCheck(pkg.name, pkg.version, "unverified-identity", distTagError, ageDaysRequired);
+  }
   const versionDoc = packument.versions?.[pkg.version];
   if (!versionDoc) {
     return plannedCheck(pkg.name, pkg.version, "missing-version", `${pkg.name}@${pkg.version} does not exist on the registry.`, ageDaysRequired);
@@ -394,6 +400,23 @@ async function verifyOnePackage(pkg: InstallPackageRef, options: RegistryGateOpt
     summary: `${pkg.name}@${pkg.version} passed registry identity, age, provenance, and lifecycle checks.`,
     ageDaysRequired,
   });
+}
+
+function distTagIdentityError(pkg: InstallPackageRef, packument: Packument): string | undefined {
+  const distTags = packument["dist-tags"];
+  if (distTags === undefined || distTags === null || typeof distTags !== "object" || Array.isArray(distTags)) {
+    return `${pkg.name}@${pkg.version} packument is missing dist-tag identity.`;
+  }
+  const versions = packument.versions ?? {};
+  for (const [tag, taggedVersion] of Object.entries(distTags)) {
+    if (typeof taggedVersion !== "string" || !EXACT_VERSION.test(taggedVersion)) {
+      return `${pkg.name}@${pkg.version} dist-tag ${tag} is not an exact version.`;
+    }
+    if (!versions[taggedVersion]) {
+      return `${pkg.name}@${pkg.version} dist-tag ${tag} points at missing version ${taggedVersion}.`;
+    }
+  }
+  return undefined;
 }
 
 function hasLifecycleScripts(versionDoc: PackumentVersion): boolean {

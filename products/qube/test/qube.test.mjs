@@ -1933,6 +1933,26 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.match(result.reason ?? result.summary, /does not match the registry integrity digest/);
   });
 
+  it("downgrades apply when packument dist-tags do not identify an exact version", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-registry-dist-tag-"));
+    const result = await verifyInstallRegistryGate({
+      selections: {
+        scope: "local",
+        packageManager: "pnpm",
+        hosts: ["generic"],
+        workProviders: ["github"],
+        ciProviders: ["github"]
+      },
+      env: {
+        QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+          [qubePackageName]: { omitDistTags: true }
+        })
+      }
+    });
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /dist-tag/);
+  });
+
   it("fails registry verification when provenance is missing", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-registry-no-prov-"));
     const result = await verifyInstallRegistryGate({
