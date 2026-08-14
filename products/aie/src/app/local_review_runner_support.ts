@@ -1297,8 +1297,9 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = [], configuredFragments?: LaneConfiguredFragments): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = [], configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection): Promise<LaneEvidence | null> {
+  const extraContext = reviewScope ? [buildDeltaPromptSection(reviewScope), ...contextLines] : [...contextLines];
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], extraContext, repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,

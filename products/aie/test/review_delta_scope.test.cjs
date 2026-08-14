@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
@@ -10,7 +10,7 @@ const {
   selectReviewScope,
   validateDeltaLaneEvidence,
 } = require('../dist/app/review_delta_scope.js');
-const { buildLocalReviewSpawnPrompt } = require('../dist/app/local_review_runner_support.js');
+const { buildLocalReviewSpawnPrompt, runExternalLane } = require('../dist/app/local_review_runner_support.js');
 const { buildModelReviewPrompt } = require('../dist/app/model_review_runner.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
 
@@ -74,6 +74,9 @@ describe('review delta scope', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'code-quality.json'), JSON.stringify({
       version: 1,
+      issueNumber: 319,
+      prNumber: 509,
+      lane: 'code-quality',
       status: 'passed',
       recommendation: 'approve',
       headSha: 'aaa111',
@@ -143,6 +146,31 @@ describe('review delta scope', () => {
     }), 0);
   });
 
+  it('rejects a prior file whose issue, pull request, or lane does not match', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-delta-identity-'));
+    const dir = join(root, '.qube', 'aie', 'reviews', '319', '509', 'aaa111');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'code-quality.json'), JSON.stringify({
+      version: 1,
+      issueNumber: 999,
+      prNumber: 1,
+      lane: 'security',
+      status: 'passed',
+      recommendation: 'approve',
+      headSha: 'aaa111',
+    }));
+    const result = validateDeltaLaneEvidence({
+      repoRoot: root,
+      issueNumber: 319,
+      prNumber: 509,
+      laneId: 'code-quality',
+      reviewScope: 'delta',
+      baseHeadSha: 'aaa111',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'unreviewed-base-head');
+  });
+
   it('counts trailing delta rounds and resets after a full pass', () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-delta-count-'));
     const writeApproved = (headSha, reviewScope, recordedAt) => {
@@ -150,6 +178,9 @@ describe('review delta scope', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'code-quality.json'), JSON.stringify({
         version: 1,
+        issueNumber: 319,
+        prNumber: 509,
+        lane: 'code-quality',
         status: 'passed',
         recommendation: 'approve',
         headSha,
@@ -259,5 +290,42 @@ describe('review delta scope', () => {
       baseHeadSha: 'aaa111',
     }));
     assert.ok(readCurrentHeadLaneEvidence(root, 319, 509, 'bbb222', 'code-quality'));
+  });
+
+  it('includes the delta section in the external-lane review bundle', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-delta-external-'));
+    mkdirSync(join(root, '.git'), { recursive: true });
+    const selection = selectReviewScope({
+      priorApprovedHeadSha: 'aaa111',
+      priorFindings: [{ summary: 'empty tokens were dropped' }],
+      deltaPaths: ['products/aie/src/gates/index.ts'],
+    });
+    let bundlePrompt = '';
+    await runExternalLane(
+      'node -e "process.exit(1)"',
+      'code-quality',
+      319,
+      509,
+      'bbb222',
+      'local-focused',
+      'local-command',
+      'a'.repeat(64),
+      root,
+      join(root, '.qube', 'aie', 'reviews', '319', '509', 'bbb222', 'code-quality.json'),
+      [],
+      'aie pr review publish 509 --lane code-quality --issue 319',
+      async (args) => {
+        const bundlePath = args[args.indexOf('--review-bundle') + 1];
+        bundlePrompt = JSON.parse(readFileSync(bundlePath, 'utf8')).promptText;
+        return { args, exitCode: 1, stdout: '', stderr: 'forced fail' };
+      },
+      [],
+      undefined,
+      selection,
+    );
+    assert.match(bundlePrompt, /Delta re-review since approved head aaa111/);
+    assert.match(bundlePrompt, /empty tokens were dropped/);
+    assert.match(bundlePrompt, /products\/aie\/src\/gates\/index\.ts/);
+    assert.doesNotMatch(bundlePrompt, /Inspect the full current-head diff for this lane\./);
   });
 });

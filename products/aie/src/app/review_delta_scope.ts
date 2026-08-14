@@ -97,6 +97,9 @@ export function validateDeltaLaneEvidence(input: {
     if (storedHead === '' || storedHead !== input.baseHeadSha) {
       return { ok: false, reason: 'unreviewed-base-head' };
     }
+    if ((record.issueNumber ?? record.issue) !== input.issueNumber) return { ok: false, reason: 'unreviewed-base-head' };
+    if ((record.prNumber ?? record.pr) !== input.prNumber) return { ok: false, reason: 'unreviewed-base-head' };
+    if ((record.lane ?? record.id) !== input.laneId) return { ok: false, reason: 'unreviewed-base-head' };
     return { ok: true };
   } catch {
     return { ok: false, reason: 'unreviewed-base-head' };
@@ -163,6 +166,9 @@ function listPriorApprovedLaneRecords(input: {
       const record = parsed as Record<string, unknown>;
       if (record.status !== 'passed' || record.recommendation !== 'approve') continue;
       if (record.carriedForward && typeof record.carriedForward === 'object') continue;
+      if ((record.issueNumber ?? record.issue) !== input.issueNumber) continue;
+      if ((record.prNumber ?? record.pr) !== input.prNumber) continue;
+      if ((record.lane ?? record.id) !== input.laneId) continue;
       const headSha = typeof record.headSha === 'string' ? record.headSha.trim() : '';
       if (headSha === '' || headSha === input.currentHeadSha || entry.name !== safeSegment(headSha)) continue;
       const findings = Array.isArray(record.findings)
