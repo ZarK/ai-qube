@@ -9,7 +9,9 @@ import { describe, it } from "node:test";
 
 import {
   acquireInstallLock,
+  bindInstallInterruptCleanup,
   cleanupGeneratedInstallArtifacts,
+  handleInstallInterrupt,
   parseLocalInstallArgs,
   resolveInsideRoot,
   runLocalQubeInstall,
@@ -48,6 +50,7 @@ describe("source-checkout QUBE install", () => {
       });
       assert.equal(first.ok, true, first.error);
       assert.deepEqual(first.linked, ["qube", "aib", "aie", "aiu", "aiq"]);
+      assert.deepEqual(first.components.resolvedCommands, ["qube", "aib", "aie", "aiu", "aiq"]);
       assert.equal(path.basename(first.coreModule), "qube-core");
       assert.equal(first.components.ok, true);
       assert.match(readTrackedStatus(fixture.root), /^$/);
@@ -169,6 +172,37 @@ describe("source-checkout QUBE install", () => {
       await rm(outside, { recursive: true, force: true });
       await fixture.cleanup();
     }
+  });
+
+  it("restores rewritten manifests when the interrupt handler runs", async () => {
+    const fixture = await createFixture();
+    try {
+      const packageJsonPath = path.join(fixture.qubeDir, "package.json");
+      const original = readFileUtf8(packageJsonPath);
+      writeFileSync(`${packageJsonPath}.publish-backup`, original);
+      writeFileSync(packageJsonPath, `${JSON.stringify({ ...JSON.parse(original), _localInstallRewrite: true }, null, 2)}\n`);
+      writeFileSync(path.join(fixture.qubeDir, "tjalve-qube-0.0.0.tgz"), "not-a-tarball\n");
+      handleInstallInterrupt(() => cleanupGeneratedInstallArtifacts(fixture.root), "SIGTERM");
+      assert.equal(readFileUtf8(packageJsonPath), original);
+      assert.equal(existsTarball(fixture.root), false);
+      assert.equal(existsSync(`${packageJsonPath}.publish-backup`), false);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("binds interrupt handlers that invoke cleanup", () => {
+    let cleaned = 0;
+    const detach = bindInstallInterruptCleanup(() => {
+      cleaned += 1;
+    });
+    try {
+      assert.ok(process.listeners("SIGINT").length >= 1);
+      assert.ok(process.listeners("SIGTERM").length >= 1);
+    } finally {
+      detach();
+    }
+    assert.equal(cleaned, 0);
   });
 
   it("rejects a second process while the first holds the lock", async () => {
