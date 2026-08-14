@@ -4204,11 +4204,39 @@ function planQubeDispatch(componentName: string | undefined, componentArgs: read
   };
 }
 
+function isRegularFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hasNodeShebang(filePath: string): boolean {
+  try {
+    const head = readFileSync(filePath, { encoding: "utf8" }).slice(0, 80);
+    return /^#!\s*(?:\/usr\/bin\/env\s+node|\/usr\/bin\/node|\/bin\/node)\b/.test(head);
+  } catch {
+    return false;
+  }
+}
+
+function resolveNodeScriptForCommand(commandPath: string): string | undefined {
+  const companion = path.join(
+    path.dirname(commandPath),
+    `${path.basename(commandPath).replace(/\.(?:cmd|bat|exe)$/i, "")}.mjs`
+  );
+  if (isRegularFile(companion)) return companion;
+  if (/\.(?:js|mjs|cjs)$/i.test(commandPath) && isRegularFile(commandPath)) return commandPath;
+  if (isRegularFile(commandPath) && hasNodeShebang(commandPath)) return commandPath;
+  return undefined;
+}
+
 function resolveCommandFromEntries(command: string, entries: readonly string[], environment: CliEnvironment): string | undefined {
   for (const entry of entries) {
     for (const name of commandNames(command, environment)) {
       const candidate = path.join(entry, name);
-      if (existsSync(candidate)) return candidate;
+      if (isRegularFile(candidate)) return candidate;
     }
   }
   return undefined;
@@ -4919,7 +4947,11 @@ async function runApplyComponents(environment: CliEnvironment, scope: InstallSco
   if (!commandPath) {
     return { error: "Cannot find qube to run components --json after apply." };
   }
-  const spawned = await spawnCapturedPath(commandPath, ["components", "--json"], environment);
+  const nodeScript = resolveNodeScriptForCommand(commandPath);
+  const spawned = nodeScript
+    ? await spawnCapturedPath(process.execPath, [nodeScript, "components", "--json"], environment)
+    : await spawnCapturedPath(commandPath, ["components", "--json"], environment);
+  const launched = nodeScript ?? commandPath;
   if (spawned.truncated) {
     return { error: "qube components --json output exceeded the capture limit." };
   }
@@ -4928,7 +4960,9 @@ async function runApplyComponents(environment: CliEnvironment, scope: InstallSco
   }
   const stdout = spawned.stdout.trim();
   if (stdout === "") {
-    return { error: spawned.stderr.trim() || "qube components --json did not return a JSON envelope." };
+    return {
+      error: spawned.stderr.trim() || `qube components --json did not return a JSON envelope (${launched}).`
+    };
   }
   try {
     const parsed = JSON.parse(stdout) as unknown;

@@ -640,10 +640,21 @@ for (const spec of specs) {
     mkdirSync(binDir, { recursive: true });
     const script = "process.stdout.write(JSON.stringify({ ok: true, command: \\"components\\", components: [{ id: \\"executor\\" }] }) + \\"\\\\n\\");";
     writeFileSync(path.join(binDir, "qube.mjs"), script);
-    if (process.platform === "win32") {
-      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nnode \\"%~dp0qube.mjs\\" %*\\r\\n");
+    if (process.env.QUBE_TEST_SILENT_QUBE_SHIM === "1") {
+      if (process.platform === "win32") {
+        writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nexit /b 0\\r\\n");
+      } else {
+        writeFileSync(path.join(binDir, "qube"), "#!/bin/sh\\nexit 0\\n");
+        chmodSync(path.join(binDir, "qube"), 0o755);
+      }
+    } else if (process.platform === "win32") {
+      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\n\\"" + process.execPath + "\\" \\"%~dp0qube.mjs\\" %*\\r\\n");
     } else {
-      writeFileSync(path.join(binDir, "qube"), "#!/usr/bin/env node\\n" + script);
+      writeFileSync(path.join(binDir, "qube"), [
+        "#!/bin/sh",
+        "exec " + JSON.stringify(process.execPath) + " " + JSON.stringify(path.join(binDir, "qube.mjs")) + " \\"$@\\"",
+        ""
+      ].join("\\n"));
       chmodSync(path.join(binDir, "qube"), 0o755);
     }
   }
@@ -1805,6 +1816,38 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const secondParsed = JSON.parse(second.stdout);
     assert.deepEqual(secondParsed.apply.executed, []);
     assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
+  });
+
+  it("reads apply components from a Node companion when the qube shim prints nothing", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-silent-bin-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SILENT_QUBE_SHIM: "1" } });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.apply.components.ok, true);
+    assert.equal(parsed.apply.components.command, "components");
+    assert.ok(Array.isArray(parsed.apply.components.components));
   });
 
   it("reports a loud components error when qube is missing after apply", () => {
