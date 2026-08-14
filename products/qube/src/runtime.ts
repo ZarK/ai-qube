@@ -4226,8 +4226,15 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
 }
 
 function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): string | null {
-  const installed = detectInstalledRoutingHostsOnPath();
   const primaryHost = readString(flags["primary-host"]);
+  const routeFlags = [
+    readString(flags["route-mechanical-implementation"]),
+    readString(flags["route-exploration-investigation"]),
+    readString(flags["route-synthesis-judgment"]),
+    readString(flags["route-independent-review"]),
+  ];
+  if (!primaryHost && routeFlags.every(value => value === undefined)) return null;
+  const installed = detectInstalledRoutingHostsOnPath();
   if (primaryHost) {
     if (!isModelRoutingHost(primaryHost)) {
       return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok.`;
