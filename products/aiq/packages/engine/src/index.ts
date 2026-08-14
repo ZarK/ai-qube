@@ -19,6 +19,7 @@ export {
   createLayoutConsumption,
   parseLayoutAffectedJson,
   parseLayoutInspectJson,
+  sanitizeLayoutForOutput,
   toContainedRepoRelativePath,
   toRepoRelativePath,
   workspaceLayoutKind,

@@ -9,6 +9,7 @@ import {
   artifactSchemaVersion,
   engineVersion,
 } from "./contracts.js";
+import { sanitizeLayoutForOutput } from "./layout-consume.js";
 import { buildEngineContext } from "./request.js";
 
 const defaultStages: StageId[] = [];
@@ -60,7 +61,7 @@ export function buildRunPlan(request: EngineContext | ResolvedRunRequest): RunPl
         stageId,
       };
     }),
-    ...(request.layout === undefined ? {} : { layout: request.layout }),
+    ...(request.layout === undefined ? {} : { layout: sanitizeLayoutForOutput(request.layout) }),
   };
 }
 

@@ -13,6 +13,7 @@ import {
   createLayoutConsumption,
   parseLayoutAffectedJson,
   parseLayoutInspectJson,
+  sanitizeLayoutForOutput,
 } from "../src/layout-consume.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -373,7 +374,26 @@ describe("layout consumption", () => {
     ).toThrow(/same layout kind/);
   });
 
-  it("rejects symlink or junction paths that leave the project root", () => {
+  it("omits remote URLs and local roots from published layout output", () => {
+    const inspect = parseLayoutInspectJson(
+      JSON.stringify({
+        ...singleAppInspect(),
+        root: "C:/Users/someone/project",
+        remotes: [{ name: "origin", url: "https://user:token@example.invalid/repo.git" }],
+      }),
+    );
+    const layout = createLayoutConsumption({
+      inspect,
+      source: "layout-inspect-json",
+    });
+    const published = sanitizeLayoutForOutput(layout);
+    expect(published.inspect.root).toBeNull();
+    expect(published.inspect.remotes).toEqual([{ name: "origin", url: "" }]);
+    expect(JSON.stringify(published)).not.toContain("user:token");
+    expect(JSON.stringify(published)).not.toContain("C:/Users/someone/project");
+  });
+
+  it("rejects symlink or junction paths that leave the project root", (ctx) => {
     const root = mkdtempSync(path.join(os.tmpdir(), "aiq-layout-symlink-"));
     const outside = path.join(root, "..", `aiq-layout-outside-${path.basename(root)}`);
     mkdirSync(path.join(root, "src"), { recursive: true });
@@ -386,6 +406,7 @@ describe("layout consumption", () => {
     } catch {
       rmSync(root, { force: true, recursive: true });
       rmSync(outside, { force: true, recursive: true });
+      ctx.skip();
       return;
     }
 

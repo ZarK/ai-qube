@@ -69,6 +69,31 @@ export function parseLayoutAffectedJson(text: string): RepoAffectedResult {
   return { layout, changedPaths, affectedProjects, suggestedGates, warnings };
 }
 
+export function sanitizeLayoutForOutput(layout: LayoutConsumption): LayoutConsumption {
+  return {
+    inspect: {
+      ...layout.inspect,
+      root: null,
+      remotes: layout.inspect.remotes.map((remote) => ({ name: remote.name, url: "" })),
+    },
+    affected:
+      layout.affected === null
+        ? null
+        : {
+            ...layout.affected,
+            layout: {
+              ...layout.affected.layout,
+              root: null,
+              remotes: layout.affected.layout.remotes.map((remote) => ({
+                name: remote.name,
+                url: "",
+              })),
+            },
+          },
+    scope: layout.scope,
+  };
+}
+
 export function createLayoutConsumption(input: {
   inspect: RepoLayoutInspection;
   affected?: RepoAffectedResult | null;
