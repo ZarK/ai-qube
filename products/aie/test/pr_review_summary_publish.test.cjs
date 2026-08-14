@@ -243,9 +243,10 @@ describe('GitHub round summary publish', () => {
 
     assert.equal(first.status, 'published');
     assert.ok(second.status === 'published' || second.status === 'skipped');
-    const creates = fixture.events.filter(event => event.startsWith('api repos/example/repo/issues/12/comments --method POST'));
-    assert.ok(creates.length >= 1, 'the first run must create the status comment');
-    assert.ok(creates.length <= 2, 'a second publish must not keep creating status comments');
+    const creates = fixture.events.filter(event => event.startsWith('api repos/example/repo/issues/12/comments --method POST') && fixture.reviewPayloads.some(payload => String(payload.body ?? '').includes('qube-pr-status')));
+    const updates = fixture.events.filter(event => /api repos\/example\/repo\/issues\/comments\/\d+ --method PATCH/.test(event));
+    assert.equal(creates.length, 1, 'the first run must create exactly one status comment');
+    assert.ok(updates.length >= 1, 'the second run must update the status comment in place');
     const statusBodies = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status'));
     assert.ok(statusBodies.some(body => body.includes('Round history') && body.includes('abc123')));
   });

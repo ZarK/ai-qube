@@ -1013,6 +1013,16 @@ function isCreatedPullReview(value: unknown): value is RawCreatedPullReview {
   return isRecord(value);
 }
 
+function publishedReviewId(result: GhRunResult): string | null {
+  try {
+    const parsed = parseGhJson<RawCreatedPullReview>(result.stdout, 'gh api create pull request review', isCreatedPullReview);
+    if (parsed.id !== undefined && parsed.id !== null && String(parsed.id).trim() !== '') return String(parsed.id);
+  } catch {
+    // Fall through.
+  }
+  return null;
+}
+
 function publishedReviewUrl(result: GhRunResult): string | null {
   try {
     const parsed = parseGhJson<RawCreatedPullReview>(result.stdout, 'gh api create pull request review', isCreatedPullReview);
@@ -2756,6 +2766,31 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     for (const chunk of extraCommentChunks) {
       const chunkResult = await submitReview({ commit_id: input.headSha, body: '', event: 'COMMENT', comments: chunk });
       if (chunkResult.exitCode !== 0) {
+        const createdReviewId = publishedReviewId(result);
+        if (createdReviewId !== null) {
+          const tombstonedBody = input.body.replace(
+            /<!--\s*qube-pr-review-summary:(\{[\s\S]*?\})\s*-->/,
+            (full, json) => {
+              try {
+                const parsed = JSON.parse(json) as Record<string, unknown>;
+                parsed.superseded = true;
+                return `<!-- qube-pr-review-summary:${JSON.stringify(parsed)} -->`;
+              } catch {
+                return full;
+              }
+            },
+          );
+          const tombstonePath = reviewPayloadPath({
+            body: `${tombstonedBody}\n\nThis round review was superseded because not every inline finding published.`,
+          });
+          try {
+            await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${createdReviewId}`, '--method', 'PUT', '--input', tombstonePath], ghOptions);
+          } catch {
+            // The chunk failure remains the publish result even if tombstone fails.
+          } finally {
+            cleanupReviewPayload(tombstonePath);
+          }
+        }
         return roundSummaryPublishResult({
           status: 'failed',
           marker: input.marker,
