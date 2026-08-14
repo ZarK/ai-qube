@@ -64,7 +64,7 @@
     "prepack": "node ../../scripts/resolve-publish-dependencies.mjs && node ../../scripts/check-publish-manifest.mjs && pnpm run build",
     "postpack": "node ../../scripts/restore-publish-dependencies.mjs",
     "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json && node ../../scripts/restore-publish-dependencies.mjs",
-    "verify": "pnpm run typecheck && pnpm test && pnpm run pack:check",
+    "verify": "pnpm run typecheck && pnpm test && pnpm run pack:check && node ../../scripts/check-strict-package-json.mjs",
     "docs:surfaces": "node scripts/render-command-surfaces.mjs"
   },
   "devDependencies": {
