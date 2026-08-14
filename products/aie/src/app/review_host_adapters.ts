@@ -90,7 +90,7 @@ export function parseGrokModelCatalog(output: string): string[] | null {
   if (headerIndex === -1) return null;
   const models: string[] = [];
   for (const line of lines.slice(headerIndex + 1)) {
-    const match = /^\s*\*?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
+    const match = /^\s*[-*]?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
     if (!match) {
       if (line.trim() === '') continue;
       break;

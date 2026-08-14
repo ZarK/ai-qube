@@ -417,6 +417,23 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
         suggestion: "Set x = y",
       }),
     }).safe, false);
+    const semicolonProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "The parser fails; fix it",
+      }),
+    });
+    assert.equal(semicolonProse.safe, false);
+    assert.match(semicolonProse.reason ?? "", /prose/);
+    assert.doesNotMatch(renderInlineReviewComment({
+      laneId: "code-quality",
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "The parser fails; fix it",
+      }),
+    }), /```suggestion/);
     assert.equal(suggestionFenceSafety({
       anchored: true,
       finding: finding({

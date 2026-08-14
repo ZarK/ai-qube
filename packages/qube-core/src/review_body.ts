@@ -567,7 +567,10 @@ export function reviewFindingMarker(finding: ReviewFinding): string {
   return `<!-- ${FINDING_MARKER_PREFIX}:${reviewFindingFingerprint(finding)} -->`;
 }
 
-const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package |[A-Za-z_$][\w$]*\([^)]*\)\s*;?)|=>|[{}=;]/;
+const IDENTIFIER = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`;
+const CODE_SHAPE = new RegExp(
+  String.raw`(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package )|${IDENTIFIER}\s*=(?!=)|${IDENTIFIER}\([^)]*\)\s*;?|=>|[{}]`,
+);
 const ENGLISH_REVIEW_LEAD = /^(please|do not|don't|consider|rewrite|set|use|add|remove|change|update|make|keep|put|move|rename|treat)\b/i;
 
 export function suggestionLooksLikeCode(text: string): boolean {
