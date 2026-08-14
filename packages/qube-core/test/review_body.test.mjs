@@ -374,6 +374,15 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     });
     assert.equal(equalsProse.safe, false);
     assert.match(equalsProse.reason ?? "", /prose/);
+    const callProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Please call(foo).",
+      }),
+    });
+    assert.equal(callProse.safe, false);
+    assert.match(callProse.reason ?? "", /prose/);
   });
 
   it("stops a published selection at the first off-diff line", () => {

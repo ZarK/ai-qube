@@ -558,7 +558,7 @@ export function reviewFindingMarker(finding: ReviewFinding): string {
   return `<!-- ${FINDING_MARKER_PREFIX}:${reviewFindingFingerprint(finding)} -->`;
 }
 
-const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package )|=>|[{}]|\w+\([^)]*\)\s*;?/;
+const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package |[A-Za-z_$][\w$]*\([^)]*\)\s*;?)|=>|[{}]/;
 
 export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();
@@ -637,12 +637,13 @@ export function renderAggregatedFixPrompt(
 }
 
 export function renderInlineReviewComment(
-  input: { readonly laneId: string; readonly finding: ReviewFinding; readonly anchored: boolean; readonly repository?: ReviewRepositoryRef; readonly headSha?: string },
+  input: { readonly laneId: string; readonly finding: ReviewFinding; readonly anchored: boolean; readonly repository?: ReviewRepositoryRef; readonly headSha?: string; readonly publishedFinding?: ReviewFinding },
   profile: ReviewRenderCapabilityProfile = GITHUB_REVIEW_RENDER_PROFILE,
 ): string {
   const claim = findingClaim(profile, input.finding);
   const confidence = typeof input.finding.confidence === "number" ? ` | confidence ${input.finding.confidence.toFixed(2)}` : "";
-  const fence = renderSuggestionFence(input, profile);
+  const published = input.publishedFinding ?? input.finding;
+  const fence = renderSuggestionFence({ ...input, finding: published }, profile);
   const span = clipReviewAnchorSpan(input.finding);
   const permalink = span?.clipped && input.repository && input.headSha
     ? fileDeepLink({ ...input.finding, location: input.finding.location ? { ...input.finding.location, line: input.finding.location.line, endLine: span.evidenceEndLine } : undefined }, input.headSha, input.repository)

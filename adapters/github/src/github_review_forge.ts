@@ -974,11 +974,12 @@ function repositoryRefFromName(nameWithOwner: string | undefined): { owner: stri
   return { owner, name };
 }
 
-function findingInlineBody(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string } } = {}): string {
+function findingInlineBody(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string }; publishedFinding?: ReviewFinding } = {}): string {
   return renderInlineReviewComment(
     {
       laneId,
       finding,
+      publishedFinding: context.publishedFinding,
       anchored: Boolean(finding.location && typeof finding.location.line === 'number'),
       headSha: context.headSha,
       repository: context.repository,
@@ -1202,14 +1203,14 @@ function inlineFindingComment(location: ReviewFinding['location'], body: string)
 function inlineReviewComment(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string }; diffIndex?: ReviewDiffIndex | null } = {}): JsonObject | null {
   const published = publishedInlineFinding(finding, context.diffIndex);
   if (!published) return null;
-  return inlineFindingComment(published.location, findingInlineBody(published, laneId, context));
+  return inlineFindingComment(published.location, findingInlineBody(finding, laneId, { ...context, publishedFinding: published }));
 }
 
 function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding, context: { headSha?: string; repository?: { owner: string; name: string }; diffIndex?: ReviewDiffIndex | null } = {}): JsonObject | null {
   const published = publishedInlineFinding(entry.finding, context.diffIndex);
   if (!published) return null;
   const body = context.diffIndex
-    ? findingInlineBody(published, entry.laneId, context)
+    ? findingInlineBody(entry.finding, entry.laneId, { ...context, publishedFinding: published })
     : entry.commentBody;
   return inlineFindingComment(published.location, body);
 }
