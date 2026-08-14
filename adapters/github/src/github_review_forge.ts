@@ -70,6 +70,20 @@ const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
 
+function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
+  const match = (body ?? '').match(/<!--\s*qube-pr-status:(\{[\s\S]*?\})\s*-->/);
+  if (!match) return [];
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed) || !Array.isArray(parsed.rounds)) return [];
+    return parsed.rounds
+      .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
+      .map(entry => ({ head: entry.head, verdict: entry.verdict }));
+  } catch {
+    return [];
+  }
+}
+
 export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
 export type GitHubLocalReviewPublishStatus = 'disabled' | 'pending' | 'planned' | 'published' | 'skipped' | 'failed';
 
@@ -2489,8 +2503,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         trustedMarkerAuthor,
         ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
       });
-    } catch {
-      // Status-comment failure must not block the round review event.
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        marker: input.marker,
+        body: input.body,
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub status-comment permissions, then rerun the round summary publish for #${input.prNumber}.`,
+      });
     }
 
     const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
@@ -2733,7 +2754,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       });
     }
     for (const chunk of extraCommentChunks) {
-      await submitReview({ commit_id: input.headSha, body: '', event: 'COMMENT', comments: chunk });
+      const chunkResult = await submitReview({ commit_id: input.headSha, body: '', event: 'COMMENT', comments: chunk });
+      if (chunkResult.exitCode !== 0) {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          failure: redact(chunkResult.stderr || chunkResult.stdout || 'gh api chunked inline review comments failed'),
+          nextAction: `Fix GitHub review comment permissions, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      }
     }
     return publishedResult(result, inlineComments.length, 'Provider-visible round summary was published; rerun PR view/gate to inspect provider state.');
   }
@@ -2919,12 +2952,25 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     trustedMarkerAuthor: string;
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
   }): Promise<void> {
-    const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber })} -->`;
+    const priorRounds = parseStatusCommentRounds(input.comments.find(comment => (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`))?.body);
+    const rounds = [
+      ...priorRounds.filter(round => round.head !== input.headSha),
+      { head: input.headSha, verdict: input.verdict },
+    ];
+    const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber, rounds })} -->`;
+    const history = rounds.map(round => `- ${round.head.slice(0, 12)}: ${round.verdict}`).join('\n');
     const body = [
       marker,
       '',
       `Review status: ${input.verdict}.`,
       `Head: ${input.headSha}.`,
+      '',
+      '<details>',
+      '<summary>Round history</summary>',
+      '',
+      history,
+      '',
+      '</details>',
       '',
       'Rerun: `aie pr gate ' + String(input.prNumber) + '`.',
     ].join('\n');
