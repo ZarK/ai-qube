@@ -42,6 +42,7 @@ function sectionOrder(lines) {
     joined.indexOf('Obligations:'),
     joined.indexOf('Behavior matrix'),
     joined.indexOf('Risk cards'),
+    joined.indexOf('Repo-configured learnings'),
     joined.indexOf('Expected review lanes'),
     joined.indexOf('Negative cases'),
     joined.indexOf('Open ambiguities'),
@@ -49,7 +50,7 @@ function sectionOrder(lines) {
 }
 
 describe('implementation brief builder', () => {
-  it('renders all six sections in order for a multi-mode issue', () => {
+  it('renders all brief sections in order for a multi-mode issue', () => {
     const brief = buildImplementationBrief({ title: 'Multi-mode work', body: MULTI_MODE_BODY, config: briefConfig() });
     for (const key of ['obligations', 'matrix', 'riskCards', 'expectedLanes', 'negativeCases', 'ambiguities']) {
       assert.ok(key in brief, `missing ${key}`);

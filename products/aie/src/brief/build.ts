@@ -2,6 +2,7 @@ import type { RepoLayoutInspection } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { parseWorkChecklistItems } from '../core/work_item.js';
 import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
+import { selectImplementerLearnings } from '../implementer_learnings.js';
 import { implementerFaceHasTestObligation, selectRiskCards } from '../risk_cards/index.js';
 import type { BriefLane, BriefLayout, BriefLayoutProject, BriefMatrix, BriefMatrixDimension, BriefObligation, ImplementationBrief, VerificationKind } from './types.js';
 
@@ -215,7 +216,7 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   return { owningProjects, omittedProjects, boundaryRules, doNotEditPaths, omittedDoNotEditPaths, derived };
 }
 
-export function buildImplementationBrief(input: { title: string; body: string; config: Config; layout?: RepoLayoutInspection }): ImplementationBrief {
+export function buildImplementationBrief(input: { title: string; body: string; config: Config; layout?: RepoLayoutInspection; repoRoot?: string }): ImplementationBrief {
   const issueText = `${input.title}\n${input.body}`;
   const criteria = parseWorkChecklistItems(input.body).map(item => item.text);
   const obligations: BriefObligation[] = criteria
@@ -228,6 +229,7 @@ export function buildImplementationBrief(input: { title: string; body: string; c
 
   const cards = selectRiskCards({ issueText, paths: expectedPaths });
   const riskCards = cards.map(card => ({ id: card.id, title: card.title, implementerFace: card.implementerFace.trim() }));
+  const repoLearnings = selectImplementerLearnings({ repoRoot: input.repoRoot, paths: expectedPaths });
 
   const expectedLanes: BriefLane[] = activeLocalReviewFocusesForConfig(input.config, expectedPaths)
     .map(lane => ({ lane, heuristic: LANE_HEURISTIC_DIGESTS[lane] }));
@@ -276,12 +278,13 @@ export function buildImplementationBrief(input: { title: string; body: string; c
         || splitSentences(issueText).some(sentence => implementerFaceHasTestObligation(sentence)),
     ),
     riskCards,
+    repoLearnings,
     expectedLanes,
     negativeCases,
     omittedNegativeCases,
     ambiguities,
     omittedAmbiguities,
     expectedPaths,
-    minimal: obligations.length === 0 && matrix === null && riskCards.length === 0,
+    minimal: obligations.length === 0 && matrix === null && riskCards.length === 0 && repoLearnings.entries.length === 0,
   };
 }

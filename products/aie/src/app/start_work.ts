@@ -163,6 +163,6 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!context.config.assignOnStart) warnings.push('Assignment is disabled by repository policy.');
   if (!context.config.commentOnStart) warnings.push('Started-work comments are disabled by repository policy.');
   const errors = preStartPolicy.ok ? plan.summary.failedActions.map(item => item.failure?.cause ?? item.description) : preStartPolicy.blockers;
-  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config, layout: await loadLayoutSnapshot(context) }) : null;
+  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config, layout: await loadLayoutSnapshot(context), repoRoot: context.cwd }) : null;
   return { ok: plan.ok, action: plan.ok ? action : 'blocked', reason: plan.ok ? reason : blockedReason({ selectedIssueNumber, preStartPolicy, plan }), selectedItem, blockers, activeIssueState: activeState, preStartPolicy, branchName, brief, plan, warnings, errors };
 }

@@ -42,12 +42,33 @@ export interface BriefLayout {
   derived: boolean;
 }
 
+export interface BriefRepoLearning {
+  id: string;
+  title: string;
+  implementerFace: string;
+  recordedAt: string;
+  trust: 'repo-doc';
+  source: 'repo-configured';
+}
+
+export interface BriefRepoLearnings {
+  status: 'ok' | 'missing' | 'invalid';
+  summary: string;
+  trust: 'repo-doc';
+  source: 'repo-configured';
+  fragmentId: 'repo-configured/review-learnings';
+  sha256: string | null;
+  entries: BriefRepoLearning[];
+  omitted: number;
+}
+
 export interface ImplementationBrief {
   obligations: BriefObligation[];
   omittedObligations: number;
   matrix: BriefMatrix | null;
   layout: BriefLayout | null;
   riskCards: BriefRiskCard[];
+  repoLearnings: BriefRepoLearnings;
   expectedLanes: BriefLane[];
   negativeCases: string[];
   omittedNegativeCases: number;

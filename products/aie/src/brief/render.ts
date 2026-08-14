@@ -1,3 +1,4 @@
+import { formatImplementerLearningsLines } from '../implementer_learnings.js';
 import type { ImplementationBrief } from './types.js';
 
 export function formatBriefLines(brief: ImplementationBrief): string[] {
@@ -62,6 +63,7 @@ export function formatBriefLines(brief: ImplementationBrief): string[] {
       lines.push(`      ${card.implementerFace}`);
     }
   }
+  lines.push(...formatImplementerLearningsLines(brief.repoLearnings));
 
   lines.push('  Expected review lanes — this change will be reviewed against these; design for them now:');
   if (brief.expectedLanes.length === 0) {

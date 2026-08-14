@@ -35,6 +35,18 @@ export type {
 } from './risk_cards/index.js';
 
 export {
+  IMPLEMENTER_LEARNINGS_CAP,
+  IMPLEMENTER_LEARNINGS_FRAGMENT_ID,
+  formatImplementerLearningsLines,
+  selectImplementerLearnings,
+} from './implementer_learnings.js';
+export type {
+  ImplementerLearning,
+  ImplementerLearningsSection,
+  ImplementerLearningsSelectionInput,
+} from './implementer_learnings.js';
+
+export {
   DEFAULT_MAX_RISK_CARDS,
   REQUIRED_RISK_CARD_IDS,
   formatRiskCardImplementerFragment,
