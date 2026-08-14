@@ -1,4 +1,4 @@
-import type { ReviewFinding } from '@tjalve/qube-core';
+import { reviewFindingFingerprint, type ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { pathsTouchPatterns } from './risk_cards/glob.js';
 
@@ -21,6 +21,11 @@ export interface SynthesisPlanOptions {
   readonly laneAdvisoryCaps?: Readonly<Record<string, number>>;
 }
 
+export interface WithheldPublicationFinding {
+  readonly finding: ReviewFinding;
+  readonly disposition: string;
+}
+
 export interface LanePublicationPlan {
   readonly laneId: LocalReviewLaneId;
   readonly published: ReviewFinding[];
@@ -29,6 +34,7 @@ export interface LanePublicationPlan {
   readonly withheldByCap: number;
   readonly withheldBySuppress: number;
   readonly withheldByLaneCap: number;
+  readonly withheldFindings: readonly WithheldPublicationFinding[];
   /**
    * True when at least one of this lane's original findings is published on
    * some lane's marker (this lane or the identity owner). A request-changes
@@ -43,6 +49,12 @@ interface WorkingFinding {
   readonly laneId: LocalReviewLaneId;
   readonly finding: ReviewFinding;
 }
+
+const DISPOSITION_DUPLICATE = 'Dropped: duplicate of another lane.';
+const DISPOSITION_OFF_DIFF = 'Dropped: advisory is off the current diff.';
+const DISPOSITION_SUPPRESS = 'Dropped: path is suppressed for this lane.';
+const DISPOSITION_LANE_CAP = 'Dropped: advisory lane cap.';
+const DISPOSITION_NIT_CAP = 'Dropped: advisory nit cap.';
 
 // The dedupe/cap winner order: canonical comprehensive lane order with
 // final-gate forced last regardless of its position, so a gate-level
@@ -111,11 +123,13 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
   const withheldDuplicatesByLane = new Map<LocalReviewLaneId, number>();
   const withheldOffDiffByLane = new Map<LocalReviewLaneId, number>();
   const withheldBySuppressByLane = new Map<LocalReviewLaneId, number>();
+  const withheldFindingsByLane = new Map<LocalReviewLaneId, WithheldPublicationFinding[]>();
   for (const lane of lanes) {
     survivingByLane.set(lane.laneId, []);
     withheldDuplicatesByLane.set(lane.laneId, 0);
     withheldOffDiffByLane.set(lane.laneId, 0);
     withheldBySuppressByLane.set(lane.laneId, 0);
+    withheldFindingsByLane.set(lane.laneId, []);
   }
 
   for (const lane of lanes) {
@@ -123,6 +137,7 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
       const identity = findingIdentity(finding);
       if (identityOwner.get(identity) !== lane.laneId) {
         withheldDuplicatesByLane.set(lane.laneId, (withheldDuplicatesByLane.get(lane.laneId) ?? 0) + 1);
+        withheldFindingsByLane.get(lane.laneId)!.push({ finding, disposition: DISPOSITION_DUPLICATE });
         continue;
       }
       // An advisory is re-confirmable against the diff only through its
@@ -132,11 +147,13 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         && (finding.location === undefined || !changedPaths.has(normalizeComparablePath(finding.location.path)));
       if (offDiff) {
         withheldOffDiffByLane.set(lane.laneId, (withheldOffDiffByLane.get(lane.laneId) ?? 0) + 1);
+        withheldFindingsByLane.get(lane.laneId)!.push({ finding, disposition: DISPOSITION_OFF_DIFF });
         continue;
       }
       const suppressGlobs = options.laneSuppress?.[lane.laneId] ?? [];
       if (finding.severity === 'advisory' && finding.location && suppressGlobs.length > 0 && pathsTouchPatterns([finding.location.path], suppressGlobs)) {
         withheldBySuppressByLane.set(lane.laneId, (withheldBySuppressByLane.get(lane.laneId) ?? 0) + 1);
+        withheldFindingsByLane.get(lane.laneId)!.push({ finding, disposition: DISPOSITION_SUPPRESS });
         continue;
       }
       const promotedConfidence = identityMaxConfidence.get(identity);
@@ -162,6 +179,9 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
     const kept = new Set(advisories.slice(0, Number(cap)));
     const next = surviving.filter(entry => entry.finding.severity !== 'advisory' || kept.has(entry));
     withheldByLaneCap.set(lane.laneId, advisories.length - kept.size);
+    for (const entry of advisories) {
+      if (!kept.has(entry)) withheldFindingsByLane.get(lane.laneId)!.push({ finding: entry.finding, disposition: DISPOSITION_LANE_CAP });
+    }
     survivingByLane.set(lane.laneId, next);
   }
 
@@ -199,6 +219,7 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         published.push(entry.finding);
       } else {
         withheldByCap += 1;
+        withheldFindingsByLane.get(lane.laneId)!.push({ finding: entry.finding, disposition: DISPOSITION_NIT_CAP });
       }
     }
     publishedByLane.set(lane.laneId, { published, withheldByCap });
@@ -224,7 +245,18 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
       withheldByCap: plan.withheldByCap,
       withheldBySuppress: withheldBySuppressByLane.get(lane.laneId) ?? 0,
       withheldByLaneCap: withheldByLaneCap.get(lane.laneId) ?? 0,
+      withheldFindings: withheldFindingsByLane.get(lane.laneId) ?? [],
       hasVisibleObligation,
     };
   });
+}
+
+export function threadDispositionsFromPlans(plans: readonly LanePublicationPlan[]): Record<string, string> {
+  const dispositions: Record<string, string> = {};
+  for (const plan of plans) {
+    for (const item of plan.withheldFindings) {
+      dispositions[reviewFindingFingerprint(item.finding)] = item.disposition;
+    }
+  }
+  return dispositions;
 }

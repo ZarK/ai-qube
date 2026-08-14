@@ -267,6 +267,7 @@ export interface GitHubRoundSummaryPublishInput {
   inlineFindings: readonly GitHubRoundSummaryInlineFinding[];
   unanchoredFindingCount: number;
   findingDigest: string;
+  dispositions?: Readonly<Record<string, string>>;
 }
 
 export interface GitHubRoundSummaryPublishResult {
@@ -2772,9 +2773,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         publisherLogins: trustedPublisherLogins(trustedMarkerAuthor),
         headSha: input.headSha,
         round: input.round,
+        dispositions: input.dispositions ?? {},
       });
-    } catch {
-      // Keep every finding as a new inline comment when thread history cannot be loaded.
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        marker: input.marker,
+        body: input.body,
+        publisherDowngradeReason,
+        supersededPriorSummaries,
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Could not load review thread history for #${input.prNumber}, so finding continuity cannot run truthfully. Fix GraphQL review-thread access, then rerun the round summary publish.`,
+      });
     }
     const newInlineFingerprints = new Set(
       lifecycleActions.filter((action) => action.kind === 'new-inline').map((action) => action.fingerprint),
@@ -2813,7 +2824,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         publisher.identity,
       );
       return roundSummaryPublishResult({
-        status: 'published',
+        status: lifecycleFailure ? 'failed' : 'published',
         marker: input.marker,
         body: publishedRoundSummaryBody(input, 'pull-request-review'),
         url,

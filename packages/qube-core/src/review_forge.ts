@@ -232,6 +232,8 @@ export interface ReviewRoundSummaryPublishInput {
   readonly inlineFindings: readonly ReviewRoundSummaryFinding[];
   readonly unanchoredFindingCount: number;
   readonly findingDigest: string;
+  /** Fingerprint to closing narration for withheld or triaged findings. */
+  readonly dispositions?: Readonly<Record<string, string>>;
 }
 
 export interface ReviewRoundSummaryPublishResult {
