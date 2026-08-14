@@ -671,8 +671,21 @@ function makePrExec(options = {}) {
       const run = workflowRunsById[runId];
       return run ? { args, exitCode: 0, stdout: JSON.stringify(run), stderr: '' } : { args, exitCode: 1, stdout: '', stderr: 'workflow run not found' };
     }
+    if (args[0] === 'api' && /repos\/example\/repo\/pulls\/12\/comments\/\d+\/replies$/.test(args[1]) && args.includes('POST')) {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ reply: args[1], ...payload });
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: 45, body: payload.body ?? '' }), stderr: '' };
+    }
     if (args[0] === 'api' && args[1] === 'graphql') {
       const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
+      if (queryArg && queryArg.includes('unresolveReviewThread')) {
+        const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { unresolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: false } } } }), stderr: '' };
+      }
+      if (queryArg && queryArg.includes('minimizeComment')) {
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }), stderr: '' };
+      }
       if (queryArg && queryArg.includes('resolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
         const queuedResult = resolveThreadResults.shift();

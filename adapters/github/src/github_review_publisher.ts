@@ -47,6 +47,8 @@ export interface GitHubReviewPublisherIdentity {
   readonly authSource: 'gh-user' | 'github-app-installation' | 'token-env' | 'none';
   /** True only when the login was derived by exercising the configured credential. */
   readonly credentialVerified: boolean;
+  /** Contents permission observed from a minted github-app installation token. */
+  readonly contentsPermission?: 'write' | 'read' | 'missing' | 'unknown' | 'not-run';
 }
 
 export interface ResolvedGitHubReviewPublisher {
@@ -363,6 +365,7 @@ function finalizeIdentity(input: {
   publishTransport: GitHubReviewPublisherTransport;
   authSource: GitHubReviewPublisherIdentity['authSource'];
   credentialVerified?: boolean;
+  contentsPermission?: GitHubReviewPublisherIdentity['contentsPermission'];
   prAuthorLogin?: string | null;
 }): GitHubReviewPublisherIdentity {
   let permissionStatus = input.permissionStatus;
@@ -391,7 +394,16 @@ function finalizeIdentity(input: {
     publishTransport,
     authSource: input.authSource,
     credentialVerified: input.credentialVerified === true,
+    contentsPermission: input.contentsPermission ?? 'not-run',
   };
+}
+
+function installationContentsPermission(permissions: Record<string, string> | undefined): 'write' | 'read' | 'missing' {
+  if (!permissions) return 'missing';
+  const contents = permissions.contents;
+  if (contents === 'write' || contents === 'admin') return 'write';
+  if (contents === 'read') return 'read';
+  return 'missing';
 }
 
 function installationHasReviewPermission(permissions: Record<string, string> | undefined): boolean {
@@ -531,6 +543,7 @@ export async function resolveGitHubReviewPublisher(
             fallbackReason: 'GitHub App publisher identity lookup did not resolve the bot login; formal review events are withheld.',
             publishTransport: 'issue-comment',
             authSource: 'github-app-installation',
+            contentsPermission: installationContentsPermission(minted.permissions),
             prAuthorLogin: options.prAuthorLogin,
           }),
         };
@@ -551,6 +564,7 @@ export async function resolveGitHubReviewPublisher(
             : 'GitHub App installation lacks pull_requests write permission; formal review events are unavailable.',
           publishTransport: hasPermission ? 'pull-request-review' : 'issue-comment',
           authSource: 'github-app-installation',
+          contentsPermission: installationContentsPermission(minted.permissions),
           prAuthorLogin: options.prAuthorLogin,
         }),
       };

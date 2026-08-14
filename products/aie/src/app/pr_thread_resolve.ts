@@ -1,6 +1,6 @@
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { getDefaults, loadConfig } from '../config/index.js';
-import type { GhExec } from '../providers/github_adapter_exports.js';
+import { resolveGitHubReviewPublisher, type GhExec } from '../providers/github_adapter_exports.js';
 import type { ResolveReviewThreadResult } from '../core/review_item.js';
 import { parsePrNumber } from './pr_gate.js';
 
@@ -8,9 +8,11 @@ export interface PrThreadResolveOptions {
   prNumber: number;
   threadIds: string[];
   all: boolean;
+  includeOtherAuthors?: boolean;
   dryRun: boolean;
   repoRoot?: string;
   exec?: GhExec;
+  publisherLogin?: string | null;
 }
 
 export interface PrThreadResolveResult extends ResolveReviewThreadResult {
@@ -27,22 +29,65 @@ export async function runPrThreadResolveService(options: PrThreadResolveOptions)
     throw new Error('Configured review provider cannot resolve review threads. Next action: use a provider adapter with resolveReviewThreads support.');
   }
   let threadIds = options.threadIds;
+  let skippedOtherAuthorIds: string[] = [];
   if (options.all) {
     const snapshot = await provider.loadPullRequestReview(options.prNumber);
-    threadIds = snapshot.item.conversations
-      .filter(thread => !thread.resolved && thread.viewerCanResolve)
-      .map(thread => thread.id);
+    const resolvable = snapshot.item.conversations.filter(thread => !thread.resolved && thread.viewerCanResolve);
+    let publisherLogin = options.publisherLogin
+      ?? config.providers.review.publisher?.githubApp?.login
+      ?? config.providers.review.publisher?.token?.login
+      ?? null;
+    if (!publisherLogin && options.includeOtherAuthors !== true) {
+      try {
+        const resolved = await resolveGitHubReviewPublisher(config.providers.review.publisher ?? null, {
+          cwd: options.repoRoot,
+          exec: options.exec,
+          mint: true,
+        });
+        publisherLogin = resolved.identity.login;
+      } catch {
+        publisherLogin = null;
+      }
+    }
+    if (options.includeOtherAuthors === true) {
+      threadIds = resolvable.map(thread => thread.id);
+    } else {
+      const matchesPublisher = (author: string | null | undefined): boolean => {
+        if (!publisherLogin || typeof author !== 'string') return false;
+        return author.trim().replace(/^@/, '').toLowerCase() === publisherLogin.trim().replace(/^@/, '').toLowerCase();
+      };
+      threadIds = resolvable.filter(thread => matchesPublisher(thread.author)).map(thread => thread.id);
+      skippedOtherAuthorIds = resolvable.filter(thread => !matchesPublisher(thread.author)).map(thread => thread.id);
+    }
+    if (threadIds.length === 0 && skippedOtherAuthorIds.length > 0) {
+      return {
+        ok: true,
+        command: 'pr thread resolve',
+        all: options.all,
+        status: 'skipped',
+        prNumber: options.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: skippedOtherAuthorIds,
+        failedThreadIds: [],
+        nextAction: `Skipped ${skippedOtherAuthorIds.length} thread(s) authored by other identities. Pass --include-other-authors to resolve them.`,
+      };
+    }
   }
   const result = await provider.resolveReviewThreads({
     prNumber: options.prNumber,
     threadIds,
     dryRun: options.dryRun,
   });
+  const skippedThreadIds = [...new Set([...result.skippedThreadIds, ...skippedOtherAuthorIds])];
   return {
     ok: true,
     command: 'pr thread resolve',
     all: options.all,
     ...result,
+    skippedThreadIds,
+    nextAction: skippedOtherAuthorIds.length > 0
+      ? `${result.nextAction} Skipped ${skippedOtherAuthorIds.length} thread(s) authored by other identities; pass --include-other-authors to resolve them.`
+      : result.nextAction,
   };
 }
 

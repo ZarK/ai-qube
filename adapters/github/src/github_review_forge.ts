@@ -36,11 +36,16 @@ import {
   DEGRADED_REVIEW_RENDER_PROFILE,
   clipReviewAnchorSpan,
   clipReviewAnchorSpanToDiff,
+  extractFindingFingerprints,
   findingWithPublishedAnchor,
   isSelfAuthoredReviewBody,
+  planReviewThreadLifecycle,
+  reviewFindingFingerprint,
   renderInlineReviewComment,
   renderLaneReviewBody,
   type ReviewDiffIndex,
+  type ReviewFindingThread,
+  type ReviewThreadLifecycleAction,
 } from '@tjalve/qube-core';
 
 import {
@@ -1527,6 +1532,31 @@ function threadLine(thread: RawThreadNode, key: 'line' | 'originalLine'): number
   return threadComments(thread).map(comment => comment[key]).find((line): line is number => typeof line === 'number' && Number.isSafeInteger(line) && line > 0) ?? null;
 }
 
+function findingThreadsFromRaw(threads: RawThreadNode[]): ReviewFindingThread[] {
+  return threads.flatMap((thread) => {
+    if (!thread.id) return [];
+    const comments = threadComments(thread);
+    const first = comments[0];
+    const reply = [...comments].reverse().find((comment) => typeof comment.databaseId === 'number');
+    return [{
+      threadId: thread.id,
+      resolved: thread.isResolved === true,
+      outdated: thread.isOutdated === true,
+      canResolve: thread.viewerCanResolve === true,
+      authorLogin: first?.author?.login ?? null,
+      fingerprints: [...new Set(comments.flatMap((comment) => extractFindingFingerprints(comment.body)))],
+      replyToDatabaseId: reply?.databaseId ?? null,
+      minimizeSubjectId: typeof first?.id === 'string' ? first.id : null,
+    }];
+  });
+}
+
+function trustedPublisherLogins(trustedAuthor: TrustedAuthorInput): string[] {
+  if (trustedAuthor === 'any-valid-marker' || trustedAuthor == null) return [];
+  if (typeof trustedAuthor === 'string') return [trustedAuthor];
+  return [...trustedAuthor];
+}
+
 function reviewConversations(threads: RawThreadNode[]): ReviewConversation[] {
   return threads.map(thread => {
     const latest = latestThreadComment(thread);
@@ -2724,7 +2754,33 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     }
 
     const summaryDiffIndex = await this.loadReviewDiffIndex(input.prNumber);
+    let lifecycleActions: ReviewThreadLifecycleAction[] = input.inlineFindings.map((entry) => ({
+      kind: 'new-inline' as const,
+      threadId: null,
+      fingerprint: reviewFindingFingerprint(entry.finding),
+      replyToDatabaseId: null,
+      minimizeSubjectId: null,
+      unresolve: false,
+      body: null,
+      finding: entry.finding,
+    }));
+    try {
+      const existingThreads = findingThreadsFromRaw(await this.getReviewThreads(repositoryName, input.prNumber));
+      lifecycleActions = planReviewThreadLifecycle({
+        findings: input.inlineFindings.map((entry) => entry.finding),
+        threads: existingThreads,
+        publisherLogins: trustedPublisherLogins(trustedMarkerAuthor),
+        headSha: input.headSha,
+        round: input.round,
+      });
+    } catch {
+      // Keep every finding as a new inline comment when thread history cannot be loaded.
+    }
+    const newInlineFingerprints = new Set(
+      lifecycleActions.filter((action) => action.kind === 'new-inline').map((action) => action.fingerprint),
+    );
     const inlineComments = input.inlineFindings
+      .filter((entry) => newInlineFingerprints.has(reviewFindingFingerprint(entry.finding)))
       .map(entry => inlineSummaryReviewComment(entry, { headSha: input.headSha, repository: repositoryRefFromName(repositoryName), diffIndex: summaryDiffIndex }))
       .filter((comment): comment is JsonObject => comment !== null);
     const roundReviewEvent = (verdict: GitHubRoundSummaryPublishInput['verdict']): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' => {
@@ -2748,8 +2804,14 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         cleanupReviewPayload(payloadPath);
       }
     };
-    const publishedResult = (publishResult: GhRunResult, inlineCommentCount: number, nextAction: string): GitHubRoundSummaryPublishResult => {
+    const publishedResult = async (publishResult: GhRunResult, inlineCommentCount: number, nextAction: string): Promise<GitHubRoundSummaryPublishResult> => {
       const url = publishedReviewUrl(publishResult);
+      const lifecycleFailure = await this.applyThreadLifecycle(
+        repositoryName,
+        input.prNumber,
+        lifecycleActions,
+        publisher.identity,
+      );
       return roundSummaryPublishResult({
         status: 'published',
         marker: input.marker,
@@ -2762,7 +2824,8 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         publisherDowngradeReason,
         supersededPriorSummaries,
         publisher: publisher.identity,
-        nextAction,
+        failure: lifecycleFailure,
+        nextAction: lifecycleFailure ?? nextAction,
       });
     };
 
@@ -2790,13 +2853,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       const bodyOnlyPayload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: [] };
       const bodyOnlyResult = await submitReview(bodyOnlyPayload);
       if (bodyOnlyResult.exitCode === 0) {
-        return publishedResult(bodyOnlyResult, 0, 'Provider-visible body-only round summary was published after GitHub rejected inline review comments; rerun PR view/gate to inspect provider state.');
+        return await publishedResult(bodyOnlyResult, 0, 'Provider-visible body-only round summary was published after GitHub rejected inline review comments; rerun PR view/gate to inspect provider state.');
       }
       if (roundReviewEvent(input.verdict) !== 'COMMENT') {
         const commentEventPayload = { commit_id: input.headSha, body: input.body, event: 'COMMENT', comments: [] };
         const commentEventResult = await submitReview(commentEventPayload);
         if (commentEventResult.exitCode === 0) {
-          return publishedResult(commentEventResult, 0, 'Provider-visible COMMENT round summary was published after GitHub rejected the requested review event; rerun PR view/gate to inspect provider state.');
+          return await publishedResult(commentEventResult, 0, 'Provider-visible COMMENT round summary was published after GitHub rejected the requested review event; rerun PR view/gate to inspect provider state.');
         }
         return roundSummaryPublishResult({
           status: 'failed',
@@ -2860,7 +2923,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         });
       }
     }
-    return publishedResult(result, inlineComments.length, 'Provider-visible round summary was published; rerun PR view/gate to inspect provider state.');
+    return await publishedResult(result, inlineComments.length, 'Provider-visible round summary was published; rerun PR view/gate to inspect provider state.');
   }
 
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {
@@ -3137,10 +3200,10 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     return result.stdout;
   }
 
-  private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
+  private async getReviewThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
     const [owner, repo] = repoName.split('/');
     if (!owner || !repo) return [];
-    const query = "query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(last: 1) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }";
+    const query = "query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(first: 20) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }";
     const nodes: RawThreadNode[] = [];
     let cursor: string | null = null;
     for (;;) {
@@ -3153,7 +3216,98 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       if (!page?.pageInfo?.hasNextPage || !page.pageInfo.endCursor) break;
       cursor = page.pageInfo.endCursor;
     }
-    return nodes.filter(thread => thread.isResolved === false);
+    return nodes;
+  }
+
+  private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
+    return (await this.getReviewThreads(repoName, prNumber)).filter(thread => thread.isResolved === false);
+  }
+
+  private contentsWriteReady(identity: GitHubReviewPublisherIdentity | undefined): boolean {
+    return identity?.contentsPermission === 'write' || identity?.contentsPermission === 'not-run' || identity?.contentsPermission == null;
+  }
+
+  private async replyToReviewComment(repoName: string, prNumber: number, commentDatabaseId: number, body: string): Promise<boolean> {
+    const payloadPath = reviewPayloadPath({ body });
+    try {
+      const result = await runGh([
+        'api',
+        `repos/${repoName}/pulls/${prNumber}/comments/${commentDatabaseId}/replies`,
+        '--method',
+        'POST',
+        '--input',
+        payloadPath,
+      ], this.options);
+      return result.exitCode === 0;
+    } finally {
+      cleanupReviewPayload(payloadPath);
+    }
+  }
+
+  private async unresolveReviewThread(threadId: string): Promise<boolean> {
+    const query = 'mutation($threadId: ID!) { unresolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }';
+    try {
+      const result = await runGh(['api', 'graphql', '-f', `threadId=${threadId}`, '-f', `query=${query}`], this.options);
+      if (result.exitCode !== 0) return false;
+      const parsed = parseGhJson<{ data?: { unresolveReviewThread?: { thread?: { id?: unknown; isResolved?: unknown } | null } | null } }>(
+        result.stdout,
+        `gh api graphql unresolve review thread ${threadId}`,
+        value => isRecord(value),
+      );
+      return parsed.data?.unresolveReviewThread?.thread?.id === threadId
+        && parsed.data.unresolveReviewThread.thread.isResolved === false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async minimizeOutdatedComment(subjectId: string): Promise<boolean> {
+    const query = 'mutation($subjectId: ID!) { minimizeComment(input: { subjectId: $subjectId, classifier: OUTDATED }) { minimizedComment { isMinimized } } }';
+    try {
+      const result = await runGh(['api', 'graphql', '-f', `subjectId=${subjectId}`, '-f', `query=${query}`], this.options);
+      if (result.exitCode !== 0) return false;
+      const parsed = parseGhJson<{ data?: { minimizeComment?: { minimizedComment?: { isMinimized?: unknown } | null } | null } }>(
+        result.stdout,
+        `gh api graphql minimize outdated comment ${subjectId}`,
+        value => isRecord(value),
+      );
+      return parsed.data?.minimizeComment?.minimizedComment?.isMinimized === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async applyThreadLifecycle(
+    repoName: string,
+    prNumber: number,
+    actions: readonly ReviewThreadLifecycleAction[],
+    identity: GitHubReviewPublisherIdentity | undefined,
+  ): Promise<string | null> {
+    const mutations = actions.filter((action) => action.kind !== 'new-inline');
+    if (mutations.length === 0) return null;
+    const needsContents = mutations.some((action) => action.kind === 'resolve' || action.kind === 'minimize-outdated' || action.unresolve);
+    if (needsContents && !this.contentsWriteReady(identity)) {
+      return 'GitHub App Contents write permission is required to resolve or minimize review threads. Grant Contents write, refresh the installation, then rerun `aie pr gate`.';
+    }
+    for (const action of mutations) {
+      if (action.kind === 'reply-still-present' && action.unresolve && action.threadId) {
+        const unresolved = await this.unresolveReviewThread(action.threadId);
+        if (!unresolved) return `Could not unresolve review thread ${action.threadId}. Confirm Contents write permission, then rerun the publish.`;
+      }
+      if ((action.kind === 'reply-still-present' || action.kind === 'resolve') && action.replyToDatabaseId != null && action.body) {
+        const replied = await this.replyToReviewComment(repoName, prNumber, action.replyToDatabaseId, action.body);
+        if (!replied) return `Could not reply in review thread ${action.threadId ?? 'unknown'}. Confirm Pull requests write permission, then rerun the publish.`;
+      }
+      if (action.kind === 'resolve' && action.threadId) {
+        const resolved = await this.resolveReviewThread(action.threadId);
+        if (!resolved) return `Could not resolve review thread ${action.threadId}. GitHub App Contents write permission is required to resolve review threads.`;
+      }
+      if (action.kind === 'minimize-outdated' && action.minimizeSubjectId) {
+        const minimized = await this.minimizeOutdatedComment(action.minimizeSubjectId);
+        if (!minimized) return `Could not minimize outdated review comment ${action.minimizeSubjectId}. GitHub App Contents write permission is required to minimize review comments.`;
+      }
+    }
+    return null;
   }
 
   private async getMergeUiState(repoName: string, prNumber: number): Promise<RawMergeUiState | null> {

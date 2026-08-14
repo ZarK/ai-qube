@@ -388,6 +388,50 @@ describe('GitHub round summary publish', () => {
     const mutatingCall = fixture.events.find(event => event.includes('--method POST') || event.includes('--method PUT') || event.includes('--method PATCH'));
     assert.equal(mutatingCall, undefined, 'a dry run must not mutate GitHub');
   });
+
+  it('replies in an existing fingerprint thread instead of posting a second inline comment', async () => {
+    const current = findingAnchor();
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{
+        laneId: 'code-quality',
+        status: 'request-changes',
+        recommendation: 'request-changes',
+        summary: 'still broken',
+        findings: [current.finding],
+        preconditions: [],
+        evidenceHeadSha: 'abc123',
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      }],
+    }), { diffIndex: { hasLine: () => true } });
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const fixture = makePrExec({
+      prViews: [basePr()],
+      diff: manyLineDiff('src/review.ts', 5),
+      threads: [{
+        id: 'PRRT_same',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_same',
+          databaseId: 44,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    const reviewPosts = fixture.reviewPayloads.filter(payload => Array.isArray(payload.comments));
+    assert.ok(reviewPosts.every(payload => payload.comments.length === 0));
+    assert.ok(fixture.events.some(event => event.includes('/comments/44/replies')));
+    assert.match(JSON.stringify(fixture.reviewPayloads), /Still present at `abc123`/);
+  });
 });
 
 describe('GitHub lane review publish fail-closed', () => {

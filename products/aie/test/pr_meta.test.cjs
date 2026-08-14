@@ -153,14 +153,41 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.match(result.nextAction, /pr thread resolve/);
   });
 
-  it('resolves all unresolved viewer-resolvable review threads', async () => {
+  it('skips other authors on --all and resolves only publisher-authored threads', async () => {
+    const threads = [
+      { id: 'PRRT_other_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Human note.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
+      { id: 'PRRT_bot_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'executor' }, body: 'Bot finding.', url: 'https://github.com/example/repo/pull/12#discussion_r8' }] } },
+    ];
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const skipped = await runPrThreadResolveService({
+      prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec, publisherLogin: 'executor',
+    });
+    assert.equal(skipped.status, 'resolved');
+    assert.deepEqual(skipped.resolvedThreadIds, ['PRRT_bot_1']);
+    assert.ok(skipped.skippedThreadIds.includes('PRRT_other_1'));
+    assert.match(skipped.nextAction, /--include-other-authors/);
+    assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
+
+    const othersOnly = await runPrThreadResolveService({
+      prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec, publisherLogin: 'qube-review[bot]',
+    });
+    assert.equal(othersOnly.status, 'skipped');
+    assert.deepEqual(othersOnly.resolvedThreadIds, []);
+    assert.ok(othersOnly.skippedThreadIds.includes('PRRT_other_1'));
+    assert.match(othersOnly.nextAction, /other identities/);
+  });
+
+  it('resolves other authors only when --include-other-authors is set', async () => {
     const threads = [
       { id: 'PRRT_resolve_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
       { id: 'PRRT_unowned_1', isResolved: false, viewerCanResolve: false, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Cannot resolve.', url: 'https://github.com/example/repo/pull/12#discussion_r7' }] } },
     ];
     const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
 
-    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec });
+    const result = await runPrThreadResolveService({
+      prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec: fixture.exec,
+    });
 
     assert.equal(result.status, 'resolved');
     assert.deepEqual(result.resolvedThreadIds, ['PRRT_resolve_1']);
@@ -194,7 +221,7 @@ describe('PR body service', { concurrency: 4 }, () => {
       resolveThreadResults: [{ exitCode: 1, stdout: '', stderr: 'GraphQL mutation failed' }],
     });
 
-    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec });
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec: fixture.exec });
 
     assert.equal(result.status, 'failed');
     assert.deepEqual(result.resolvedThreadIds, []);
