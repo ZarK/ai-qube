@@ -873,36 +873,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const streamedFailuresByLane = new Map<string, string>();
   const streamedPublishedLanes = new Set<string>();
   const publishLaneOutcomes: { lane: string; status: string; failure?: string | null }[] = [];
-  let streamingDisclosed = false;
-  const streamLanePublish = !dryRun && routedFocuses.length > 0 && !sessionLockBlocksExecution
-    ? async (lane: LocalReviewLaneRun): Promise<void> => {
-        if (lane.status !== 'completed' || !lane.route) return;
-        const laneKey = `${lane.issueNumber} ${lane.lane}`;
-        try {
-          const laneEvidence = readCurrentHeadLaneEvidence(repoRoot, lane.issueNumber, options.prNumber, finalSnapshot.pr.headRefOid, lane.lane);
-          if (!laneEvidence || (laneEvidence.status !== 'passed' && laneEvidence.status !== 'failed' && laneEvidence.status !== 'needs-work')) return;
-          if (!streamingDisclosed) {
-            await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
-            streamingDisclosed = true;
-          }
-          // The head is rechecked after disclosure so drift between disclosure
-          // and mutation withholds the publish, exactly like the batch loop.
-          if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) return;
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
-          const publishFailure = prReviewPublishFailureMessage(published);
-          if (publishFailure) {
-            streamedFailuresByLane.set(laneKey, `${lane.lane}: ${publishFailure}`);
-            publishLaneOutcomes.push({ lane: lane.lane, status: 'failed', failure: publishFailure });
-          } else {
-            streamedPublishedLanes.add(laneKey);
-            publishLaneOutcomes.push({ lane: lane.lane, status: published.publish.status, failure: null });
-          }
-        } catch (error: unknown) {
-          streamedFailuresByLane.set(laneKey, `${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
-          publishLaneOutcomes.push({ lane: lane.lane, status: 'failed', failure: error instanceof Error ? error.message : String(error) });
-        }
-      }
-    : undefined;
+  const streamLanePublish = undefined;
   // The lock is released after evidence read and provider publish complete; a
   // crashed gate's lock goes stale immediately via the holder pid liveness rule.
   let localReviewRunner: LocalReviewRunResult;
@@ -1011,47 +982,18 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           // delta: local HEAD was just verified equal to the provider head,
           // and working-tree or index paths must never count as part of the
           // pushed PR. A null observation fails publication closed downstream.
-          const publishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
-          const publishedUrls: string[] = [];
-          let publishedCount = 0;
-          let skipMatchedCount = 0;
-          for (const { evidence, lane } of publishableLanes) {
-            try {
-              const laneKey = `${evidence.issueNumber} ${lane.id}`;
-              if (streamedPublishedLanes.has(laneKey)) {
-                streamedFailuresByLane.delete(laneKey);
-                skipMatchedCount += 1;
-                continue;
-              }
-              // The batch outcome supersedes any streamed attempt for this
-              // lane, so a lane never reports twice and a transient streamed
-              // failure cannot poison a later batch success.
-              streamedFailuresByLane.delete(laneKey);
-              if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
-              // The expected set is the declared active focus set for this
-              // head, never the subset that happened to produce evidence: a
-              // partial round must declare the full set it belongs to, or its
-              // markers would mint a smaller round that reads as complete.
-              const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
-              const publishFailure = prReviewPublishFailureMessage(published);
-              if (publishFailure) {
-                publishUnavailable.push(`${lane.id}: ${publishFailure}`);
-                publishLaneOutcomes.push({ lane: lane.id, status: 'failed', failure: publishFailure });
-              } else {
-                if (published.publish.status === 'published') publishedCount += 1;
-                else skipMatchedCount += 1;
-                if (published.publish.url) publishedUrls.push(published.publish.url);
-                publishLaneOutcomes.push({ lane: lane.id, status: published.publish.status, failure: null });
-              }
-            } catch (error: unknown) {
-              publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
-              publishLaneOutcomes.push({ lane: lane.id, status: 'failed', failure: error instanceof Error ? error.message : String(error) });
-            }
+          for (const { lane } of publishableLanes) {
+            publishLaneOutcomes.push({ lane: lane.id, status: 'skipped', failure: null });
           }
-          publishUnavailable.push(...streamedFailuresByLane.values());
-          localReviewPublish = publishUnavailable.length > 0
-            ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
-            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${publishedCount} routed current-head lane review(s) (${skipMatchedCount} already current) from the QUBE orchestrator.` };
+          localReviewPublish = {
+            status: 'published',
+            runId: null,
+            marker: null,
+            body: null,
+            url: null,
+            failure: null,
+            nextAction: 'Lane verdicts publish as one round review event; per-lane review events are not created.',
+          };
           finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
         }
       }
@@ -1106,6 +1048,27 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
               nextAction: `${summaryPublished.publish.nextAction ?? 'Round summary published.'} Failed lane publish: ${failedLaneNames.join(', ')}.`,
             }
           : summaryPublished.publish;
+        if (roundSummary.status === 'failed') {
+          localReviewPublish = {
+            status: 'failed',
+            runId: null,
+            marker: roundSummary.marker,
+            body: roundSummary.body,
+            url: roundSummary.url,
+            failure: roundSummary.failure,
+            nextAction: roundSummary.nextAction,
+          };
+        } else if (roundSummary.status === 'published' || roundSummary.status === 'skipped') {
+          localReviewPublish = {
+            status: roundSummary.status === 'skipped' ? 'skipped' : 'published',
+            runId: null,
+            marker: roundSummary.marker,
+            body: roundSummary.body,
+            url: roundSummary.url,
+            failure: null,
+            nextAction: roundSummary.nextAction,
+          };
+        }
       } catch (error: unknown) {
         roundSummary = {
           status: 'failed',
@@ -1120,28 +1083,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     }
   }
   const publishedCarriedLanes: string[] = [];
-  if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
-    // Same committed-delta rule as the fresh-lane publish loop above.
-    const carriedPublishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
-    for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
-      for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
-        if (streamedPublishedLanes.has(`${evidence.issueNumber} ${lane.id}`)) continue;
-        try {
-          // The same declared active set as the fresh-lane loop: every marker
-          // at one head must agree on the round's expected lane set.
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
-          const carriedFailure = prReviewPublishFailureMessage(published);
-          if (carriedFailure) {
-            publishUnavailable.push(`${lane.id}: ${carriedFailure}`);
-          } else if (published.publish.status === 'published' || published.publish.status === 'skipped') {
-            publishedCarriedLanes.push(lane.id);
-          }
-        } catch (error: unknown) {
-          publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);
-        }
-      }
-    }
-  }
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const carriedForwardLanes = localReview.status === 'passed'
     ? [...new Set([

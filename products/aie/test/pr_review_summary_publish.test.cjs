@@ -163,6 +163,112 @@ describe('GitHub round summary publish', () => {
     assert.match(String(payload?.message ?? ''), /Superseded by head new222/);
   });
 
+  it('fails the round publish when a later inline-comment chunk fails', async () => {
+    const findings = Array.from({ length: 21 }, (_, index) => ({
+      id: `f${index + 1}`,
+      severity: 'advisory',
+      message: `Finding ${index + 1}.`,
+      location: { path: 'src/a.ts', line: index + 1, side: 'destination' },
+    }));
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{
+        laneId: 'code-quality',
+        status: 'passed',
+        recommendation: 'approve',
+        summary: 'ok',
+        findings,
+        preconditions: [],
+        evidenceHeadSha: 'abc123',
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      }],
+    }), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    let reviewPosts = 0;
+    const exec = async (args) => {
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('POST')) {
+        reviewPosts += 1;
+        if (reviewPosts > 1) return { args, exitCode: 1, stdout: '', stderr: 'chunk rejected' };
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /chunk rejected/);
+  });
+
+  it('chunks inline comments past 20 and keeps the verdict on the primary event', async () => {
+    const findings = Array.from({ length: 21 }, (_, index) => ({
+      id: `f${index + 1}`,
+      severity: 'advisory',
+      message: `Finding ${index + 1}.`,
+      location: { path: 'src/a.ts', line: index + 1, side: 'destination' },
+    }));
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{
+        laneId: 'code-quality',
+        status: 'passed',
+        recommendation: 'approve',
+        summary: 'ok',
+        findings,
+        preconditions: [],
+        evidenceHeadSha: 'abc123',
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      }],
+    }), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    const reviewPosts = fixture.reviewPayloads.filter(payload => Array.isArray(payload.comments));
+    assert.ok(reviewPosts.length >= 2, 'expected a chunked second review call');
+    assert.equal(reviewPosts[0].event, 'APPROVE');
+    assert.ok(reviewPosts[0].comments.length <= 20);
+    assert.ok(reviewPosts.slice(1).every(payload => payload.event === 'COMMENT'));
+  });
+
+  it('creates one status comment and updates it in place on the next publish', async () => {
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const first = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+    const second = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(first.status, 'published');
+    assert.ok(second.status === 'published' || second.status === 'skipped');
+    const creates = fixture.events.filter(event => event.startsWith('api repos/example/repo/issues/12/comments --method POST') && fixture.reviewPayloads.some(payload => String(payload.body ?? '').includes('qube-pr-status')));
+    const updates = fixture.events.filter(event => /api repos\/example\/repo\/issues\/comments\/\d+ --method PATCH/.test(event));
+    assert.equal(creates.length, 1, 'the first run must create exactly one status comment');
+    assert.ok(updates.length >= 1, 'the second run must update the status comment in place');
+    const statusBodies = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status'));
+    assert.ok(statusBodies.some(body => body.includes('Round history') && body.includes('abc123')));
+    const lastStatus = statusBodies.at(-1) ?? '';
+    assert.match(lastStatus, /"rounds":\[\{"head":"abc123","verdict":"/);
+  });
+
+  it('parses nested status-comment rounds instead of truncating at the first brace', async () => {
+    const existing = {
+      author: { login: 'executor' },
+      body: '<!-- qube-pr-status:{"version":1,"prNumber":12,"rounds":[{"head":"old111","verdict":"approve"}]} -->\nReview status: approve.\n',
+      url: 'https://github.com/example/repo/pull/12#issuecomment-91',
+    };
+    const fixture = makePrExec({ prViews: [basePr({ headRefOid: 'new222', comments: [existing] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const render = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+    await provider.publishRoundReviewSummary(publishInputFromRender(render, { headSha: 'new222', round: 'round-new' }));
+    const statusBodies = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status'));
+    const lastStatus = statusBodies.at(-1) ?? '';
+    assert.match(lastStatus, /old111/);
+    assert.match(lastStatus, /new222/);
+  });
+
   it('still publishes the current-head summary when prior-head dismissal fails', async () => {
     const priorReview = {
       id: 888,

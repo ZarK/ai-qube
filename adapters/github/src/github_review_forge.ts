@@ -68,6 +68,27 @@ const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
 const MAX_LANE_HISTORY_RECORDS = 100;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
+const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
+
+function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
+  const text = body ?? '';
+  const prefix = '<!-- qube-pr-status:';
+  const start = text.indexOf(prefix);
+  if (start < 0) return [];
+  const jsonStart = start + prefix.length;
+  const end = text.indexOf(' -->', jsonStart);
+  if (end < 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(text.slice(jsonStart, end));
+    if (!isRecord(parsed) || !Array.isArray(parsed.rounds)) return [];
+    return parsed.rounds
+      .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
+      .map(entry => ({ head: entry.head, verdict: entry.verdict }))
+      .slice(-20);
+  } catch {
+    return [];
+  }
+}
 
 export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
 export type GitHubLocalReviewPublishStatus = 'disabled' | 'pending' | 'planned' | 'published' | 'skipped' | 'failed';
@@ -519,6 +540,16 @@ function laneReviewMarker(metadata: LaneReviewMetadata): string {
   return `<!-- ${LANE_REVIEW_MARKER_PREFIX}:${JSON.stringify(metadata)} -->`;
 }
 
+function parseAllLaneReviewMetadata(body: string | undefined): LaneReviewMetadata[] {
+  const records: LaneReviewMetadata[] = [];
+  const pattern = /<!--\s*qube-pr-review:(\{[\s\S]*?\})\s*-->/g;
+  for (const match of (body ?? '').matchAll(pattern)) {
+    const parsed = parseLaneReviewMetadata(match[0]);
+    if (parsed) records.push(parsed);
+  }
+  return records;
+}
+
 function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata | null {
   const match = (body ?? '').match(/<!--\s*qube-pr-review:(\{[\s\S]*?\})\s*-->/);
   if (!match) return null;
@@ -596,9 +627,10 @@ function trustedLaneReviewComment(comment: RawComment, trustedAuthor: TrustedAut
 function laneReviewComments(comments: RawComment[], trustedAuthor: TrustedAuthorInput, headSha: string): LaneReviewComment[] {
   const records: LaneReviewComment[] = [];
   for (const comment of comments) {
-    const metadata = trustedLaneReviewComment(comment, trustedAuthor);
-    if (!metadata) continue;
-    records.push({ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha, publishedAt: comment.createdAt ?? null });
+    if (!authorIsTrusted(comment.author?.login, trustedAuthor)) continue;
+    for (const metadata of parseAllLaneReviewMetadata(comment.body)) {
+      records.push({ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha, publishedAt: comment.createdAt ?? null });
+    }
   }
   return records;
 }
@@ -608,9 +640,9 @@ function laneReviewReviews(reviews: RawReview[], trustedAuthor: TrustedAuthorInp
   if (trustedAuthor !== 'any-valid-marker' && trustedAuthorsList(trustedAuthor).length === 0) return [];
   for (const review of reviews) {
     if (!authorIsTrusted(review.author?.login, trustedAuthor)) continue;
-    const metadata = parseLaneReviewMetadata(review.body);
-    if (!metadata) continue;
-    records.push({ metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
+    for (const metadata of parseAllLaneReviewMetadata(review.body)) {
+      records.push({ metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
+    }
   }
   return records;
 }
@@ -985,6 +1017,16 @@ function publishedCommentUrl(result: GhRunResult): string | null {
 
 function isCreatedPullReview(value: unknown): value is RawCreatedPullReview {
   return isRecord(value);
+}
+
+function publishedReviewId(result: GhRunResult): string | null {
+  try {
+    const parsed = parseGhJson<RawCreatedPullReview>(result.stdout, 'gh api create pull request review', isCreatedPullReview);
+    if (parsed.id !== undefined && parsed.id !== null && String(parsed.id).trim() !== '') return String(parsed.id);
+  } catch {
+    // Fall through.
+  }
+  return null;
 }
 
 function publishedReviewUrl(result: GhRunResult): string | null {
@@ -2467,6 +2509,27 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       // Dismissal failure must not block the current-head round summary.
     }
 
+    try {
+      await this.upsertRoundStatusComment({
+        repositoryName,
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        verdict: input.verdict,
+        comments,
+        trustedMarkerAuthor,
+        ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
+      });
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        marker: input.marker,
+        body: input.body,
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub status-comment permissions, then rerun the round summary publish for #${input.prNumber}.`,
+      });
+    }
+
     const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
     const live = existingRecords.filter(record => record.superseded !== true && record.prNumber === input.prNumber);
     const sameRoundRecord = live.find(record => record.head === input.headSha && record.round === input.round) ?? null;
@@ -2652,7 +2715,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       });
     };
 
-    const payload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: inlineComments };
+    const maxInlineComments = 20;
+    const primaryComments = inlineComments.slice(0, maxInlineComments);
+    const extraCommentChunks: JsonObject[][] = [];
+    for (let index = maxInlineComments; index < inlineComments.length; index += maxInlineComments) {
+      extraCommentChunks.push(inlineComments.slice(index, index + maxInlineComments));
+    }
+    const payload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: primaryComments };
     let result = await submitReview(payload);
     if (maybePendingReviewConflict(result)) {
       try {
@@ -2699,6 +2768,46 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${bodyOnlyResult.stderr || bodyOnlyResult.stdout || 'unknown'}`),
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun the round summary publish for #${input.prNumber}.`,
       });
+    }
+    for (const chunk of extraCommentChunks) {
+      const chunkResult = await submitReview({ commit_id: input.headSha, body: '', event: 'COMMENT', comments: chunk });
+      if (chunkResult.exitCode !== 0) {
+        const createdReviewId = publishedReviewId(result);
+        if (createdReviewId !== null) {
+          const tombstonedBody = input.body.replace(
+            /<!--\s*qube-pr-review-summary:(\{[\s\S]*?\})\s*-->/,
+            (full, json) => {
+              try {
+                const parsed = JSON.parse(json) as Record<string, unknown>;
+                parsed.superseded = true;
+                return `<!-- qube-pr-review-summary:${JSON.stringify(parsed)} -->`;
+              } catch {
+                return full;
+              }
+            },
+          );
+          const tombstonePath = reviewPayloadPath({
+            body: `${tombstonedBody}\n\nThis round review was superseded because not every inline finding published.`,
+          });
+          try {
+            await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${createdReviewId}`, '--method', 'PUT', '--input', tombstonePath], ghOptions);
+          } catch {
+            // The chunk failure remains the publish result even if tombstone fails.
+          } finally {
+            cleanupReviewPayload(tombstonePath);
+          }
+        }
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          failure: redact(chunkResult.stderr || chunkResult.stdout || 'gh api chunked inline review comments failed'),
+          nextAction: `Fix GitHub review comment permissions, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      }
     }
     return publishedResult(result, inlineComments.length, 'Provider-visible round summary was published; rerun PR view/gate to inspect provider state.');
   }
@@ -2873,6 +2982,53 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     ensureGhSuccess(`gh api pull review comments for PR ${prNumber}`, result);
     const parsed = parseGhJson<RawReviewComment[] | RawReviewComment[][]>(result.stdout, `gh api pull review comments for PR ${prNumber}`, isRawReviewCommentArray);
     return parsed.flat();
+  }
+
+  private async upsertRoundStatusComment(input: {
+    repositoryName: string;
+    prNumber: number;
+    headSha: string;
+    verdict: string;
+    comments: readonly RawComment[];
+    trustedMarkerAuthor: string;
+    ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
+  }): Promise<void> {
+    const priorRounds = parseStatusCommentRounds(input.comments.find(comment => (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`))?.body);
+    const rounds = [
+      ...priorRounds.filter(round => round.head !== input.headSha),
+      { head: input.headSha, verdict: input.verdict },
+    ];
+    const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber, rounds })} -->`;
+    const history = rounds.map(round => `- ${round.head.slice(0, 12)}: ${round.verdict}`).join('\n');
+    const body = [
+      marker,
+      '',
+      `Review status: ${input.verdict}.`,
+      `Head: ${input.headSha}.`,
+      '',
+      '<details>',
+      '<summary>Round history</summary>',
+      '',
+      history,
+      '',
+      '</details>',
+      '',
+      'Rerun: `aie pr gate ' + String(input.prNumber) + '`.',
+    ].join('\n');
+    const existing = input.comments.find(comment => authorIsTrusted(comment.author?.login, input.trustedMarkerAuthor) && (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`));
+    const commentId = existing ? issueCommentIdFromUrl(existing.url) : null;
+    const payloadPath = reviewPayloadPath({ body });
+    try {
+      if (commentId) {
+        const result = await runGh(['api', `repos/${input.repositoryName}/issues/comments/${commentId}`, '--method', 'PATCH', '--input', payloadPath], input.ghOptions);
+        if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment update failed');
+        return;
+      }
+      const result = await runGh(['api', `repos/${input.repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], input.ghOptions);
+      if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment create failed');
+    } finally {
+      cleanupReviewPayload(payloadPath);
+    }
   }
 
   private async dismissSupersededRequestChanges(input: {
