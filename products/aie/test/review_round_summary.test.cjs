@@ -364,6 +364,23 @@ describe('renderRoundSummaryBody', () => {
     assert.match(render.body, /docs: not run \(no evidence at this head\)/);
   });
 
+  it('deep-links a finding to the file and line when repository metadata is present', () => {
+    const input = roundInput({
+      expectedLanes: ['code-quality'],
+      lanes: [lane({
+        laneId: 'code-quality',
+        recommendation: 'request-changes',
+        findings: [finding({ severity: 'blocking', message: 'Broken parser.', location: { path: 'src/a.ts', line: 12, side: 'destination' } })],
+      })],
+    });
+    input.repository = { owner: 'ZarK', name: 'ai-qube' };
+    const render = renderRoundSummaryBody(input, { diffIndex: null });
+    assert.match(render.body, /https:\/\/github.com\/ZarK\/ai-qube\/blob\/headsha1234567\/src\/a.ts#L12/);
+    const first = render.body.indexOf('Broken parser.');
+    const last = render.body.lastIndexOf('Broken parser.');
+    assert.equal(first, last);
+  });
+
   it('keeps the verdict sentence inside a 180-character truncation of visible prose', () => {
     const input = roundInput({
       expectedLanes: ['code-quality'],

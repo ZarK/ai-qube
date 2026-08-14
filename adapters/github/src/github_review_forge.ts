@@ -226,6 +226,16 @@ export interface GitHubLaneReviewPublishResult {
 
 const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';
 
+function publishedRoundSummaryBody(
+  input: GitHubRoundSummaryPublishInput,
+  publishKind: 'pull-request-review' | 'issue-comment',
+): string {
+  if (publishKind === 'issue-comment' && typeof input.issueCommentBody === 'string' && input.issueCommentBody.trim() !== '') {
+    return input.issueCommentBody;
+  }
+  return input.body;
+}
+
 export interface GitHubRoundSummaryInlineFinding {
   laneId: string;
   finding: ReviewFinding;
@@ -242,6 +252,8 @@ export interface GitHubRoundSummaryPublishInput {
   verdict: GitHubLocalReviewRecommendation;
   /** Fully rendered markdown body, including the embedded qube-pr-review-summary marker, ready to publish verbatim. */
   body: string;
+  /** Re-rendered body for issue-comment transport; required so fallback never reuses the review-api prose. */
+  issueCommentBody?: string;
   marker: string;
   inlineFindings: readonly GitHubRoundSummaryInlineFinding[];
   unanchoredFindingCount: number;
@@ -2480,11 +2492,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     const publisherDowngradeReason = publisher.identity.formalEventCapability ? null : publisher.identity.fallbackReason;
 
     if (input.dryRun) {
+      const plannedKind = publisher.identity.formalEventCapability ? 'pull-request-review' : 'issue-comment';
       return roundSummaryPublishResult({
         status: 'planned',
         marker: input.marker,
-        body: input.body,
-        publishKind: publisher.identity.formalEventCapability ? 'pull-request-review' : 'issue-comment',
+        body: publishedRoundSummaryBody(input, plannedKind),
+        publishKind: plannedKind,
         inlineCommentCount: publisher.identity.formalEventCapability ? input.inlineFindings.length : 0,
         unanchoredFindingCount: publisher.identity.formalEventCapability ? input.unanchoredFindingCount : input.unanchoredFindingCount + input.inlineFindings.length,
         publisherDowngradeReason,
@@ -2582,7 +2595,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
           nextAction: 'The provider-visible round summary for this PR head is already published and unchanged.',
         });
       }
-      const payloadPath = reviewPayloadPath({ body: input.body });
+      const updateKind = sameRoundRecord.kind === 'review' ? 'pull-request-review' : 'issue-comment';
+      const updateBody = publishedRoundSummaryBody(input, updateKind);
+      const payloadPath = reviewPayloadPath({ body: updateBody });
       try {
         await assertHeadUnchanged();
         const endpoint = sameRoundRecord.kind === 'review'
@@ -2594,7 +2609,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         return roundSummaryPublishResult({
           status: 'published',
           marker: input.marker,
-          body: input.body,
+          body: updateBody,
           url,
           summaryUrl: url,
           publishKind: sameRoundRecord.kind === 'review' ? 'pull-request-review' : 'issue-comment',
@@ -2623,7 +2638,8 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
     // Same-author or missing-permission identities degrade to an issue comment.
     if (!publisher.identity.formalEventCapability) {
-      const payloadPath = reviewPayloadPath({ body: input.body });
+      const fallbackBody = publishedRoundSummaryBody(input, 'issue-comment');
+      const payloadPath = reviewPayloadPath({ body: fallbackBody });
       try {
         await assertHeadUnchanged();
         const commentResult = await runGh(['api', `repos/${repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], ghOptions);
@@ -2643,7 +2659,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         return roundSummaryPublishResult({
           status: 'published',
           marker: input.marker,
-          body: input.body,
+          body: fallbackBody,
           url,
           summaryUrl: url,
           publishKind: 'issue-comment',
@@ -2699,7 +2715,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       return roundSummaryPublishResult({
         status: 'published',
         marker: input.marker,
-        body: input.body,
+        body: publishedRoundSummaryBody(input, 'pull-request-review'),
         url,
         summaryUrl: url,
         publishKind: 'pull-request-review',
@@ -2718,7 +2734,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     for (let index = maxInlineComments; index < inlineComments.length; index += maxInlineComments) {
       extraCommentChunks.push(inlineComments.slice(index, index + maxInlineComments));
     }
-    const payload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: primaryComments };
+    const payload = { commit_id: input.headSha, body: publishedRoundSummaryBody(input, 'pull-request-review'), event: roundReviewEvent(input.verdict), comments: primaryComments };
     let result = await submitReview(payload);
     if (maybePendingReviewConflict(result)) {
       try {

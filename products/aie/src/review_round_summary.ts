@@ -4,7 +4,6 @@ import {
   GITHUB_REVIEW_RENDER_PROFILE,
   classifyReviewLaneState,
   renderInlineReviewComment,
-  renderLaneChips,
   renderRoundReviewBody,
   renderSuggestionFence as renderSharedSuggestionFence,
   suggestionFenceSafety as sharedSuggestionFenceSafety,
@@ -272,14 +271,6 @@ function toLaneRenderInput(lane: RoundSummaryLaneInput): ReviewLaneRenderInput {
     profile: lane.profile,
     evidencePath: lane.evidencePath,
   };
-}
-
-export function renderLaneRollupTable(lanes: readonly RoundSummaryLaneInput[], expectedLanes: readonly string[]): string {
-  return renderLaneChips(lanes.map(toLaneRenderInput), expectedLanes);
-}
-
-export function renderCollapsibleLaneDetails(lanes: readonly RoundSummaryLaneInput[], expectedLanes: readonly string[]): string {
-  return renderLaneChips(lanes.map(toLaneRenderInput), expectedLanes);
 }
 
 export interface RoundSummaryRenderOptions {

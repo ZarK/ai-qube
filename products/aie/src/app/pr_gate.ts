@@ -31,7 +31,7 @@ import { createReviewForgeProvider } from '../providers/review_forge_adapters.js
 import { evaluateReviewSourceContract, resolveReviewSources, type ReviewSourceContract } from '../review_source.js';
 import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { prReviewPublishFailureMessage, runPrReviewPublishWithProvider } from './pr_review_publish.js';
-import { runPrReviewSummaryPublishWithProvider } from './pr_review_summary_publish.js';
+import { reviewRepositoryFromPullRequestUrl, runPrReviewSummaryPublishWithProvider } from './pr_review_summary_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
@@ -1034,6 +1034,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           prNumber: options.prNumber,
           issueNumber: issueNumberForSummary,
           headSha: finalSnapshot.pr.headRefOid,
+          repository: reviewRepositoryFromPullRequestUrl(finalSnapshot.pr.url),
           repoRoot,
           exec: options.exec,
           expectedLanes: activeFocuses,

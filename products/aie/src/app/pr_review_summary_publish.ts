@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { normalizeReviewFinding, reviewFindingKey, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
+import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
@@ -16,6 +16,13 @@ const DEFAULT_REVIEW_NIT_CAP = 10;
 
 function safeHeadSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+export function reviewRepositoryFromPullRequestUrl(url: string | undefined): ReviewRepositoryRef | undefined {
+  if (!url) return undefined;
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/|$)/i.exec(url.trim());
+  if (!match) return undefined;
+  return { owner: match[1], name: match[2] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,6 +101,8 @@ export interface PrReviewSummaryPublishOptions {
   expectedLanes?: readonly LocalReviewLaneId[];
   /** Expected lanes whose current-head evidence is a trusted-provider reuse marker with no local evidence file. */
   providerReuseLanes?: readonly LocalReviewLaneId[];
+  /** Owner/name used for file deep links in the round summary. */
+  repository?: ReviewRepositoryRef;
   /** Paths changed by this PR head; see PrReviewPublishOptions.changedPaths for the same null/undefined/[] semantics. */
   changedPaths?: readonly string[] | null;
   deltaBaseRef?: string;
@@ -114,13 +123,15 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     throw new Error('publish round review summary failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the round summary.');
   }
   const repoRoot = options.repoRoot ?? process.cwd();
-  const target = options.headSha && options.issueNumber
-    ? null
-    : provider.loadPullRequestReviewTarget
+  const needsTarget = !options.headSha || !options.issueNumber || !options.repository;
+  const target = needsTarget
+    ? provider.loadPullRequestReviewTarget
       ? await provider.loadPullRequestReviewTarget(options.prNumber)
-      : await provider.loadPullRequestReview(options.prNumber);
+      : await provider.loadPullRequestReview(options.prNumber)
+    : null;
   const headSha = options.headSha ?? target?.pr.headRefOid ?? '';
   const issueNumber = options.issueNumber ?? target?.closingIssueNumbers[0] ?? 0;
+  const repository = options.repository ?? reviewRepositoryFromPullRequestUrl(target?.pr.url);
   if (issueNumber <= 0) {
     throw new Error('publish round review summary failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
@@ -185,19 +196,19 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   // not compute one; renderRoundSummaryBody then marks every finding
   // unanchored instead of guessing at diff coverage.
   const diffIndex = provider.loadReviewDiffIndex ? await provider.loadReviewDiffIndex(options.prNumber) : null;
-  const render = renderRoundSummaryBody(
-    {
-      prNumber: options.prNumber,
-      issueNumber,
-      headSha,
-      round,
-      expectedLanes: expectedLaneIds,
-      lanes: roundSummaryLanes,
-      priorRound: loadPriorRoundDelta(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds),
-      rerunCommand: `aie pr gate ${options.prNumber}`,
-    },
-    { diffIndex },
-  );
+  const renderInput = {
+    prNumber: options.prNumber,
+    issueNumber,
+    headSha,
+    round,
+    expectedLanes: expectedLaneIds,
+    lanes: roundSummaryLanes,
+    repository,
+    priorRound: loadPriorRoundDelta(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds),
+    rerunCommand: `aie pr gate ${options.prNumber}`,
+  };
+  const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api' });
+  const issueCommentRender = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor) }));
   const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,
@@ -218,6 +229,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
   })} -->`).join('\n');
   const consolidatedBody = `${laneMarkers}\n${render.body}`;
+  const issueCommentBody = `${laneMarkers}\n${issueCommentRender.body}`;
 
   if (!provider.publishRoundReviewSummary) {
     return {
@@ -245,6 +257,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     expectedLanes: expectedLaneIds,
     verdict: render.verdict,
     body: consolidatedBody,
+    issueCommentBody,
     marker: render.marker,
     inlineFindings,
     unanchoredFindingCount: render.unanchored.length,
