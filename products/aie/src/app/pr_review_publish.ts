@@ -535,6 +535,23 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   if (!options.expectedLanes || options.expectedLanes.length === 0) {
     throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the lane review.');
   }
+  if (provider.capabilities().publishLaneReview !== true) {
+    return {
+      ok: true,
+      command: 'pr review publish',
+      prNumber: options.prNumber,
+      lane: options.lane,
+      publish: {
+        status: 'skipped',
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        failure: null,
+        nextAction: `The configured review provider does not declare lane review publishing; skipped ${options.lane}.`,
+      },
+    };
+  }
   const repoRoot = options.repoRoot ?? process.cwd();
   const loadedSnapshot = options.headSha && options.issueNumber
     ? null

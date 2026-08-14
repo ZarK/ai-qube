@@ -80,11 +80,11 @@ const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   planReviewRequests: true,
   applyReviewRequests: true,
   publishLaneReview: true,
-  publishLaneReviewInline: false,
+  publishLaneReviewInline: true,
   publishLocalReview: false,
   resolveReviewThreads: true,
   ciDiagnostics: true,
-  publishRoundReviewSummary: false,
+  publishRoundReviewSummary: true,
 });
 
 const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
@@ -114,6 +114,8 @@ const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
     setup: Object.freeze([
       'GitLab review-forge support is available through the optional GitLab adapter package.',
       'Set GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL before reading or mutating GitLab merge request review state.',
+      'Use a project or group access token with api scope so notes, discussions, and approvals can be written.',
+      'A 401 response means the token is missing api scope. A 403 response means merge request approval permission is missing.',
     ]),
     create: async (options: ReviewForgeAdapterOptions) => {
       const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-gitlab', 'createGitLabReviewForgeProvider');

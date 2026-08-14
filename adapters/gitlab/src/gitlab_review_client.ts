@@ -1,9 +1,13 @@
 import type {
   GitLabDiscussion,
+  GitLabDiscussionPosition,
   GitLabMergeRequest,
+  GitLabMergeRequestDiff,
   GitLabNote,
+  GitLabProject,
   GitLabReviewProviderOptions,
   GitLabReviewRestClient,
+  GitLabTokenInfo,
   GitLabUser,
 } from "./gitlab_review_types.js";
 
@@ -87,6 +91,14 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}`, { resolved: "true" });
   }
 
+  async unresolveMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion> {
+    return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}`, { resolved: "false" });
+  }
+
+  async listMergeRequestDiffs(input: { projectId: string; iid: string }): Promise<GitLabMergeRequestDiff[]> {
+    return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/diffs`);
+  }
+
   async createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote> {
     return this.post(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`, { body: input.body });
   }
@@ -95,8 +107,40 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes/${encodeURIComponent(input.noteId)}`, { body: input.body });
   }
 
+  async createMergeRequestDiscussion(input: { projectId: string; iid: string; body: string; position: GitLabDiscussionPosition }): Promise<GitLabDiscussion> {
+    return this.postJson(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions`, {
+      body: input.body,
+      position: input.position,
+    });
+  }
+
+  async replyToMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string; body: string }): Promise<GitLabNote> {
+    return this.postJson(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}/notes`, {
+      body: input.body,
+    });
+  }
+
+  async approveMergeRequest(input: { projectId: string; iid: string; sha?: string }): Promise<void> {
+    await this.postJson(
+      `/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/approve`,
+      input.sha ? { sha: input.sha } : {},
+    );
+  }
+
+  async unapproveMergeRequest(input: { projectId: string; iid: string }): Promise<void> {
+    await this.postJson(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/unapprove`, {});
+  }
+
   async getCurrentUser(): Promise<GitLabUser> {
     return this.get("/user");
+  }
+
+  async getPersonalAccessTokenSelf(): Promise<GitLabTokenInfo> {
+    return this.get("/personal_access_tokens/self");
+  }
+
+  async getProject(input: { projectId: string }): Promise<GitLabProject> {
+    return this.get(`/projects/${encodeProjectId(input.projectId)}`);
   }
 
   private async get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
@@ -134,6 +178,10 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   private async post<T>(path: string, body: Record<string, string>): Promise<T> {
+    return this.postJson(path, body);
+  }
+
+  private async postJson<T>(path: string, body: unknown): Promise<T> {
     const response = await this.request(new URL(`${this.apiBaseUrl}${path}`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -170,6 +218,12 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
       throw error;
     }
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error(`GitLab API request failed while reading ${url.pathname}. Cause: HTTP 401. The token is missing the api scope or is invalid. Set a project or group access token with api scope, then retry.`);
+      }
+      if (response.status === 403) {
+        throw new Error(`GitLab API request failed while reading ${url.pathname}. Cause: HTTP 403. The token cannot approve or write merge request review data. Grant api scope and merge request approval permission, then retry.`);
+      }
       throw new Error(`GitLab API request failed while reading ${url.pathname}. Cause: HTTP ${response.status}. Next action: verify GITLAB_TOKEN, GITLAB_BASE_URL, GITLAB_PROJECT_ID, and project permissions, then retry.`);
     }
     return response;

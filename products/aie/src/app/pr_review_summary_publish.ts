@@ -145,6 +145,23 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   if (!options.expectedLanes || options.expectedLanes.length === 0) {
     throw new Error('publish round review summary failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the round summary.');
   }
+  const declaredCapabilities = provider.capabilities();
+  if (!provider.publishRoundReviewSummary || declaredCapabilities.publishRoundReviewSummary !== true) {
+    return {
+      ok: true,
+      command: 'pr review publish-summary',
+      prNumber: options.prNumber,
+      publish: {
+        status: 'skipped',
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        failure: null,
+        nextAction: 'The configured review provider does not declare round review summary publishing; per-lane review publishing remains the provider-visible feedback surface.',
+      },
+    };
+  }
   const repoRoot = options.repoRoot ?? process.cwd();
   const needsTarget = !options.headSha || !options.issueNumber || !options.repository;
   const target = needsTarget
@@ -232,9 +249,10 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     priorRound: loadPriorRoundDelta(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds),
     rerunCommand: `aie pr gate ${options.prNumber}`,
   };
-  const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api' });
+  const renderProfile = provider.id === 'gitlab' ? 'gitlab' : 'github';
+  const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api', profile: renderProfile });
   const issueCommentRender = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
-  const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor, { repository, headSha }) }));
+  const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor, { repository, headSha, profile: renderProfile }) }));
   const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,
     head: headSha,
@@ -255,23 +273,6 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   })} -->`).join('\n');
   const consolidatedBody = `${laneMarkers}\n${render.body}`;
   const issueCommentBody = `${laneMarkers}\n${issueCommentRender.body}`;
-
-  if (!provider.publishRoundReviewSummary) {
-    return {
-      ok: true,
-      command: 'pr review publish-summary',
-      prNumber: options.prNumber,
-      publish: {
-        status: 'disabled',
-        runId: null,
-        marker: render.marker,
-        body: consolidatedBody,
-        url: null,
-        failure: null,
-        nextAction: 'The configured review provider does not support round review summaries; per-lane review publishing remains the provider-visible feedback surface.',
-      },
-    };
-  }
 
   const publish = await provider.publishRoundReviewSummary({
     dryRun: options.dryRun ?? false,

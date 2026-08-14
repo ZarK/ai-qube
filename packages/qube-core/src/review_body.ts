@@ -4,14 +4,15 @@ import type { ReviewDiffIndex, ReviewFinding } from "./review_forge.js";
 export type ReviewRoundVerdict = "approve" | "request-changes" | "pending" | "inconclusive";
 export type ReviewLaneRenderState = "approved" | "request-changes" | "inconclusive" | "reused" | "carried" | "not-run";
 export type ReviewPublishTransport = "review-api" | "issue-comment";
-export type ReviewSuggestionFenceKind = "github" | "none";
+export type ReviewSuggestionFenceKind = "github" | "gitlab-offset" | "none";
 
 export const CLEAN_ROUND_PHRASE = "No issues found";
 export const DEGRADED_TRANSPORT_LABEL = "issue-comment transport";
 
 export interface ReviewRenderCapabilityProfile {
-  readonly id: "github" | "degraded";
+  readonly id: "github" | "gitlab" | "degraded";
   readonly alerts: boolean;
+  readonly alertStyle?: "github" | "admonition";
   readonly collapsedSections: boolean;
   readonly suggestionFence: ReviewSuggestionFenceKind;
   readonly sanitizeText?: (value: string) => string;
@@ -22,6 +23,14 @@ export const GITHUB_REVIEW_RENDER_PROFILE: ReviewRenderCapabilityProfile = Objec
   alerts: true,
   collapsedSections: true,
   suggestionFence: "github",
+});
+
+export const GITLAB_REVIEW_RENDER_PROFILE: ReviewRenderCapabilityProfile = Object.freeze({
+  id: "gitlab",
+  alerts: true,
+  alertStyle: "admonition",
+  collapsedSections: true,
+  suggestionFence: "gitlab-offset",
 });
 
 export const DEGRADED_REVIEW_RENDER_PROFILE: ReviewRenderCapabilityProfile = Object.freeze({
@@ -223,10 +232,19 @@ function renderVerdictBlock(
     : "";
   const downgrade = downgradeReason && downgradeReason.trim() !== "" ? ` Publisher downgrade: ${downgradeReason.trim()}.` : "";
   const full = `${sentence}${degradeNote}${downgrade}`;
+  if (profile.alerts && profile.alertStyle === "admonition") {
+    return `> **${admonitionKind(verdict)}:** ${full}`;
+  }
   if (profile.alerts) {
     return [`> [!${alertKind(verdict)}]`, `> ${full}`].join("\n");
   }
   return `**${full}**`;
+}
+
+function admonitionKind(verdict: ReviewRoundVerdict): string {
+  if (verdict === "request-changes") return "Caution";
+  if (verdict === "approve") return "Note";
+  return "Warning";
 }
 
 function findingClaim(profile: ReviewRenderCapabilityProfile, finding: ReviewFinding): string {
@@ -250,8 +268,10 @@ function fileDeepLink(
   finding: ReviewFinding,
   headSha: string,
   repository: ReviewRepositoryRef | undefined,
+  profile: ReviewRenderCapabilityProfile = GITHUB_REVIEW_RENDER_PROFILE,
 ): string {
   const label = fileLocationText(finding);
+  if (profile.id === "gitlab") return label;
   if (!finding.location || !repository || headSha.trim() === "") return label;
   const start = finding.location.line;
   const end = finding.location.endLine && finding.location.endLine !== start ? `-L${finding.location.endLine}` : "";
@@ -278,7 +298,7 @@ function renderFindingTable(
   if (findings.length === 0) return "";
   const rows = findings.map((row) => {
     const claim = findingClaim(profile, row.finding);
-    return `| ${row.finding.severity} | **${claim}** ${reviewFindingMarker(row.finding)} | ${fileDeepLink(row.finding, headSha, repository)} | ${threadCell(row, transport)} | ${row.laneId} |`;
+    return `| ${row.finding.severity} | **${claim}** ${reviewFindingMarker(row.finding)} | ${fileDeepLink(row.finding, headSha, repository, profile)} | ${threadCell(row, transport)} | ${row.laneId} |`;
   });
   return [
     "| Severity | Finding | Location | Thread | Lane |",
@@ -612,7 +632,13 @@ export function renderSuggestionFence(
   if (profile.suggestionFence === "none") return null;
   const safety = suggestionFenceSafety(input);
   if (!safety.safe) return null;
-  return ["```suggestion", sanitize(profile, (input.finding.suggestion ?? "").replace(/\r\n/g, "\n")), "```"].join("\n");
+  const replacement = sanitize(profile, (input.finding.suggestion ?? "").replace(/\r\n/g, "\n"));
+  if (profile.suggestionFence === "gitlab-offset") {
+    const span = clipReviewAnchorSpan(input.finding);
+    const extraAfter = span ? Math.max(0, span.endLine - span.line) : 0;
+    return ["```suggestion:-0+" + String(extraAfter), replacement, "```"].join("\n");
+  }
+  return ["```suggestion", replacement, "```"].join("\n");
 }
 
 function findingMechanism(profile: ReviewRenderCapabilityProfile, finding: ReviewFinding, claim: string): string {
@@ -662,7 +688,7 @@ export function renderInlineReviewComment(
   const fence = renderSuggestionFence({ ...input, finding: published }, profile);
   const span = clipReviewAnchorSpan(input.finding);
   const permalink = span?.clipped && input.repository && input.headSha
-    ? fileDeepLink({ ...input.finding, location: input.finding.location ? { ...input.finding.location, line: input.finding.location.line, endLine: span.evidenceEndLine } : undefined }, input.headSha, input.repository)
+    ? fileDeepLink({ ...input.finding, location: input.finding.location ? { ...input.finding.location, line: input.finding.location.line, endLine: span.evidenceEndLine } : undefined }, input.headSha, input.repository, profile)
     : span?.clipped && input.finding.location
       ? `${input.finding.location.path}:${span.line}-${span.evidenceEndLine}`
       : null;

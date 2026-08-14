@@ -34,6 +34,24 @@ export interface GitLabMergeRequest {
   readonly assignees?: GitLabUser[];
   readonly head_pipeline?: GitLabPipeline | null;
   readonly references?: { readonly short?: string; readonly relative?: string; readonly full?: string };
+  readonly diff_refs?: GitLabDiffRefs | null;
+}
+
+export interface GitLabDiffRefs {
+  readonly base_sha?: string;
+  readonly start_sha?: string;
+  readonly head_sha?: string;
+}
+
+export interface GitLabDiscussionPosition {
+  readonly base_sha: string;
+  readonly start_sha: string;
+  readonly head_sha: string;
+  readonly position_type: "text";
+  readonly old_path: string;
+  readonly new_path: string;
+  readonly old_line?: number;
+  readonly new_line?: number;
 }
 
 export interface GitLabNote {
@@ -55,15 +73,51 @@ export interface GitLabDiscussion {
   readonly notes?: GitLabNote[];
 }
 
+export interface GitLabMergeRequestDiff {
+  readonly old_path?: string;
+  readonly new_path?: string;
+  readonly diff?: string;
+  readonly renamed_file?: boolean;
+  readonly new_file?: boolean;
+  readonly deleted_file?: boolean;
+}
+
+export interface GitLabTokenInfo {
+  readonly scopes?: readonly string[];
+}
+
+export interface GitLabProject {
+  readonly permissions?: {
+    readonly project_access?: { readonly access_level?: number } | null;
+    readonly group_access?: { readonly access_level?: number } | null;
+  };
+}
+
+export interface GitLabReviewPermissionDiagnosis {
+  readonly login: string | null;
+  readonly tokenPresent: boolean;
+  readonly apiScope: "ok" | "missing" | "unknown";
+  readonly approvalPermission: "ok" | "missing" | "unknown";
+  readonly failure: string | null;
+}
+
 export interface GitLabReviewRestClient {
   getMergeRequest(input: { projectId: string; iid: string }): Promise<GitLabMergeRequest>;
   findMergeRequestForBranch?(input: { projectId: string; sourceBranch: string }): Promise<GitLabMergeRequest | null>;
   listMergeRequestNotes(input: { projectId: string; iid: string }): Promise<GitLabNote[]>;
   listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]>;
+  listMergeRequestDiffs?(input: { projectId: string; iid: string }): Promise<GitLabMergeRequestDiff[]>;
   resolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
+  unresolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote>;
   updateMergeRequestNote?(input: { projectId: string; iid: string; noteId: string; body: string }): Promise<GitLabNote>;
+  createMergeRequestDiscussion?(input: { projectId: string; iid: string; body: string; position: GitLabDiscussionPosition }): Promise<GitLabDiscussion>;
+  replyToMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string; body: string }): Promise<GitLabNote>;
+  approveMergeRequest?(input: { projectId: string; iid: string; sha?: string }): Promise<void>;
+  unapproveMergeRequest?(input: { projectId: string; iid: string }): Promise<void>;
   getCurrentUser?(): Promise<GitLabUser>;
+  getPersonalAccessTokenSelf?(): Promise<GitLabTokenInfo>;
+  getProject?(input: { projectId: string }): Promise<GitLabProject>;
 }
 
 export type GitLabReviewFetch = typeof fetch;

@@ -25,6 +25,14 @@ Supported now:
   lane review feedback with stable QUBE metadata.
 - GitLab merge request discussions are read as code conversation feedback and
   unresolved discussions are exposed as merge blockers.
+- AIE publishes diff-anchored findings as positioned GitLab discussions, with
+  committable ` ```suggestion:-X+Y ` fences from the shared GitLab renderer
+  profile.
+- AIE publishes one round summary note per merge request head, updates that
+  note in place on the same head, and tombstones it when the head changes.
+- An approving round approves the merge request. A request-changes round
+  revokes that approval. Both use the configured project or group access token.
+- AIE keeps one status note and edits it in place on later gate runs.
 - AIE can resolve addressed GitLab merge request discussions through
   `aie pr thread resolve` when the GitLab review provider is selected.
 - GitLab merge request `head_pipeline` status is exposed as provider gate
@@ -38,7 +46,7 @@ Explicitly unsupported now:
   issue payloads.
 - AIE does not mutate GitLab issue states, labels, comments, assignees, or
   completion state yet.
-- AIE does not create, update, approve, merge, or close GitLab merge requests.
+- AIE does not create, merge, or close GitLab merge requests.
 - AIE does not trigger or rerun GitLab pipelines yet.
 - AIE does not silently fall back to GitHub labels, pull requests, or Actions
   when GitLab lifecycle, review, or CI behavior is requested.
@@ -48,13 +56,20 @@ Explicitly unsupported now:
 GitLab read flows require explicit credentials and project scope:
 
 ```bash
-GITLAB_TOKEN=<personal-or-project-access-token>
+GITLAB_TOKEN=<project-or-group-access-token-with-api-scope>
 GITLAB_PROJECT_ID=<numeric-project-id-or-url-encoded-project-path>
 GITLAB_BASE_URL=https://gitlab.com
 ```
 
 `GITLAB_BASE_URL` is optional and defaults to GitLab.com. Set it for
 self-managed GitLab instances.
+
+Review publish, inline discussions, and merge request approval require a
+project or group access token with the `api` scope. A 401 response from
+publish means that scope is missing. A 403 response means the token cannot
+approve the merge request. Run `aie review doctor --json` after the token
+is set. Allow the token user to approve merge requests in the project
+approval settings.
 
 The Executor config can select GitLab as both the work provider and the review
 provider:

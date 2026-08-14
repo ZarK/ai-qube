@@ -1,6 +1,7 @@
 import {
   createAction,
   createActionPlan,
+  loginsMatch,
   normalizeGateEvidence,
   normalizeProviderSource,
   normalizeReviewFinding,
@@ -20,12 +21,27 @@ import {
   type ResolveReviewThreadResult,
   type ReviewItem,
   type ReviewItemKey,
+  type ReviewDiffIndex,
   type ReviewLaneReviewPublishInput,
   type ReviewLaneReviewPublishResult,
   type ReviewMergeBlock,
+  type ReviewRoundSummaryPublishInput,
+  type ReviewRoundSummaryPublishResult,
 } from "@tjalve/qube-core";
 import { createHash } from "node:crypto";
 import { FetchGitLabReviewRestClient, normalizeMergeRequestIid, required } from "./gitlab_review_client.js";
+import {
+  classifyGitLabPublishError,
+  discussionPosition,
+  isBenignApprovalStateError,
+  parseGitLabDiffIndex,
+  parseRoundSummaryMarker,
+  parseStatusNoteRounds,
+  planGitLabThreadLifecycle,
+  renamedOldPath,
+  renderStatusNote,
+  summaryNoteBody,
+} from "./gitlab_review_publish.js";
 import { displayId, headSha, jsonValue, metadataLine, normalizeHandle, noteMetadata, reviewerId, userName } from "./gitlab_review_metadata.js";
 import type {
   GitLabCiDiagnostic,
@@ -33,6 +49,7 @@ import type {
   GitLabMergeRequest,
   GitLabMetadata,
   GitLabNote,
+  GitLabReviewPermissionDiagnosis,
   GitLabReviewProviderOptions,
   GitLabReviewPullRequest,
   GitLabReviewRestClient,
@@ -329,7 +346,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   capabilities(): ReviewForgeCapabilities {
-    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: false, resolveReviewThreads: true };
+    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewSummary: true };
   }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
@@ -698,6 +715,356 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       && record.summary === redact(input.summary)
       && record.findingDigest === plannedMetadata.findingDigest
       && record.stale !== true);
+  }
+
+  async loadReviewDiffIndex(prNumber: number): Promise<ReviewDiffIndex | null> {
+    if (!this.client.listMergeRequestDiffs) return null;
+    try {
+      const diffs = await this.client.listMergeRequestDiffs({ projectId: this.projectId, iid: String(prNumber) });
+      return parseGitLabDiffIndex(diffs);
+    } catch {
+      return null;
+    }
+  }
+
+  async diagnoseReviewPermissions(): Promise<GitLabReviewPermissionDiagnosis> {
+    const tokenPresent = Boolean((this.options.token ?? process.env.GITLAB_TOKEN ?? "").trim());
+    if (!tokenPresent) {
+      return {
+        login: null,
+        tokenPresent: false,
+        apiScope: "missing",
+        approvalPermission: "missing",
+        failure: "GITLAB_TOKEN is not set. Set a project or group access token with api scope.",
+      };
+    }
+    let login: string | null = null;
+    try {
+      login = await this.trustedMarkerAuthor();
+    } catch (error) {
+      const message = classifyGitLabPublishError(error);
+      if (/HTTP 401/.test(message)) {
+        return { login: null, tokenPresent: true, apiScope: "missing", approvalPermission: "unknown", failure: message };
+      }
+    }
+    let apiScope: GitLabReviewPermissionDiagnosis["apiScope"] = login ? "ok" : "unknown";
+    if (this.client.getPersonalAccessTokenSelf) {
+      try {
+        const token = await this.client.getPersonalAccessTokenSelf();
+        const scopes = (token.scopes ?? []).map((scope) => scope.toLowerCase());
+        apiScope = scopes.includes("api") ? "ok" : "missing";
+      } catch (error) {
+        const message = classifyGitLabPublishError(error);
+        if (/HTTP 401/.test(message)) apiScope = "missing";
+      }
+    }
+    let approvalPermission: GitLabReviewPermissionDiagnosis["approvalPermission"] = "unknown";
+    if (this.client.getProject) {
+      try {
+        const project = await this.client.getProject({ projectId: this.projectId });
+        const level = project.permissions?.project_access?.access_level ?? project.permissions?.group_access?.access_level ?? null;
+        if (typeof level === "number") approvalPermission = level >= 30 ? "ok" : "missing";
+      } catch (error) {
+        const message = classifyGitLabPublishError(error);
+        if (/HTTP 403/.test(message) || /HTTP 401/.test(message)) approvalPermission = "missing";
+      }
+    }
+    const failure = apiScope === "missing"
+      ? "GitLab token is missing the api scope. Create a project or group access token with api scope."
+      : approvalPermission === "missing"
+        ? "GitLab token cannot approve merge requests. Use a project or group access token whose role may approve."
+        : null;
+    return { login, tokenPresent: true, apiScope, approvalPermission, failure };
+  }
+
+  async publishRoundReviewSummary(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult> {
+    const body = summaryNoteBody(input);
+    if (input.dryRun) {
+      return {
+        status: "planned",
+        runId: input.round,
+        marker: input.marker,
+        body,
+        url: null,
+        publishKind: "issue-comment",
+        inlineCommentCount: input.inlineFindings.length,
+        unanchoredFindingCount: input.unanchoredFindingCount,
+        failure: null,
+        nextAction: `Rerun without --dry-run to publish the GitLab round summary for !${input.prNumber}.`,
+      };
+    }
+    try {
+      const mergeRequest = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const currentHead = typeof mergeRequest.sha === "string" ? mergeRequest.sha : "";
+      if (currentHead === "" || currentHead !== input.headSha) {
+        return {
+          status: "failed",
+          runId: input.round,
+          marker: input.marker,
+          body,
+          url: null,
+          failure: currentHead === ""
+            ? `merge request !${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitLab reports the current head.`
+            : `merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`,
+          nextAction: "Rerun the round summary publish for the current merge request head.",
+        };
+      }
+      const publisher = await this.trustedMarkerAuthor();
+      if (!publisher) {
+        return {
+          status: "failed",
+          runId: input.round,
+          marker: input.marker,
+          body,
+          url: null,
+          failure: "GitLab publisher identity is unresolved, so review markers cannot be trusted. Verify GITLAB_TOKEN can call /user.",
+          nextAction: "Set a project or group access token with api scope, then rerun the round summary publish.",
+        };
+      }
+      const notes = await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
+      const live = notes.flatMap((note) => {
+        const parsed = parseRoundSummaryMarker(note.body);
+        if (!parsed || parsed.prNumber !== input.prNumber || parsed.superseded) return [];
+        if (!loginsMatch(userName(note.author), publisher)) return [];
+        return [{ note, parsed }];
+      });
+
+      const assertHeadUnchanged = async (): Promise<void> => {
+        const fresh = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+        const freshHead = typeof fresh.sha === "string" ? fresh.sha : "";
+        if (freshHead === "" || freshHead !== input.headSha) {
+          throw new Error(freshHead === ""
+            ? `merge request !${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+            : `merge request !${input.prNumber} head changed from ${input.headSha} to ${freshHead} before publication; rerun pr gate for the current head.`);
+        }
+      };
+
+      await this.upsertGitLabStatusNote(input, notes, publisher);
+      let supersededPriorSummaries = 0;
+      if (this.client.updateMergeRequestNote) {
+        for (const record of live.filter((entry) => entry.parsed.head !== input.headSha)) {
+          const tombstone = [
+            `<!-- qube-pr-review-summary:${JSON.stringify({ version: 1, head: record.parsed.head, round: record.parsed.round, prNumber: record.parsed.prNumber, findingDigest: record.parsed.findingDigest, superseded: true })} -->`,
+            "",
+            "This round summary was superseded by a review of a later head; see the latest QUBE round summary for this merge request.",
+          ].join("\n");
+          try {
+            await assertHeadUnchanged();
+            await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(record.note.id), body: tombstone });
+            supersededPriorSummaries += 1;
+          } catch {
+            // Best-effort supersession; the current summary still publishes below.
+          }
+        }
+      }
+      const sameRound = live.find((entry) => entry.parsed.head === input.headSha && entry.parsed.round === input.round) ?? null;
+      if (sameRound && sameRound.parsed.findingDigest === input.findingDigest) {
+        const lifecycleFailure = await this.applyGitLabThreadLifecycle(input, mergeRequest, publisher);
+        if (lifecycleFailure) {
+          return {
+            status: "failed",
+            runId: input.round,
+            marker: input.marker,
+            body,
+            url: sameRound.note.web_url ?? null,
+            summaryUrl: sameRound.note.web_url ?? null,
+            publishKind: "issue-comment",
+            supersededPriorSummaries,
+            failure: lifecycleFailure,
+            nextAction: `The GitLab round summary body is unchanged, but thread lifecycle did not complete: ${lifecycleFailure}`,
+          };
+        }
+        await this.applyGitLabApproval(input);
+        return {
+          status: "skipped",
+          runId: input.round,
+          marker: input.marker,
+          body: null,
+          url: sameRound.note.web_url ?? null,
+          summaryUrl: sameRound.note.web_url ?? null,
+          publishKind: "issue-comment",
+          supersededPriorSummaries,
+          failure: null,
+          nextAction: "The provider-visible GitLab round summary for this merge request head is already published and unchanged.",
+        };
+      }
+      await assertHeadUnchanged();
+      let summaryNote: GitLabNote;
+      if (sameRound && this.client.updateMergeRequestNote) {
+        summaryNote = await this.client.updateMergeRequestNote({
+          projectId: this.projectId,
+          iid: String(input.prNumber),
+          noteId: String(sameRound.note.id),
+          body,
+        });
+      } else {
+        summaryNote = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body });
+      }
+      const lifecycleFailure = await this.applyGitLabThreadLifecycle(input, mergeRequest, publisher);
+      if (lifecycleFailure) {
+        return {
+          status: "failed",
+          runId: input.round,
+          marker: input.marker,
+          body,
+          url: summaryNote.web_url ?? null,
+          summaryUrl: summaryNote.web_url ?? null,
+          publishKind: "issue-comment",
+          supersededPriorSummaries,
+          failure: lifecycleFailure,
+          nextAction: `The GitLab round summary note was written, but thread lifecycle did not complete: ${lifecycleFailure}`,
+        };
+      }
+      await this.applyGitLabApproval(input);
+      return {
+        status: "published",
+        runId: input.round,
+        marker: input.marker,
+        body,
+        url: summaryNote.web_url ?? null,
+        summaryUrl: summaryNote.web_url ?? null,
+        publishKind: "issue-comment",
+        inlineCommentCount: input.inlineFindings.length,
+        unanchoredFindingCount: input.unanchoredFindingCount,
+        supersededPriorSummaries,
+        failure: null,
+        nextAction: "Provider-visible GitLab round summary was published; rerun MR view/gate to inspect provider state.",
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        runId: input.round,
+        marker: input.marker,
+        body,
+        url: null,
+        failure: classifyGitLabPublishError(error),
+        nextAction: `Fix GitLab note, discussion, or approval permissions, then rerun the round summary publish for !${input.prNumber}.`,
+      };
+    }
+  }
+
+  private async applyGitLabThreadLifecycle(
+    input: ReviewRoundSummaryPublishInput,
+    mergeRequest: GitLabMergeRequest,
+    publisher: string | null,
+  ): Promise<string | null> {
+    const publisherLogins = publisher ? [publisher] : [];
+    let discussions: GitLabDiscussion[] = [];
+    try {
+      discussions = await this.client.listMergeRequestDiscussions({ projectId: this.projectId, iid: String(input.prNumber) });
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const diffs = this.client.listMergeRequestDiffs
+      ? await this.client.listMergeRequestDiffs({ projectId: this.projectId, iid: String(input.prNumber) }).catch(() => [])
+      : [];
+    const actions = planGitLabThreadLifecycle({
+      findings: input.inlineFindings.map((entry) => entry.finding),
+      discussions,
+      publisherLogins,
+      headSha: input.headSha,
+      round: input.round,
+      dispositions: input.dispositions,
+    });
+    for (const action of actions) {
+      if (action.kind === "minimize-outdated") {
+        continue;
+      }
+      if (action.kind === "reply-still-present" && action.threadId && action.body) {
+        if (action.unresolve && this.client.unresolveMergeRequestDiscussion) {
+          await this.client.unresolveMergeRequestDiscussion({
+            projectId: this.projectId,
+            iid: String(input.prNumber),
+            discussionId: action.threadId,
+          });
+        }
+        if (this.client.replyToMergeRequestDiscussion) {
+          await this.client.replyToMergeRequestDiscussion({
+            projectId: this.projectId,
+            iid: String(input.prNumber),
+            discussionId: action.threadId,
+            body: action.body,
+          });
+        }
+      }
+      if (action.kind === "resolve" && action.threadId) {
+        if (action.body && this.client.replyToMergeRequestDiscussion) {
+          await this.client.replyToMergeRequestDiscussion({
+            projectId: this.projectId,
+            iid: String(input.prNumber),
+            discussionId: action.threadId,
+            body: action.body,
+          });
+        }
+        if (this.client.resolveMergeRequestDiscussion) {
+          await this.client.resolveMergeRequestDiscussion({
+            projectId: this.projectId,
+            iid: String(input.prNumber),
+            discussionId: action.threadId,
+          });
+        }
+      }
+      if (action.kind === "new-inline" && action.finding?.location && this.client.createMergeRequestDiscussion) {
+        const path = action.finding.location.path;
+        const position = discussionPosition({
+          diffRefs: mergeRequest.diff_refs,
+          path,
+          oldPath: renamedOldPath(diffs, path),
+          line: action.finding.location.line ?? 0,
+          side: action.finding.location.side,
+        });
+        if (!position || !action.finding.location.line) {
+          continue;
+        }
+        const comment = input.inlineFindings.find((entry) => entry.finding === action.finding);
+        await this.client.createMergeRequestDiscussion({
+          projectId: this.projectId,
+          iid: String(input.prNumber),
+          body: comment?.commentBody ?? action.finding.message,
+          position,
+        });
+      }
+    }
+    return null;
+  }
+
+  private async applyGitLabApproval(input: ReviewRoundSummaryPublishInput): Promise<void> {
+    if (input.verdict !== "approve" && input.verdict !== "request-changes") return;
+    try {
+      if (input.verdict === "approve") {
+        if (!this.client.approveMergeRequest) {
+          throw new Error("GitLab approval permission is missing. The review client cannot approve this merge request.");
+        }
+        await this.client.approveMergeRequest({ projectId: this.projectId, iid: String(input.prNumber), sha: input.headSha });
+        return;
+      }
+      if (!this.client.unapproveMergeRequest) {
+        throw new Error("GitLab approval permission is missing. The review client cannot revoke approval on this merge request.");
+      }
+      await this.client.unapproveMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+    } catch (error) {
+      if (isBenignApprovalStateError(error)) return;
+      throw new Error(classifyGitLabPublishError(error, "approve"));
+    }
+  }
+
+  private async upsertGitLabStatusNote(
+    input: ReviewRoundSummaryPublishInput,
+    notes: readonly GitLabNote[],
+    publisher: string,
+  ): Promise<void> {
+    const existing = notes.find((note) => {
+      if (parseStatusNoteRounds(note.body).length === 0 && !note.body.includes("<!-- qube-pr-status:")) return false;
+      return loginsMatch(userName(note.author), publisher);
+    });
+    const prior = existing ? parseStatusNoteRounds(existing.body) : [];
+    const next = [...prior.filter((round) => round.head !== input.headSha), { head: input.headSha, verdict: input.verdict }];
+    const body = renderStatusNote(next, input.prNumber);
+    if (existing && this.client.updateMergeRequestNote) {
+      await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existing.id), body });
+      return;
+    }
+    await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body });
   }
 }
 

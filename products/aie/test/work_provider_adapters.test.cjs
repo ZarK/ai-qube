@@ -97,7 +97,8 @@ describe('work provider adapter boundary', () => {
       assert.equal(byId.gitlab.capabilities.loadReview, true);
       assert.equal(byId.gitlab.capabilities.planReviewRequests, true);
       assert.equal(byId.gitlab.capabilities.publishLaneReview, true);
-      assert.equal(byId.gitlab.capabilities.publishLaneReviewInline, false);
+      assert.equal(byId.gitlab.capabilities.publishLaneReviewInline, true);
+      assert.equal(byId.gitlab.capabilities.publishRoundReviewSummary, true);
       assert.equal(byId.gitlab.capabilities.publishLocalReview, false);
       assert.equal(byId.gitlab.capabilities.ciDiagnostics, true);
       assert.equal(reviewForgeAdapterPackage('gitlab'), '@tjalve/qube-adapter-gitlab');

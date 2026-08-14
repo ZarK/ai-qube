@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   DEGRADED_REVIEW_RENDER_PROFILE,
   GITHUB_REVIEW_RENDER_PROFILE,
+  GITLAB_REVIEW_RENDER_PROFILE,
   classifyReviewLaneState,
   renderInlineReviewComment,
   renderRoundReviewBody,
@@ -147,13 +148,15 @@ export function suggestionFenceSafety(anchor: FindingAnchor): SuggestionSafety {
   return sharedSuggestionFenceSafety(anchor);
 }
 
-export function renderSuggestionFence(anchor: FindingAnchor): string | null {
-  return renderSharedSuggestionFence(anchor, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
+export function renderSuggestionFence(anchor: FindingAnchor, profileId: 'github' | 'gitlab' | 'degraded' = 'github'): string | null {
+  const profile = profileId === 'gitlab' ? GITLAB_REVIEW_RENDER_PROFILE : profileId === 'degraded' ? DEGRADED_REVIEW_RENDER_PROFILE : GITHUB_REVIEW_RENDER_PROFILE;
+  return renderSharedSuggestionFence(anchor, { ...profile, sanitizeText });
 }
 
 /** Full inline review-comment body: finding text plus a safe suggestion fence when one applies. */
-export function renderInlineCommentBody(anchor: FindingAnchor, context: { readonly repository?: ReviewRepositoryRef; readonly headSha?: string } = {}): string {
-  return renderInlineReviewComment({ ...anchor, repository: context.repository, headSha: context.headSha }, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
+export function renderInlineCommentBody(anchor: FindingAnchor, context: { readonly repository?: ReviewRepositoryRef; readonly headSha?: string; readonly profile?: 'github' | 'gitlab' | 'degraded' } = {}): string {
+  const profile = context.profile === 'gitlab' ? GITLAB_REVIEW_RENDER_PROFILE : context.profile === 'degraded' ? DEGRADED_REVIEW_RENDER_PROFILE : GITHUB_REVIEW_RENDER_PROFILE;
+  return renderInlineReviewComment({ ...anchor, repository: context.repository, headSha: context.headSha }, { ...profile, sanitizeText });
 }
 
 export const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';
@@ -283,7 +286,7 @@ export interface RoundSummaryRenderOptions {
   readonly publisherDowngradeReason?: string | null;
   readonly supersededPriorSummaries?: number;
   readonly transport?: ReviewPublishTransport;
-  readonly profile?: 'github' | 'degraded';
+  readonly profile?: 'github' | 'gitlab' | 'degraded';
 }
 
 export interface RoundSummaryRender {
@@ -310,7 +313,9 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
   const transport = options.transport ?? input.transport ?? (options.publisherDowngradeReason ? 'issue-comment' : 'review-api');
   const profile = options.profile === 'degraded' || transport === 'issue-comment'
     ? { ...DEGRADED_REVIEW_RENDER_PROFILE, sanitizeText }
-    : { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText };
+    : options.profile === 'gitlab'
+      ? { ...GITLAB_REVIEW_RENDER_PROFILE, sanitizeText }
+      : { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText };
 
   const metadata: RoundSummaryMarkerMetadata = {
     version: 1,

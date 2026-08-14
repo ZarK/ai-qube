@@ -6,6 +6,7 @@ import {
   DEGRADED_REVIEW_RENDER_PROFILE,
   DEGRADED_TRANSPORT_LABEL,
   GITHUB_REVIEW_RENDER_PROFILE,
+  GITLAB_REVIEW_RENDER_PROFILE,
   UNTRUSTED_FIX_GUARDRAIL,
   classifyReviewLaneState,
   clipReviewAnchorSpan,
@@ -337,6 +338,28 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     });
     assert.doesNotMatch(unsafe, /```suggestion/);
     assert.match(unsafe, /no committable suggestion:/);
+  });
+
+  it("renders GitLab offset suggestion fences and withholds prose", () => {
+    const body = renderInlineReviewComment({
+      laneId: "code-quality",
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, endLine: 6, side: "destination" },
+        suggestion: "const a = 1;\nconst b = 2;",
+      }),
+    }, GITLAB_REVIEW_RENDER_PROFILE);
+    assert.match(body, /```suggestion:-0\+1\nconst a = 1;\nconst b = 2;\n```/);
+    assert.doesNotMatch(body, /> \[!/);
+    const prose = renderInlineReviewComment({
+      laneId: "code-quality",
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Please rewrite this function more clearly.",
+      }),
+    }, GITLAB_REVIEW_RENDER_PROFILE);
+    assert.doesNotMatch(prose, /```suggestion/);
   });
 
   it("never puts prose in a suggestion fence", () => {

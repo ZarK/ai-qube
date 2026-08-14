@@ -26,6 +26,10 @@ export {
   createGitLabReviewProvider,
   GitLabReviewForgeProvider,
 } from "./gitlab_review_forge.js";
+export {
+  discussionPosition,
+  parseRoundSummaryMarker,
+} from "./gitlab_review_publish.js";
 export type {
   GitLabReviewProvider,
 } from "./gitlab_review_forge.js";
