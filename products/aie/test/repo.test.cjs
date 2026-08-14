@@ -1451,6 +1451,126 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'modules/app'), false);
   });
 
+  it('inspects a docs content repo layout with docs projects and local signals', async () => {
+    const repo = makeFixtureRepo('docs-content-repo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'docs-content-repo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'docs']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-docs');
+    assert.equal(result.projects.find(project => project.path === 'docs').packageName, 'docs');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'mkdocs.yml'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected docs projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('docs-content-repo');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['docs/guide.md', 'mkdocs.yml'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'docs-content-repo');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-docs', 'docs']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture-docs').changedPaths, ['mkdocs.yml']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'docs').gates.includes('docs'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a docs content repo when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('docs-content-repo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'docs-content-repo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'docs']);
+  });
+
+  it('reports an ambiguous layout when docs and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('docs-content-repo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify nested docs trees without a root proof as a docs content repo', async () => {
+    const repo = makeFixtureRepo('ambiguous-docs-content-repo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['website']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root Docusaurus')));
+  });
+
+  it('does not classify a root app project plus docs as a docs content repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'App.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    writeFileSync(join(repo, 'docs', 'index.md'), '# docs\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.notEqual(result.kind, 'docs-content-repo');
+  });
+
+  it('does not classify a generic JavaScript workspace as a docs content repo', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.notEqual(result.kind, 'docs-content-repo');
+  });
+
+  it('keeps generated docs build paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('docs-content-repo');
+    mkdirSync(join(repo, '_build'), { recursive: true });
+    writeFileSync(join(repo, '_build', 'index.html'), '<html></html>\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['_build/index.html'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not follow symlink docs members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('docs-content-repo');
+    const outside = join(repo, '..', 'outside-docs-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'index.md'), '# escape\n');
+    const link = join(repo, 'docs');
+    try {
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'docs'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));

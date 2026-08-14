@@ -30,5 +30,7 @@ Current fixture shapes:
 - `ambiguous-mobile-app`: negative mobile fixture with a nested Android tree but no root mobile proof file.
 - `infrastructure-repo`: positive infrastructure fixture with root Terraform files, two modules, and a GitHub Actions workflow.
 - `ambiguous-infrastructure-repo`: negative infrastructure fixture with a nested Terraform module but no root Terraform, Helm, Kubernetes, Ansible, Pulumi, or CDK proof.
+- `docs-content-repo`: positive docs content fixture with root `mkdocs.yml`, a `docs/` tree, and a GitHub Actions workflow.
+- `ambiguous-docs-content-repo`: negative docs fixture with a nested docs tree but no root MkDocs, Docusaurus, Hugo, Sphinx, or mdBook proof.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
