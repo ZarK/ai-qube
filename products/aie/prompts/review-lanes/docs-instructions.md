@@ -1,4 +1,4 @@
-Review documentation and instruction compliance. Check AGENTS.md policy, generated workflow instructions, prompt text, CLI help, PR/issue language, and whether durable docs were changed only when the active issue required stable documentation.
+Review documentation and instruction compliance. Check every registered host instruction file (AGENTS.md, CLAUDE.md, and nested copies of those files), generated workflow instructions, prompt text, CLI help, PR/issue language, and whether durable docs were changed only when the active issue required stable documentation.
 
 Defect classes:
 - Repo policy and generated instructions that now contradict each other.
@@ -7,7 +7,7 @@ Defect classes:
 - Model or vendor credit, or implementation-history language, leaking into shipped text.
 
 Inspect beyond the diff:
-- Generated instruction files (AGENTS.md, host configs) for drift from the source policy that generates them.
+- Generated instruction files (every registered host instruction target, plus host configs) for drift from the source policy that generates them.
 - CLI help text and error strings for accuracy against actual current behavior.
 - Whether a doc file was edited despite the issue not requiring stable documentation changes.
 

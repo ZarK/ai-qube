@@ -2,6 +2,7 @@ import type { ExecutorPolicy, ReviewModelsPolicy } from '../core/policy.js';
 import { cloneModelRoutingPolicy, defaultModelRoutingPolicy } from '../core/model_routing.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
+import { defaultInstructionContextSources } from '../agent_host_adapters.js';
 import type { Config, ConfigFileShape, FocusedGateSelector, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
 import { DEFAULT_CONFIG_VERSION } from './types.js';
 
@@ -74,7 +75,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
         commandAddendum: [],
       },
       contextSources: {
-        instructions: ['AGENTS.md', '**/AGENTS.md'],
+        instructions: defaultInstructionContextSources(),
         requirements: ['docs/spec.md', 'products/aie/docs/*.md'],
         issues: 'github',
         issueComments: 'github',

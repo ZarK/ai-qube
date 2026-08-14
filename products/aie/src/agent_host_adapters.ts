@@ -73,12 +73,19 @@ export interface AgentHostAdapterMetadata {
   readonly id: AgentHostId;
   readonly packageName: string | null;
   readonly installed: boolean;
+  readonly instructionPaths: readonly string[];
 }
 
 const AGENTS_INSTRUCTIONS: InstructionTarget = {
   id: 'agents-instructions',
   path: 'AGENTS.md',
   description: 'Always-loaded Executor instructions for AGENTS.md hosts.',
+};
+
+const CLAUDE_INSTRUCTIONS: InstructionTarget = {
+  id: 'claude-instructions',
+  path: 'CLAUDE.md',
+  description: 'Always-loaded Executor instructions for Claude Code hosts.',
 };
 
 const OPENCODE_COMMAND: CommandTarget = {
@@ -246,10 +253,10 @@ const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
-  Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false }),
-  Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true }),
-  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true }),
-  Object.freeze({ id: 'grok-build', packageName: null, installed: true }),
+  Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'grok-build', packageName: null, installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
 ]);
 
 let cachedCodexProfile: AgentHostProfile | null | undefined;
@@ -389,4 +396,42 @@ export async function hostIdsForInstructionPath(path: string): Promise<AgentHost
 export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<string[]> {
   const profiles = ids ? await getAgentHostProfiles(ids) : await getAvailableAgentHostProfiles();
   return [...new Set(profiles.flatMap(profile => profile.instructionTargets.map(target => target.path)))];
+}
+
+export function registeredInstructionPaths(): string[] {
+  const paths = new Set<string>();
+  for (const target of registeredInstructionTargets()) {
+    if (target.path.trim() !== '') paths.add(target.path);
+  }
+  return [...paths];
+}
+
+export function defaultInstructionContextSources(): string[] {
+  const sources: string[] = [];
+  const seen = new Set<string>();
+  for (const path of registeredInstructionPaths()) {
+    const filename = path.split('/').pop() ?? path;
+    if (filename === '' || seen.has(filename)) continue;
+    seen.add(filename);
+    sources.push(filename, `**/${filename}`);
+  }
+  return sources;
+}
+
+function registeredInstructionTargets(): InstructionTarget[] {
+  const targets: InstructionTarget[] = [];
+  const seen = new Set<string>();
+  const add = (path: string) => {
+    if (path.trim() === '' || seen.has(path)) return;
+    seen.add(path);
+    targets.push({ id: path, path, description: `Registered host instruction file ${path}.` });
+  };
+  for (const adapter of ADAPTERS) {
+    for (const path of adapter.instructionPaths) add(path);
+  }
+  for (const profile of Object.values(BUILTIN_PROFILES)) {
+    if (!profile) continue;
+    for (const target of profile.instructionTargets) add(target.path);
+  }
+  return targets;
 }
