@@ -114,7 +114,7 @@ Repository layout matrix:
 | Infrastructure repo | Terraform/OpenTofu modules, Helm charts, Kubernetes manifests, Ansible, Pulumi/CDK. | Treat plan/apply/deploy commands as high-risk; default to validation/plan-only gates and supply-chain/secret checks. |
 | Docs/content repo | Docusaurus, MkDocs, Hugo, Sphinx, mdBook, Astro content, docs-only roots. | Use link/build/lint gates and avoid code-style assumptions. |
 | Polyrepo or multi-checkout workspace | Root `.gitmodules` with contained checkout paths, extra contained `.git` under `repos/`/`checkouts/`/`externals/`/`modules/`, or Gradle `includeBuild` with its own `.git`. Multiple remotes alone are not proof. | Map changed paths to contained checkout directories. Do not follow checkout URLs or mutate sibling checkouts outside the root. |
-| Generated/vendor-heavy repo | `vendor/`, generated clients, lockfiles, `dist/`, vendored subtrees, generated code markers. | Quality-control should classify generated/vendor paths and keep implementation changes out unless policy allows. |
+| Generated/vendor-heavy repo | Contained `vendor/` or `third_party/`, or more than one contained generated output tree such as `dist/` and `generated/`. A single lockfile is not proof. | Map remaining source to the root app. Keep generated and vendored paths out of mutation scope. |
 
 Layout provider requirements:
 

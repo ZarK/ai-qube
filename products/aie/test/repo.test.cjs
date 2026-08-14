@@ -1763,6 +1763,85 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'repos/web'), true);
   });
 
+  it('inspects a generated vendor heavy layout with vendor and generated signals', async () => {
+    const repo = makeFixtureRepo('generated-vendor-heavy');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'generated-vendor-heavy');
+    assert.deepEqual(result.projects.map(project => project.path), ['.']);
+    assert.equal(result.projects[0].packageName, 'fixture-vendor-app');
+    assert.ok(result.vendorPaths.some(signal => signal.path === 'vendor'));
+    assert.ok(result.generatedPaths.some(signal => signal.path === 'dist'));
+    assert.ok(result.generatedPaths.some(signal => signal.path === 'generated'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps source changes in a generated vendor heavy repo and keeps vendor paths out of mutation', async () => {
+    const repo = makeFixtureRepo('generated-vendor-heavy');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['src/index.ts', 'vendor/lib/index.js', 'dist/index.js', 'generated/client.ts'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'generated-vendor-heavy');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.path), ['.']);
+    assert.deepEqual(result.affectedProjects[0].changedPaths, ['src/index.ts']);
+    assert.ok(result.affectedProjects[0].gates.includes('typecheck'));
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not classify a single generated directory without vendor as generated-vendor-heavy', async () => {
+    const repo = makeFixtureRepo('ambiguous-generated-vendor-heavy');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+  });
+
+  it('does not classify a generic JavaScript workspace as generated-vendor-heavy', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+  });
+
+  it('does not classify a lockfile-only root as generated-vendor-heavy', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'package-lock.json'), '{}\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+  });
+
+  it('does not follow symlink vendor trees out of the repository root', async (t) => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'fixture-vendor-escape', private: true }, null, 2));
+    const outside = join(repo, '..', 'outside-vendor-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'index.js'), 'module.exports = {}\n');
+    try {
+      symlinkSync(outside, join(repo, 'vendor'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+    assert.equal(result.vendorPaths.some(signal => signal.path === 'vendor'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));

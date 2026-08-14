@@ -213,7 +213,7 @@ async function inspectRepoSignals(options: RepoInspectOptions): Promise<{
   return {
     root,
     remotes: remoteResult.exitCode === 0 ? parseRemoteLines(remoteResult.stdout) : [],
-    generatedPathSignals: root && existsSync(join(root, 'dist')) ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
+    generatedPathSignals: root && existsSync(join(root, 'dist')) && containedProjectPath(root, join(root, 'dist')) === 'dist' ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
     warnings,
   };
 }
@@ -1364,7 +1364,10 @@ function detectCiHints(root: string | null): RepoCiHint[] {
 
 function pathSignals(root: string | null, names: readonly string[], reason: string): RepoPathSignal[] {
   if (!root) return [];
-  return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
+  return names.filter(path => {
+    const candidate = join(root, path);
+    return existsSync(candidate) && containedProjectPath(root, candidate) === path;
+  }).map(path => ({ path, reason }));
 }
 
 function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoProject[] {
@@ -1686,7 +1689,7 @@ function signalContainsPath(signals: readonly RepoPathSignal[], changedPath: str
 
 function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPath: string): boolean {
   if (projectPath === '.') {
-    if (layoutKind === 'single-app-service') return true;
+    if (layoutKind === 'single-app-service' || layoutKind === 'generated-vendor-heavy') return true;
     return !changedPath.includes('/') || changedPath.startsWith('.github/');
   }
   const prefix = `${projectPath.replace(/\/+$/, '')}/`;
