@@ -1076,7 +1076,7 @@ function directoryLooksLikeTerraform(root: string, relativePath: string): boolea
 }
 
 function terraformModuleSources(text: string): string[] {
-  return [...text.matchAll(/source\s*=\s*["']([^"']+)["']/g)]
+  return [...cmakeWithoutLineComments(text).matchAll(/source\s*=\s*["']([^"']+)["']/g)]
     .map(match => match[1])
     .filter(source => source.startsWith('./') || source.startsWith('../') || (!source.includes('://') && !source.includes('?') && !source.startsWith('git::')));
 }
@@ -1512,7 +1512,7 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\/|\.tf$|\.tofu$|Chart\.yaml$|kustomization\.ya?ml$|Pulumi\.yaml$|cdk\.json$|ansible\.cfg$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\/|\.tf$|\.tofu$|Chart\.yaml$|kustomization\.ya?ml$|Pulumi\.yaml$|cdk\.json$|ansible\.cfg$|(?:^|\/)(?:playbook|site)\.yml$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|bzl|swift|m|mm)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];

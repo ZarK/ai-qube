@@ -1368,6 +1368,33 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-pulumi');
   });
 
+  it('does not treat commented Terraform module sources as declared members', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    mkdirSync(join(repo, 'modules', 'old'), { recursive: true });
+    writeFileSync(join(repo, 'modules', 'old', 'main.tf'), 'variable "old" { type = string }\n');
+    writeFileSync(join(repo, 'main.tf'), 'locals {\n  name = "fixture-infra"\n}\n\n# source = "./modules/old"\n\nmodule "network" {\n  source = "./modules/network"\n}\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'infrastructure-repo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/network']);
+    assert.equal(result.projects.some(project => project.path === 'modules/old'), false);
+  });
+
+  it('maps Ansible playbook changes to the infrastructure dependency-review gate', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'playbook.yml'), '- hosts: all\n  tasks: []\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['playbook.yml'],
+    });
+
+    assert.equal(result.layout.kind, 'infrastructure-repo');
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
   it('does not classify a lone Terraform file without modules as an infrastructure repo', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'main.tf'), 'locals { name = "lone" }\n');
