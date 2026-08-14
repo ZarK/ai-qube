@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync } = require('node:child_process');
-const { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const { cpSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { getDefaults } = require('../dist/config/index.js');
@@ -337,6 +337,99 @@ describe('repo layout inspection and affected scope', () => {
     assert.deepEqual(result.projects.map(project => project.path), ['.', 'crates/cli', 'crates/core']);
     assert.equal(result.projects.some(project => project.packageName === 'outside-rust-leak'), false);
     assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('inspects a Go module workspace layout with modules and local signals', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'go-workspace');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/cli', 'modules/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === 'modules/core').packageName, 'example.com/fixture/core');
+    assert.equal(result.projects.find(project => project.path === 'modules/cli').packageName, 'example.com/fixture/cli');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'go.work'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected Go workspace modules and suggested gates', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['modules/core/core.go', 'modules/cli/go.mod', 'go.work'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'go-workspace');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['root', 'example.com/fixture/cli', 'example.com/fixture/core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'root').changedPaths, ['go.work']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'example.com/fixture/core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'example.com/fixture/cli').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('does not classify nested Go modules without a root go.work as a workspace', async () => {
+    const repo = makeFixtureRepo('ambiguous-go-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['modules/core']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root go.work was found')));
+  });
+
+  it('keeps vendored Go paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+    mkdirSync(join(repo, 'vendor'), { recursive: true });
+    writeFileSync(join(repo, 'vendor', 'mod.go'), 'vendored\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['vendor/mod.go'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand Go workspace members outside the repository root', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+    const outside = join(repo, '..', 'outside-go-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'go.mod'), 'module example.com/outside\n\ngo 1.22\n');
+    writeFileSync(join(repo, 'go.work'), 'go 1.22\n\nuse (\n\t./modules/core\n\t../outside-go-leak\n)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/cli', 'modules/core']);
+    assert.equal(result.projects.some(project => project.packageName === 'example.com/outside'), false);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink workspace members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('go-workspace');
+    const outside = join(repo, '..', 'outside-go-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'go.mod'), 'module example.com/outside\n\ngo 1.22\n');
+    const link = join(repo, 'modules', 'escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+    writeFileSync(join(repo, 'go.work'), 'go 1.22\n\nuse (\n\t./modules/core\n\t./modules/escape\n)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.packageName === 'example.com/outside'), false);
+    assert.equal(result.projects.some(project => project.path === 'modules/escape'), false);
   });
 
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
