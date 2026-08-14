@@ -116,6 +116,13 @@ export function prefixBinDir(prefix) {
   return path.join(prefix, "bin");
 }
 
+function fileDigest(filePath) {
+  if (!existsSync(filePath) || !lstatSync(filePath).isFile() || lstatSync(filePath).isSymbolicLink()) {
+    return null;
+  }
+  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
 export function listGeneratedTarballs(repoRoot) {
   const found = [];
   for (const relativeDir of CLEANUP_PACKAGE_DIRS) {
@@ -130,6 +137,24 @@ export function listGeneratedTarballs(repoRoot) {
     }
   }
   return found;
+}
+
+export function snapshotGeneratedTarballs(repoRoot) {
+  const snapshot = new Map();
+  for (const relativePath of listGeneratedTarballs(repoRoot)) {
+    snapshot.set(relativePath, fileDigest(path.join(repoRoot, relativePath)));
+  }
+  return snapshot;
+}
+
+function normalizePreservedTarballs(preserveTarballs) {
+  if (preserveTarballs instanceof Map) return preserveTarballs;
+  const snapshot = new Map();
+  for (const entry of preserveTarballs ?? []) {
+    if (typeof entry === "string") snapshot.set(entry, true);
+    else if (entry?.relativePath) snapshot.set(entry.relativePath, entry.digest ?? true);
+  }
+  return snapshot;
 }
 
 function parseRestorePayload(stdout) {
@@ -193,10 +218,10 @@ function restorePublishManifest(repoRoot, packageJsonPath) {
   return false;
 }
 
-export function cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs = new Set()) {
+export function cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs = new Map()) {
   const restoredManifests = [];
   const removedTarballs = [];
-  const preserved = preserveTarballs instanceof Set ? preserveTarballs : new Set(preserveTarballs);
+  const preserved = normalizePreservedTarballs(preserveTarballs);
   for (const relativeDir of CLEANUP_PACKAGE_DIRS) {
     const dir = path.join(repoRoot, relativeDir);
     if (!existsSync(dir) || !lstatSync(dir).isDirectory()) continue;
@@ -208,9 +233,12 @@ export function cleanupGeneratedInstallArtifacts(repoRoot, preserveTarballs = ne
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isFile() || !TARBALL_NAME.test(entry.name)) continue;
       const relativeTarball = path.join(relativeDir, entry.name);
-      if (preserved.has(relativeTarball)) continue;
       const tarballPath = path.join(dir, entry.name);
       if (escapesRoot(repoRoot, tarballPath)) continue;
+      const expected = preserved.get(relativeTarball);
+      if (expected === true || (typeof expected === "string" && expected === fileDigest(tarballPath))) {
+        continue;
+      }
       unlinkSync(tarballPath);
       removedTarballs.push(relativeTarball);
     }
@@ -266,10 +294,36 @@ export function quotePosixShellArg(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function writeBinShim(binDir, command, scriptPath) {
+function rejectSymlinkInstallPath(candidate, prefix, label) {
+  if (!existsSync(candidate)) return;
+  if (lstatSync(candidate).isSymbolicLink()) {
+    throw Object.assign(new Error(`${label} is a symlink.`), { reasonCode: "path-escape" });
+  }
+  if (escapesRoot(prefix, candidate)) {
+    throw Object.assign(new Error(`${label} resolves outside the install prefix.`), { reasonCode: "path-escape" });
+  }
+}
+
+export function assertPrefixOutsideCheckout(repoRoot, prefix) {
+  const realRepo = existsSync(repoRoot) ? realpathSync.native(repoRoot) : path.resolve(repoRoot);
+  const resolvedPrefix = path.resolve(prefix);
+  const realPrefix = existsSync(resolvedPrefix) ? realpathSync.native(resolvedPrefix) : resolvedPrefix;
+  const relative = path.relative(realRepo, realPrefix);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    throw Object.assign(new Error("Install prefix must be outside the source checkout."), {
+      reasonCode: "prefix-inside-checkout",
+    });
+  }
+}
+
+function writeBinShim(binDir, command, scriptPath, prefix) {
+  rejectSymlinkInstallPath(binDir, prefix, "install bin directory");
   mkdirSync(binDir, { recursive: true });
+  rejectSymlinkInstallPath(binDir, prefix, "install bin directory");
   const unixPath = path.join(binDir, command);
   const windowsPath = path.join(binDir, `${command}.cmd`);
+  rejectSymlinkInstallPath(unixPath, prefix, `${command} shim`);
+  rejectSymlinkInstallPath(windowsPath, prefix, `${command} shim`);
   const unixBody = [
     "#!/bin/sh",
     `exec ${quotePosixShellArg(process.execPath)} ${quotePosixShellArg(scriptPath)} "$@"`,
@@ -290,7 +344,7 @@ function writeBinShim(binDir, command, scriptPath) {
 
 function trackedGitStatus(repoRoot) {
   if (!existsSync(path.join(repoRoot, ".git"))) return "";
-  const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+  const result = spawnSync("git", ["status", "--porcelain"], {
     cwd: repoRoot,
     encoding: "utf8",
     windowsHide: true,
@@ -530,7 +584,7 @@ export async function runLocalQubeInstall(input = {}) {
   const startedGit = trackedGitStatus(repoRoot);
   let lock;
   let detachSignals;
-  let preserveTarballs = new Set();
+  let preserveTarballs = new Map();
   const report = {
     ok: false,
     command: "install:qube:local",
@@ -545,7 +599,8 @@ export async function runLocalQubeInstall(input = {}) {
   };
   try {
     lock = acquireInstallLock(repoRoot, lockDir);
-    preserveTarballs = new Set(listGeneratedTarballs(repoRoot));
+    assertPrefixOutsideCheckout(repoRoot, prefix);
+    preserveTarballs = snapshotGeneratedTarballs(repoRoot);
     detachSignals = bindInstallInterruptCleanup(interruptCleanup);
     if (input.injectFailure === "build" || input.injectFailure === "pack") {
       const qubeDir = assertSourcePathSafe(repoRoot, "products/qube", "qube package");
@@ -577,7 +632,7 @@ export async function runLocalQubeInstall(input = {}) {
         qubePackageDir = resolved.packageDir;
         qubeScriptPath = resolved.binPath;
       }
-      writeBinShim(binDir, component.command, resolved.binPath);
+      writeBinShim(binDir, component.command, resolved.binPath, prefix);
       report.linked.push(component.command);
     }
     const missing = COMPONENT_LINKS

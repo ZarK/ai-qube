@@ -12,11 +12,11 @@ import {
   bindInstallInterruptCleanup,
   cleanupGeneratedInstallArtifacts,
   handleInstallInterrupt,
-  listGeneratedTarballs,
   parseLocalInstallArgs,
   quotePosixShellArg,
   resolveInsideRoot,
   runLocalQubeInstall,
+  snapshotGeneratedTarballs,
 } from "../scripts/local-install-qube.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -49,7 +49,7 @@ describe("source-checkout QUBE install", () => {
   it("installs a fixture checkout without packing and keeps git clean", async () => {
     const fixture = await createFixture();
     try {
-      const prefix = path.join(fixture.root, "prefix");
+      const prefix = fixture.prefix;
       const first = await runLocalQubeInstall({
         repoRoot: fixture.root,
         prefix,
@@ -89,7 +89,7 @@ describe("source-checkout QUBE install", () => {
   it("runs the production script against a fixture through a fresh prefix", async () => {
     const fixture = await createFixture();
     try {
-      const prefix = path.join(fixture.root, "prefix");
+      const prefix = fixture.prefix;
       const result = execFileSync(process.execPath, [
         installerPath,
         "--json",
@@ -116,7 +116,7 @@ describe("source-checkout QUBE install", () => {
       const original = readFileUtf8(path.join(fixture.qubeDir, "package.json"));
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
         injectFailure: "build",
@@ -138,7 +138,7 @@ describe("source-checkout QUBE install", () => {
       writeFileSync(leftover, "keep\n");
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -156,7 +156,7 @@ describe("source-checkout QUBE install", () => {
       const original = readFileUtf8(path.join(fixture.qubeDir, "package.json"));
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
         injectFailure: "pack",
@@ -171,6 +171,42 @@ describe("source-checkout QUBE install", () => {
     }
   });
 
+  it("rejects an install prefix inside the source checkout", async () => {
+    const fixture = await createFixture();
+    try {
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: path.join(fixture.root, "prefix"),
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "prefix-inside-checkout");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("deletes a pre-existing tarball whose contents change during the install", async () => {
+    const fixture = await createFixture();
+    try {
+      const leftover = path.join(fixture.qubeDir, "tjalve-qube-0.0.0.tgz");
+      writeFileSync(leftover, "old\n");
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: fixture.prefix,
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+        injectFailure: "pack",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "pack-failed");
+      assert.equal(existsSync(leftover), false);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("fails when a selected component envelope row has the wrong package identity", async () => {
     const fixture = await createFixture();
     try {
@@ -178,7 +214,7 @@ describe("source-checkout QUBE install", () => {
       writeFileSync(qubeBin, `#!/usr/bin/env node\n${componentsBinSource().replace('"@tjalve/aib"', '"@wrong/aib"')}`);
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -199,7 +235,7 @@ describe("source-checkout QUBE install", () => {
       writeFileSync(aibManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -217,7 +253,7 @@ describe("source-checkout QUBE install", () => {
       writeFileSync(path.join(fixture.root, "products", "aib", "bin", "run"), "#!/usr/bin/env node\nprocess.exit(2);\n");
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -235,7 +271,7 @@ describe("source-checkout QUBE install", () => {
       rmSync(path.join(fixture.root, "products", "aiq", "packages", "cli", "dist", "bin", "aiq.js"));
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -255,7 +291,7 @@ describe("source-checkout QUBE install", () => {
       symlinkSync(outside, fixture.qubeDir, process.platform === "win32" ? "junction" : "dir");
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -274,7 +310,7 @@ describe("source-checkout QUBE install", () => {
       const original = readFileUtf8(packageJsonPath);
       const leftover = path.join(fixture.qubeDir, "tjalve-qube-user.tgz");
       writeFileSync(leftover, "keep\n");
-      const preserveTarballs = new Set(listGeneratedTarballs(fixture.root));
+      const preserveTarballs = snapshotGeneratedTarballs(fixture.root);
       writeFileSync(`${packageJsonPath}.publish-backup`, original);
       writeFileSync(packageJsonPath, `${JSON.stringify({ ...JSON.parse(original), _localInstallRewrite: true }, null, 2)}\n`);
       writeFileSync(path.join(fixture.qubeDir, "tjalve-qube-0.0.0.tgz"), "not-a-tarball\n");
@@ -327,7 +363,7 @@ describe("source-checkout QUBE install", () => {
     try {
       const result = await runLocalQubeInstall({
         repoRoot: fixture.root,
-        prefix: path.join(fixture.root, "prefix"),
+        prefix: fixture.prefix,
         skipBuild: true,
         lockDir: fixture.lockDir,
       });
@@ -335,6 +371,30 @@ describe("source-checkout QUBE install", () => {
       assert.equal(result.reasonCode, "lock-held");
     } finally {
       lock.release();
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not follow a prefix shim symlink out of the install prefix", { skip: process.platform === "win32" }, async () => {
+    const fixture = await createFixture();
+    const outside = await mkdtemp(path.join(os.tmpdir(), "qube-local-install-prefix-target-"));
+    try {
+      const binDir = path.join(fixture.prefix, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const outsideFile = path.join(outside, "secret");
+      writeFileSync(outsideFile, "keep\n");
+      symlinkSync(outsideFile, path.join(binDir, "qube"));
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: fixture.prefix,
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reasonCode, "path-escape");
+      assert.equal(readFileUtf8(outsideFile), "keep\n");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
       await fixture.cleanup();
     }
   });
@@ -388,7 +448,7 @@ function existsTarball(root) {
 }
 
 function readTrackedStatus(root) {
-  return execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+  return execFileSync("git", ["status", "--porcelain"], {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
@@ -398,6 +458,7 @@ function readTrackedStatus(root) {
 async function createFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "qube-local-install-fixture-"));
   const lockDir = await mkdtemp(path.join(os.tmpdir(), "qube-local-install-locks-"));
+  const prefixRoot = await mkdtemp(path.join(os.tmpdir(), "qube-local-install-prefix-"));
   const qubeDir = path.join(root, "products", "qube");
   const coreDir = path.join(root, "packages", "qube-core");
   writeFileSync(path.join(root, "package.json"), `${JSON.stringify({
@@ -428,9 +489,11 @@ async function createFixture() {
     root,
     qubeDir,
     lockDir,
+    prefix: path.join(prefixRoot, "prefix"),
     async cleanup() {
       await rm(root, { recursive: true, force: true });
       await rm(lockDir, { recursive: true, force: true });
+      await rm(prefixRoot, { recursive: true, force: true });
     },
   };
 }
