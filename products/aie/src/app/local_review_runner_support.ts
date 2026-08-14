@@ -958,6 +958,30 @@ export interface ReviewModelTierResolution {
   substitution: string | null;
 }
 
+export function configuredReviewModelHost(config: {
+  reviewRoute?: { host: string } | null;
+  reviewLanes?: readonly { route?: { host: string } | null }[];
+  localReviewAgents?: readonly string[];
+  reviewModels: ReviewModelsPolicy;
+}): ReviewModelHostId {
+  const routeHost = config.reviewRoute?.host;
+  if (isReviewModelHost(routeHost)) return routeHost;
+  const laneHost = config.reviewLanes?.map(lane => lane.route?.host).find(host => isReviewModelHost(host));
+  if (laneHost) return laneHost;
+  const localHost = config.localReviewAgents?.find(host => isReviewModelHost(host));
+  if (localHost) return localHost;
+  const review = config.reviewModels.review;
+  if (review.grok) return 'grok';
+  if (review.codex) return 'codex';
+  if (review['claude-code']) return 'claude-code';
+  if (review.opencode) return 'opencode';
+  return 'codex';
+}
+
+function isReviewModelHost(value: unknown): value is ReviewModelHostId {
+  return value === 'codex' || value === 'claude-code' || value === 'opencode' || value === 'grok';
+}
+
 export function resolveReviewModelTier(models: ReviewModelsPolicy, tier: ReviewModelTierId, host: ReviewModelHostId): ReviewModelTierResolution {
   const configured = models[tier][host];
   if (configured) return { model: configured.model, effort: configured.effort, substitution: null };
