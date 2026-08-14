@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 import type {
@@ -133,7 +134,7 @@ export function applyLayoutToCandidateFiles(input: {
   const kept: string[] = [];
 
   for (const file of input.files) {
-    const relativePath = toRepoRelativePath(file, input.cwd);
+    const relativePath = toContainedRepoRelativePath(file, input.cwd);
     if (relativePath === null) {
       throw new LayoutConsumptionError(
         `Input path ${file} is outside the project root. Use a path inside the current directory.`,
@@ -192,6 +193,25 @@ export function toRepoRelativePath(file: string, cwd: string): string | null {
     return null;
   }
   return portablePath(relativePath === "" ? "." : relativePath);
+}
+
+export function toContainedRepoRelativePath(file: string, cwd: string): string | null {
+  const lexical = toRepoRelativePath(file, cwd);
+  if (lexical === null) {
+    return null;
+  }
+
+  try {
+    const realCwd = realpathSync(path.resolve(cwd));
+    const realFile = realpathSync(path.resolve(cwd, file));
+    const realRelative = path.relative(realCwd, realFile);
+    if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      return null;
+    }
+    return portablePath(realRelative === "" ? "." : realRelative);
+  } catch {
+    return lexical;
+  }
 }
 
 export function workspaceLayoutKind(kind: RepoLayoutKind): boolean {

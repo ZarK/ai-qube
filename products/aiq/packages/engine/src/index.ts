@@ -19,6 +19,7 @@ export {
   createLayoutConsumption,
   parseLayoutAffectedJson,
   parseLayoutInspectJson,
+  toContainedRepoRelativePath,
   toRepoRelativePath,
   workspaceLayoutKind,
 } from "./layout-consume.js";

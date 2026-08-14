@@ -1,4 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -333,6 +335,43 @@ describe("layout consumption", () => {
         source: "layout-affected-json",
       }),
     ).toThrow(/same layout kind/);
+  });
+
+  it("rejects symlink or junction paths that leave the project root", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "aiq-layout-symlink-"));
+    const outside = path.join(root, "..", `aiq-layout-outside-${path.basename(root)}`);
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(root, "src", "index.ts"), "export const value = 1;\n");
+    writeFileSync(path.join(outside, "secret.ts"), "export const secret = true;\n");
+    const link = path.join(root, "src", "link.ts");
+    try {
+      symlinkSync(path.join(outside, "secret.ts"), link);
+    } catch {
+      rmSync(root, { force: true, recursive: true });
+      rmSync(outside, { force: true, recursive: true });
+      return;
+    }
+
+    const inspect = parseLayoutInspectJson(JSON.stringify(singleAppInspect()));
+    const layout = createLayoutConsumption({
+      inspect,
+      source: "layout-inspect-json",
+      candidatePaths: ["src/index.ts"],
+    });
+    try {
+      expect(() =>
+        applyLayoutToCandidateFiles({
+          files: ["src/link.ts"],
+          cwd: root,
+          layout,
+          requireProvenScope: false,
+        }),
+      ).toThrow(/outside the project root/);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+      rmSync(outside, { force: true, recursive: true });
+    }
   });
 
   it("does not import layout detection from Executor", async () => {
