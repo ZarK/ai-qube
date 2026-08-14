@@ -768,7 +768,8 @@ describe('init service', () => {
     assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
     assert.match(agents, /Do not claim UI audit success from CLI JSON, API health, notes, or status checks/);
     assert.match(agents, /review: run `qube aie review gate <issue> --prompt`, use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
-    assert.match(agents, /test: run configured quality gates/);
+    assert.match(agents, /test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`/);
+    assert.match(agents, /at the final head run the complete configured gate set before merge/);
     assert.match(agents, /PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the PR body before opening the pull request and update entries when review fixes move code or tests, open a non-draft, ready-for-review pull request that closes the issue/);
     assert.match(agents, /merge: address review\/check feedback, loop back to implementation when a gate fails/);
     assert.match(agents, /completion: after merge, run `qube aie complete <issue>`/);

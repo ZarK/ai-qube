@@ -347,7 +347,14 @@
         }
       ],
       "qualityGates": [],
-      "qualityControl": true
+      "qualityControl": true,
+      "focusedSelectors": [
+        { "glob": "products/aie/**", "commands": ["pnpm --dir products/aie --config.verify-deps-before-run=false run test"] },
+        { "glob": "products/aib/**", "commands": ["pnpm --dir products/aib --config.verify-deps-before-run=false run test"] },
+        { "glob": "packages/qube-core/**", "commands": ["pnpm --dir packages/qube-core --config.verify-deps-before-run=false run test"] },
+        { "glob": "packages/qube-cli/**", "commands": ["pnpm --dir packages/qube-cli --config.verify-deps-before-run=false run test"] },
+        { "glob": "products/aiq/**", "commands": ["pnpm run build:aiq"] }
+      ]
     },
     "audit": {
       "manualUiAudit": true,

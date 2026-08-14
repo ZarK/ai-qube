@@ -281,6 +281,105 @@ describe('gates CLI', () => {
     assert.equal(plan.interactions.json, true);
     assert.equal(plan.dryRun.supported, true);
     assert.deepEqual(plan.flags.find(flag => flag.name === 'stage').options, ['all', 'pre-merge', 'pre-pr']);
+    assert.deepEqual(plan.flags.find(flag => flag.name === 'round').options, ['fix', 'ship']);
+    assert.equal(plan.flags.find(flag => flag.name === 'changed').multiple, true);
     assert.equal(status.mutation.mutates, false);
+  });
+});
+
+describe('focused gate tier', () => {
+  function configWithSelectors(definitions, selectors) {
+    const config = configWithGates(definitions);
+    config.policy.gates.focusedSelectors = selectors;
+    return config;
+  }
+
+  const definitions = [
+    { name: 'aie-tests', kind: 'unit', command: 'pnpm --dir products/aie run test', stage: 'pre-merge', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
+    { name: 'cli-tests', kind: 'unit', command: 'pnpm --dir packages/qube-cli run test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
+  ];
+  const selectors = [
+    { glob: 'products/aie/**', commands: ['node --test products/aie/test/gates.test.cjs'] },
+    { glob: 'packages/qube-cli/**', commands: ['pnpm --dir packages/qube-cli run test'] },
+  ];
+
+  it('reads nested policy.gates.focusedSelectors when the top-level alias is empty', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = [];
+    config.policy.gates.focusedSelectors = selectors;
+    const plan = buildGatePlan(config, { round: 'fix', changedPaths: ['products/aie/src/gates/index.ts'] });
+    assert.equal(plan.tier, 'focused');
+    assert.equal(plan.tierReason, 'all-paths-matched');
+    assert.deepEqual(plan.selectedCommands, ['node --test products/aie/test/gates.test.cjs']);
+  });
+
+  it('selects focused commands when every changed path matches a configured glob', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = selectors;
+    const plan = buildGatePlan(config, { round: 'fix', changedPaths: ['products/aie/src/gates/index.ts'] });
+    assert.equal(plan.tier, 'focused');
+    assert.equal(plan.tierReason, 'all-paths-matched');
+    assert.deepEqual(plan.selectedCommands, ['node --test products/aie/test/gates.test.cjs']);
+    assert.equal(plan.shipRequiresFullTier, true);
+    assert.deepEqual(plan.gates.map(gate => gate.name), ['cli-tests', 'aie-tests']);
+    assert.match(plan.warnings.join('\n'), /complete configured gate set/);
+  });
+
+  it('keeps the full configured set for ship-round even when every path would match', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = selectors;
+    const plan = buildGatePlan(config, { round: 'ship', changedPaths: ['products/aie/src/gates/index.ts'] });
+    assert.equal(plan.tier, 'full');
+    assert.equal(plan.tierReason, 'ship-round');
+    assert.deepEqual(plan.selectedCommands, ['pnpm --dir packages/qube-cli run test', 'pnpm --dir products/aie run test']);
+    assert.equal(plan.gates.length, 2);
+  });
+
+  it('falls back to the full set when a changed path matches no glob', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = selectors;
+    const plan = buildGatePlan(config, { round: 'fix', changedPaths: ['docs/spec.md'] });
+    assert.equal(plan.tier, 'full');
+    assert.equal(plan.tierReason, 'unmapped-path');
+    assert.deepEqual(plan.unmatchedPaths, ['docs/spec.md']);
+    assert.deepEqual(plan.selectedCommands, ['pnpm --dir packages/qube-cli run test', 'pnpm --dir products/aie run test']);
+  });
+
+  it('fails closed to the full set for absolute or parent-directory paths', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = selectors;
+    const absolute = buildGatePlan(config, { round: 'fix', changedPaths: ['/etc/passwd'] });
+    const parent = buildGatePlan(config, { round: 'fix', changedPaths: ['../secret.ts'] });
+    assert.equal(absolute.tier, 'full');
+    assert.equal(absolute.tierReason, 'unsafe-path');
+    assert.equal(parent.tier, 'full');
+    assert.equal(parent.tierReason, 'unsafe-path');
+  });
+
+  it('emits focused-tier guidance from the production CLI path', () => {
+    const repo = makeGitRepo();
+    writeConfig(repo, configWithSelectors(definitions, selectors));
+    const result = binRun(['gates', 'plan', '--round', 'fix', '--changed', 'products/aie/src/gates/index.ts', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parsed.tier, 'focused');
+    assert.equal(parsed.tierReason, 'all-paths-matched');
+    assert.deepEqual(parsed.selectedCommands, ['node --test products/aie/test/gates.test.cjs']);
+    assert.equal(parsed.shipRequiresFullTier, true);
+    assert.equal(parsed.gates.length, 2);
+    assert.match(parsed.warnings.join('\n'), /complete configured gate set/);
+  });
+
+  it('rejects an absolute glob in trusted config', () => {
+    const config = cleanConfig();
+    config.policy.gates.focusedSelectors = [{ glob: '/tmp/**', commands: ['npm test'] }];
+    const result = validateConfig(config);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.gates.focusedSelectors[0].glob'));
   });
 });

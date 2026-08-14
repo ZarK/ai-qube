@@ -357,7 +357,7 @@ describe('legacy instruction migration', () => {
     assert.match(agents, /BEGIN EXECUTOR MANAGED SECTION/);
     assert.match(agents, /Executor Issue Workflow/);
     assert.match(agents, /standing authorization under repository policy/);
-    assert.match(agents, /test: run configured quality gates/);
+    assert.match(agents, /test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`/);
     assert.doesNotMatch(agents, /gh-issue-start\.sh/);
   });
 

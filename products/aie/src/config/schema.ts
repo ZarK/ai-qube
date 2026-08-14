@@ -13,8 +13,8 @@ import {
   type ModelCatalogEntry,
   type ModelRoutingPolicy,
 } from '../core/model_routing.js';
-import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
-import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
+import { cloneConfigFile, cloneFocusedSelector, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
+import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type FocusedGateSelector, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1040,17 +1040,67 @@ function readReviewModels(value: unknown, path: string, errors: ValidationError[
 }
 
 function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: ValidationError[]): GatePolicyConfig {
-  if (value === undefined) return { definitions: defaultValue.definitions.map(cloneGate), qualityGates: [...defaultValue.qualityGates], qualityControl: defaultValue.qualityControl };
+  if (value === undefined) {
+    return {
+      definitions: defaultValue.definitions.map(cloneGate),
+      qualityGates: [...defaultValue.qualityGates],
+      qualityControl: defaultValue.qualityControl,
+      focusedSelectors: defaultValue.focusedSelectors.map(cloneFocusedSelector),
+    };
+  }
   if (!isPlainObject(value)) {
     errors.push({ kind: 'invalid', path: 'policy.gates', message: 'policy.gates must be an object' });
-    return { definitions: defaultValue.definitions.map(cloneGate), qualityGates: [...defaultValue.qualityGates], qualityControl: defaultValue.qualityControl };
+    return {
+      definitions: defaultValue.definitions.map(cloneGate),
+      qualityGates: [...defaultValue.qualityGates],
+      qualityControl: defaultValue.qualityControl,
+      focusedSelectors: defaultValue.focusedSelectors.map(cloneFocusedSelector),
+    };
   }
-  rejectUnknownKeys(value, ['definitions', 'qualityGates', 'qualityControl'], 'policy.gates', errors);
+  rejectUnknownKeys(value, ['definitions', 'qualityGates', 'qualityControl', 'focusedSelectors'], 'policy.gates', errors);
   return {
     definitions: readGateConfigs(value.definitions, 'policy.gates.definitions', errors) ?? defaultValue.definitions.map(cloneGate),
     qualityGates: readStringArray(value, 'qualityGates', defaultValue.qualityGates, 'policy.gates', errors),
     qualityControl: readBoolean(value, 'qualityControl', defaultValue.qualityControl, 'policy.gates', errors),
+    focusedSelectors: readFocusedSelectors(value.focusedSelectors, defaultValue.focusedSelectors, errors),
   };
+}
+
+function readFocusedSelectors(value: unknown, defaultValue: FocusedGateSelector[], errors: ValidationError[]): FocusedGateSelector[] {
+  if (value === undefined) return defaultValue.map(cloneFocusedSelector);
+  if (!Array.isArray(value)) {
+    errors.push({ kind: 'invalid', path: 'policy.gates.focusedSelectors', message: 'policy.gates.focusedSelectors must be an array of selector objects' });
+    return defaultValue.map(cloneFocusedSelector);
+  }
+  const selectors: FocusedGateSelector[] = [];
+  value.forEach((entry, index) => {
+    const path = `policy.gates.focusedSelectors[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+      return;
+    }
+    rejectUnknownKeys(entry, ['glob', 'commands'], path, errors);
+    const glob = typeof entry.glob === 'string' ? entry.glob.trim() : '';
+    if (glob === '') {
+      errors.push({ kind: 'invalid', path: `${path}.glob`, message: `${path}.glob must be a non-empty relative glob` });
+      return;
+    }
+    if (glob.startsWith('/') || /^[A-Za-z]:/.test(glob) || glob.split(/[\\/]/).includes('..')) {
+      errors.push({ kind: 'invalid', path: `${path}.glob`, message: `${path}.glob must be a repository-relative glob without .. or an absolute path` });
+      return;
+    }
+    if (!Array.isArray(entry.commands) || !entry.commands.every(item => typeof item === 'string')) {
+      errors.push({ kind: 'invalid', path: `${path}.commands`, message: `${path}.commands must be an array of strings` });
+      return;
+    }
+    const commands = entry.commands.map(item => item.trim()).filter(item => item !== '');
+    if (commands.length === 0) {
+      errors.push({ kind: 'invalid', path: `${path}.commands`, message: `${path}.commands must contain at least one non-empty command` });
+      return;
+    }
+    selectors.push({ glob, commands });
+  });
+  return selectors;
 }
 
 function readAudit(value: unknown, defaultValue: AuditConfig, errors: ValidationError[]): AuditConfig {
