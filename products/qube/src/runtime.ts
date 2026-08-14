@@ -6030,77 +6030,30 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
 
 const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
 
-function spawnCapturedPath(
-  commandPath: string,
-  args: readonly string[],
-  environment: CliEnvironment
-): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
+type CapturedProcessResult = {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly truncated: boolean;
+};
+
+function captureChildOutput(child: ReturnType<typeof spawn>): Promise<CapturedProcessResult> {
   return new Promise(resolve => {
-    let command: string;
-    let spawnArgs: string[];
-    try {
-      [command, spawnArgs] = spawnInput({
-        component: qubeComponents[0]!,
-        commandPath,
-        resolution: { commandPath, source: "path" },
-        args
-      });
-    } catch (err: unknown) {
-      resolve({ exitCode: 2, stdout: "", stderr: `${err instanceof Error ? err.message : String(err)}\n`, truncated: false });
-      return;
-    }
-    const child = spawn(command, spawnArgs, {
-      cwd: environment.cwd,
-      env: environment.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
-      windowsHide: true
-    });
     let stdout = "";
     let stderr = "";
     let truncated = false;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    const append = (existing: string, chunk: string): string => {
-      const remaining = CAPTURED_DISPATCH_MAX_CHARS - existing.length;
-      if (chunk.length <= remaining) return existing + chunk;
-      truncated = true;
-      return existing + chunk.slice(0, Math.max(0, remaining));
+    let settled = false;
+    const finish = (result: CapturedProcessResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
     };
-    child.stdout.on("data", chunk => { stdout = append(stdout, chunk); });
-    child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
-    child.on("exit", (code, signal) => {
-      if (signal) {
-        process.kill(process.pid, signal);
-        return;
-      }
-      resolve({ exitCode: code ?? 1, stdout, stderr, truncated });
-    });
-    child.on("error", error => resolve({
-      exitCode: 1,
-      stdout,
-      stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`,
-      truncated
-    }));
-  });
-}
-
-function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
-  return new Promise(resolve => {
-    let command: string;
-    let args: string[];
-    try {
-      [command, args] = spawnInput(request);
-    } catch (err: unknown) {
-      resolve({ exitCode: 2, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n`, truncated: false });
+    if (!child.stdout || !child.stderr) {
+      finish({ exitCode: 1, stdout: "", stderr: "Captured process has no stdout or stderr pipe.\n", truncated: false });
       return;
     }
-    const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });
-    let stdout = '';
-    let stderr = '';
-    let truncated = false;
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     // Bounded capture: a runaway or compromised component cannot exhaust composer memory,
     // and truncation is recorded so a valid-JSON prefix is never treated as a complete envelope.
     const append = (existing: string, chunk: string): string => {
@@ -6109,17 +6062,73 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: 
       truncated = true;
       return existing + chunk.slice(0, Math.max(0, remaining));
     };
-    child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
-    child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
-    child.on('exit', (code, signal) => {
+    child.stdout.on("data", chunk => { stdout = append(stdout, chunk); });
+    child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
+    // Wait for close, not exit: exit can fire before the last stdout chunk is delivered.
+    child.on("close", (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);
         return;
       }
-      resolve({ exitCode: code ?? 1, stdout, stderr, truncated });
+      finish({ exitCode: code ?? 1, stdout, stderr, truncated });
     });
-    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`, truncated }));
+    child.on("error", error => finish({
+      exitCode: 1,
+      stdout,
+      stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`,
+      truncated
+    }));
   });
+}
+
+function spawnCapturedPath(
+  commandPath: string,
+  args: readonly string[],
+  environment: CliEnvironment
+): Promise<CapturedProcessResult> {
+  let command: string;
+  let spawnArgs: string[];
+  try {
+    [command, spawnArgs] = spawnInput({
+      component: qubeComponents[0]!,
+      commandPath,
+      resolution: { commandPath, source: "path" },
+      args
+    });
+  } catch (err: unknown) {
+    return Promise.resolve({
+      exitCode: 2,
+      stdout: "",
+      stderr: `${err instanceof Error ? err.message : String(err)}\n`,
+      truncated: false
+    });
+  }
+  return captureChildOutput(spawn(command, spawnArgs, {
+    cwd: environment.cwd,
+    env: environment.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+    windowsHide: true
+  }));
+}
+
+function dispatchCommandCaptured(request: DispatchRequest): Promise<CapturedProcessResult> {
+  let command: string;
+  let args: string[];
+  try {
+    [command, args] = spawnInput(request);
+  } catch (err: unknown) {
+    return Promise.resolve({
+      exitCode: 2,
+      stdout: "",
+      stderr: `${err instanceof Error ? err.message : String(err)}\n`,
+      truncated: false
+    });
+  }
+  return captureChildOutput(spawn(command, args, {
+    stdio: ["inherit", "pipe", "pipe"],
+    shell: false
+  }));
 }
 
 const CMD_UNSAFE_ARGUMENT = /[&|<>^%!"\r\n]/;
