@@ -558,7 +558,7 @@ export function reviewFindingMarker(finding: ReviewFinding): string {
   return `<!-- ${FINDING_MARKER_PREFIX}:${reviewFindingFingerprint(finding)} -->`;
 }
 
-const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|return |await |#include |def |fn |pub |using |package )|[{}=;]|=>/;
+const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package )|=>|[{}]|\w+\([^)]*\)\s*;?/;
 
 export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();

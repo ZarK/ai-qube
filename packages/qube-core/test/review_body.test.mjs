@@ -365,6 +365,15 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
         suggestion: "Please rewrite this function.\nIt should be clearer.",
       }),
     }), /```suggestion/);
+    const equalsProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Please set x = 1.",
+      }),
+    });
+    assert.equal(equalsProse.safe, false);
+    assert.match(equalsProse.reason ?? "", /prose/);
   });
 
   it("stops a published selection at the first off-diff line", () => {
