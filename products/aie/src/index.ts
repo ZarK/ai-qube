@@ -4,6 +4,17 @@
  */
 export const name = '@tjalve/aie';
 export { validateConfig } from './config/schema.js';
+export {
+  composeProviderPermutation,
+  compositionUsesSelectedKinds,
+  resolveCompositionFixturePath,
+} from './providers/compose.js';
+export type {
+  CapabilityObservation,
+  CompositionRole,
+  CompositionSupport,
+  ProviderComposition,
+} from './providers/compose.js';
 
 export type {
   RiskCard,

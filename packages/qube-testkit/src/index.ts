@@ -77,6 +77,9 @@ export type {
 } from "./bootstrap-checklists.js";
 
 export { runLiveProvisionerSuite } from "./live-suite.js";
+export { LIVE_COMBINATION_ARCHETYPES, liveProvidersForArchetype } from "./archetypes.js";
+export type { LiveCombinationArchetype } from "./archetypes.js";
+export { runLiveCombination, runLiveCombinationSuite } from "./combination-suite.js";
 export { createLinearProvisioner } from "./provisioners/linear.js";
 export { createGitLabProvisioner } from "./provisioners/gitlab.js";
 export { createJiraProvisioner, jiraProjectKey } from "./provisioners/jira.js";

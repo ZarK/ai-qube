@@ -943,6 +943,45 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.deepEqual(parsed.connections.connections.map(connection => [connection.adapterId, connection.status]), [["github", "unverified"]]);
     assert.equal(parsed.connections.connections[0].readOnly, true);
     assert.equal(parsed.workflow.status, "not-run");
+    assert.equal(parsed.permutation.status, "ok");
+    assert.equal(parsed.permutation.work.kind, "github");
+    assert.equal(parsed.permutation.review.kind, "github");
+    assert.equal(parsed.permutation.ci.kind, "github");
+    assert.ok(parsed.permutation.work.capabilities.some(item => item.id === "listOpenWork"));
+    const human = runCli(["doctor", "--offline"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    assert.match(human.stdout, /Provider permutation:/);
+    assert.match(human.stdout, /- work: github/);
+  });
+
+  it("reports per-role capability summaries for curated provider permutations", () => {
+    const cases = [
+      { work: "github", review: "github", ci: "github" },
+      { work: "gitlab", review: "gitlab", ci: "gitlab" },
+      { work: "jira", review: "gitlab", ci: "jenkins" },
+      { work: "linear", review: "github", ci: "github" },
+    ];
+    for (const selection of cases) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-permutation-doctor-"));
+      const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-permutation-quality-"));
+      createQualityDoctorShim(qualityRoot);
+      mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+      writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+        version: 1,
+        providers: {
+          work: { kind: selection.work },
+          review: { kind: selection.review },
+          ci: { kind: selection.ci },
+        },
+      })}\n`, "utf8");
+      const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+      assert.equal(result.status, 0, result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.permutation.work.kind, selection.work);
+      assert.equal(parsed.permutation.review.kind, selection.review);
+      assert.equal(parsed.permutation.ci.kind, selection.ci);
+      assert.ok(parsed.permutation.work.capabilities.every(item => item.support === "supported" || item.support === "unsupported" || item.support === "unknown"));
+      assert.ok(parsed.permutation.missing.every(item => item.support !== "supported"));
+    }
   });
 
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
