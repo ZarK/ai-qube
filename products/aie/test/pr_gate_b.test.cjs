@@ -2071,10 +2071,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     assert.equal(result.publish.status, 'planned');
     assert.equal(result.publish.publishKind, 'pull-request-review');
-    assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
-    assert.match(result.publish.body ?? '', /Completeness self-check:/);
+    assert.match(result.publish.body ?? '', /No issues found: 0 blocking, 0 advisory, 1 lane/);
+    assert.match(result.publish.body ?? '', /<summary>Completeness<\/summary>/);
     assert.match(result.publish.body ?? '', /Inspected the code-quality lane scope at this head/);
-    assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
     assert.ok(calls.some(call => call.join(' ') === `pr view 12 --json ${prViewFields}`));
     assert.equal(calls.some(call => call.join(' ') === 'pr diff 12 --patch'), false);
     assert.ok(calls.some(call => call.join(' ') === 'api repos/example/repo/issues/12/comments --method GET -F per_page=100 --paginate --slurp'));

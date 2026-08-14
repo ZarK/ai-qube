@@ -8,7 +8,10 @@ export function createQubeReviewAgent(): ReviewAgentAdapter {
     aliases: ['qubereview'],
     isNonActionableSummary: (text) => {
       const normalized = normalizedFeedbackText(text);
-      return emptyOrPromptOnlyFeedback(text) || normalized.startsWith('**no issues found**') || normalized.startsWith('no issues found');
+      return emptyOrPromptOnlyFeedback(text)
+        || normalized.startsWith('**no issues found**')
+        || normalized.startsWith('no issues found')
+        || /\bno issues found:/i.test(normalized);
     },
   });
 }

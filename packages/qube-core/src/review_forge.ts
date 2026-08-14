@@ -225,6 +225,8 @@ export interface ReviewRoundSummaryPublishInput {
   readonly verdict: "approve" | "request-changes" | "pending" | "inconclusive";
   /** Fully rendered markdown body, including the embedded marker, ready to publish verbatim. */
   readonly body: string;
+  /** Re-rendered body for issue-comment transport; adapters must publish this instead of `body` when formal review events are unavailable. */
+  readonly issueCommentBody?: string;
   readonly marker: string;
   /** Findings the caller determined are diff-anchorable, for provider-side inline comment placement. */
   readonly inlineFindings: readonly ReviewRoundSummaryFinding[];

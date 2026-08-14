@@ -1455,7 +1455,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(result.publish.inlineCommentCount, 1);
     assert.equal(result.publish.bodyFindingCount, 1);
     assert.match(result.publish.body ?? '', /Keep this in the review body/);
-    assert.match(result.publish.body ?? '', /1 finding\(s\) were published as inline review comments/);
+    assert.match(result.publish.body ?? '', /1 finding\(s\) published as inline review comments/);
   });
 
   it('deletes an empty stale pending GitHub review and retries lane review publish', async () => {
@@ -1580,7 +1580,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     // one provider marker per lane per round, never a second one.
     assert.equal(superseding.status, 'published');
     assert.equal(superseding.publishKind, 'issue-comment');
-    assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
+    assert.match(superseding.body ?? '', /Request changes: 1 blocking, 0 advisory, 1 lane/);
     assert.match(superseding.nextAction ?? '', /updated in place for its round/);
     assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/issues/comments/777' && call[call.indexOf('--method') + 1] === 'PATCH'), 'the same-round marker must be updated, not recreated');
     assert.equal(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST'), false, 'no new marker may be created for an existing round');
@@ -2002,8 +2002,8 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.match(body, /\[REDACTED PRIVATE KEY\]/);
     assert.match(body, /api_key=\[REDACTED\]/);
     assert.match(body, /token=\[REDACTED\]/);
-    assert.match(body, /Visible blocker detail\. Visible blocker detail\./);
-    assert.match(body, /truncated because this single finding exceeded 12000 characters; source retained at \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
+    assert.match(body, /Visible blocker detail/);
+    assert.ok(body.length < 4000, 'oversized finding text must not be copied into the published body');
     assert.equal(readFileSync(lanePath, 'utf8'), before);
     assert.match(before, /private-key-material|plain-secret-value|another-secret-value|final-visible-tail-marker/);
   });

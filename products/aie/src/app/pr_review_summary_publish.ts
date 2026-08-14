@@ -1,5 +1,8 @@
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -11,6 +14,83 @@ import type { PrGateExec } from './pr_gate.js';
 
 const DEFAULT_REVIEW_NIT_CAP = 10;
 
+function safeHeadSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+export function reviewRepositoryFromPullRequestUrl(url: string | undefined): ReviewRepositoryRef | undefined {
+  if (!url) return undefined;
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/|$)/i.exec(url.trim());
+  if (!match) return undefined;
+  return { owner: match[1], name: match[2] };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function loadPriorRoundDelta(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[]): ReviewRoundDeltaInput | undefined {
+  const prDir = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
+  try {
+    verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], prDir);
+    if (!lstatSync(prDir).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+  const currentSeg = safeHeadSegment(headSha);
+  let newest: { name: string; mtime: number } | null = null;
+  try {
+    for (const entry of readdirSync(prDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === currentSeg || entry.name.includes('..')) continue;
+      const path = join(prDir, entry.name);
+      try {
+        verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
+        const stats = lstatSync(path);
+        if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
+        if (!newest || stats.mtimeMs > newest.mtime) newest = { name: entry.name, mtime: stats.mtimeMs };
+      } catch {
+        // Skip unreadable sibling head directories.
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  if (!newest) return undefined;
+  const keys: string[] = [];
+  for (const laneId of expectedLanes) {
+    const evidencePath = join(prDir, newest.name, `${laneId}.json`);
+    try {
+      verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], evidencePath);
+      if (!lstatSync(evidencePath).isFile()) continue;
+      const parsed: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
+      if (!isRecord(parsed) || !Array.isArray(parsed.findings)) continue;
+      for (const item of parsed.findings) {
+        if (!isRecord(item)) continue;
+        try {
+          const finding = normalizeReviewFinding({
+            id: typeof item.id === 'string' ? item.id : undefined,
+            severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+            message: typeof item.message === 'string' ? item.message : '',
+            ...(isRecord(item.location) && typeof item.location.path === 'string'
+              ? { location: { path: item.location.path, line: typeof item.location.line === 'number' ? item.location.line : undefined, side: item.location.side === 'source' ? 'source' : 'destination' } }
+              : {}),
+          });
+          keys.push(reviewFindingKey(laneId, finding));
+        } catch {
+          // Skip malformed prior findings.
+        }
+      }
+    } catch {
+      // Skip unreadable prior-head evidence.
+    }
+  }
+  return {
+    priorHeadSha: newest.name,
+    priorFindingKeys: keys,
+    commitRange: `${newest.name.slice(0, 12)}..${headSha.slice(0, 12)}`,
+  };
+}
+
 export interface PrReviewSummaryPublishOptions {
   prNumber: number;
   issueNumber?: number;
@@ -21,6 +101,8 @@ export interface PrReviewSummaryPublishOptions {
   expectedLanes?: readonly LocalReviewLaneId[];
   /** Expected lanes whose current-head evidence is a trusted-provider reuse marker with no local evidence file. */
   providerReuseLanes?: readonly LocalReviewLaneId[];
+  /** Owner/name used for file deep links in the round summary. */
+  repository?: ReviewRepositoryRef;
   /** Paths changed by this PR head; see PrReviewPublishOptions.changedPaths for the same null/undefined/[] semantics. */
   changedPaths?: readonly string[] | null;
   deltaBaseRef?: string;
@@ -41,13 +123,15 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     throw new Error('publish round review summary failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the round summary.');
   }
   const repoRoot = options.repoRoot ?? process.cwd();
-  const target = options.headSha && options.issueNumber
-    ? null
-    : provider.loadPullRequestReviewTarget
+  const needsTarget = !options.headSha || !options.issueNumber || !options.repository;
+  const target = needsTarget
+    ? provider.loadPullRequestReviewTarget
       ? await provider.loadPullRequestReviewTarget(options.prNumber)
-      : await provider.loadPullRequestReview(options.prNumber);
+      : await provider.loadPullRequestReview(options.prNumber)
+    : null;
   const headSha = options.headSha ?? target?.pr.headRefOid ?? '';
   const issueNumber = options.issueNumber ?? target?.closingIssueNumbers[0] ?? 0;
+  const repository = options.repository ?? reviewRepositoryFromPullRequestUrl(target?.pr.url);
   if (issueNumber <= 0) {
     throw new Error('publish round review summary failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
@@ -99,7 +183,11 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
       preconditions: lane.preconditions,
       evidenceHeadSha: lane.evidenceHeadSha,
       carriedForwardFromHeadSha: lane.carriedForwardFromHeadSha,
+      origin: lane.origin,
       withheld: { duplicates: plan?.withheldDuplicates ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
+      host: lane.host,
+      profile: lane.profile,
+      evidencePath: lane.path,
     };
   });
 
@@ -108,10 +196,19 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   // not compute one; renderRoundSummaryBody then marks every finding
   // unanchored instead of guessing at diff coverage.
   const diffIndex = provider.loadReviewDiffIndex ? await provider.loadReviewDiffIndex(options.prNumber) : null;
-  const render = renderRoundSummaryBody(
-    { prNumber: options.prNumber, issueNumber, headSha, round, expectedLanes: expectedLaneIds, lanes: roundSummaryLanes },
-    { diffIndex },
-  );
+  const renderInput = {
+    prNumber: options.prNumber,
+    issueNumber,
+    headSha,
+    round,
+    expectedLanes: expectedLaneIds,
+    lanes: roundSummaryLanes,
+    repository,
+    priorRound: loadPriorRoundDelta(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds),
+    rerunCommand: `aie pr gate ${options.prNumber}`,
+  };
+  const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api' });
+  const issueCommentRender = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor) }));
   const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,
@@ -132,6 +229,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
   })} -->`).join('\n');
   const consolidatedBody = `${laneMarkers}\n${render.body}`;
+  const issueCommentBody = `${laneMarkers}\n${issueCommentRender.body}`;
 
   if (!provider.publishRoundReviewSummary) {
     return {
@@ -159,6 +257,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     expectedLanes: expectedLaneIds,
     verdict: render.verdict,
     body: consolidatedBody,
+    issueCommentBody,
     marker: render.marker,
     inlineFindings,
     unanchoredFindingCount: render.unanchored.length,

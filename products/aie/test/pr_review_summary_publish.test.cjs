@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const { createGitHubReviewForgeProvider, makePrExec, basePr } = require('./support/pr_gate_fixture.cjs');
+const { reviewRepositoryFromPullRequestUrl } = require('../dist/app/pr_review_summary_publish.js');
 const { renderRoundSummaryBody, renderInlineCommentBody } = require('../dist/review_round_summary.js');
 
 function findingAnchor(overrides = {}) {
@@ -60,6 +61,13 @@ function publishInputFromRender(render, overrides = {}) {
     ...overrides,
   };
 }
+
+describe('reviewRepositoryFromPullRequestUrl', () => {
+  it('parses owner and name from a GitHub pull request URL', () => {
+    assert.deepEqual(reviewRepositoryFromPullRequestUrl('https://github.com/ZarK/ai-qube/pull/527'), { owner: 'ZarK', name: 'ai-qube' });
+    assert.equal(reviewRepositoryFromPullRequestUrl('https://gitlab.com/group/project/-/merge_requests/1'), undefined);
+  });
+});
 
 describe('GitHub round summary publish', () => {
   it('creates a formal pull request review with inline comments on first publish', async () => {
@@ -125,17 +133,26 @@ describe('GitHub round summary publish', () => {
   });
 
   it('degrades to an issue comment when the publisher identity is the pull request author', async () => {
-    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const input = roundInput();
+    const render = renderRoundSummaryBody(input, { diffIndex: null, transport: 'review-api' });
+    const degraded = renderRoundSummaryBody(input, { diffIndex: null, transport: 'issue-comment', profile: 'degraded' });
     const fixture = makePrExec({ prViews: [basePr({ author: { login: 'executor' } })] });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
 
-    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render, { issueCommentBody: degraded.body }));
 
     assert.equal(result.status, 'published');
     assert.equal(result.publishKind, 'issue-comment');
     assert.ok(result.publisherDowngradeReason);
+    assert.equal(result.body, degraded.body);
+    assert.match(result.body, /issue-comment transport/);
+    assert.doesNotMatch(result.body, /posted inline/);
+    assert.doesNotMatch(result.body, /\[!NOTE\]/);
+    assert.notEqual(result.body, render.body);
     const commentPost = fixture.events.find(event => event.startsWith('api repos/example/repo/issues/12/comments --method POST'));
     assert.ok(commentPost, 'expected a POST to create the issue comment fallback');
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPost, undefined, 'fallback must not create a formal review event');
   });
 
   it('dismisses prior-head request-changes reviews when a new head publishes', async () => {

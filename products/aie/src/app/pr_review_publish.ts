@@ -79,7 +79,7 @@ function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: numb
 // publication decisions.
 function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
   verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
-  let cacheStats;
+  let cacheStats: ReturnType<typeof lstatSync>;
   try {
     cacheStats = lstatSync(path);
   } catch (err: unknown) {
@@ -268,6 +268,9 @@ export interface ValidatedRoundLane {
   /** The head this lane's own evidence record was recorded at; equals the round head unless the lane carried evidence forward. */
   readonly evidenceHeadSha: string;
   readonly carriedForwardFromHeadSha: string | null;
+  readonly origin: 'local' | 'trusted-provider';
+  readonly host: string;
+  readonly profile: string;
   readonly path: string;
 }
 
@@ -296,6 +299,9 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
         preconditions,
         evidenceHeadSha: carriedForwardFromHeadSha ?? headSha,
         carriedForwardFromHeadSha,
+        origin: 'local',
+        host: validated.host,
+        profile: validated.profile,
         path: validated.path,
       });
     } catch (error) {
@@ -309,6 +315,9 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
           preconditions: [],
           evidenceHeadSha: headSha,
           carriedForwardFromHeadSha: null,
+          origin: 'trusted-provider',
+          host: 'trusted-provider',
+          profile: 'local-focused',
           path: '',
         });
         continue;

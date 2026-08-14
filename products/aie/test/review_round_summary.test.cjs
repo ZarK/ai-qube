@@ -38,6 +38,7 @@ function lane(overrides = {}) {
     preconditions: overrides.preconditions ?? [],
     evidenceHeadSha: overrides.evidenceHeadSha ?? 'abc1234567890',
     carriedForwardFromHeadSha: overrides.carriedForwardFromHeadSha ?? null,
+    origin: overrides.origin ?? 'local',
     withheld: overrides.withheld ?? { duplicates: 0, offDiff: 0, byCap: 0 },
   };
 }
@@ -169,14 +170,14 @@ describe('renderInlineCommentBody', () => {
   it('appends a suggestion fence when the suggestion is safe', () => {
     const anchor = { laneId: 'code-quality', anchored: true, unanchoredReason: null, finding: finding({ location: { path: 'src/a.ts', line: 5, side: 'destination' }, suggestion: 'const x = 1;', message: 'Use const.' }) };
     const body = renderInlineCommentBody(anchor);
-    assert.match(body, /Use const\./);
+    assert.match(body, /\*\*Use const\.\*\*/);
     assert.match(body, /```suggestion\nconst x = 1;\n```/);
   });
 
   it('omits the fence when the suggestion is unsafe, keeping the finding text', () => {
     const anchor = { laneId: 'code-quality', anchored: false, unanchoredReason: 'off diff', finding: finding({ suggestion: 'const x = 1;', message: 'Use const.' }) };
     const body = renderInlineCommentBody(anchor);
-    assert.match(body, /Use const\./);
+    assert.match(body, /\*\*Use const\.\*\*/);
     assert.doesNotMatch(body, /```suggestion/);
   });
 });
@@ -289,8 +290,9 @@ describe('renderRoundSummaryBody', () => {
     const blockingIndex = render.body.indexOf('Blocking issue.');
     const advisoryIndex = render.body.indexOf('Advisory issue.');
     assert.ok(blockingIndex > 0 && advisoryIndex > blockingIndex);
-    assert.match(render.body, /Lane rollup:/);
-    assert.match(render.body, /<summary>Lane details<\/summary>/);
+    assert.match(render.body, /\[!CAUTION\]/);
+    assert.match(render.body, /Request changes: 1 blocking, 1 advisory/);
+    assert.match(render.body, /<summary>Lane notes<\/summary>/);
     assert.match(render.body, /<!-- qube-pr-review-summary:/);
   });
 
@@ -300,16 +302,18 @@ describe('renderRoundSummaryBody', () => {
       expectedLanes: ['code-quality'],
     });
     const render = renderRoundSummaryBody(input);
-    const preconditionsIndex = render.body.indexOf('Preconditions observed:');
-    const rollupIndex = render.body.indexOf('Lane rollup:');
-    assert.ok(preconditionsIndex > 0 && rollupIndex > preconditionsIndex);
+    const conditionsIndex = render.body.indexOf('<summary>Review conditions</summary>');
+    const notesIndex = render.body.indexOf('<summary>Lane notes</summary>');
+    assert.ok(conditionsIndex > 0 && notesIndex > 0);
     assert.match(render.body, /CI is green\./);
+    assert.doesNotMatch(render.body, /Preconditions observed:/);
   });
 
   it('reports publisher downgrade reason and superseded count in the body', () => {
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null, publisherDowngradeReason: 'same-author fallback', supersededPriorSummaries: 2 });
     assert.match(render.body, /Publisher downgrade: same-author fallback/);
-    assert.match(render.body, /superseded 2 prior-head summary/);
+    assert.match(render.body, /issue-comment transport/);
+    assert.doesNotMatch(render.body, /posted inline/);
   });
 
   it('produces a stable finding digest for identical input and a different digest when a finding changes', () => {
@@ -331,13 +335,60 @@ describe('renderRoundSummaryBody', () => {
     const render = renderRoundSummaryBody(input, { diffIndex });
     assert.equal(render.inline.length, 1);
     assert.equal(render.unanchored.length, 1);
-    assert.match(render.body, /- inline comments: 1/);
-    assert.match(render.body, /- unanchored findings: 1/);
+    assert.match(render.body, /pending/);
+    assert.match(render.body, /off-diff, no thread/);
   });
 
   it('shows a lane as missing in the rollup table when no evidence was provided for an expected lane', () => {
     const input = roundInput({ lanes: [lane({ laneId: 'code-quality' })], expectedLanes: ['code-quality', 'security'] });
     const render = renderRoundSummaryBody(input, { diffIndex: null });
-    assert.match(render.body, /\| security \| missing \|/);
+    assert.match(render.body, /security: not run \(no evidence at this head\)/);
+  });
+
+  it('renders reused, carried, approved, request-changes, and not-run as distinct chips', () => {
+    const input = roundInput({
+      expectedLanes: ['code-quality', 'security', 'performance', 'issue-compliance', 'docs'],
+      lanes: [
+        lane({ laneId: 'code-quality', recommendation: 'approve', origin: 'local' }),
+        lane({ laneId: 'security', recommendation: 'request-changes', origin: 'local' }),
+        lane({ laneId: 'performance', recommendation: 'approve', origin: 'trusted-provider' }),
+        lane({ laneId: 'issue-compliance', recommendation: 'approve', carriedForwardFromHeadSha: 'oldheadbbbbbbbb' }),
+      ],
+    });
+    const render = renderRoundSummaryBody(input, { diffIndex: null });
+    assert.match(render.body, /code-quality: approved/);
+    assert.match(render.body, /security: request-changes/);
+    assert.match(render.body, /performance: reused/);
+    assert.doesNotMatch(render.body, /performance: approved/);
+    assert.match(render.body, /issue-compliance: carried from oldheadbbbbb/);
+    assert.match(render.body, /docs: not run \(no evidence at this head\)/);
+  });
+
+  it('deep-links a finding to the file and line when repository metadata is present', () => {
+    const input = roundInput({
+      expectedLanes: ['code-quality'],
+      lanes: [lane({
+        laneId: 'code-quality',
+        recommendation: 'request-changes',
+        findings: [finding({ severity: 'blocking', message: 'Broken parser.', location: { path: 'src/a.ts', line: 12, side: 'destination' } })],
+      })],
+    });
+    input.repository = { owner: 'ZarK', name: 'ai-qube' };
+    const render = renderRoundSummaryBody(input, { diffIndex: null });
+    assert.match(render.body, /https:\/\/github.com\/ZarK\/ai-qube\/blob\/headsha1234567\/src\/a.ts#L12/);
+    const first = render.body.indexOf('Broken parser.');
+    const last = render.body.lastIndexOf('Broken parser.');
+    assert.equal(first, last);
+  });
+
+  it('keeps the verdict sentence inside a 180-character truncation of visible prose', () => {
+    const input = roundInput({
+      expectedLanes: ['code-quality'],
+      lanes: [lane({ laneId: 'code-quality', recommendation: 'request-changes', findings: [finding({ severity: 'blocking', message: 'Broken parser.' })] })],
+    });
+    const render = renderRoundSummaryBody(input, { diffIndex: null });
+    const visible = render.body.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    assert.match(visible, /Request changes/);
+    assert.match(visible, /1 blocking/);
   });
 });
