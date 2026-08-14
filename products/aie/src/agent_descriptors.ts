@@ -450,7 +450,7 @@ export function renderAgentPrompt(input: PromptRenderInput): RenderedAgentPrompt
     ? []
     : [
       `## ${REPO_CONFIGURED_GUIDANCE_HEADING}\n${REPO_CONFIGURED_GUIDANCE_PREFACE}`,
-      ...repoStack.map(fragment => `### ${fragment.id}\n${fragment.text}`),
+      ...repoStack.map(fragment => fragment.text),
     ];
   const text = [
     ...builtinStack.map(fragment => `## ${fragment.id}\n${fragment.text}`),
