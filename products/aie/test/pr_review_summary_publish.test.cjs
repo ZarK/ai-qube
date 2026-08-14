@@ -84,6 +84,18 @@ describe('reviewRepositoryFromPullRequestUrl', () => {
 });
 
 describe('GitHub round summary publish', () => {
+  it('does not post an inline comment for a line that is off the current diff', async () => {
+    const offDiff = findingAnchor({ id: 'off-diff', location: { path: 'src/review.ts', line: 99, side: 'destination' } });
+    const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [offDiff.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.inlineCommentCount, 0);
+  });
+
   it('creates a formal pull request review with inline comments on first publish', async () => {
     const anchored = findingAnchor({ id: 'anchored-1' });
     const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [anchored.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });

@@ -1175,9 +1175,8 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
 }
 
 function publishedInlineFinding(finding: ReviewFinding, diffIndex?: ReviewDiffIndex | null): ReviewFinding | null {
-  const span = diffIndex
-    ? clipReviewAnchorSpanToDiff(finding, diffIndex)
-    : clipReviewAnchorSpan(finding);
+  if (!diffIndex) return null;
+  const span = clipReviewAnchorSpanToDiff(finding, diffIndex);
   if (!span) return null;
   return findingWithPublishedAnchor(finding, span);
 }

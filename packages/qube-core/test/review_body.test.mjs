@@ -414,6 +414,13 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
       anchored: true,
       finding: finding({
         location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Set x = y",
+      }),
+    }).safe, false);
+    assert.equal(suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
         suggestion: "x = 1;",
       }),
     }).safe, true);

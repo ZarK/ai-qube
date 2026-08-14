@@ -568,7 +568,7 @@ export function reviewFindingMarker(finding: ReviewFinding): string {
 }
 
 const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |function |class |if \(|for \(|while \(|return |await |#include |def |fn |pub |using |package |[A-Za-z_$][\w$]*\([^)]*\)\s*;?)|=>|[{}=;]/;
-const ENGLISH_REVIEW_LEAD = /^(please|do not|don't|consider|rewrite)\b/i;
+const ENGLISH_REVIEW_LEAD = /^(please|do not|don't|consider|rewrite|set|use|add|remove|change|update|make|keep|put|move|rename|treat)\b/i;
 
 export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();
