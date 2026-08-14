@@ -193,4 +193,55 @@ describe('local app runner CLI', () => {
     assert.deepEqual(parsed.commandLine, ['npm', 'run', 'dev']);
     assert.equal(parsed.spawnPlan.windowsHide, true);
   });
+
+  it('forwards flags, values, spaces, and nested separators after --', () => {
+    const root = repo();
+    const result = binRun([
+      'run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--',
+      'node', 'Program Files/app.mjs', '--dev', '--host=127.0.0.1', '-p', '3000', '--', '--nested', '-1',
+    ], root);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(parsed.commandLine, [
+      'node', 'Program Files/app.mjs', '--dev', '--host=127.0.0.1', '-p', '3000', '--', '--nested', '-1',
+    ]);
+    assert.deepEqual(parsed.spawnPlan.args, parsed.commandLine.slice(1));
+  });
+
+  it('forwards an empty application argument after --', () => {
+    const root = repo();
+    const result = binRun(['run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--', 'node', 'app.mjs', '', '--dev'], root);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(result.status, 0);
+    assert.deepEqual(parsed.commandLine, ['node', 'app.mjs', '', '--dev']);
+    assert.deepEqual(parsed.spawnPlan.args, ['app.mjs', '', '--dev']);
+  });
+
+  it('still rejects unknown AIE flags before the command separator', () => {
+    const root = repo();
+    const result = binRun(['run', 'start', '--dev', '--', 'node', 'app.mjs'], root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Unknown flag: --dev/);
+  });
+
+  it('preserves an empty application argument after --', () => {
+    const root = repo();
+    const result = binRun([
+      'run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--',
+      'node', 'app.mjs', '',
+    ], root);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(parsed.commandLine, ['node', 'app.mjs', '']);
+    assert.deepEqual(parsed.spawnPlan.args, ['app.mjs', '']);
+  });
+
+  it('still fails when no app command follows the separator', () => {
+    const root = repo();
+    const result = binRun(['run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--'], root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /Missing 1 required arg|missing app command after `--`/);
+  });
 });

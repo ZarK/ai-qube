@@ -1402,7 +1402,7 @@ function createQubeCli(environment: CliEnvironment) {
         definition.command,
         ({ argv }) => executeDirectCommand(definition, argv, environment)
       )),
-      createRuntimeCommand(runCommand, ({ args }) => executeQubeDispatch(readString(args.component), readStringArray(args.args), environment)),
+      createRuntimeCommand(runCommand, ({ args }) => executeQubeDispatch(readString(args.component), stripSeparator(readStringArray(args.args)), environment)),
       ...qubeComponents.map((component, index) => createRuntimeCommand(
         componentCommands[index]!,
         ({ args }) => executeQubeDispatch(component.command, readStringArray(args.args), environment)
