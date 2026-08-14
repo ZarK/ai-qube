@@ -24,5 +24,7 @@ Current fixture shapes:
 - `bazel-monorepo`: positive Bazel monorepo fixture with root `MODULE.bazel`, `WORKSPACE`, two `BUILD` packages, and a GitHub Actions workflow.
 - `pants-monorepo`: positive Pants monorepo fixture with root `pants.toml` source roots, two `BUILD` packages, and a GitHub Actions workflow.
 - `ambiguous-bazel-pants-buck`: negative Bazel/Pants/Buck fixture with a nested `BUILD` package but no root workspace proof file.
+- `cmake-superbuild`: positive CMake superbuild fixture with root `CMakeLists.txt` `add_subdirectory` members, `CMakePresets.json`, two projects, and a GitHub Actions workflow.
+- `ambiguous-cmake-superbuild`: negative CMake fixture with a nested `CMakeLists.txt` but no root `add_subdirectory` or FetchContent proof.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
