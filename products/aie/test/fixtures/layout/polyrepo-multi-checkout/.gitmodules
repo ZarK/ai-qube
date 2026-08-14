@@ -1,0 +1,6 @@
+[submodule "repos/api"]
+	path = repos/api
+	url = https://example.invalid/api.git
+[submodule "repos/web"]
+	path = repos/web
+	url = https://example.invalid/web.git
