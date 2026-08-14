@@ -34,5 +34,7 @@ Current fixture shapes:
 - `ambiguous-docs-content-repo`: negative docs fixture with a nested docs tree but no root MkDocs, Docusaurus, Hugo, Sphinx, or mdBook proof.
 - `polyrepo-multi-checkout`: positive polyrepo fixture with root `.gitmodules`, two contained checkout directories, and a GitHub Actions workflow.
 - `ambiguous-polyrepo-multi-checkout`: negative polyrepo fixture with a nested `repos/` checkout-shaped directory but no extra contained `.git` or `.gitmodules` member.
+- `generated-vendor-heavy`: positive generated/vendor-heavy fixture with a root app, `vendor/`, `dist/`, `generated/`, and a GitHub Actions workflow.
+- `ambiguous-generated-vendor-heavy`: negative generated/vendor-heavy fixture with a single `dist/` tree and no vendor root.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.

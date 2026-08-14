@@ -213,7 +213,7 @@ async function inspectRepoSignals(options: RepoInspectOptions): Promise<{
   return {
     root,
     remotes: remoteResult.exitCode === 0 ? parseRemoteLines(remoteResult.stdout) : [],
-    generatedPathSignals: root && existsSync(join(root, 'dist')) ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
+    generatedPathSignals: root && isContainedDirectory(root, 'dist') ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
     warnings,
   };
 }
@@ -1364,7 +1364,7 @@ function detectCiHints(root: string | null): RepoCiHint[] {
 
 function pathSignals(root: string | null, names: readonly string[], reason: string): RepoPathSignal[] {
   if (!root) return [];
-  return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
+  return names.filter(path => isContainedDirectory(root, path)).map(path => ({ path, reason }));
 }
 
 function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoProject[] {
@@ -1511,7 +1511,6 @@ function resolveProvenWorkspace(
 
 function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
-  if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
   const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
@@ -1552,6 +1551,7 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
   if (proven === 'docs') return 'docs-content-repo';
   if (proven === 'polyrepo') return 'polyrepo-multi-checkout';
   if (proven === 'conflict') return 'unknown';
+  if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
@@ -1686,7 +1686,7 @@ function signalContainsPath(signals: readonly RepoPathSignal[], changedPath: str
 
 function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPath: string): boolean {
   if (projectPath === '.') {
-    if (layoutKind === 'single-app-service') return true;
+    if (layoutKind === 'single-app-service' || layoutKind === 'generated-vendor-heavy') return true;
     return !changedPath.includes('/') || changedPath.startsWith('.github/');
   }
   const prefix = `${projectPath.replace(/\/+$/, '')}/`;
