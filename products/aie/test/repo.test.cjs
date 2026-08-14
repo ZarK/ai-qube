@@ -992,6 +992,27 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.warnings.some(warning => warning.includes('no root CMakeLists.txt add_subdirectory')));
   });
 
+  it('recognizes case-insensitive CMake add_subdirectory commands', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(fixture_cmake_root)\nAdd_Subdirectory(apps/cli)\nADD_SUBDIRECTORY("packages/core")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+  });
+
+  it('does not treat commented CMake add_subdirectory lines as superbuild proof', async () => {
+    const repo = makeFixtureRepo('ambiguous-cmake-superbuild');
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(commented_root)\n# add_subdirectory(apps/cli)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'c-cpp-cmake-superbuild');
+    assert.equal(result.kind, 'single-app-service');
+    assert.ok(result.warnings.some(warning => warning.includes('no root CMakeLists.txt add_subdirectory')));
+  });
+
   it('does not classify a lone root CMakeLists.txt as a CMake superbuild', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(lone_app)\nadd_executable(lone main.cpp)\n');

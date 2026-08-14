@@ -809,10 +809,32 @@ function bazelProjectName(root: string, relativePath: string): string | null {
   return portablePath(relativePath).split('/').filter(Boolean).pop() ?? null;
 }
 
+function cmakeWithoutLineComments(text: string): string {
+  return text.split(/\r?\n/).map(line => {
+    let quote: '"' | "'" | null = null;
+    let output = '';
+    for (const character of line) {
+      if (quote) {
+        output += character;
+        if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        output += character;
+        continue;
+      }
+      if (character === '#') break;
+      output += character;
+    }
+    return output;
+  }).join('\n');
+}
+
 function cmakeAddSubdirectoryPaths(text: string): string[] {
   const paths: string[] = [];
-  for (const match of text.matchAll(/\badd_subdirectory\s*\(\s*["']?([^"'\s)]+)/g)) {
-    const raw = portablePath(match[1].trim()).replace(/\/+$/, '');
+  for (const match of cmakeWithoutLineComments(text).matchAll(/\badd_subdirectory\s*\(\s*(?:"([^"]+)"|'([^']+)'|([^\s)]+))/gi)) {
+    const raw = portablePath((match[1] ?? match[2] ?? match[3] ?? '').trim()).replace(/\/+$/, '');
     if (!raw || raw.startsWith('$') || raw.startsWith('<')) continue;
     paths.push(raw);
   }
@@ -820,7 +842,7 @@ function cmakeAddSubdirectoryPaths(text: string): string[] {
 }
 
 function cmakeHasFetchContent(text: string): boolean {
-  return /\bFetchContent_(Declare|MakeAvailable)\b/.test(text);
+  return /\bFetchContent_(Declare|MakeAvailable)\b/i.test(cmakeWithoutLineComments(text));
 }
 
 function cmakeProjectCallName(text: string): string | null {
