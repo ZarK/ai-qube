@@ -35,6 +35,13 @@ export type {
 } from './risk_cards/index.js';
 
 export {
+  REPO_CONFIGURED_GUIDANCE_HEADING,
+  REPO_CONFIGURED_GUIDANCE_PREFACE,
+  repoConfiguredFragment,
+  renderAgentPrompt,
+} from './agent_descriptors.js';
+
+export {
   IMPLEMENTER_LEARNINGS_CAP,
   IMPLEMENTER_LEARNINGS_FRAGMENT_ID,
   formatImplementerLearningsLines,

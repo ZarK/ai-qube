@@ -369,8 +369,8 @@ export function priorRiskCardCommandIdentity(promptStackEntries: unknown): strin
   return hash(JSON.stringify(ids));
 }
 
-export function expectedLaneFragmentDigest(lane: LocalReviewLaneId, repoRoot?: string): string {
-  return builtinFragmentDigest(promptStack(lane, [`Run local review lane ${lane}.`], [], repoRoot).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
+export function expectedLaneFragmentDigest(lane: LocalReviewLaneId, repoRoot?: string, configuredFragments?: LaneConfiguredFragments): string {
+  return builtinFragmentDigest(promptStack(lane, [`Run local review lane ${lane}.`], [], repoRoot, configuredFragments).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
 
 async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
@@ -897,11 +897,17 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
   ];
 }
 
+export interface LaneConfiguredFragments {
+  repository?: readonly string[];
+  lanePrompt?: readonly string[];
+}
+
 export function promptStack(
   lane: LocalReviewLaneId,
   contextLines: readonly string[] = [`Run local review lane ${lane}.`],
   riskCardFragments: readonly string[] = [],
   repoRoot?: string,
+  configuredFragments?: LaneConfiguredFragments,
 ) {
   const rendered = renderAgentPrompt({
     hostId: 'codex',
@@ -910,6 +916,8 @@ export function promptStack(
     laneIds: [lane],
     contextLines,
     commandFragments: riskCardFragments,
+    repositoryFragments: configuredFragments?.repository,
+    lanePromptFragments: configuredFragments?.lanePrompt,
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
   if (!repoRoot) return rendered;
@@ -1279,8 +1287,8 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = []): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot);
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = [], configuredFragments?: LaneConfiguredFragments): Promise<LaneEvidence | null> {
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,

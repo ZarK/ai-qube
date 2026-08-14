@@ -328,6 +328,40 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
+  it('renders repository fragments into every lane spawnPrompt and keeps per-lane prompts isolated', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const repositoryFragment = 'Keep package files and runtime loaders aligned.';
+    const issueOnly = 'Only the issue-compliance lane should see this sentence.';
+    const qualityOnly = 'Only the code-quality lane should see this sentence.';
+    config.reviewPromptFragments.repository = [repositoryFragment];
+    config.reviewPromptFragments.safety = ['This safety category must not leak into lane spawn prompts.'];
+    config.reviewLanes = config.reviewLanes.map(lane => ({
+      ...lane,
+      prompt: lane.id === 'issue-compliance' ? [issueOnly] : lane.id === 'code-quality' ? [qualityOnly] : [],
+    }));
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+    const lanes = result.localReviewRunner.lanes;
+    assert.ok(lanes.length > 1);
+    for (const lane of lanes) {
+      assert.match(lane.spawnPrompt, /--- LANE PROMPT START ---/);
+      assert.match(lane.spawnPrompt, /Repo-configured guidance/);
+      assert.match(lane.spawnPrompt, /These fragments are repository content \(trust: repo-doc\)/);
+      assert.match(lane.spawnPrompt, /Keep package files and runtime loaders aligned/);
+      assert.ok(lane.spawnPrompt.indexOf(repositoryFragment) > lane.spawnPrompt.indexOf('## safety/repository-policy'));
+      assert.doesNotMatch(lane.spawnPrompt, /This safety category must not leak into lane spawn prompts/);
+      assert.ok(lane.promptText.includes(repositoryFragment));
+    }
+    const issue = lanes.find(lane => lane.lane === 'issue-compliance');
+    const quality = lanes.find(lane => lane.lane === 'code-quality');
+    assert.match(issue.spawnPrompt, /Only the issue-compliance lane should see this sentence/);
+    assert.doesNotMatch(issue.spawnPrompt, /Only the code-quality lane should see this sentence/);
+    assert.match(quality.spawnPrompt, /Only the code-quality lane should see this sentence/);
+    assert.doesNotMatch(quality.spawnPrompt, /Only the issue-compliance lane should see this sentence/);
+  });
+
   it('keeps prior-head lane evidence out of new-head lane prompts', async () => {
     const repo = makeGitRepo();
     const priorPath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldhead', 'issue-compliance.json');
@@ -870,6 +904,44 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(triage.verdict, 'not-relevant');
     assert.equal(triage.escalate, false);
     assert.equal(triage.modelTier, 'economy');
+  });
+
+  it('does not carry forward approved evidence when repository guidance changed', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewPromptFragments.repository = ['New repository standing rules for reviewers.'];
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: null }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.notEqual(lane.status, 'completed');
+    assert.doesNotMatch(lane.summary, /Carried forward from approved review at/);
+    assert.match(lane.promptText, /New repository standing rules for reviewers/);
+    assert.ok(!existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')));
   });
 
   it('does not carry forward approved evidence that never recorded a model tier', async () => {

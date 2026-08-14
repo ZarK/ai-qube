@@ -1818,7 +1818,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
   });
 
-  it("reads apply components from a Node companion when the qube shim prints nothing", () => {
+  it("reads apply components from a Node companion after the child process closes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-silent-bin-"));
     const harness = createInstallApplyHarness(root);
     const result = runCli([
