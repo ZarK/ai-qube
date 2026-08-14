@@ -152,8 +152,8 @@ export function renderSuggestionFence(anchor: FindingAnchor): string | null {
 }
 
 /** Full inline review-comment body: finding text plus a safe suggestion fence when one applies. */
-export function renderInlineCommentBody(anchor: FindingAnchor): string {
-  return renderInlineReviewComment(anchor, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
+export function renderInlineCommentBody(anchor: FindingAnchor, context: { readonly repository?: ReviewRepositoryRef; readonly headSha?: string } = {}): string {
+  return renderInlineReviewComment({ ...anchor, repository: context.repository, headSha: context.headSha }, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
 }
 
 export const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';

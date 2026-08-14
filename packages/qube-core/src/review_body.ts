@@ -239,7 +239,11 @@ function findingClaim(profile: ReviewRenderCapabilityProfile, finding: ReviewFin
 
 function fileLocationText(finding: ReviewFinding): string {
   if (!finding.location) return "no location";
-  return finding.location.line ? `${finding.location.path}:${finding.location.line}` : finding.location.path;
+  if (!finding.location.line) return finding.location.path;
+  if (finding.location.endLine && finding.location.endLine !== finding.location.line) {
+    return `${finding.location.path}:${finding.location.line}-${finding.location.endLine}`;
+  }
+  return `${finding.location.path}:${finding.location.line}`;
 }
 
 function fileDeepLink(
@@ -249,7 +253,9 @@ function fileDeepLink(
 ): string {
   const label = fileLocationText(finding);
   if (!finding.location || !repository || headSha.trim() === "") return label;
-  const line = finding.location.line ? `#L${finding.location.line}` : "";
+  const start = finding.location.line;
+  const end = finding.location.endLine && finding.location.endLine !== start ? `-L${finding.location.endLine}` : "";
+  const line = start ? `#L${start}${end}` : "";
   const path = finding.location.path.replace(/^\/+/, "");
   return `[${label}](https://github.com/${repository.owner}/${repository.name}/blob/${headSha}/${path}${line})`;
 }
@@ -539,13 +545,14 @@ export function suggestionFenceSafety(input: {
   const location = input.finding.location;
   if (!location || typeof location.line !== "number") return { safe: false, reason: "no committable suggestion: suggestion has no anchored line" };
   if (location.side === "source") return { safe: false, reason: "no committable suggestion: suggestions can only replace current-diff lines" };
-  const span = (location.endLine ?? location.line) - location.line;
-  if (span < 0 || span > MAX_SUGGESTION_SPAN_LINES) return { safe: false, reason: `no committable suggestion: suggestion spans more than ${MAX_SUGGESTION_SPAN_LINES} lines` };
+  const span = clipReviewAnchorSpan(input.finding);
+  if (!span) return { safe: false, reason: "no committable suggestion: suggestion has no anchored line" };
+  const anchoredLines = span.endLine - span.line + 1;
+  if (anchoredLines > MAX_SUGGESTION_SPAN_LINES) return { safe: false, reason: `no committable suggestion: suggestion spans more than ${MAX_SUGGESTION_SPAN_LINES} lines` };
   if (suggestion.includes("```")) return { safe: false, reason: "no committable suggestion: suggestion text contains a code fence" };
   if (suggestion.length > MAX_SUGGESTION_LENGTH) return { safe: false, reason: `no committable suggestion: suggestion exceeds ${MAX_SUGGESTION_LENGTH} characters` };
   if (!suggestionLooksLikeCode(suggestion)) return { safe: false, reason: "no committable suggestion: replacement is prose, not code" };
   const suggestionLines = suggestion.replace(/\r\n/g, "\n").split("\n").length;
-  const anchoredLines = (location.endLine ?? location.line) - location.line + 1;
   if (suggestionLines !== anchoredLines) return { safe: false, reason: "no committable suggestion: replacement line count does not match the anchored span" };
   return { safe: true, reason: null };
 }

@@ -964,9 +964,22 @@ function truncatePublishedFinding(value: string, evidencePath: string | null): s
   return `${text.slice(0, limit).trimEnd()}${suffix}`;
 }
 
-function findingInlineBody(finding: ReviewFinding, laneId: string): string {
+function repositoryRefFromName(nameWithOwner: string | undefined): { owner: string; name: string } | undefined {
+  if (!nameWithOwner) return undefined;
+  const [owner, name] = nameWithOwner.split('/');
+  if (!owner || !name) return undefined;
+  return { owner, name };
+}
+
+function findingInlineBody(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string } } = {}): string {
   return renderInlineReviewComment(
-    { laneId, finding, anchored: Boolean(finding.location && typeof finding.location.line === 'number') },
+    {
+      laneId,
+      finding,
+      anchored: Boolean(finding.location && typeof finding.location.line === 'number'),
+      headSha: context.headSha,
+      repository: context.repository,
+    },
     { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText: sanitizePublishedText },
   );
 }
@@ -1175,8 +1188,8 @@ function inlineFindingComment(location: ReviewFinding['location'], body: string)
   return comment;
 }
 
-function inlineReviewComment(finding: ReviewFinding, laneId: string): JsonObject | null {
-  return inlineFindingComment(finding.location, findingInlineBody(finding, laneId));
+function inlineReviewComment(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string } } = {}): JsonObject | null {
+  return inlineFindingComment(finding.location, findingInlineBody(finding, laneId, context));
 }
 
 function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding): JsonObject | null {
@@ -2290,7 +2303,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       }
     }
     const inlineComments = inlineFindings
-      .map(finding => inlineReviewComment(finding, input.lane))
+      .map(finding => inlineReviewComment(finding, input.lane, { headSha: input.headSha, repository: repositoryRefFromName(repositoryName) }))
       .filter((comment): comment is JsonObject => comment !== null);
     const { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
     const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {

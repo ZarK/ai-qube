@@ -219,7 +219,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   };
   const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api' });
   const issueCommentRender = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
-  const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor) }));
+  const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor, { repository, headSha }) }));
   const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,
     head: headSha,
