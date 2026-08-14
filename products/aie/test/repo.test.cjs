@@ -731,6 +731,184 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'src/Escape'), false);
   });
 
+  it('inspects a Bazel monorepo layout with packages and local signals', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture_bazel_root');
+    assert.equal(result.projects.find(project => project.path === 'apps/cli').packageName, 'cli');
+    assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, 'core');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'MODULE.bazel'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'WORKSPACE'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+    assert.ok(result.warnings.some(warning => warning.includes('target graphs are not inferred')));
+  });
+
+  it('inspects a Pants monorepo layout from pants.toml source roots', async () => {
+    const repo = makeFixtureRepo('pants-monorepo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, 'core');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pants.toml'));
+  });
+
+  it('inspects a Buck monorepo layout from .buckconfig and BUCK packages', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, '.buckconfig'), '[project]\n');
+    mkdirSync(join(repo, 'apps', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'apps', 'cli', 'BUCK'), 'cxx_binary(name = "cli")\n');
+    writeFileSync(join(repo, 'apps', 'cli', 'main.cc'), 'int main() { return 0; }\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli']);
+    assert.ok(result.rootMarkers.some(marker => marker.path === '.buckconfig'));
+  });
+
+  it('maps changed paths to affected Bazel packages and suggested gates', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['packages/core/lib.cc', 'apps/cli/BUILD', 'MODULE.bazel'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture_bazel_root', 'cli', 'core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture_bazel_root').changedPaths, ['MODULE.bazel']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'cli').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a Bazel monorepo when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(inspected.projects.find(project => project.path === '.').kind, 'workspace');
+  });
+
+  it('reports an ambiguous layout when Bazel and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not treat unlisted conventional BUILD packages as Pants members', async () => {
+    const repo = makeFixtureRepo('pants-monorepo');
+    mkdirSync(join(repo, 'services', 'api'), { recursive: true });
+    writeFileSync(join(repo, 'services', 'api', 'BUILD'), 'python_sources()\n');
+    writeFileSync(join(repo, 'pants.toml'), '[GLOBAL]\npants_version = "2.22.0"\n\n[source]\nroot_patterns = [\n  "/apps",\n]\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli']);
+    assert.equal(result.projects.some(project => project.path === 'packages/core'), false);
+    assert.equal(result.projects.some(project => project.path === 'services/api'), false);
+  });
+
+  it('does not classify nested BUILD packages without a root workspace proof as a monorepo', async () => {
+    const repo = makeFixtureRepo('ambiguous-bazel-pants-buck');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['packages/core']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root MODULE.bazel')));
+  });
+
+  it('does not classify a lone root BUILD file as a Bazel monorepo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'BUILD'), 'package(default_visibility = ["//visibility:public"])\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'bazel-pants-buck-monorepo');
+    assert.equal(result.projects.some(project => project.path === '.' && project.kind === 'workspace'), false);
+  });
+
+  it('does not classify MODULE.bazel without packages as a proven package set', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'MODULE.bazel'), 'module(name = "empty-module")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'bazel-pants-buck-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.']);
+    assert.ok(result.warnings.some(warning => warning.includes('no member package roots were resolved')));
+  });
+
+  it('keeps generated Bazel output paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+    mkdirSync(join(repo, 'bazel-bin'), { recursive: true });
+    writeFileSync(join(repo, 'bazel-bin', 'cli'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['bazel-bin/cli'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not treat Bazel local_path_override or members outside the repository root as projects', async () => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+    const outside = join(repo, '..', 'outside-bazel-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'BUILD'), 'package(default_visibility = ["//visibility:public"])\n');
+    writeFileSync(join(repo, 'MODULE.bazel'), 'module(\n    name = "fixture_bazel_root",\n    version = "0.0.0",\n)\n\nlocal_path_override(\n    module_name = "leak",\n    path = "../outside-bazel-leak",\n)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+    assert.equal(result.projects.some(project => project.path.includes('outside-bazel-leak')), false);
+  });
+
+  it('does not follow symlink Bazel packages out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('bazel-monorepo');
+    const outside = join(repo, '..', 'outside-bazel-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'BUILD'), 'package(default_visibility = ["//visibility:public"])\n');
+    const link = join(repo, 'packages', 'escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'packages/escape'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));

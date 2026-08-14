@@ -21,5 +21,8 @@ Current fixture shapes:
 - `ambiguous-java-kotlin`: negative Java/Kotlin fixture with a nested Gradle module but no root settings file or aggregator `pom.xml`.
 - `dotnet-solution`: positive .NET solution fixture with a root `.sln`, `Directory.Build.props`, two projects, and a GitHub Actions workflow.
 - `ambiguous-dotnet-solution`: negative .NET fixture with a nested `.csproj` but no root solution file.
+- `bazel-monorepo`: positive Bazel monorepo fixture with root `MODULE.bazel`, `WORKSPACE`, two `BUILD` packages, and a GitHub Actions workflow.
+- `pants-monorepo`: positive Pants monorepo fixture with root `pants.toml` source roots, two `BUILD` packages, and a GitHub Actions workflow.
+- `ambiguous-bazel-pants-buck`: negative Bazel/Pants/Buck fixture with a nested `BUILD` package but no root workspace proof file.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
