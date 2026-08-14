@@ -104,7 +104,7 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   async updateMergeRequestNote(input: { projectId: string; iid: string; noteId: string; body: string }): Promise<GitLabNote> {
-    return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes/${encodeURIComponent(input.noteId)}`, { body: input.body });
+    return this.putJson(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes/${encodeURIComponent(input.noteId)}`, { body: input.body });
   }
 
   async createMergeRequestDiscussion(input: { projectId: string; iid: string; body: string; position: GitLabDiscussionPosition }): Promise<GitLabDiscussion> {
@@ -195,6 +195,15 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     const response = await this.request(url, {
       method: "PUT",
+    });
+    return this.readJson(response, path);
+  }
+
+  private async putJson<T>(path: string, body: unknown): Promise<T> {
+    const response = await this.request(new URL(`${this.apiBaseUrl}${path}`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
     return this.readJson(response, path);
   }

@@ -21,6 +21,7 @@ export type {
   GitLabPipelineCheckResult,
   GitLabPipelineCheckStatus,
 } from "./gitlab_ci_provider.js";
+export { FetchGitLabReviewRestClient } from "./gitlab_review_client.js";
 export {
   createGitLabReviewForgeProvider,
   createGitLabReviewProvider,

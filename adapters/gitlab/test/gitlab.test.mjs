@@ -6,6 +6,7 @@ import {
   createGitLabReviewForgeProvider,
   createGitLabWorkProvider,
   discussionPosition,
+  FetchGitLabReviewRestClient,
   gitLabIssueToWorkItem,
   mapGitLabPipelineStatus,
 } from "../dist/index.js";
@@ -1098,6 +1099,28 @@ describe("GitLab review forge adapter", () => {
       assert.equal(requests[1].method, "PUT");
       assert.match(requests[1].url, /\/merge_requests\/12\/discussions\/discussion-open\?resolved=true$/);
       assert.equal(requests[1].body, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("updates merge request notes with a JSON body instead of a query string", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    try {
+      globalThis.fetch = async (url, options) => {
+        requests.push({ url: String(url), method: options.method, body: options.body });
+        return new Response(JSON.stringify({ id: 7, body: "updated" }), { status: 200 });
+      };
+      const client = new FetchGitLabReviewRestClient({
+        token: "gitlab-token",
+        projectId: "acme/qube",
+        baseUrl: "https://gitlab.internal.example.com/",
+      });
+      await client.updateMergeRequestNote({ projectId: "acme/qube", iid: "12", noteId: "7", body: "line1\nline2" });
+      assert.equal(requests[0].method, "PUT");
+      assert.doesNotMatch(requests[0].url, /[?&]body=/);
+      assert.equal(JSON.parse(requests[0].body).body, "line1\nline2");
     } finally {
       globalThis.fetch = originalFetch;
     }
