@@ -539,7 +539,7 @@ export function findingWithPublishedAnchor(finding: ReviewFinding, span: ReviewA
 }
 
 function normalizeFindingIdentityText(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLowerCase();
+  return value.replace(/[*_`]+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 export function reviewFindingFingerprint(finding: ReviewFinding): string {
@@ -564,8 +564,8 @@ export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed === "") return false;
   const lines = trimmed.split(/\n/).map((line) => line.trim()).filter((line) => line !== "");
-  const proseLine = (line: string): boolean => /^[A-Z].*[.!?]$/.test(line) && !CODE_SHAPE.test(line);
-  if (lines.length > 0 && lines.every(proseLine)) return false;
+  const sentenceLine = (line: string): boolean => /^[A-Z][\s\S]*[.!?]$/.test(line);
+  if (lines.length > 0 && lines.every(sentenceLine)) return false;
   return CODE_SHAPE.test(trimmed);
 }
 

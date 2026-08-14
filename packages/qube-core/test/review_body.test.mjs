@@ -413,7 +413,12 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
       message: "The parser truncates.",
       location: { path: "src/a.ts", line: 10, endLine: 40, side: "destination" },
     }));
+    const formatted = reviewFindingFingerprint(finding({
+      message: "**The parser truncates.**",
+      location: { path: "src/a.ts", line: 10, endLine: 40, side: "destination" },
+    }));
     assert.equal(first, second);
+    assert.equal(first, formatted);
   });
 
   it("matches a multi-line suggestion to the published clipped span", () => {
