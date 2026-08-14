@@ -236,6 +236,7 @@ export const RUN_WAIT_FLAG_DETAILS: CommandFlagSchema[] = [
 export const RUN_STATUS_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable local app runner status output', default: false },
   { name: '--name', type: 'string', description: 'Stable runner name to inspect', default: 'ui-audit' },
+  { name: '--attempt', type: 'string', description: 'Existing start attempt id whose logs should be tailed instead of the current attempt' },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

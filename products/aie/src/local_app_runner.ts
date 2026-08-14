@@ -1,9 +1,10 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { processIdentity } from './local_app_runner_process.js';
 import type {
+  AttemptLogPaths,
   RunMetadata,
   RunNameOptions,
   RunPaths,
@@ -17,8 +18,10 @@ import type {
   RunWaitResult,
   SpawnPlan,
 } from './local_app_runner_types.js';
+
 export { formatRunResult } from './local_app_runner_format.js';
 export type {
+  AttemptLogPaths,
   RunCommand,
   RunMetadata,
   RunNameOptions,
@@ -38,6 +41,15 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const LOG_TAIL_LINES = 30;
 const SAFE_RUN_NAME = /^[A-Za-z0-9._-]+$/;
+const SAFE_ATTEMPT_ID = /^[A-Za-z0-9._-]+$/;
+const LEGACY_ATTEMPT_ID = 'legacy';
+
+interface CurrentAttempt {
+  attemptId: string;
+  stdoutPath: string;
+  stderrPath: string;
+  startedAt: string;
+}
 
 function validateName(name: string): string {
   const normalized = name.trim();
@@ -45,15 +57,135 @@ function validateName(name: string): string {
   return normalized;
 }
 
-export function runPaths(repoRoot: string, name: string): RunPaths {
+function validateAttemptId(attemptId: string): string {
+  const normalized = attemptId.trim();
+  if (!SAFE_ATTEMPT_ID.test(normalized)) throw new Error(`run attempt id must contain only letters, numbers, dot, underscore, or dash; received "${attemptId}"`);
+  return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function writeJsonAtomic(path: string, value: unknown): void {
+  const temporaryPath = `${path}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+  try {
+    renameSync(temporaryPath, path);
+  } catch {
+    rmSync(path, { force: true });
+    renameSync(temporaryPath, path);
+  }
+}
+
+function attemptFilePaths(directory: string, attemptId: string): AttemptLogPaths {
+  if (attemptId === LEGACY_ATTEMPT_ID) {
+    return {
+      attemptId,
+      stdoutPath: join(directory, 'stdout.log'),
+      stderrPath: join(directory, 'stderr.log'),
+    };
+  }
+  return {
+    attemptId,
+    stdoutPath: join(directory, `stdout-${attemptId}.log`),
+    stderrPath: join(directory, `stderr-${attemptId}.log`),
+  };
+}
+
+function listHistoricalLogs(directory: string): AttemptLogPaths[] {
+  if (!existsSync(directory)) return [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const ids = new Set<string>();
+  for (const name of names) {
+    const match = name.match(/^(?:stdout|stderr)-(.+)\.log$/);
+    if (match) ids.add(match[1]);
+  }
+  if (names.includes('stdout.log') || names.includes('stderr.log')) ids.add(LEGACY_ATTEMPT_ID);
+  return [...ids].sort().map(attemptId => attemptFilePaths(directory, attemptId));
+}
+
+function createAttemptId(now: Date, existingIds: string[]): string {
+  const base = now.toISOString().replace(/[-:]/g, '').replace('.', '');
+  if (!existingIds.includes(base)) return base;
+  let suffix = 2;
+  while (existingIds.includes(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+function readCurrentAttempt(path: string): CurrentAttempt | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || parsed.version !== 1 || typeof parsed.attemptId !== 'string' || typeof parsed.stdoutPath !== 'string' || typeof parsed.stderrPath !== 'string') {
+      return null;
+    }
+    return {
+      attemptId: parsed.attemptId,
+      stdoutPath: parsed.stdoutPath,
+      stderrPath: parsed.stderrPath,
+      startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCurrentAttempt(path: string, value: CurrentAttempt): void {
+  writeJsonAtomic(path, { version: 1, ...value });
+}
+
+function baseRunPaths(repoRoot: string, name: string): Omit<RunPaths, 'attemptId' | 'stdoutPath' | 'stderrPath' | 'historicalLogs'> {
   const safeName = validateName(name);
   const directory = join(repoRoot, '.qube', 'aie', 'runs', safeName);
   return {
     directory,
     metadataPath: join(directory, 'metadata.json'),
-    stdoutPath: join(directory, 'stdout.log'),
-    stderrPath: join(directory, 'stderr.log'),
+    currentAttemptPath: join(directory, 'current-attempt.json'),
   };
+}
+
+function withLogPaths(
+  base: Omit<RunPaths, 'attemptId' | 'stdoutPath' | 'stderrPath' | 'historicalLogs'>,
+  attemptId: string | null,
+  stdoutPath: string,
+  stderrPath: string,
+): RunPaths {
+  const historicalLogs = listHistoricalLogs(base.directory);
+  if (attemptId && !historicalLogs.some(entry => entry.attemptId === attemptId)) {
+    historicalLogs.push({ attemptId, stdoutPath, stderrPath });
+    historicalLogs.sort((left, right) => left.attemptId.localeCompare(right.attemptId));
+  }
+  return { ...base, attemptId, stdoutPath, stderrPath, historicalLogs };
+}
+
+export function runPaths(repoRoot: string, name: string, attemptId?: string): RunPaths {
+  const base = baseRunPaths(repoRoot, name);
+  if (attemptId) {
+    const safeAttemptId = validateAttemptId(attemptId);
+    const files = attemptFilePaths(base.directory, safeAttemptId);
+    return withLogPaths(base, files.attemptId, files.stdoutPath, files.stderrPath);
+  }
+  if (existsSync(base.metadataPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(base.metadataPath, 'utf8'));
+      if (isRecord(parsed) && typeof parsed.stdoutPath === 'string' && typeof parsed.stderrPath === 'string') {
+        const metadataAttemptId = typeof parsed.attemptId === 'string' ? parsed.attemptId : null;
+        return withLogPaths(base, metadataAttemptId, parsed.stdoutPath, parsed.stderrPath);
+      }
+    } catch {
+      // Fall through to the current-attempt pointer or legacy files.
+    }
+  }
+  const current = readCurrentAttempt(base.currentAttemptPath);
+  if (current) return withLogPaths(base, current.attemptId, current.stdoutPath, current.stderrPath);
+  const legacy = attemptFilePaths(base.directory, LEGACY_ATTEMPT_ID);
+  return withLogPaths(base, null, legacy.stdoutPath, legacy.stderrPath);
 }
 
 function resolveWorkingDirectory(repoRoot: string, cwd: string | undefined): string {
@@ -75,6 +207,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
 }
 
 function metadataFromPlan(options: RunStartOptions, paths: RunPaths, plan: SpawnPlan, pid: number, platform: NodeJS.Platform): RunMetadata {
+  if (!paths.attemptId) throw new Error('run start requires an attempt id before writing metadata');
   return {
     version: 1,
     name: validateName(options.name),
@@ -83,14 +216,11 @@ function metadataFromPlan(options: RunStartOptions, paths: RunPaths, plan: Spawn
     cwd: plan.cwd,
     startedAt: (options.now ?? new Date()).toISOString(),
     platform,
+    attemptId: paths.attemptId,
     stdoutPath: paths.stdoutPath,
     stderrPath: paths.stderrPath,
     metadataPath: paths.metadataPath,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function readRunMetadata(repoRoot: string, name: string): RunMetadata | null {
@@ -120,6 +250,27 @@ function logTail(paths: RunPaths): { stdout: string[]; stderr: string[] } {
   return { stdout: tail(paths.stdoutPath), stderr: tail(paths.stderrPath) };
 }
 
+function recordSpawnError(stderrPath: string, message: string): void {
+  try {
+    mkdirSync(dirname(stderrPath), { recursive: true });
+    appendFileSync(stderrPath, `\n[aie-runner] spawn error: ${message}\n`);
+  } catch {
+    // Status and wait still report empty tails when the attempt file cannot be written.
+  }
+}
+
+function removeMetadataIfCurrentAttempt(metadataPath: string, attemptId: string): void {
+  try {
+    if (!existsSync(metadataPath)) return;
+    const parsed: unknown = JSON.parse(readFileSync(metadataPath, 'utf8'));
+    if (isRecord(parsed) && parsed.attemptId === attemptId) {
+      rmSync(metadataPath, { force: true });
+    }
+  } catch {
+    // Leave metadata in place when ownership cannot be confirmed.
+  }
+}
+
 function safeClose(fd: number): void {
   try {
     closeSync(fd);
@@ -128,9 +279,26 @@ function safeClose(fd: number): void {
   }
 }
 
-export function runStatus(options: RunNameOptions): RunStatusResult {
-  const paths = runPaths(options.repoRoot, options.name);
+function fallbackPaths(repoRoot: string, name: string): RunPaths {
   try {
+    return runPaths(repoRoot, name);
+  } catch {
+    const directory = join(repoRoot, '.qube', 'aie', 'runs', 'unknown');
+    return {
+      directory,
+      metadataPath: join(directory, 'metadata.json'),
+      currentAttemptPath: join(directory, 'current-attempt.json'),
+      attemptId: null,
+      stdoutPath: join(directory, 'stdout.log'),
+      stderrPath: join(directory, 'stderr.log'),
+      historicalLogs: [],
+    };
+  }
+}
+
+export function runStatus(options: RunNameOptions): RunStatusResult {
+  try {
+    const paths = runPaths(options.repoRoot, options.name, options.attemptId);
     const metadata = readRunMetadata(options.repoRoot, options.name);
     const status = statusFromMetadata(metadata);
     return {
@@ -138,18 +306,25 @@ export function runStatus(options: RunNameOptions): RunStatusResult {
       command: 'run status',
       name: validateName(options.name),
       status,
+      attemptId: paths.attemptId,
       metadata,
       paths,
       logTail: logTail(paths),
-      nextAction: status === 'running' ? `Use \`aie run wait --name ${options.name} --url <url>\` or \`aie run stop --name ${options.name}\`.` : `Start the app with \`aie run start --name ${options.name} -- <command>\`.`,
+      nextAction: options.attemptId && !existsSync(paths.stdoutPath) && !existsSync(paths.stderrPath)
+        ? `No logs exist for attempt ${paths.attemptId}. Use \`aie run status --name ${options.name}\` for the current attempt.`
+        : status === 'running'
+          ? `Use \`aie run wait --name ${options.name} --url <url>\` or \`aie run stop --name ${options.name}\`.`
+          : `Start the app with \`aie run start --name ${options.name} -- <command>\`.`,
     };
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);
+    const paths = fallbackPaths(options.repoRoot, options.name);
     return {
       ok: false,
       command: 'run status',
       name: options.name,
       status: 'unknown',
+      attemptId: paths.attemptId,
       metadata: null,
       paths,
       logTail: logTail(paths),
@@ -160,11 +335,11 @@ export function runStatus(options: RunNameOptions): RunStatusResult {
 }
 
 export function runStart(options: RunStartOptions): RunStartResult {
-  const paths = runPaths(options.repoRoot, options.name);
-  const plan = buildSpawnPlan(options, paths);
+  const existingPaths = runPaths(options.repoRoot, options.name);
   const existing = readRunMetadata(options.repoRoot, options.name);
   const existingStatus = statusFromMetadata(existing);
   if (existingStatus === 'running') {
+    const plan = buildSpawnPlan(options, existingPaths);
     return {
       ok: false,
       command: 'run start',
@@ -173,13 +348,17 @@ export function runStart(options: RunStartOptions): RunStartResult {
       commandLine: [plan.command, ...plan.args],
       cwd: plan.cwd,
       pid: existing?.pid ?? null,
-      paths,
+      attemptId: existing?.attemptId ?? existingPaths.attemptId,
+      paths: existingPaths,
       spawnPlan: plan,
       status: 'running',
       nextAction: `Stop the existing process with \`aie run stop --name ${options.name}\`, or choose a different --name.`,
       error: `Run "${options.name}" is already running with PID ${existing?.pid}.`,
     };
   }
+  const attemptId = createAttemptId(options.now ?? new Date(), existingPaths.historicalLogs.map(entry => entry.attemptId));
+  const paths = runPaths(options.repoRoot, options.name, attemptId);
+  const plan = buildSpawnPlan(options, paths);
   if (options.dryRun) {
     return {
       ok: true,
@@ -189,6 +368,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       commandLine: [plan.command, ...plan.args],
       cwd: plan.cwd,
       pid: null,
+      attemptId,
       paths,
       spawnPlan: plan,
       status: 'missing',
@@ -197,6 +377,14 @@ export function runStart(options: RunStartOptions): RunStartResult {
   }
 
   mkdirSync(paths.directory, { recursive: true });
+  const startedAt = (options.now ?? new Date()).toISOString();
+  writeCurrentAttempt(paths.currentAttemptPath, {
+    attemptId,
+    stdoutPath: paths.stdoutPath,
+    stderrPath: paths.stderrPath,
+    startedAt,
+  });
+  if (existsSync(paths.metadataPath)) rmSync(paths.metadataPath, { force: true });
   const stdout = openSync(paths.stdoutPath, 'a');
   const stderr = openSync(paths.stderrPath, 'a');
   try {
@@ -209,10 +397,11 @@ export function runStart(options: RunStartOptions): RunStartResult {
     safeClose(stdout);
     safeClose(stderr);
     child.once('error', err => {
-      appendFileSync(paths.stderrPath, `\n[aie-runner] spawn error: ${err.message}\n`);
-      rmSync(paths.metadataPath, { force: true });
+      recordSpawnError(paths.stderrPath, err.message);
+      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
     });
     if (!child.pid) {
+      recordSpawnError(paths.stderrPath, 'The app process did not expose a PID after spawn.');
       return {
         ok: false,
         command: 'run start',
@@ -221,6 +410,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
         commandLine: [plan.command, ...plan.args],
         cwd: plan.cwd,
         pid: null,
+        attemptId,
         paths,
         spawnPlan: plan,
         status: 'missing',
@@ -230,7 +420,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
     }
     const metadata = metadataFromPlan(options, paths, plan, child.pid, options.platform ?? process.platform);
     try {
-      writeFileSync(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      writeJsonAtomic(paths.metadataPath, metadata);
     } catch (err: unknown) {
       child.kill();
       const error = err instanceof Error ? err.message : String(err);
@@ -242,6 +432,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
         commandLine: [plan.command, ...plan.args],
         cwd: plan.cwd,
         pid: child.pid,
+        attemptId,
         paths,
         spawnPlan: plan,
         status: 'unknown',
@@ -258,6 +449,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       commandLine: metadata.command,
       cwd: metadata.cwd,
       pid: metadata.pid,
+      attemptId,
       paths,
       spawnPlan: plan,
       status: 'running',
@@ -267,6 +459,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
     safeClose(stdout);
     safeClose(stderr);
     const error = err instanceof Error ? err.message : String(err);
+    recordSpawnError(paths.stderrPath, error);
     return {
       ok: false,
       command: 'run start',
@@ -275,6 +468,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       commandLine: [plan.command, ...plan.args],
       cwd: plan.cwd,
       pid: null,
+      attemptId,
       paths,
       spawnPlan: plan,
       status: 'missing',
@@ -305,7 +499,7 @@ function isLocalReadinessUrl(input: string): boolean {
 }
 
 export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
-  const paths = runPaths(options.repoRoot, options.name);
+  const paths = runPaths(options.repoRoot, options.name, options.attemptId);
   const metadata = readRunMetadata(options.repoRoot, options.name);
   const timeoutSeconds = Math.max(1, Math.trunc(options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS));
   const pollIntervalMs = Math.max(100, Math.trunc(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS));
@@ -320,6 +514,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
       timeoutSeconds,
       elapsedMs: 0,
       attempts: 0,
+      attemptId: paths.attemptId,
       status: 'request-failed',
       httpStatus: null,
       paths,
@@ -337,6 +532,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
       timeoutSeconds,
       elapsedMs: 0,
       attempts: 0,
+      attemptId: paths.attemptId,
       status: 'missing-run',
       httpStatus: null,
       paths,
@@ -358,6 +554,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
         timeoutSeconds,
         elapsedMs: clock() - started,
         attempts,
+        attemptId: paths.attemptId,
         status: 'stopped',
         httpStatus: lastStatus,
         paths,
@@ -379,6 +576,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
         timeoutSeconds,
         elapsedMs: clock() - started,
         attempts,
+        attemptId: paths.attemptId,
         status: 'ready',
         httpStatus: result.httpStatus,
         paths,
@@ -396,6 +594,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
     timeoutSeconds,
     elapsedMs: clock() - started,
     attempts,
+    attemptId: paths.attemptId,
     status: 'timeout',
     httpStatus: lastStatus,
     paths,
@@ -424,7 +623,7 @@ function killProcessTree(pid: number, platform: NodeJS.Platform): boolean {
 }
 
 export function runStop(options: RunStopOptions): RunStopResult {
-  const paths = runPaths(options.repoRoot, options.name);
+  const paths = runPaths(options.repoRoot, options.name, options.attemptId);
   const metadata = readRunMetadata(options.repoRoot, options.name);
   const status = metadata ? processIdentity(metadata, options.platform ?? process.platform).state : 'missing';
   if (!metadata) {
@@ -434,6 +633,7 @@ export function runStop(options: RunStopOptions): RunStopResult {
       dryRun: options.dryRun === true,
       name: validateName(options.name),
       status: 'missing',
+      attemptId: paths.attemptId,
       pid: null,
       paths,
       logTail: logTail(paths),
@@ -447,6 +647,7 @@ export function runStop(options: RunStopOptions): RunStopResult {
       dryRun: true,
       name: metadata.name,
       status,
+      attemptId: paths.attemptId,
       pid: metadata.pid,
       paths,
       logTail: logTail(paths),
@@ -463,6 +664,7 @@ export function runStop(options: RunStopOptions): RunStopResult {
     dryRun: false,
     name: metadata.name,
     status: stopped ? 'stopped' : 'unknown',
+    attemptId: paths.attemptId,
     pid: metadata.pid,
     paths,
     logTail: logTail(paths),
