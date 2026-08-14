@@ -651,6 +651,19 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
   });
 
+  it('does not treat unlisted conventional .NET projects as solution members', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    mkdirSync(join(repo, 'src', 'Unlisted'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'Unlisted', 'Unlisted.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    writeFileSync(join(repo, 'Fixture.sln'), 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'dotnet-solution');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App']);
+    assert.equal(result.projects.some(project => project.path === 'src/Unlisted'), false);
+  });
+
   it('does not classify nested .NET projects without a root solution as a solution', async () => {
     const repo = makeFixtureRepo('ambiguous-dotnet-solution');
 
@@ -695,7 +708,7 @@ describe('repo layout inspection and affected scope', () => {
 
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
-    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App']);
     assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
   });
 

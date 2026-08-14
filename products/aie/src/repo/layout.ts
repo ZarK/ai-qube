@@ -666,13 +666,11 @@ function detectDotnetWorkspaceSignals(root: string | null): DotnetWorkspaceSigna
     ...solutionFiles,
     ...DOTNET_MARKER_FILES.filter(path => existsSync(join(root, path))),
   ].sort();
-  const resolvedFromSolution = declaredPatterns
+  const provenMembers = declaredPatterns
     .map(projectFile => dotnetDirectoryFromProjectFile(root, projectFile))
     .filter((path): path is string => path !== null && path !== '.');
-  const resolvedProjectPaths = [...new Set([
-    ...resolvedFromSolution,
-    ...DOTNET_PROJECT_DIRS.flatMap(directoryName => containedChildDotnetProjects(root, directoryName)),
-  ])].sort();
+  const conventionalMembers = DOTNET_PROJECT_DIRS.flatMap(directoryName => containedChildDotnetProjects(root, directoryName));
+  const resolvedProjectPaths = [...new Set(solutionFiles.length > 0 ? provenMembers : conventionalMembers)].sort();
   return { declaredPatterns, markerPaths, resolvedProjectPaths };
 }
 
