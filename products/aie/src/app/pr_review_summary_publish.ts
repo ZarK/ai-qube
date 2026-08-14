@@ -113,6 +113,25 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     { diffIndex },
   );
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor) }));
+  const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
+    version: 1,
+    head: headSha,
+    lane: lane.laneId,
+    expectedLanes: expectedLaneIds,
+    round,
+    profile: 'local-focused',
+    runId: `${round}:${lane.laneId}`,
+    issueNumber,
+    prNumber: options.prNumber,
+    host: 'local-host',
+    recommendation: lane.recommendation,
+    status: lane.status,
+    summary: lane.summary || `${lane.laneId} ${lane.status}`,
+    inline: 'review-api',
+    bodyFindingCount: lane.findings.length,
+    blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
+  })} -->`).join('\n');
+  const consolidatedBody = `${laneMarkers}\n${render.body}`;
 
   if (!provider.publishRoundReviewSummary) {
     return {
@@ -123,7 +142,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
         status: 'disabled',
         runId: null,
         marker: render.marker,
-        body: render.body,
+        body: consolidatedBody,
         url: null,
         failure: null,
         nextAction: 'The configured review provider does not support round review summaries; per-lane review publishing remains the provider-visible feedback surface.',
@@ -139,7 +158,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     issueNumber,
     expectedLanes: expectedLaneIds,
     verdict: render.verdict,
-    body: render.body,
+    body: consolidatedBody,
     marker: render.marker,
     inlineFindings,
     unanchoredFindingCount: render.unanchored.length,

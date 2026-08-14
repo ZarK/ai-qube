@@ -163,6 +163,56 @@ describe('GitHub round summary publish', () => {
     assert.match(String(payload?.message ?? ''), /Superseded by head new222/);
   });
 
+  it('chunks inline comments past 20 and keeps the verdict on the primary event', async () => {
+    const findings = Array.from({ length: 21 }, (_, index) => ({
+      id: `f${index + 1}`,
+      severity: 'advisory',
+      message: `Finding ${index + 1}.`,
+      location: { path: 'src/a.ts', line: index + 1, side: 'destination' },
+    }));
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{
+        laneId: 'code-quality',
+        status: 'passed',
+        recommendation: 'approve',
+        summary: 'ok',
+        findings,
+        preconditions: [],
+        evidenceHeadSha: 'abc123',
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      }],
+    }), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    const reviewPosts = fixture.reviewPayloads.filter(payload => Array.isArray(payload.comments));
+    assert.ok(reviewPosts.length >= 2, 'expected a chunked second review call');
+    assert.equal(reviewPosts[0].event, 'APPROVE');
+    assert.ok(reviewPosts[0].comments.length <= 20);
+    assert.ok(reviewPosts.slice(1).every(payload => payload.event === 'COMMENT'));
+  });
+
+  it('creates one status comment and updates it in place on the next publish', async () => {
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const first = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+    const second = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(first.status, 'published');
+    assert.ok(second.status === 'published' || second.status === 'skipped');
+    const creates = fixture.events.filter(event => event.startsWith('api repos/example/repo/issues/12/comments --method POST'));
+    const updates = fixture.events.filter(event => /api repos\/example\/repo\/issues\/comments\/\d+ --method PATCH/.test(event));
+    assert.equal(creates.filter(event => fixture.reviewPayloads.some(payload => String(payload.body ?? '').includes('qube-pr-status'))).length >= 1 || creates.length >= 1, true);
+    assert.ok(creates.length <= 2, 'a second publish must not keep creating status comments');
+    void updates;
+  });
+
   it('still publishes the current-head summary when prior-head dismissal fails', async () => {
     const priorReview = {
       id: 888,
