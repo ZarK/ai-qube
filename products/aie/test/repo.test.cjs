@@ -1814,6 +1814,46 @@ describe('repo layout inspection and affected scope', () => {
     assert.notEqual(result.kind, 'generated-vendor-heavy');
   });
 
+  it('keeps a Go workspace when a contained vendor tree exists', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+    mkdirSync(join(repo, 'vendor'), { recursive: true });
+    writeFileSync(join(repo, 'vendor', 'mod.go'), 'vendored\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'go-workspace');
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+    assert.ok(result.vendorPaths.some(signal => signal.path === 'vendor'));
+  });
+
+  it('keeps a JavaScript workspace when multiple generated directories exist', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    mkdirSync(join(repo, 'dist'), { recursive: true });
+    mkdirSync(join(repo, 'coverage'), { recursive: true });
+    writeFileSync(join(repo, 'dist', 'index.js'), 'export {}\n');
+    writeFileSync(join(repo, 'coverage', 'lcov.info'), 'TN:\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+  });
+
+  it('classifies multiple contained generated trees without vendor as generated-vendor-heavy', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'fixture-generated-app', private: true }, null, 2));
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    mkdirSync(join(repo, 'dist'), { recursive: true });
+    mkdirSync(join(repo, 'generated'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'index.ts'), 'export {}\n');
+    writeFileSync(join(repo, 'dist', 'index.js'), 'export {}\n');
+    writeFileSync(join(repo, 'generated', 'client.ts'), 'export const generatedClient = true;\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'generated-vendor-heavy');
+  });
+
   it('does not classify a lockfile-only root as generated-vendor-heavy', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'package-lock.json'), '{}\n');

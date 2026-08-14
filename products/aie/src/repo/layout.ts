@@ -1514,7 +1514,6 @@ function resolveProvenWorkspace(
 
 function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
-  if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
   const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
@@ -1555,6 +1554,7 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
   if (proven === 'docs') return 'docs-content-repo';
   if (proven === 'polyrepo') return 'polyrepo-multi-checkout';
   if (proven === 'conflict') return 'unknown';
+  if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
