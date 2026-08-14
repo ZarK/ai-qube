@@ -37,6 +37,17 @@ interface PythonWorkspaceSignals {
   readonly resolvedProjectPaths: readonly string[];
 }
 
+interface CargoProject {
+  readonly name: string | null;
+  readonly workspacePatterns: readonly string[];
+}
+
+interface RustWorkspaceSignals {
+  readonly declaredPatterns: readonly string[];
+  readonly markerPaths: readonly string[];
+  readonly resolvedProjectPaths: readonly string[];
+}
+
 const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
   { path: 'package.json', markerKind: 'package', projectKind: 'app', packageManager: null },
   { path: 'pyproject.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
@@ -52,6 +63,8 @@ const JS_WORKSPACE_MARKER_FILES = ['pnpm-workspace.yaml', 'turbo.json', 'nx.json
 const JS_WORKSPACE_PROJECT_DIRS = ['apps', 'packages', 'products', 'adapters', 'plugins'] as const;
 const PYTHON_WORKSPACE_MARKER_FILES = ['uv.lock', 'poetry.lock', 'pdm.lock', 'tox.ini', 'noxfile.py'] as const;
 const PYTHON_WORKSPACE_PROJECT_DIRS = ['apps', 'packages', 'services', 'libs'] as const;
+const RUST_WORKSPACE_MARKER_FILES = ['Cargo.lock'] as const;
+const RUST_WORKSPACE_PROJECT_DIRS = ['crates', 'apps', 'packages', 'services'] as const;
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -173,6 +186,50 @@ function pythonWorkspacePatterns(text: string): string[] {
     }
     const inWorkspaceSection = section === 'tool.uv.workspace' || section === 'tool.pdm.workspace';
     if (!inWorkspaceSection) continue;
+    if (line.match(/^\s*members\s*=\s*\[/)) collectingMembers = true;
+    if (collectingMembers || line.match(/^\s*members\s*=/)) {
+      for (const match of line.matchAll(/["']([^"']+)["']/g)) patterns.push(match[1]);
+    }
+    if (collectingMembers && line.includes(']')) collectingMembers = false;
+  }
+  return [...new Set(patterns)].sort();
+}
+
+function readCargoProject(root: string, path = 'Cargo.toml'): CargoProject | null {
+  const text = readTextFile(root, path);
+  if (text === null) return null;
+  return {
+    name: cargoPackageName(text),
+    workspacePatterns: cargoWorkspacePatterns(text),
+  };
+}
+
+function cargoPackageName(text: string): string | null {
+  let section = '';
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim();
+      continue;
+    }
+    const nameMatch = line.match(/^\s*name\s*=\s*["']([^"']+)["']/);
+    if (nameMatch && section === 'package') return nameMatch[1].trim();
+  }
+  return null;
+}
+
+function cargoWorkspacePatterns(text: string): string[] {
+  const patterns: string[] = [];
+  let section = '';
+  let collectingMembers = false;
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim();
+      collectingMembers = false;
+      continue;
+    }
+    if (section !== 'workspace') continue;
     if (line.match(/^\s*members\s*=\s*\[/)) collectingMembers = true;
     if (collectingMembers || line.match(/^\s*members\s*=/)) {
       for (const match of line.matchAll(/["']([^"']+)["']/g)) patterns.push(match[1]);
@@ -368,7 +425,28 @@ function hasPythonWorkspaceSignals(signals: PythonWorkspaceSignals): boolean {
   return signals.declaredPatterns.length > 0 || signals.resolvedProjectPaths.length > 0;
 }
 
-function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoRootMarker[] {
+function detectRustWorkspaceSignals(root: string | null, rootCargo: CargoProject | null): RustWorkspaceSignals {
+  if (!root) return { declaredPatterns: [], markerPaths: [], resolvedProjectPaths: [] };
+  const declaredPatterns = [...(rootCargo?.workspacePatterns ?? [])];
+  const markerPaths = RUST_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path))).sort();
+  const resolvedProjectPaths = [...new Set([
+    ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'Cargo.toml')),
+    ...RUST_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
+      const directory = join(root, directoryName);
+      if (!existsSync(directory)) return [];
+      return readdirSync(directory, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'Cargo.toml')))
+        .map(entry => portablePath(join(directoryName, entry.name)));
+    }),
+  ])].sort();
+  return { declaredPatterns, markerPaths, resolvedProjectPaths };
+}
+
+function hasRustWorkspaceSignals(signals: RustWorkspaceSignals): boolean {
+  return signals.declaredPatterns.length > 0 || signals.resolvedProjectPaths.length > 0;
+}
+
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
@@ -378,6 +456,7 @@ function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildS
     ...jsWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...pythonWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...pythonWorkspaceSignals.toolSections.map(section => ({ path: 'pyproject.toml', kind: 'workspace' as const, section })),
+    ...rustWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
@@ -398,14 +477,20 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals): RepoProject[] {
   const rootPackage = readPackageJson(root);
   const rootPyProject = readPyProject(root);
-  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths])].sort();
+  const rootCargo = readCargoProject(root);
+  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths, ...rustWorkspaceSignals.resolvedProjectPaths])].sort();
   const projects: RepoProject[] = [];
-  const jsWorkspace = rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals);
-  const pythonWorkspace = rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals);
-  if (pythonWorkspace && (!jsWorkspace || resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals) === 'python')) {
+  const jsWorkspace = Boolean(rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals));
+  const pythonWorkspace = Boolean(rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals));
+  const rustWorkspace = Boolean(rootCargo && hasRustWorkspaceSignals(rustWorkspaceSignals));
+  const winner = resolveProvenWorkspace({ js: jsWorkspace, python: pythonWorkspace, rust: rustWorkspace }, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals);
+  if (winner === 'rust' && rootCargo) {
+    const packageName = rootCargo.name;
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (winner === 'python' && rootPyProject) {
     const packageName = rootPyProject.name;
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (rootPackage) {
@@ -414,6 +499,9 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   } else if (rootPyProject) {
     const packageName = rootPyProject.name;
     projects.push({ id: projectId('.', packageName), path: '.', kind: pythonWorkspace ? 'workspace' : 'app', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (rootCargo) {
+    const packageName = rootCargo.name;
+    projects.push({ id: projectId('.', packageName), path: '.', kind: rustWorkspace ? 'workspace' : 'app', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);
@@ -422,57 +510,84 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   for (const path of paths) {
     const packageJson = readPackageJson(root, `${path}/package.json`);
     const pyProject = readPyProject(root, `${path}/pyproject.toml`);
-    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? null;
+    const cargo = readCargoProject(root, `${path}/Cargo.toml`);
+    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? cargo?.name ?? null;
     projects.push({ id: projectId(path, packageName), path, kind: 'package', packageName, packageManager: packageJson ? packageManagerForPath(packageManagers, path) : null, gates: gatesForProject(path) });
   }
   return projects;
 }
 
-function resolveWorkspaceConflict(jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): 'javascript' | 'python' | 'conflict' {
-  const jsMembers = jsWorkspaceSignals.resolvedProjectPaths.length;
-  const pythonMembers = pythonWorkspaceSignals.resolvedProjectPaths.length;
-  if (jsMembers > 0 && pythonMembers === 0) return 'javascript';
-  if (pythonMembers > 0 && jsMembers === 0) return 'python';
-  return 'conflict';
+type ProvenWorkspace = 'javascript' | 'python' | 'rust' | 'conflict' | 'none';
+
+function resolveProvenWorkspace(
+  present: { js: boolean; python: boolean; rust: boolean },
+  jsWorkspaceSignals: JsWorkspaceSignals,
+  pythonWorkspaceSignals: PythonWorkspaceSignals,
+  rustWorkspaceSignals: RustWorkspaceSignals,
+): ProvenWorkspace {
+  const withMembers: ProvenWorkspace[] = [];
+  if (present.js && jsWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('javascript');
+  if (present.python && pythonWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('python');
+  if (present.rust && rustWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('rust');
+  if (withMembers.length > 1) return 'conflict';
+  if (withMembers.length === 1) return withMembers[0];
+  const presentKinds = [present.js && 'javascript', present.python && 'python', present.rust && 'rust'].filter((value): value is Exclude<ProvenWorkspace, 'conflict' | 'none'> => Boolean(value));
+  if (presentKinds.length === 1) return presentKinds[0];
+  if (presentKinds.length > 1) return 'conflict';
+  return 'none';
 }
 
-function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoLayoutKind {
+function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
-  if (jsRootWorkspace && pythonRootWorkspace) {
-    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
-    if (resolved === 'javascript') return 'javascript-typescript-workspace';
-    if (resolved === 'python') return 'python-workspace-monorepo';
-    return 'unknown';
-  }
-  if (jsRootWorkspace) return 'javascript-typescript-workspace';
-  if (pythonRootWorkspace) return 'python-workspace-monorepo';
+  const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
+  const proven = resolveProvenWorkspace(
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace },
+    jsWorkspaceSignals,
+    pythonWorkspaceSignals,
+    rustWorkspaceSignals,
+  );
+  if (proven === 'javascript') return 'javascript-typescript-workspace';
+  if (proven === 'python') return 'python-workspace-monorepo';
+  if (proven === 'rust') return 'rust-workspace';
+  if (proven === 'conflict') return 'unknown';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals): string[] {
   const warnings: string[] = [];
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
-  if (jsRootWorkspace && pythonRootWorkspace) {
-    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
-    warnings.push(resolved === 'conflict'
-      ? 'Both JavaScript and Python root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.'
-      : `Both JavaScript and Python root workspace declarations were detected; layout classification used the ${resolved === 'python' ? 'Python' : 'JavaScript'} workspace because only it resolves member projects.`);
+  const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
+  const proven = resolveProvenWorkspace(
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace },
+    jsWorkspaceSignals,
+    pythonWorkspaceSignals,
+    rustWorkspaceSignals,
+  );
+  const present = [jsRootWorkspace && 'JavaScript', pythonRootWorkspace && 'Python', rustRootWorkspace && 'Rust'].filter((value): value is string => Boolean(value));
+  if (present.length > 1) {
+    const names = present.length === 2 ? `Both ${present[0]} and ${present[1]}` : present.join(', ');
+    const provenLabel = proven === 'javascript' ? 'JavaScript' : proven === 'python' ? 'Python' : proven === 'rust' ? 'Rust' : null;
+    warnings.push(proven === 'conflict' || !provenLabel
+      ? `${names} root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.`
+      : `${names} root workspace declarations were detected; layout classification used the ${provenLabel} workspace because only it resolves member projects.`);
   }
   if (!root) warnings.push('Not inside a git repository; layout inspection is incomplete.');
   if (rootSignals.length > 1 && kind === 'unknown') warnings.push(`Multiple root package/build signals were detected (${rootSignals.map(signal => signal.path).join(', ')}); repository layout is ambiguous.`);
   if (jsWorkspaceSignals.markerPaths.length > 0 && !rootSignals.some(signal => signal.path === 'package.json')) warnings.push(`JavaScript workspace marker(s) were detected (${jsWorkspaceSignals.markerPaths.join(', ')}) but no root package.json was found; workspace layout is ambiguous.`);
   if ((pythonWorkspaceSignals.markerPaths.length > 0 || pythonWorkspaceSignals.resolvedProjectPaths.length > 0) && !rootSignals.some(signal => signal.path === 'pyproject.toml')) warnings.push(`Python workspace marker(s) were detected (${[...pythonWorkspaceSignals.markerPaths, ...pythonWorkspaceSignals.resolvedProjectPaths].join(', ')}) but no root pyproject.toml was found; workspace layout is ambiguous.`);
+  if ((rustWorkspaceSignals.markerPaths.length > 0 || rustWorkspaceSignals.resolvedProjectPaths.length > 0) && !rootSignals.some(signal => signal.path === 'Cargo.toml')) warnings.push(`Rust workspace marker(s) were detected (${[...rustWorkspaceSignals.markerPaths, ...rustWorkspaceSignals.resolvedProjectPaths].join(', ')}) but no root Cargo.toml was found; workspace layout is ambiguous.`);
   if (kind === 'javascript-typescript-workspace' && jsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('JavaScript workspace signals were detected, but no member package roots were resolved.');
   if (kind === 'python-workspace-monorepo' && pythonWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Python workspace signals were detected, but no member package roots were resolved.');
+  if (kind === 'rust-workspace' && rustWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Rust workspace signals were detected, but no member crate roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
-  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
+  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'rust-workspace' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
     warnings.push('Affected-scope mapping is conservative for this layout kind.');
   }
   return warnings;
@@ -485,16 +600,18 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const rootSignals = detectRootBuildSignals(root, packageManagers);
   const rootPackage = root ? readPackageJson(root) : null;
   const rootPyProject = root ? readPyProject(root) : null;
+  const rootCargo = root ? readCargoProject(root) : null;
   const jsWorkspaceSignals = detectJsWorkspaceSignals(root, rootPackage);
   const pythonWorkspaceSignals = detectPythonWorkspaceSignals(root, rootPyProject);
-  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals);
-  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals) : [];
+  const rustWorkspaceSignals = detectRustWorkspaceSignals(root, rootCargo);
+  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
-    ...pathSignals(root, ['dist', 'build', 'coverage', 'generated'], 'Generated output path exists.'),
+    ...pathSignals(root, ['dist', 'build', 'coverage', 'generated', 'target'], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals);
+  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals);
   return {
     kind,
     root,
@@ -506,7 +623,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals)],
   };
 }
 
@@ -532,7 +649,7 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];

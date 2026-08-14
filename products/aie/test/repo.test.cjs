@@ -241,6 +241,104 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.rootMarkers.some(marker => marker.path === 'noxfile.py'));
   });
 
+  it('inspects a Rust workspace layout with crates and local signals', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'rust-workspace');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'crates/cli', 'crates/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === 'crates/core').packageName, 'fixture-rust-core');
+    assert.equal(result.projects.find(project => project.path === 'crates/cli').packageName, 'fixture-rust-cli');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Cargo.toml'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Cargo.lock'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected Rust workspace crates and suggested gates', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['crates/core/src/lib.rs', 'crates/cli/Cargo.toml', 'Cargo.lock'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'rust-workspace');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['root', 'fixture-rust-cli', 'fixture-rust-core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'root').changedPaths, ['Cargo.lock']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'fixture-rust-core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'fixture-rust-cli').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a Rust workspace when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'rust-workspace');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'crates/cli', 'crates/core']);
+    assert.equal(inspected.projects.find(project => project.path === '.').kind, 'workspace');
+  });
+
+  it('reports an ambiguous layout when Rust and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify Rust lockfiles without a root Cargo.toml as a workspace', async () => {
+    const repo = makeFixtureRepo('ambiguous-rust-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['crates/core']);
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Cargo.lock'));
+    assert.ok(result.warnings.some(warning => warning.includes('no root Cargo.toml was found')));
+  });
+
+  it('keeps generated Rust target paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+    mkdirSync(join(repo, 'target'), { recursive: true });
+    writeFileSync(join(repo, 'target', 'debug.rs'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['target/debug.rs'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand Rust workspace members outside the repository root', async () => {
+    const repo = makeFixtureRepo('rust-workspace');
+    const outside = join(repo, '..', 'outside-rust-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'Cargo.toml'), '[package]\nname = "outside-rust-leak"\nversion = "0.0.0"\n');
+    writeFileSync(join(repo, 'Cargo.toml'), '[workspace]\nmembers = ["crates/*", "../outside-rust-leak"]\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'crates/cli', 'crates/core']);
+    assert.equal(result.projects.some(project => project.packageName === 'outside-rust-leak'), false);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
