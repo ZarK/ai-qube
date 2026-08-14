@@ -27,7 +27,7 @@ function thread(overrides = {}) {
     canResolve: overrides.canResolve ?? true,
     authorLogin: overrides.authorLogin ?? "qube-review[bot]",
     fingerprints: overrides.fingerprints ?? ["deadbeefdeadbeef"],
-    replyToDatabaseId: overrides.replyToDatabaseId ?? 11,
+    replyToDatabaseId: Object.hasOwn(overrides, "replyToDatabaseId") ? overrides.replyToDatabaseId : 11,
     minimizeSubjectId: overrides.minimizeSubjectId ?? "IC_1",
   };
 }
@@ -57,7 +57,28 @@ describe("planReviewThreadLifecycle", () => {
     assert.equal(actions[0].kind, "reply-still-present");
     assert.equal(actions[0].threadId, "PRRT_1");
     assert.match(actions[0].body ?? "", /Still present at `abc123456789` \(round 2\)\./);
+    assert.match(actions[0].body ?? "", /Fix the parser\./);
     assert.equal(actions.some((action) => action.kind === "new-inline"), false);
+  });
+
+  it("minimizes an unresolvable outdated thread when a reply cannot be posted", () => {
+    const current = finding();
+    const fingerprint = reviewFindingFingerprint(current);
+    const actions = planReviewThreadLifecycle({
+      findings: [current],
+      threads: [thread({
+        fingerprints: [fingerprint],
+        outdated: true,
+        canResolve: false,
+        replyToDatabaseId: null,
+        minimizeSubjectId: "IC_stale_persist",
+      })],
+      publisherLogins: ["qube-review[bot]"],
+      headSha: "abc1234567890",
+      round: "2",
+    });
+    assert.ok(actions.some((action) => action.kind === "minimize-outdated" && action.minimizeSubjectId === "IC_stale_persist"));
+    assert.ok(actions.some((action) => action.kind === "new-inline"));
   });
 
   it("unresolves a returning fingerprint on a previously resolved publisher thread", () => {

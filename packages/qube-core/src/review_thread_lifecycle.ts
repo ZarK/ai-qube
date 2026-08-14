@@ -121,6 +121,31 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
       });
       continue;
     }
+    if (thread.outdated && !thread.canResolve && thread.replyToDatabaseId == null) {
+      if (thread.minimizeSubjectId) {
+        actions.push({
+          kind: "minimize-outdated",
+          threadId: thread.threadId,
+          fingerprint,
+          replyToDatabaseId: null,
+          minimizeSubjectId: thread.minimizeSubjectId,
+          unresolve: false,
+          body: null,
+          finding: null,
+        });
+      }
+      actions.push({
+        kind: "new-inline",
+        threadId: null,
+        fingerprint,
+        replyToDatabaseId: null,
+        minimizeSubjectId: null,
+        unresolve: false,
+        body: null,
+        finding,
+      });
+      continue;
+    }
     actions.push({
       kind: "reply-still-present",
       threadId: thread.threadId,
@@ -128,7 +153,7 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
       replyToDatabaseId: thread.replyToDatabaseId,
       minimizeSubjectId: thread.minimizeSubjectId,
       unresolve: thread.resolved,
-      body: stillPresentReply(input.headSha, input.round),
+      body: stillPresentReply(input.headSha, input.round, finding.message),
       finding,
     });
   }
