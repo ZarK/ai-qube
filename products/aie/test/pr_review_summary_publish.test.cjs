@@ -4,7 +4,10 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const { createGitHubReviewForgeProvider, makePrExec, basePr } = require('./support/pr_gate_fixture.cjs');
-const { reviewRepositoryFromPullRequestUrl } = require('../dist/app/pr_review_summary_publish.js');
+const { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { reviewRepositoryFromPullRequestUrl, loadPriorRoundDelta, MAX_PRIOR_REVIEW_HEADS } = require('../dist/app/pr_review_summary_publish.js');
 const { renderRoundSummaryBody, renderInlineCommentBody } = require('../dist/review_round_summary.js');
 
 function findingAnchor(overrides = {}) {
@@ -109,6 +112,23 @@ describe('GitHub round summary publish', () => {
     assert.equal(result.status, 'skipped');
     const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
     assert.equal(reviewPost, undefined, 'a skip-matched republish must not create a new review');
+  });
+
+  it('updates a same-round review whose marker predates findingDigest instead of posting a duplicate', async () => {
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const legacyBody = render.body.replace(/,"findingDigest":"[^"]*"/, '');
+    assert.doesNotMatch(legacyBody, /findingDigest/);
+    const existingReview = { id: 555, author: { login: 'executor' }, body: legacyBody, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({ prViews: [basePr({ reviews: [existingReview], latestReviews: [existingReview] })], pullReviews: [existingReview] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    const updatePut = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews/555 --method PUT'));
+    assert.ok(updatePut, 'expected a PUT to refresh the legacy same-round review');
+    const createPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(createPost, undefined, 'a legacy same-round marker must not create a second review');
   });
 
   it('updates an existing same-round marker in place when its content changes', async () => {
@@ -428,5 +448,37 @@ describe('GitHub lane review publish fail-closed', () => {
     assert.ok(second.status === 'skipped' || second.status === 'published');
     const reviewPosts = fixture.events.filter(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
     assert.equal(reviewPosts.length, 1, 'two same-head publishes must not create a second review event');
+  });
+});
+
+describe('loadPriorRoundDelta', () => {
+  function writeLane(repo, issueNumber, prNumber, head, findings) {
+    const dir = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), head);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'code-quality.json'), JSON.stringify({ findings }), 'utf8');
+  }
+
+  it('reads only the newest prior head and skips an oversized sibling set', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-prior-round-'));
+    try {
+      const current = 'cccccccccccccccccccccccccccccccccccccccc';
+      const older = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const newer = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      writeLane(repo, 93, 12, older, [{ id: 'old', severity: 'advisory', message: 'Older finding.' }]);
+      writeLane(repo, 93, 12, newer, [{ id: 'new', severity: 'advisory', message: 'Newer finding.' }]);
+      writeLane(repo, 93, 12, current, []);
+      utimesSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', older), 1_700_000_000, 1_700_000_000);
+      utimesSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', newer), 1_700_000_100, 1_700_000_100);
+      const selected = loadPriorRoundDelta(repo, 93, 12, current, ['code-quality']);
+      assert.equal(selected.priorHeadSha, newer);
+      assert.equal(selected.priorFindingKeys.length, 1);
+
+      for (let index = 0; index < MAX_PRIOR_REVIEW_HEADS; index += 1) {
+        writeLane(repo, 93, 12, `${String(index).padStart(40, 'd')}`, []);
+      }
+      assert.equal(loadPriorRoundDelta(repo, 93, 12, current, ['code-quality']), undefined);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

@@ -304,8 +304,8 @@ function parseRoundSummaryMarkerRecord(body: string | undefined): Pick<RoundSumm
     if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
     if (typeof parsed.round !== 'string' || parsed.round.trim() === '') return null;
     if (typeof parsed.prNumber !== 'number' || !Number.isSafeInteger(parsed.prNumber) || parsed.prNumber <= 0) return null;
-    if (typeof parsed.findingDigest !== 'string' || parsed.findingDigest.trim() === '') return null;
-    return { head: parsed.head, round: parsed.round, prNumber: parsed.prNumber, findingDigest: parsed.findingDigest, superseded: parsed.superseded === true };
+    const findingDigest = typeof parsed.findingDigest === 'string' ? parsed.findingDigest.trim() : '';
+    return { head: parsed.head, round: parsed.round, prNumber: parsed.prNumber, findingDigest, superseded: parsed.superseded === true };
   } catch {
     return null;
   }

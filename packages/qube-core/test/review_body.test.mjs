@@ -12,6 +12,7 @@ import {
   clipReviewAnchorSpanToDiff,
   computeReviewRoundDelta,
   isSelfAuthoredReviewBody,
+  renderAggregatedFixPrompt,
   renderInlineReviewComment,
   renderLaneChips,
   renderLaneReviewBody,
@@ -374,6 +375,15 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     });
     assert.equal(equalsProse.safe, false);
     assert.match(equalsProse.reason ?? "", /prose/);
+    const equalsAssignProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "Please set x = y.",
+      }),
+    });
+    assert.equal(equalsAssignProse.safe, false);
+    assert.match(equalsAssignProse.reason ?? "", /prose/);
     const callProse = suggestionFenceSafety({
       anchored: true,
       finding: finding({
@@ -383,6 +393,51 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     });
     assert.equal(callProse.safe, false);
     assert.match(callProse.reason ?? "", /prose/);
+    const lowercaseCallProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "please call(foo)",
+      }),
+    });
+    assert.equal(lowercaseCallProse.safe, false);
+    assert.match(lowercaseCallProse.reason ?? "", /prose/);
+    assert.doesNotMatch(renderInlineReviewComment({
+      laneId: "code-quality",
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "please call(foo)",
+      }),
+    }), /```suggestion/);
+    assert.equal(suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, side: "destination" },
+        suggestion: "x = 1;",
+      }),
+    }).safe, true);
+  });
+
+  it("writes the untrusted guardrail once in the aggregated fix prompt", () => {
+    const prompt = renderAggregatedFixPrompt([
+      {
+        laneId: "code-quality",
+        finding: finding({ message: "First finding.", location: { path: "src/a.ts", line: 1 } }),
+        anchored: true,
+        unanchoredReason: null,
+      },
+      {
+        laneId: "performance",
+        finding: finding({ id: "f2", message: "Second finding.", location: { path: "src/b.ts", line: 2 } }),
+        anchored: true,
+        unanchoredReason: null,
+      },
+    ]);
+    const escaped = UNTRUSTED_FIX_GUARDRAIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.equal(prompt.match(new RegExp(escaped, "g"))?.length, 1);
+    assert.match(prompt, /In src\/a\.ts around lines 1-1, First finding\./);
+    assert.match(prompt, /In src\/b\.ts around lines 2-2, Second finding\./);
   });
 
   it("stops a published selection at the first off-diff line", () => {
@@ -419,6 +474,15 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     }));
     assert.equal(first, second);
     assert.equal(first, formatted);
+    const underscored = reviewFindingFingerprint(finding({
+      message: "Rename foo_bar.",
+      location: { path: "src/a.ts", line: 10, side: "destination" },
+    }));
+    const collapsed = reviewFindingFingerprint(finding({
+      message: "Rename foobar.",
+      location: { path: "src/a.ts", line: 10, side: "destination" },
+    }));
+    assert.notEqual(underscored, collapsed);
   });
 
   it("matches a multi-line suggestion to the published clipped span", () => {

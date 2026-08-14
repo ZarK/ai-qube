@@ -192,7 +192,7 @@ export function parseRoundSummaryMarker(body: string | undefined): RoundSummaryM
     if (typeof parsed.issueNumber !== 'number' || !Number.isSafeInteger(parsed.issueNumber) || parsed.issueNumber <= 0) return null;
     if (parsed.verdict !== 'approve' && parsed.verdict !== 'request-changes' && parsed.verdict !== 'pending' && parsed.verdict !== 'inconclusive') return null;
     if (!Array.isArray(parsed.expectedLanes) || parsed.expectedLanes.length === 0 || !parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')) return null;
-    if (typeof parsed.findingDigest !== 'string' || parsed.findingDigest.trim() === '') return null;
+    const findingDigest = typeof parsed.findingDigest === 'string' ? parsed.findingDigest.trim() : '';
     return {
       version: 1,
       head: parsed.head,
@@ -206,7 +206,7 @@ export function parseRoundSummaryMarker(body: string | undefined): RoundSummaryM
       unanchoredFindingCount: typeof parsed.unanchoredFindingCount === 'number' && Number.isSafeInteger(parsed.unanchoredFindingCount) ? parsed.unanchoredFindingCount : 0,
       blockingFindingCount: typeof parsed.blockingFindingCount === 'number' && Number.isSafeInteger(parsed.blockingFindingCount) ? parsed.blockingFindingCount : 0,
       advisoryFindingCount: typeof parsed.advisoryFindingCount === 'number' && Number.isSafeInteger(parsed.advisoryFindingCount) ? parsed.advisoryFindingCount : 0,
-      findingDigest: parsed.findingDigest,
+      findingDigest,
     };
   } catch {
     return null;

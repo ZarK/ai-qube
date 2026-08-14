@@ -220,6 +220,7 @@
       ],
       "agents": [],
       "localAgents": [
+        "grok",
         "codex"
       ],
       "waitMinutes": 0,
@@ -240,7 +241,7 @@
         "synthesis": {}
       },
       "route": {
-        "host": "codex",
+        "host": "grok",
         "tier": "review",
         "timeoutSeconds": 900,
         "maxTurns": 8
@@ -248,7 +249,7 @@
       "failover": {
         "faults": 1,
         "route": {
-          "host": "grok",
+          "host": "codex",
           "tier": "review",
           "timeoutSeconds": 900,
           "maxTurns": 16
