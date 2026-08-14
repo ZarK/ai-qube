@@ -7,6 +7,9 @@ import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
 import { redact } from '../redact.js';
 import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from '../supply_chain_guard.js';
+import { isGateRound, selectFocusedTier, type GateRound, type GateTier, type GateTierReason } from './focused_tier.js';
+
+export { isGateRound, type GateRound, type GateTier, type GateTierReason } from './focused_tier.js';
 
 export type GateRequirement = 'required' | 'advisory';
 export type GateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found' | 'verified-from-trusted-state';
@@ -32,6 +35,14 @@ export interface GatePlanResult {
   command: 'gates plan';
   dryRun: boolean;
   stage: GateStage | null;
+  round: GateRound;
+  tier: GateTier;
+  tierReason: GateTierReason;
+  selectedCommands: string[];
+  changedPaths: string[];
+  unmatchedPaths: string[];
+  shipRequiresFullTier: true;
+  layout: { available: boolean; summary: string | null };
   gates: GatePlanEntry[];
   summary: {
     total: number;
@@ -151,19 +162,50 @@ function planEntry(gate: GateConfig): GatePlanEntry {
   };
 }
 
-export function buildGatePlan(config: Config, options: { stage?: GateStage; dryRun?: boolean } = {}): GatePlanResult {
+export function buildGatePlan(config: Config, options: {
+  stage?: GateStage;
+  dryRun?: boolean;
+  round?: GateRound;
+  changedPaths?: readonly string[];
+  layout?: { available: boolean; summary?: string | null };
+} = {}): GatePlanResult {
   const stage = options.stage ?? null;
-  const gates = configuredGates(config).filter(gate => stageMatches(gate, stage)).sort(compareGates).map(planEntry);
+  const configured = configuredGates(config).filter(gate => stageMatches(gate, stage)).sort(compareGates);
+  const gates = configured.map(planEntry);
+  const selection = selectFocusedTier({
+    round: options.round,
+    changedPaths: options.changedPaths,
+    selectors: config.focusedSelectors ?? config.policy.gates.focusedSelectors ?? [],
+    fullCommands: gates.map(gate => gate.command),
+  });
+  const warnings: string[] = [];
+  if (gates.some(gate => gate.supplyChainSensitive)) {
+    warnings.push(`Supply-chain-sensitive gates require ${SUPPLY_CHAIN_GUARD_NAME} dependency/tool review evidence before the agent runs the command.`);
+  }
+  if (selection.tier === 'focused') {
+    warnings.push('Fix-round guidance selected focused commands. The ship-ready path still requires the complete configured gate set.');
+  } else if (options.round === 'fix') {
+    warnings.push(`Fix-round guidance fell back to the full configured set (${selection.tierReason}).`);
+  }
   return {
     ok: true,
     command: 'gates plan',
     dryRun: options.dryRun ?? false,
     stage,
+    round: options.round ?? 'ship',
+    tier: selection.tier,
+    tierReason: selection.tierReason,
+    selectedCommands: selection.selectedCommands,
+    changedPaths: selection.changedPaths,
+    unmatchedPaths: selection.unmatchedPaths,
+    shipRequiresFullTier: true,
+    layout: {
+      available: options.layout?.available === true,
+      summary: options.layout?.summary ?? null,
+    },
     gates,
     summary: summarizePlan(gates),
-    warnings: gates.some(gate => gate.supplyChainSensitive)
-      ? [`Supply-chain-sensitive gates require ${SUPPLY_CHAIN_GUARD_NAME} dependency/tool review evidence before the agent runs the command.`]
-      : [],
+    warnings,
   };
 }
 
@@ -314,7 +356,13 @@ function summarizeStatus(gates: GateStatusEntry[]): GateStatusResult['summary'] 
 
 export function formatGatePlan(result: GatePlanResult): string {
   const lines = [`Gate plan: ${result.summary.total} to check, ${result.summary.supplyChainSensitive} supply-chain-sensitive.`];
+  lines.push(`Tier: ${result.tier} (${result.tierReason}). Ship-ready still requires the complete configured set.`);
   if (result.stage) lines.push(`Stage filter: ${result.stage} (includes all-stage gates).`);
+  if (result.round === 'fix' && result.selectedCommands.length > 0) {
+    lines.push(`Selected this round: ${result.selectedCommands.join('; ')}`);
+  }
+  if (result.unmatchedPaths.length > 0) lines.push(`Unmapped paths: ${result.unmatchedPaths.join(', ')}`);
+  if (result.layout.summary) lines.push(`Layout: ${result.layout.summary}`);
   if (result.gates.length === 0) lines.push('No configured gates matched. Executor did not run any commands.');
   for (const gate of result.gates) {
     const markers = [gate.requirement, gate.supplyChainSensitive ? 'supply-chain-sensitive' : null, gate.externalService ? 'external-service' : null].filter(Boolean).join(', ');

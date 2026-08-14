@@ -208,7 +208,7 @@ const COMMAND_DEFINITIONS = [
     supportsDryRun: true,
     stageValues: GATE_STAGE_OPTIONS,
     stableErrorKinds: ['config-error', ...CONFIG_ERROR_KINDS],
-    examples: ['aie gates plan --dry-run', 'aie gates plan --stage pre-pr --json'],
+    examples: ['aie gates plan --dry-run', 'aie gates plan --stage pre-pr --json', 'aie gates plan --round fix --changed products/aie/src/gates/index.ts --json'],
   },
   {
     name: 'gates status',

@@ -2,7 +2,7 @@ import type { ExecutorPolicy, ReviewModelsPolicy } from '../core/policy.js';
 import { cloneModelRoutingPolicy, defaultModelRoutingPolicy } from '../core/model_routing.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
-import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
+import type { Config, ConfigFileShape, FocusedGateSelector, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
 import { DEFAULT_CONFIG_VERSION } from './types.js';
 
 export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
@@ -101,6 +101,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       definitions: [],
       qualityGates: [],
       qualityControl: false,
+      focusedSelectors: [],
     },
     audit: {
       manualUiAudit: true,
@@ -136,6 +137,10 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
 
 export function cloneGate(gate: GateConfig): GateConfig {
   return { ...gate, env: { ...gate.env } };
+}
+
+export function cloneFocusedSelector(selector: FocusedGateSelector): FocusedGateSelector {
+  return { glob: selector.glob, commands: [...selector.commands] };
 }
 
 function cloneConnectionFields(connection: Record<string, string> | undefined): Record<string, string> | undefined {
@@ -268,6 +273,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
         definitions: input.policy.gates.definitions.map(cloneGate),
         qualityGates: [...input.policy.gates.qualityGates],
         qualityControl: input.policy.gates.qualityControl,
+        focusedSelectors: (input.policy.gates.focusedSelectors ?? []).map(cloneFocusedSelector),
       },
       audit: { ...input.policy.audit },
       instructions: { ...input.policy.instructions },
@@ -444,6 +450,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     gates: policy.gates.definitions.map(cloneGate),
     qualityGates: [...policy.gates.qualityGates],
     qualityControl: policy.gates.qualityControl,
+    focusedSelectors: (policy.gates.focusedSelectors ?? []).map(cloneFocusedSelector),
     instructions: { ...policy.instructions },
     supplyChain: { ...policy.supplyChain },
     migration: { ...policy.migration },

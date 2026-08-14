@@ -20,7 +20,8 @@ import { commandDescription, commandExamples, isHelpToken } from './command_meta
 import { completeIssue } from './complete/index.js';
 import { getDefaults, loadConfig, loadConfigFile, type ValidationError } from './config/index.js';
 import { buildDoctorDiagnostics } from './doctor.js';
-import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGateStage } from './gates/index.js';
+import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGateRound, isGateStage } from './gates/index.js';
+import { inspectAffected } from './repo/index.js';
 import { runInit } from './init/index.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';
 import { buildMigrationMap, formatMigrationMap, formatMigrationPlan, runMigration } from './migrate/index.js';
@@ -820,7 +821,30 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const loaded = await loadConfigFile();
     if (!loaded.ok) return configLoadFailure(context, 'gates plan', loaded, 'Fix the selected Executor config, then run the gate plan again.');
     const stage = stringFlag(context, 'stage');
-    const result = buildGatePlan(loaded.config ?? getDefaults(), { stage: isGateStage(stage) ? stage : undefined, dryRun: readBooleanFlag(context, 'dry-run') });
+    const round = stringFlag(context, 'round');
+    const changedPaths = stringListFlag(context, 'changed') ?? [];
+    const config = loaded.config ?? getDefaults();
+    let layout: { available: boolean; summary: string | null } | undefined;
+    if (changedPaths.length > 0) {
+      try {
+        const affected = await inspectAffected({ config, cwd: loaded.root ?? undefined, changedPaths });
+        layout = {
+          available: true,
+          summary: affected.layout.projects.length > 0
+            ? `${affected.layout.projects.length} layout project(s) inspected`
+            : 'Layout inspection returned no projects',
+        };
+      } catch {
+        layout = { available: false, summary: 'Layout inspection was unavailable; path matching used explicit --changed paths only.' };
+      }
+    }
+    const result = buildGatePlan(config, {
+      stage: isGateStage(stage) ? stage : undefined,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      round: isGateRound(round) ? round : undefined,
+      changedPaths,
+      layout,
+    });
     return commandResult(context, result, formatGatePlan(result));
   },
   'gates status': async context => {

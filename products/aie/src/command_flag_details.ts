@@ -111,10 +111,14 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const GATE_ROUND_OPTIONS = ['fix', 'ship'];
+
 export const GATES_PLAN_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable gate plan', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show the gate plan without running configured commands', default: false },
   { name: '--stage', type: 'string', description: 'Filter gates by stage; all-stage gates are included when filtering', options: GATE_STAGE_OPTIONS },
+  { name: '--round', type: 'string', description: 'Select fix-round focused guidance or the ship-ready full set', options: GATE_ROUND_OPTIONS },
+  { name: '--changed', type: 'string', description: 'Repository-relative changed path used for focused selection; repeat for each path', multiple: true },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

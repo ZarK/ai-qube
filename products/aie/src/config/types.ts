@@ -176,10 +176,16 @@ export interface ReviewConfig {
   failover: ReviewFailoverPolicy | null;
 }
 
+export interface FocusedGateSelector {
+  glob: string;
+  commands: string[];
+}
+
 export interface GatePolicyConfig {
   definitions: GateConfig[];
   qualityGates: string[];
   qualityControl: boolean;
+  focusedSelectors: FocusedGateSelector[];
 }
 
 export interface AuditConfig {
@@ -272,6 +278,7 @@ export interface Config extends ConfigFileShape {
   gates: GateConfig[];
   qualityGates: string[];
   qualityControl: boolean;
+  focusedSelectors: FocusedGateSelector[];
   instructions: InstructionConfig;
   supplyChain: SupplyChainConfig;
   migration: MigrationConfig;
