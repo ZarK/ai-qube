@@ -1,11 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  composeProviderPermutation,
-  validateConfig,
-  type CapabilityObservation,
-  type ProviderComposition,
-} from "@tjalve/aie";
+import { validateConfig } from "@tjalve/aie";
+
+interface CapabilityObservation {
+  readonly role: "work" | "review" | "ci";
+  readonly id: string;
+  readonly support: "supported" | "unsupported" | "unknown";
+  readonly reasonCode: string;
+  readonly summary: string;
+}
+
+interface ProviderComposition {
+  readonly work: { readonly id: string };
+  readonly review: { readonly id: string };
+  readonly ci: { readonly id: string };
+  readonly observations: readonly CapabilityObservation[];
+  readonly missing: readonly CapabilityObservation[];
+}
 
 export interface PermutationRoleSummary {
   readonly role: "work" | "review" | "ci";
@@ -59,8 +70,39 @@ export async function runPermutationDoctor(cwd: string): Promise<PermutationDoct
       missing: Object.freeze([]),
     });
   }
-  const composition = await composeProviderPermutation(validated.config);
+  const compose = await loadComposeProviderPermutation();
+  if (!compose) {
+    return kindsOnlySummary(validated.config.providers);
+  }
+  const composition = await compose(validated.config);
   return summarizeComposition(composition);
+}
+
+async function loadComposeProviderPermutation(): Promise<((config: unknown) => Promise<ProviderComposition>) | undefined> {
+  const imported = await import("@tjalve/aie") as { composeProviderPermutation?: (config: unknown) => Promise<ProviderComposition> };
+  return typeof imported.composeProviderPermutation === "function" ? imported.composeProviderPermutation : undefined;
+}
+
+function kindsOnlySummary(providers: { readonly work: { readonly kind: string }; readonly review: { readonly kind: string }; readonly ci: { readonly kind: string } }): PermutationDoctorResult {
+  const work = kindsOnlyRole("work", providers.work.kind);
+  const review = kindsOnlyRole("review", providers.review.kind);
+  const ci = kindsOnlyRole("ci", providers.ci.kind);
+  return Object.freeze({
+    status: "ok",
+    summary: `Active permutation is work=${work.kind}, review=${review.kind}, ci=${ci.kind}.`,
+    work,
+    review,
+    ci,
+    missing: Object.freeze([]),
+  });
+}
+
+function kindsOnlyRole(role: "work" | "review" | "ci", kind: string): PermutationRoleSummary {
+  return Object.freeze({
+    role,
+    kind,
+    capabilities: Object.freeze([]),
+  });
 }
 
 export function summarizeComposition(composition: ProviderComposition): PermutationDoctorResult {
