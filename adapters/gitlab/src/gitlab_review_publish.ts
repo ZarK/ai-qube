@@ -239,5 +239,5 @@ export function planGitLabThreadLifecycle(input: {
 }
 
 export function summaryNoteBody(input: ReviewRoundSummaryPublishInput): string {
-  return input.issueCommentBody ?? input.body;
+  return input.body;
 }

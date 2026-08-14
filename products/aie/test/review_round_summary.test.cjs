@@ -306,6 +306,33 @@ describe('renderRoundSummaryBody', () => {
     assert.match(render.body, /<!-- qube-pr-review-summary:/);
   });
 
+  it('renders GitLab admonitions and offset suggestion fences', () => {
+    const anchored = {
+      laneId: 'code-quality',
+      anchored: true,
+      unanchoredReason: null,
+      finding: finding({
+        location: { path: 'src/a.ts', line: 5, endLine: 6, side: 'destination' },
+        suggestion: 'const a = 1;\nconst b = 2;',
+      }),
+    };
+    const render = renderRoundSummaryBody(roundInput({
+      expectedLanes: ['code-quality'],
+      lanes: [lane({ laneId: 'code-quality', recommendation: 'request-changes', findings: [anchored.finding] })],
+    }), { diffIndex: { hasLine: () => true }, profile: 'gitlab', transport: 'review-api' });
+    assert.match(render.body, /> \*\*Caution:\*\*/);
+    assert.doesNotMatch(render.body, /> \[!/);
+    const inline = renderInlineCommentBody(anchored, { profile: 'gitlab' });
+    assert.match(inline, /```suggestion:-0\+1\nconst a = 1;\nconst b = 2;\n```/);
+    assert.doesNotMatch(renderInlineCommentBody({
+      ...anchored,
+      finding: finding({
+        location: { path: 'src/a.ts', line: 5, side: 'destination' },
+        suggestion: 'Please rewrite this function more clearly.',
+      }),
+    }, { profile: 'gitlab' }), /```suggestion/);
+  });
+
   it('separates preconditions from lane findings', () => {
     const input = roundInput({
       lanes: [lane({ laneId: 'code-quality', preconditions: ['CI is green.'] })],

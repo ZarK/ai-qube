@@ -251,7 +251,9 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   };
   const renderProfile = provider.id === 'gitlab' ? 'gitlab' : 'github';
   const render = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'review-api', profile: renderProfile });
-  const issueCommentRender = renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
+  const issueCommentRender = provider.id === 'gitlab'
+    ? render
+    : renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor, { repository, headSha, profile: renderProfile }) }));
   const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,

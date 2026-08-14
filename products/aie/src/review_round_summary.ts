@@ -311,10 +311,10 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
   const allAdvisory = [...rankedInline.advisory, ...rankedUnanchored.advisory];
   const findingDigest = computeRoundFindingDigest(inline, unanchored, preconditions);
   const transport = options.transport ?? input.transport ?? (options.publisherDowngradeReason ? 'issue-comment' : 'review-api');
-  const profile = options.profile === 'degraded' || transport === 'issue-comment'
-    ? { ...DEGRADED_REVIEW_RENDER_PROFILE, sanitizeText }
-    : options.profile === 'gitlab'
-      ? { ...GITLAB_REVIEW_RENDER_PROFILE, sanitizeText }
+  const profile = options.profile === 'gitlab'
+    ? { ...GITLAB_REVIEW_RENDER_PROFILE, sanitizeText }
+    : options.profile === 'degraded' || transport === 'issue-comment'
+      ? { ...DEGRADED_REVIEW_RENDER_PROFILE, sanitizeText }
       : { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText };
 
   const metadata: RoundSummaryMarkerMetadata = {

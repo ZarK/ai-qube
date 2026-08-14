@@ -12,7 +12,6 @@ import {
   type GateEvidence,
   type JsonObject,
   type ReviewFeedback,
-  type ReviewFinding,
   type ReviewForgeCapabilities,
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
@@ -739,12 +738,14 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       };
     }
     let login: string | null = null;
-    try {
-      login = await this.trustedMarkerAuthor();
-    } catch (error) {
-      const message = classifyGitLabPublishError(error);
-      if (/HTTP 401/.test(message)) {
-        return { login: null, tokenPresent: true, apiScope: "missing", approvalPermission: "unknown", failure: message };
+    if (this.client.getCurrentUser) {
+      try {
+        login = userName(await this.client.getCurrentUser());
+      } catch (error) {
+        const message = classifyGitLabPublishError(error);
+        if (/HTTP 401/.test(message)) {
+          return { login: null, tokenPresent: true, apiScope: "missing", approvalPermission: "unknown", failure: message };
+        }
       }
     }
     let apiScope: GitLabReviewPermissionDiagnosis["apiScope"] = login ? "ok" : "unknown";
@@ -839,6 +840,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         }
       };
 
+      await assertHeadUnchanged();
       await this.upsertGitLabStatusNote(input, notes, publisher);
       let supersededPriorSummaries = 0;
       if (this.client.updateMergeRequestNote) {

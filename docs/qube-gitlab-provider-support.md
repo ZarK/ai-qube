@@ -166,10 +166,23 @@ request notes. Local review lane publication writes provider-visible GitLab
 notes with stable QUBE metadata, and those notes are read back as trusted lane
 review records for the current merge request head.
 
-GitLab merge request approval, merge, and pipeline triggering are mutation
-gaps. They remain unsupported until each mutation path has a tested adapter
-contract. GitLab discussion resolution is supported through the review-thread
-resolution command.
+When `providers.review.kind` is `gitlab`, a completed gate publishes:
+
+- positioned discussions for diff-anchored findings
+- one round summary note (`<!-- qube-pr-review-summary:... -->`)
+- one status note (`<!-- qube-pr-status:... -->`) created once and edited
+  in place
+- merge request approval on an approving round, or revoked approval on
+  request-changes
+
+Bodies render through the shared GitLab profile: admonition verdicts, offset
+suggestion fences, and no GitHub alert syntax. Orchestration consults the
+adapter capability flags. A capability declared false produces a typed skip
+instead of calling the adapter.
+
+GitLab merge, issue lifecycle mutation, and pipeline triggering remain
+unsupported. GitLab discussion resolution is supported through the
+review-thread resolution command.
 
 ## Live Suite Bootstrap
 
@@ -194,5 +207,9 @@ without `QUBE_TESTKIT_LIVE=1` and the credentials below. It never reports
 - GitLab milestones are project metadata, not GitHub milestones.
 - GitLab merge requests expose mergeability, reviewers, approval state, and
   pipeline state through GitLab-specific APIs.
+- GitLab inline review comments are positioned discussions, not GitHub pull
+  request review events. Suggestions use ` ```suggestion:-X+Y ` offset
+  fences. The round verdict maps to GitLab approve/unapprove plus a summary
+  note.
 - GitLab CI status normally comes from merge request `head_pipeline` or
   project pipeline APIs, not GitHub Checks.

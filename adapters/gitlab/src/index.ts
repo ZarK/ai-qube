@@ -27,8 +27,12 @@ export {
   GitLabReviewForgeProvider,
 } from "./gitlab_review_forge.js";
 export {
+  classifyGitLabPublishError,
   discussionPosition,
+  parseGitLabDiffIndex,
   parseRoundSummaryMarker,
+  parseStatusNoteRounds,
+  renamedOldPath,
 } from "./gitlab_review_publish.js";
 export type {
   GitLabReviewProvider,
@@ -38,7 +42,7 @@ export type {
   GitLabDiscussion,
   GitLabMergeRequest,
   GitLabNote,
-  GitLabReviewFetch, GitLabReviewProviderOptions,
+  GitLabReviewFetch, GitLabReviewPermissionDiagnosis, GitLabReviewProviderOptions,
   GitLabReviewPullRequest,
   GitLabReviewRestClient,
   GitLabReviewSnapshot,

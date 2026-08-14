@@ -1661,6 +1661,261 @@ describe("GitLab round summary publish", () => {
     assert.equal(created[0].position.old_path, "src/a.ts");
   });
 
+  it("skips a same-head same-digest republish", async () => {
+    const notes = [{
+      id: 7,
+      body: "<!-- qube-pr-review-summary:{\"version\":1,\"head\":\"head-sha\",\"round\":\"round-1\",\"prNumber\":12,\"findingDigest\":\"abc\"} -->\nNote",
+      author: { username: "executor" },
+      web_url: "https://gitlab.example.com/note/7",
+    }];
+    const updates = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          const note = { id: 99, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/99" };
+          notes.push(note);
+          return note;
+        },
+        async updateMergeRequestNote({ noteId, body }) {
+          updates.push({ noteId, body });
+          return { id: Number(noteId), body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${noteId}` };
+        },
+        async approveMergeRequest() {},
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const result = await provider.publishRoundReviewSummary(summaryInput());
+    assert.equal(result.status, "skipped");
+    assert.equal(updates.some((entry) => entry.noteId === "7" && entry.body.includes("qube-pr-review-summary")), false);
+  });
+
+  it("ignores a forged round-summary marker from another author", async () => {
+    const created = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return [{
+            id: 4,
+            body: "<!-- qube-pr-review-summary:{\"version\":1,\"head\":\"head-sha\",\"round\":\"round-1\",\"prNumber\":12,\"findingDigest\":\"abc\"} -->\nForged",
+            author: { username: "intruder" },
+          }];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          created.push(body);
+          return { id: 5, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/5" };
+        },
+        async approveMergeRequest() {},
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const result = await provider.publishRoundReviewSummary(summaryInput());
+    assert.equal(result.status, "published");
+    assert.equal(created.some((body) => body.includes("qube-pr-review-summary") || body.includes("Note")), true);
+  });
+
+  it("fails closed when the merge request head changes before publication", async () => {
+    let reads = 0;
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          reads += 1;
+          return makeGitLabMergeRequest({ sha: reads === 1 ? "head-sha" : "advanced-head" });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("no note may be created for a stale head");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const result = await provider.publishRoundReviewSummary(summaryInput());
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /head changed/);
+  });
+
+  it("creates a status note once and edits it in place", async () => {
+    const notes = [];
+    const updates = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest();
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        updates.push({ noteId, body });
+        const existing = notes.find((note) => String(note.id) === String(noteId));
+        if (existing) existing.body = body;
+        return { id: Number(noteId), body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${noteId}` };
+      },
+      async approveMergeRequest() {},
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    await provider.publishRoundReviewSummary(summaryInput({ findingDigest: "first" }));
+    await provider.publishRoundReviewSummary(summaryInput({ findingDigest: "second" }));
+    const statusNotes = notes.filter((note) => note.body.includes("<!-- qube-pr-status:"));
+    assert.equal(statusNotes.length, 1);
+    assert.equal(updates.some((entry) => entry.body.includes("qube-pr-status")), true);
+  });
+
+  it("anchors an old-line finding and a renamed file discussion", async () => {
+    const created = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ diff_refs: { base_sha: "base", start_sha: "start", head_sha: "head-sha" } });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async listMergeRequestDiffs() {
+          return [{ old_path: "src/old.ts", new_path: "src/new.ts", renamed_file: true, diff: "@@ -1 +1 @@\n-old\n+new\n" }];
+        },
+        async createMergeRequestNote({ body }) {
+          return { id: 1, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" };
+        },
+        async createMergeRequestDiscussion({ body, position }) {
+          created.push({ body, position });
+          return { id: "d1", notes: [{ id: 2, body, author: { username: "executor" } }] };
+        },
+        async unapproveMergeRequest() {},
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const oldLine = {
+      id: "old",
+      severity: "advisory",
+      message: "Removed line.",
+      location: { path: "src/a.ts", line: 8, side: "source" },
+    };
+    const renamed = {
+      id: "renamed",
+      severity: "advisory",
+      message: "Renamed file.",
+      location: { path: "src/new.ts", line: 4, side: "destination" },
+    };
+    const result = await provider.publishRoundReviewSummary(summaryInput({
+      verdict: "request-changes",
+      inlineFindings: [
+        { laneId: "code-quality", finding: oldLine, commentBody: "Removed line." },
+        { laneId: "code-quality", finding: renamed, commentBody: "Renamed file." },
+      ],
+    }));
+    assert.equal(result.status, "published");
+    assert.equal(created.find((entry) => entry.position.old_line === 8)?.position.old_line, 8);
+    const renamedPosition = created.find((entry) => entry.position.new_path === "src/new.ts");
+    assert.equal(renamedPosition.position.old_path, "src/old.ts");
+    assert.equal(renamedPosition.position.new_line, 4);
+  });
+
+  it("diagnoses missing api scope and approval permission", async () => {
+    const missingScope = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      token: "token",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("unused");
+        },
+        async getCurrentUser() {
+          throw new Error("GitLab API request failed while reading /user. Cause: HTTP 401. The token is missing the api scope or is invalid.");
+        },
+      },
+    });
+    const scope = await missingScope.diagnoseReviewPermissions();
+    assert.equal(scope.apiScope, "missing");
+    assert.match(String(scope.failure), /api scope/);
+
+    const missingApproval = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      token: "token",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("unused");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+        async getPersonalAccessTokenSelf() {
+          return { scopes: ["api"] };
+        },
+        async getProject() {
+          return { permissions: { project_access: { access_level: 20 } } };
+        },
+      },
+    });
+    const approval = await missingApproval.diagnoseReviewPermissions();
+    assert.equal(approval.apiScope, "ok");
+    assert.equal(approval.approvalPermission, "missing");
+  });
+
   it("names missing approval permission on HTTP 403", async () => {
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
