@@ -1,6 +1,12 @@
 export type RunCommand = 'run start' | 'run wait' | 'run status' | 'run stop';
 export type RunStatusState = 'missing' | 'running' | 'stopped' | 'unknown';
 
+export interface AttemptLogPaths {
+  attemptId: string;
+  stdoutPath: string;
+  stderrPath: string;
+}
+
 export interface RunMetadata {
   version: 1;
   name: string;
@@ -9,6 +15,7 @@ export interface RunMetadata {
   cwd: string;
   startedAt: string;
   platform: NodeJS.Platform;
+  attemptId?: string;
   stdoutPath: string;
   stderrPath: string;
   metadataPath: string;
@@ -17,8 +24,11 @@ export interface RunMetadata {
 export interface RunPaths {
   directory: string;
   metadataPath: string;
+  currentAttemptPath: string;
+  attemptId: string | null;
   stdoutPath: string;
   stderrPath: string;
+  historicalLogs: AttemptLogPaths[];
 }
 
 export interface SpawnPlan {
@@ -39,6 +49,7 @@ export interface RunStartResult {
   commandLine: string[];
   cwd: string;
   pid: number | null;
+  attemptId: string | null;
   paths: RunPaths;
   spawnPlan: SpawnPlan;
   status: RunStatusState;
@@ -51,6 +62,7 @@ export interface RunStatusResult {
   command: 'run status';
   name: string;
   status: RunStatusState;
+  attemptId: string | null;
   metadata: RunMetadata | null;
   paths: RunPaths;
   logTail: { stdout: string[]; stderr: string[] };
@@ -66,6 +78,7 @@ export interface RunWaitResult {
   timeoutSeconds: number;
   elapsedMs: number;
   attempts: number;
+  attemptId: string | null;
   status: 'ready' | 'timeout' | 'missing-run' | 'stopped' | 'request-failed';
   httpStatus: number | null;
   paths: RunPaths;
@@ -80,6 +93,7 @@ export interface RunStopResult {
   dryRun: boolean;
   name: string;
   status: RunStatusState;
+  attemptId: string | null;
   pid: number | null;
   paths: RunPaths;
   logTail: { stdout: string[]; stderr: string[] };
@@ -100,6 +114,7 @@ export interface RunStartOptions {
 export interface RunNameOptions {
   repoRoot: string;
   name: string;
+  attemptId?: string;
 }
 
 export interface RunWaitOptions extends RunNameOptions {

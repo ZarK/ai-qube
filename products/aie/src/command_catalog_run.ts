@@ -55,7 +55,7 @@ export const RUN_COMMAND_DEFINITIONS: ExecutorCommandDefinition[] = [
     supportsJson: true,
     supportsDryRun: false,
     stableErrorKinds: ['parse-error', 'local-runner-error', ...CONFIG_ERROR_KINDS],
-    examples: ['aie run status --name ui-audit', 'aie run status --name ui-audit --json'],
+    examples: ['aie run status --name ui-audit', 'aie run status --name ui-audit --json', 'aie run status --name ui-audit --attempt 20260618T000000000Z'],
   },
   {
     name: 'run stop',

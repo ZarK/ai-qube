@@ -7,21 +7,31 @@ export function formatRunResult(result: RunStartResult | RunStatusResult | RunWa
     lines.push(`Command: ${result.commandLine.join(' ')}`);
     lines.push(`Working directory: ${result.cwd}`);
     if (result.pid) lines.push(`PID: ${result.pid}`);
+    if (result.attemptId) lines.push(`Attempt: ${result.attemptId}`);
     lines.push(`Logs: ${result.paths.stdoutPath} / ${result.paths.stderrPath}`);
   } else if (result.command === 'run status') {
     lines.push(`Run status ${result.name}: ${result.status}.`);
+    if (result.attemptId) lines.push(`Attempt: ${result.attemptId}`);
     if (result.metadata) {
       lines.push(`PID: ${result.metadata.pid}`);
       lines.push(`Command: ${result.metadata.command.join(' ')}`);
       lines.push(`Working directory: ${result.metadata.cwd}`);
     }
+    lines.push(`Logs: ${result.paths.stdoutPath} / ${result.paths.stderrPath}`);
   } else if (result.command === 'run wait') {
     lines.push(`Run wait ${result.name}: ${result.status}.`);
+    if (result.attemptId) lines.push(`Attempt: ${result.attemptId}`);
     lines.push(`URL: ${result.url}`);
     lines.push(`Attempts: ${result.attempts}; elapsed: ${result.elapsedMs}ms; HTTP: ${result.httpStatus ?? 'none'}`);
+    lines.push(`Logs: ${result.paths.stdoutPath} / ${result.paths.stderrPath}`);
   } else {
     lines.push(`Run stop ${result.name}: ${result.status}.`);
+    if (result.attemptId) lines.push(`Attempt: ${result.attemptId}`);
     if (result.pid) lines.push(`PID: ${result.pid}`);
+    lines.push(`Logs: ${result.paths.stdoutPath} / ${result.paths.stderrPath}`);
+  }
+  if (result.paths.historicalLogs.length > 0) {
+    lines.push(`Historical logs: ${result.paths.directory}`);
   }
   if ('error' in result && result.error) lines.push(`Error: ${result.error}`);
   if ('logTail' in result) {

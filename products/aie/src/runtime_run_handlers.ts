@@ -92,7 +92,7 @@ export const handleRunStatus: RuntimeCommandHandler = async context => {
   try {
     const loaded = await loadConfigFile();
     if (!loaded.ok) return configLoadFailure(context, 'run status', loaded, 'Fix the selected Executor config, then inspect the local app runner again.');
-    const result = runStatus({ repoRoot: loaded.root, name: runName(context) });
+    const result = runStatus({ repoRoot: loaded.root, name: runName(context), attemptId: stringFlag(context, 'attempt') });
     return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
