@@ -909,6 +909,157 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'packages/escape'), false);
   });
 
+  it('inspects a CMake superbuild layout with projects and local signals', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture_cmake_root');
+    assert.equal(result.projects.find(project => project.path === 'apps/cli').packageName, 'cli');
+    assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, 'core');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'CMakeLists.txt'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'CMakePresets.json'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected CMake projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['packages/core/lib.cpp', 'apps/cli/CMakeLists.txt', 'CMakeLists.txt'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture_cmake_root', 'cli', 'core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture_cmake_root').changedPaths, ['CMakeLists.txt']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'cli').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a CMake superbuild when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'apps/cli', 'packages/core']);
+    assert.equal(inspected.projects.find(project => project.path === '.').kind, 'workspace');
+  });
+
+  it('reports an ambiguous layout when CMake and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not treat unlisted conventional CMake projects as superbuild members', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    mkdirSync(join(repo, 'services', 'api'), { recursive: true });
+    writeFileSync(join(repo, 'services', 'api', 'CMakeLists.txt'), 'add_library(api api.cpp)\n');
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(fixture_cmake_root)\nadd_subdirectory(apps/cli)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli']);
+    assert.equal(result.projects.some(project => project.path === 'packages/core'), false);
+    assert.equal(result.projects.some(project => project.path === 'services/api'), false);
+  });
+
+  it('does not classify nested CMake projects without root add_subdirectory as a superbuild', async () => {
+    const repo = makeFixtureRepo('ambiguous-cmake-superbuild');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['apps/cli']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root CMakeLists.txt add_subdirectory')));
+  });
+
+  it('does not classify a lone root CMakeLists.txt as a CMake superbuild', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(lone_app)\nadd_executable(lone main.cpp)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'app');
+  });
+
+  it('does not classify FetchContent-only CMake as a proven member set', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(fetch_only)\ninclude(FetchContent)\nFetchContent_Declare(dep GIT_REPOSITORY https://example.invalid/dep.git)\nFetchContent_MakeAvailable(dep)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'c-cpp-cmake-superbuild');
+    assert.deepEqual(result.projects.map(project => project.path), ['.']);
+    assert.ok(result.warnings.some(warning => warning.includes('no member project roots were resolved')));
+  });
+
+  it('keeps generated CMake output paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    mkdirSync(join(repo, 'cmake-build-debug'), { recursive: true });
+    writeFileSync(join(repo, 'cmake-build-debug', 'cli'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['cmake-build-debug/cli'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand CMake add_subdirectory members outside the repository root', async () => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    const outside = join(repo, '..', 'outside-cmake-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'CMakeLists.txt'), 'add_library(leak leak.cpp)\n');
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(fixture_cmake_root)\nadd_subdirectory(apps/cli)\nadd_subdirectory(../outside-cmake-leak)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/cli']);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink CMake members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('cmake-superbuild');
+    const outside = join(repo, '..', 'outside-cmake-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'CMakeLists.txt'), 'add_library(escape escape.cpp)\n');
+    const link = join(repo, 'packages', 'escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+    writeFileSync(join(repo, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\nproject(fixture_cmake_root)\nadd_subdirectory(apps/cli)\nadd_subdirectory(packages/escape)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'packages/escape'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
