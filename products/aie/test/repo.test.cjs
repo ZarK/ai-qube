@@ -432,6 +432,167 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'modules/escape'), false);
   });
 
+  it('inspects a Gradle Java/Kotlin multi-project layout with modules and local signals', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/app', 'modules/core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-java-root');
+    assert.equal(result.projects.find(project => project.path === 'modules/core').packageName, 'core');
+    assert.equal(result.projects.find(project => project.path === 'modules/app').packageName, 'app');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'settings.gradle.kts'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('inspects a Maven Java/Kotlin multi-project layout with aggregator modules', async () => {
+    const repo = makeFixtureRepo('java-kotlin-maven');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/app', 'modules/core']);
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-java-root');
+    assert.equal(result.projects.find(project => project.path === 'modules/core').packageName, 'fixture-java-core');
+    assert.equal(result.projects.find(project => project.path === 'modules/app').packageName, 'fixture-java-app');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pom.xml'));
+  });
+
+  it('maps changed paths to affected Java/Kotlin modules and suggested gates', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['modules/core/src/main/kotlin/Core.kt', 'modules/app/build.gradle.kts', 'settings.gradle.kts'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'java-kotlin-multi-project');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-java-root', 'app', 'core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture-java-root').changedPaths, ['settings.gradle.kts']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'app').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a Java/Kotlin multi-project when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'java-kotlin-multi-project');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'modules/app', 'modules/core']);
+    assert.equal(inspected.projects.find(project => project.path === '.').kind, 'workspace');
+  });
+
+  it('reports an ambiguous layout when Java/Kotlin and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify nested Gradle modules without root settings as a multi-project', async () => {
+    const repo = makeFixtureRepo('ambiguous-java-kotlin');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['modules/core']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root settings.gradle')));
+  });
+
+  it('does not classify a lone root pom.xml as a Java/Kotlin multi-project', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'pom.xml'), '<project>\n  <artifactId>lone-app</artifactId>\n</project>\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'app');
+  });
+
+  it('does not classify settings without includes or members as a proven module set', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'settings.gradle.kts'), 'rootProject.name = "empty-settings"\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+    assert.deepEqual(result.projects.map(project => project.path), ['.']);
+    assert.ok(result.warnings.some(warning => warning.includes('no member module roots were resolved')));
+  });
+
+  it('keeps generated Gradle paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    mkdirSync(join(repo, '.gradle'), { recursive: true });
+    writeFileSync(join(repo, '.gradle', 'fileHashes.bin'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['.gradle/fileHashes.bin'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand Gradle includes outside the repository root', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    const outside = join(repo, '..', 'outside-java-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'build.gradle.kts'), 'plugins { `java-library` }\n');
+    writeFileSync(join(repo, 'settings.gradle.kts'), 'rootProject.name = "fixture-java-root"\ninclude(":modules:core")\ninclude(":modules:app")\ninclude("../outside-java-leak")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/app', 'modules/core']);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink Gradle members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    const outside = join(repo, '..', 'outside-java-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'build.gradle.kts'), 'plugins { `java-library` }\n');
+    const link = join(repo, 'modules', 'escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+    writeFileSync(join(repo, 'settings.gradle.kts'), 'rootProject.name = "fixture-java-root"\ninclude(":modules:core")\ninclude(":modules:escape")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'modules/escape'), false);
+  });
+
+  it('does not treat includeBuild paths as Gradle members', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    mkdirSync(join(repo, 'tools', 'composite'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'composite', 'build.gradle.kts'), 'plugins { base }\n');
+    writeFileSync(join(repo, 'settings.gradle.kts'), 'rootProject.name = "fixture-java-root"\ninclude(":modules:core")\nincludeBuild("tools/composite")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'tools/composite'), false);
+    assert.ok(result.projects.some(project => project.path === 'modules/core'));
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
