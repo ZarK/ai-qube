@@ -34,12 +34,15 @@ export interface PermutationDoctorResult {
 }
 
 export interface ModelRoutingDoctorResult {
-  readonly status: "ok" | "missing" | "invalid";
+  readonly status: "ok" | "missing" | "invalid" | "unavailable";
   readonly summary: string;
   readonly resolution: ModelRoutingResolution | null;
 }
 
-export async function runModelRoutingDoctor(cwd: string): Promise<ModelRoutingDoctorResult> {
+export async function runModelRoutingDoctor(
+  cwd: string,
+  lookup?: (command: string) => boolean,
+): Promise<ModelRoutingDoctorResult> {
   const configPath = path.join(cwd, ".qube", "aie", "config.json");
   if (!existsSync(configPath)) {
     return { status: "missing", summary: "No Executor config was found; model routing cannot be resolved.", resolution: null };
@@ -54,7 +57,15 @@ export async function runModelRoutingDoctor(cwd: string): Promise<ModelRoutingDo
   if (!validated.ok || !validated.config) {
     return { status: "invalid", summary: "Executor config is invalid; model routing cannot be resolved.", resolution: null };
   }
-  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, detectInstalledRoutingHostsOnPath());
+  const installed = detectInstalledRoutingHostsOnPath(lookup);
+  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, installed);
+  if (installed.length === 0) {
+    return {
+      status: "unavailable",
+      summary: `No installed modelRouting host is available for primary ${resolution.primary.id}.`,
+      resolution,
+    };
+  }
   const substitutions = resolution.substitutions.length;
   return {
     status: "ok",

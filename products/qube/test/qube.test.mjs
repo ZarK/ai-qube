@@ -51,6 +51,7 @@ import {
   renderCommandSurfacesDoc,
   modelRoutingPromptPlan,
   runConnectionDoctor,
+  runModelRoutingDoctor,
   resolveCommand,
   resolveComponentCommand,
 } from "../dist/index.js";
@@ -985,7 +986,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     }
   });
 
-  it("reports modelRouting decisions and substitutions in doctor JSON", () => {
+  it("reports modelRouting decisions and substitutions in doctor JSON", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-model-routing-doctor-"));
     const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-model-routing-quality-"));
     createQualityDoctorShim(qualityRoot);
@@ -1001,11 +1002,15 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
     const parsed = JSON.parse(result.stdout);
     assert.ok(parsed.modelRouting);
-    assert.ok(["ok", "missing", "invalid"].includes(parsed.modelRouting.status));
-    if (parsed.modelRouting.resolution) {
-      assert.equal(parsed.modelRouting.resolution.routes["independent-review"].reviewTier, "review");
-      assert.ok(Array.isArray(parsed.modelRouting.resolution.substitutions));
-    }
+    assert.ok(["ok", "unavailable"].includes(parsed.modelRouting.status));
+    assert.equal(parsed.modelRouting.resolution.routes["independent-review"].reviewTier, "review");
+    assert.ok(Array.isArray(parsed.modelRouting.resolution.substitutions));
+
+    const unavailable = await runModelRoutingDoctor(cwd, () => false);
+    assert.equal(unavailable.status, "unavailable");
+    assert.notEqual(unavailable.status, "ok");
+    assert.match(unavailable.summary, /No installed modelRouting host/);
+    assert.ok(unavailable.resolution.substitutions.length >= 1);
   });
 
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
