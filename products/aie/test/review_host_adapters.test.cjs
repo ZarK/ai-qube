@@ -81,6 +81,26 @@ describe('review host adapter registry', () => {
     assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok']);
   });
 
+  it('parses a Grok json-schema envelope when text is already an object', () => {
+    const adapter = getReviewHostAdapter('grok');
+    const lane = { recommendation: 'approve', status: 'passed', severity: 'none' };
+    const parsed = adapter.parseEnvelope(JSON.stringify({ text: lane, sessionId: 'grok-session' }));
+    assert.equal(parsed.sessionId, 'grok-session');
+    assert.deepEqual(JSON.parse(parsed.text), lane);
+  });
+
+  it('parses a Grok JSONL final event and a session_id alias', () => {
+    const adapter = getReviewHostAdapter('grok');
+    const lane = { recommendation: 'approve', status: 'passed' };
+    const stdout = [
+      JSON.stringify({ type: 'progress', text: 'working' }),
+      JSON.stringify({ text: lane, session_id: 'from-jsonl' }),
+    ].join('\n');
+    const parsed = adapter.parseEnvelope(stdout);
+    assert.equal(parsed.sessionId, 'from-jsonl');
+    assert.deepEqual(JSON.parse(parsed.text), lane);
+  });
+
   it('reports no missing capabilities for the built-in codex and grok adapters', () => {
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('codex')), []);
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok')), []);

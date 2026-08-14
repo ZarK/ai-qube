@@ -211,7 +211,7 @@
           "runner": "local-host",
           "rereview": "delta",
           "route": {
-            "host": "codex",
+            "host": "grok",
             "tier": "review",
             "timeoutSeconds": 900,
             "maxTurns": 8
