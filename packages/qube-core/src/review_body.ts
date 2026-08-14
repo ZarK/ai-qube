@@ -301,6 +301,29 @@ function wrapCollapsed(profile: ReviewRenderCapabilityProfile, title: string, co
   return ["<details>", `<summary>${title}</summary>`, "", content, "", "</details>"].join("\n");
 }
 
+function laneNoteText(
+  profile: ReviewRenderCapabilityProfile,
+  lane: ReviewLaneRenderInput,
+  rows: readonly ReviewFindingRenderRow[] = [],
+): string {
+  let summary = sanitize(profile, lane.summary);
+  const findings = [
+    ...lane.findings,
+    ...rows.filter((row) => row.laneId === lane.laneId).map((row) => row.finding),
+  ];
+  const seen = new Set<string>();
+  for (const finding of findings) {
+    if (seen.has(finding.id)) continue;
+    seen.add(finding.id);
+    const message = sanitize(profile, finding.message);
+    const claim = findingClaim(profile, finding);
+    if (message !== "") summary = summary.split(message).join("");
+    if (claim !== "" && claim !== message) summary = summary.split(claim).join("");
+  }
+  summary = summary.replace(/\s+/g, " ").trim();
+  return summary === "" ? laneChipLabel(lane) : summary;
+}
+
 function renderCollapsedNotes(
   profile: ReviewRenderCapabilityProfile,
   input: ReviewRoundRenderInput,
@@ -309,8 +332,7 @@ function renderCollapsedNotes(
   const noteLines = input.expectedLanes.map((laneId) => {
     const lane = byLane.get(laneId);
     if (!lane) return `- ${laneId}: not run (no evidence at this head)`;
-    const summary = sanitize(profile, lane.summary);
-    return `- ${laneId}: ${summary === "" ? laneChipLabel(lane) : summary}`;
+    return `- ${laneId}: ${laneNoteText(profile, lane, input.findings)}`;
   });
   const preconditions = [...new Set(input.lanes.flatMap((lane) => lane.preconditions ?? []).map((item) => item.trim()).filter((item) => item !== ""))];
   const hosts = [...new Set(input.lanes.map((lane) => lane.host).filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
@@ -373,8 +395,9 @@ export function renderLaneReviewBody(
     anchored: false,
     unanchoredReason: input.transport === "review-api" ? null : DEGRADED_TRANSPORT_LABEL,
   }));
-  const blocking = [...input.bodyFindings, ...input.lane.findings].filter((finding) => finding.severity === "blocking").length;
-  const advisory = [...input.bodyFindings, ...input.lane.findings].filter((finding) => finding.severity === "advisory").length;
+  const countedFindings = input.lane.findings.length > 0 ? input.lane.findings : input.bodyFindings;
+  const blocking = countedFindings.filter((finding) => finding.severity === "blocking").length;
+  const advisory = countedFindings.filter((finding) => finding.severity === "advisory").length;
   const sentence = renderVerdictSentence({
     verdict: input.lane.recommendation,
     blocking,

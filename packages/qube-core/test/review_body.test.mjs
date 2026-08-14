@@ -108,6 +108,31 @@ describe("renderRoundReviewBody", () => {
     assert.doesNotMatch(render.body, /finding digest:/);
   });
 
+  it("strips finding claims out of a lane summary before collapsed notes", () => {
+    const finding = {
+      id: "dup",
+      severity: "blocking",
+      message: "Parser truncates nested status history.",
+    };
+    const render = renderRoundReviewBody({
+      marker: marker(),
+      verdict: "request-changes",
+      headSha: "headsha1234567",
+      expectedLanes: ["code-quality"],
+      lanes: [lane({
+        recommendation: "request-changes",
+        summary: "Parser truncates nested status history. Inspected the delta.",
+        findings: [finding],
+      })],
+      findings: [{ laneId: "code-quality", finding, anchored: false, unanchoredReason: "no location" }],
+      transport: "review-api",
+    });
+    const notes = render.body.slice(render.body.indexOf("<summary>Lane notes</summary>"));
+    assert.equal(notes.includes("Parser truncates nested status history"), false);
+    assert.match(notes, /Inspected the delta/);
+    assert.equal(render.body.split("Parser truncates nested status history").length - 1, 1);
+  });
+
   it("states each finding once and keeps finding text out of collapsed lane notes", () => {
     const row = {
       laneId: "code-quality",
@@ -214,6 +239,20 @@ describe("renderRoundReviewBody", () => {
 });
 
 describe("renderLaneReviewBody and renderInlineReviewComment", () => {
+  it("counts each lane finding once when body findings are a display subset", () => {
+    const blocking = finding({ id: "b1", severity: "blocking", message: "One blocker." });
+    const render = renderLaneReviewBody({
+      marker: "<!-- qube-pr-review:{\"version\":1} -->",
+      lane: lane({ recommendation: "request-changes", findings: [blocking] }),
+      bodyFindings: [blocking],
+      inlineCount: 0,
+      transport: "review-api",
+      headSha: "headsha1234567",
+    });
+    assert.match(render.body, /1 blocking, 0 advisory/);
+    assert.doesNotMatch(render.body, /2 blocking/);
+  });
+
   it("uses the shared renderer for lane bodies and omits adapter-local metadata walls", () => {
     const render = renderLaneReviewBody({
       marker: "<!-- qube-pr-review:{\"version\":1} -->",
