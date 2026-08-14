@@ -53,8 +53,11 @@ Body content:
 
 Identity:
 
-- The publisher app has no uploaded logo, so GitHub renders the app owner's
-  personal avatar on every automated review event.
+- The publisher app (`QUBE Review`, slug `qube-review`, login
+  `qube-review[bot]`) now serves a distinct geometric Q mark from
+  `https://avatars.githubusercontent.com/in/4573671`. The repository owner
+  avatar remains `https://avatars.githubusercontent.com/u/39051`. Historical
+  review events pick up the new mark by reference.
 
 ## Root causes
 
@@ -118,6 +121,18 @@ and set the badge background color in the app's display settings. Avatars are
 served by reference, so the change applies to historical events. Do not rename
 the app: a rename can change the app slug and the `[bot]` login, which the
 publisher config and marker trust-matching depend on.
+
+Chosen mark (2026-08-14): keep the existing multi-color Q on a dark ground
+instead of a one-color mark. The live GitHub App logo is the geometric Q PNG
+at `https://avatars.githubusercontent.com/in/4573671`. Match the badge to that
+dark ground. Source artwork lives in [docs/design](design/). The display name
+is `QUBE Review`; the slug `qube-review` and login `qube-review[bot]` stay
+unchanged.
+
+`review doctor` warns when a configured github-app publisher's bot
+`avatar_url` matches the repository owner's `avatar_url` after the query
+string is stripped. The warning does not change permission-driven readiness.
+Token and user publishers skip the avatar probe.
 
 ### Round review event
 

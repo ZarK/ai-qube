@@ -24,11 +24,27 @@ export interface ReviewRepositoryProbeResult {
   readonly accessible: boolean;
   readonly pullRequestPermission: ReviewPullRequestPermission;
   readonly fallbackReason: string | null;
+  readonly ownerAvatarUrl?: string | null;
 }
 
 export interface ReviewRepositoryProbe extends ReviewRepositoryProbeResult {
   readonly attempted: boolean;
   readonly status: 'ok' | 'degraded' | 'failed' | 'not-run';
+}
+
+export type ReviewAvatarProbeStatus = 'ok' | 'warning' | 'unknown' | 'not-run';
+
+export interface ReviewAvatarProbe {
+  readonly attempted: boolean;
+  readonly status: ReviewAvatarProbeStatus;
+  readonly botAvatarUrl: string | null;
+  readonly ownerAvatarUrl: string | null;
+  readonly ownerFallback: boolean | null;
+}
+
+export interface ReviewAvatarObservation {
+  readonly botAvatarUrl: string | null;
+  readonly ownerAvatarUrl: string | null;
 }
 
 export interface ReviewPublisherProbe {
@@ -38,6 +54,7 @@ export interface ReviewPublisherProbe {
   readonly formalEventCapability: boolean | null;
   readonly fallbackReason: string | null;
   readonly repository: ReviewRepositoryProbe;
+  readonly avatar: ReviewAvatarProbe;
 }
 
 export interface ReviewDoctorResult {
@@ -75,6 +92,16 @@ export type ReviewRepositoryAccessProber = (options: {
   readonly timeoutMs?: number;
 }) => Promise<ReviewRepositoryProbeResult>;
 
+export type ReviewAvatarProber = (options: {
+  readonly cwd?: string;
+  readonly accessToken: string | null;
+  readonly identity: GitHubReviewPublisherIdentity;
+  readonly repository: string | null;
+  readonly ownerAvatarUrl: string | null;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}) => Promise<ReviewAvatarObservation>;
+
 export interface RunReviewDoctorOptions {
   readonly config: Config | null;
   readonly cwd?: string;
@@ -83,6 +110,7 @@ export interface RunReviewDoctorOptions {
   readonly probeTimeoutMs?: number;
   readonly resolvePublisher?: ReviewPublisherResolver;
   readonly probeRepositoryAccess?: ReviewRepositoryAccessProber;
+  readonly probePublisherAvatar?: ReviewAvatarProber;
 }
 
 export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
@@ -96,6 +124,7 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
       'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',
+      'Upload a distinct app logo and matching badge color in the GitHub App display settings. Do not rename the app; a rename can change the slug and `[bot]` login.',
       'Apply local config with `review setup github-app --app-id <id> --installation-id <id> --private-key-env <ENV_NAME> --yes` (prefer --private-key-env over --private-key-path).',
       'Run `review doctor --json` for a read-only identity and permission probe. The probe mints only a short-lived installation token in memory.',
     ],
@@ -305,10 +334,116 @@ async function probeCurrentRepositoryAccess(options: {
     repository,
     accessible: true,
     pullRequestPermission,
+    ownerAvatarUrl: parseOwnerAvatarUrl(repositoryBody),
     fallbackReason: pullRequestPermission === 'write'
       ? null
       : `Configured publisher can read ${repository} but Pull requests write permission was not confirmed.`,
   };
+}
+
+export function normalizeReviewAvatarUrl(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.origin}${path}`;
+  } catch {
+    return null;
+  }
+}
+
+function parseOwnerAvatarUrl(body: Record<string, unknown>): string | null {
+  const owner = body.owner;
+  if (!isRecord(owner) || typeof owner.avatar_url !== 'string') return null;
+  return owner.avatar_url;
+}
+
+function parseUserAvatarUrl(stdout: string): string | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    return isRecord(parsed) && typeof parsed.avatar_url === 'string' ? parsed.avatar_url : null;
+  } catch {
+    const body = parseRepositoryBody(stdout);
+    return body && typeof body.avatar_url === 'string' ? body.avatar_url : null;
+  }
+}
+
+function notRunAvatarProbe(): ReviewAvatarProbe {
+  return {
+    attempted: false,
+    status: 'not-run',
+    botAvatarUrl: null,
+    ownerAvatarUrl: null,
+    ownerFallback: null,
+  };
+}
+
+function avatarProbeFrom(observation: ReviewAvatarObservation): ReviewAvatarProbe {
+  const botAvatarUrl = normalizeReviewAvatarUrl(observation.botAvatarUrl);
+  const ownerAvatarUrl = normalizeReviewAvatarUrl(observation.ownerAvatarUrl);
+  if (!botAvatarUrl || !ownerAvatarUrl) {
+    return {
+      attempted: true,
+      status: 'unknown',
+      botAvatarUrl,
+      ownerAvatarUrl,
+      ownerFallback: null,
+    };
+  }
+  const ownerFallback = botAvatarUrl === ownerAvatarUrl;
+  return {
+    attempted: true,
+    status: ownerFallback ? 'warning' : 'ok',
+    botAvatarUrl,
+    ownerAvatarUrl,
+    ownerFallback,
+  };
+}
+
+async function probePublisherAvatar(options: {
+  readonly cwd?: string;
+  readonly accessToken: string | null;
+  readonly identity: GitHubReviewPublisherIdentity;
+  readonly repository: string | null;
+  readonly ownerAvatarUrl: string | null;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}): Promise<ReviewAvatarObservation> {
+  let ownerAvatarUrl = options.ownerAvatarUrl;
+  const limits = { signal: options.signal, timeoutMs: options.timeoutMs };
+  if (!ownerAvatarUrl && options.repository && options.accessToken) {
+    const accessResult = await runGh([
+      'api',
+      `repos/${options.repository}`,
+      '-H',
+      'Accept: application/vnd.github+json',
+    ], { cwd: options.cwd, token: options.accessToken, ...limits });
+    if (accessResult.exitCode === 0) {
+      const body = parseRepositoryBody(accessResult.stdout) ?? (() => {
+        try {
+          const parsed = JSON.parse(accessResult.stdout) as unknown;
+          return isRecord(parsed) ? parsed : null;
+        } catch {
+          return null;
+        }
+      })();
+      ownerAvatarUrl = body ? parseOwnerAvatarUrl(body) : null;
+    }
+  }
+  let botAvatarUrl: string | null = null;
+  if (options.accessToken && options.identity.login) {
+    const userResult = await runGh([
+      'api',
+      `users/${encodeURIComponent(options.identity.login)}`,
+      '-H',
+      'Accept: application/vnd.github+json',
+    ], { cwd: options.cwd, token: options.accessToken, ...limits });
+    if (userResult.exitCode === 0) botAvatarUrl = parseUserAvatarUrl(userResult.stdout);
+  }
+  return { botAvatarUrl, ownerAvatarUrl };
 }
 
 function notRunRepositoryProbe(): ReviewRepositoryProbe {
@@ -329,6 +464,7 @@ function repositoryProbe(result: ReviewRepositoryProbeResult): ReviewRepositoryP
     repository: result.repository,
     accessible: result.accessible,
     pullRequestPermission: result.pullRequestPermission,
+    ownerAvatarUrl: result.ownerAvatarUrl ?? null,
     fallbackReason: sanitizeReason(result.fallbackReason),
   };
 }
@@ -362,6 +498,12 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
   if (readiness === 'unconfigured') return 'Run `qube review setup github-app` (preferred) or `qube review setup token` (fallback).';
   if (missingFields.length > 0) return `Re-run \`qube review setup ${mode}\` with ${missingFields.join(' and ')}, then add --yes to apply the safe references.`;
   if (!probe.attempted) return 'Run `qube review doctor --json` without --no-probe after the referenced credential is available locally.';
+  if (readiness === 'ready' && probe.avatar.status === 'warning') {
+    return 'Upload a distinct logo in the GitHub App display settings (PNG, JPG, or GIF under 1 MB; 200x200 px recommended) and set the badge background to match. Do not rename the app. Then rerun `qube review doctor --json`.';
+  }
+  if (readiness === 'ready' && probe.avatar.status === 'unknown') {
+    return 'Publisher permissions are ready, but the github-app avatar could not be compared with the repository owner avatar. Confirm the app logo in GitHub App display settings, then rerun `qube review doctor --json`.';
+  }
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
   if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
   // Credential resolution failures take priority over repository-access messaging.
@@ -423,6 +565,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   const missingFields = publisherMissingFields(publisher);
   const resolver = options.resolvePublisher ?? resolveGitHubReviewPublisher;
   const repositoryProber = options.probeRepositoryAccess ?? probeCurrentRepositoryAccess;
+  const avatarProber = options.probePublisherAvatar ?? probePublisherAvatar;
   const probeTimeoutMs = options.probeTimeoutMs ?? REVIEW_DOCTOR_PROBE_TIMEOUT_MS;
   let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
@@ -487,6 +630,26 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
       });
     }
   }
+  let avatar = notRunAvatarProbe();
+  if (attempted && mode === 'github-app' && canProbeRepository && resolved) {
+    try {
+      avatar = avatarProbeFrom(await withProbeTimeout(
+        (signal) => avatarProber({
+          cwd: options.cwd,
+          accessToken: resolved.accessToken ?? null,
+          identity,
+          repository: repository.repository,
+          ownerAvatarUrl: repository.ownerAvatarUrl ?? null,
+          signal,
+          timeoutMs: probeTimeoutMs,
+        }),
+        'Publisher avatar probe',
+        probeTimeoutMs,
+      ));
+    } catch {
+      avatar = avatarProbeFrom({ botAvatarUrl: null, ownerAvatarUrl: repository.ownerAvatarUrl ?? null });
+    }
+  }
   const readiness = readinessFor(identity, missingFields, configured, repository);
   // Do not coerce unobservable fine-grained-token PR permission (unknown) into missing.
   const effectivePermissionStatus = identity.permissionStatus === 'same-author'
@@ -510,6 +673,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     formalEventCapability: attempted ? formalEventCapability : null,
     fallbackReason: attempted ? fallbackReason : null,
     repository,
+    avatar,
   };
   return {
     ok: true,
@@ -542,6 +706,7 @@ export function formatReviewDoctor(result: ReviewDoctorResult): string {
     `Permission probe: ${result.probe.status}`,
     `Repository probe: ${result.probe.repository.status}${result.probe.repository.repository ? ` (${result.probe.repository.repository})` : ''}`,
     `Pull requests permission: ${result.probe.repository.pullRequestPermission}`,
+    `Avatar probe: ${result.probe.avatar.status}`,
     ...(result.fallbackReason ? [`Reason: ${result.fallbackReason}`] : []),
     `Next action: ${result.nextAction}`,
     result.roleBoundary,

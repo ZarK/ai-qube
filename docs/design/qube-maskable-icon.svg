@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title description">
+  <title id="title">QUBE maskable application icon</title>
+  <desc id="description">A full-bleed Carbon icon with the four-part Q inside the maskable safe zone.</desc>
+  <rect width="32" height="32" fill="#0C1113"/>
+  <g transform="translate(2.88 2.88) scale(.82)">
+    <path data-flow="quality" fill="#64C3CF" d="M14 4h-4a6 6 0 0 0-6 6v4h6v-3.25a.75.75 0 0 1 .75-.75H14Z"/>
+    <path data-flow="umpire" fill="#F1B55B" d="M16 4h4a6 6 0 0 1 6 6v4h-6v-3.25a.75.75 0 0 0-.75-.75H16Z"/>
+    <path data-flow="executor" fill="#F47A86" d="M4 16v4a6 6 0 0 0 6 6h4v-6h-3.25a.75.75 0 0 1-.75-.75V16Z"/>
+    <g data-flow="bootstrap" fill="#B99AE7">
+      <path d="M16 26h4a6 6 0 0 0 6-6v-4h-6v3.25a.75.75 0 0 1-.75.75H16Z"/>
+      <path d="M17.25 17.5h3.5l8.5 8.5v1l-2.5 2.5h-1l-8.5-8.5Z"/>
+    </g>
+  </g>
+</svg>
