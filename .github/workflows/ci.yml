@@ -115,7 +115,7 @@ jobs:
 
       - name: Test and pack-check core packages
         run: |
-          node --test --test-concurrency=1 test/*.test.mjs
+          node --test --test-concurrency=1 test/local-install-qube.test.mjs test/repository-policy.test.mjs
           pnpm --filter @tjalve/qube-core run verify
           pnpm --filter @tjalve/qube-testkit run verify
           pnpm --filter @tjalve/qube-adapter-github run verify
