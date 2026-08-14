@@ -448,12 +448,6 @@ function prefixCommandPath(binDir, command) {
 }
 
 function verifyCommandOnPath(command, childPath, binDir) {
-  if (typeof binDir !== "string" || typeof childPath !== "string") {
-    throw Object.assign(new Error(`verifyCommandOnPath received invalid paths for ${command}.`), {
-      reasonCode: "verify-failed",
-      command,
-    });
-  }
   const shim = prefixCommandPath(binDir, command);
   if (!shim) {
     throw Object.assign(new Error(`Missing ${command} shim in the install prefix.`), {
