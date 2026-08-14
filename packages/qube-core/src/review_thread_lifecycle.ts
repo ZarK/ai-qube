@@ -72,6 +72,19 @@ export function stillPresentReply(headSha: string, round: string, detail?: strin
   return `${lead}${extra}`;
 }
 
+function persistReplyDetail(finding: ReviewFinding): string {
+  const parts: string[] = [];
+  if (finding.location) {
+    const line = finding.location.line;
+    parts.push(typeof line === "number"
+      ? `Current location: \`${finding.location.path}:${line}\`.`
+      : `Current location: \`${finding.location.path}\`.`);
+  }
+  const message = finding.message.trim();
+  if (message !== "") parts.push(message);
+  return parts.join("\n\n");
+}
+
 export function fixedClosingReply(headSha: string, round: string): string {
   return `Fixed in \`${shortHead(headSha)}\` — resolved by round ${round}.`;
 }
@@ -152,9 +165,6 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
         continue;
       }
     }
-    const locationNote = finding.location
-      ? `${finding.location.path}${finding.location.line ? `:${finding.location.line}` : ""}`
-      : null;
     actions.push({
       kind: "reply-still-present",
       threadId: thread.threadId,
@@ -162,7 +172,7 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
       replyToDatabaseId: thread.replyToDatabaseId,
       minimizeSubjectId: thread.minimizeSubjectId,
       unresolve: thread.resolved,
-      body: stillPresentReply(input.headSha, input.round, [finding.message, locationNote].filter(Boolean).join(" ")),
+      body: stillPresentReply(input.headSha, input.round, persistReplyDetail(finding)),
       finding,
     });
   }

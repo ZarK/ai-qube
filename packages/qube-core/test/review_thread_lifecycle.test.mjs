@@ -57,8 +57,26 @@ describe("planReviewThreadLifecycle", () => {
     assert.equal(actions[0].kind, "reply-still-present");
     assert.equal(actions[0].threadId, "PRRT_1");
     assert.match(actions[0].body ?? "", /Still present at `abc123456789` \(round 2\)\./);
+    assert.match(actions[0].body ?? "", /Current location: `src\/a\.ts:4`\./);
     assert.match(actions[0].body ?? "", /Fix the parser\./);
     assert.equal(actions.some((action) => action.kind === "new-inline"), false);
+  });
+
+  it("replies on an outdated resolvable thread instead of opening a second thread", () => {
+    const current = finding();
+    const fingerprint = reviewFindingFingerprint(current);
+    const actions = planReviewThreadLifecycle({
+      findings: [current],
+      threads: [thread({ fingerprints: [fingerprint], outdated: true, canResolve: true })],
+      publisherLogins: ["qube-review[bot]"],
+      headSha: "abc1234567890",
+      round: "2",
+    });
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].kind, "reply-still-present");
+    assert.match(actions[0].body ?? "", /Current location: `src\/a\.ts:4`\./);
+    assert.equal(actions.some((action) => action.kind === "new-inline"), false);
+    assert.equal(actions.some((action) => action.kind === "minimize-outdated"), false);
   });
 
   it("minimizes an unresolvable outdated thread when a reply cannot be posted", () => {
@@ -79,6 +97,7 @@ describe("planReviewThreadLifecycle", () => {
     });
     assert.ok(actions.some((action) => action.kind === "minimize-outdated" && action.minimizeSubjectId === "IC_stale_persist"));
     assert.ok(actions.some((action) => action.kind === "new-inline"));
+    assert.equal(actions.some((action) => action.kind === "reply-still-present"), false);
   });
 
   it("minimizes an unresolvable outdated comment even when a reply id is present", () => {
