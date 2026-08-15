@@ -287,7 +287,7 @@ describe('init guide CLI and doctor-clean setup', () => {
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
   });
 
-  it('CLI --review-mode is consumed and --yes writes a doctor-clean setup', async () => {
+  it('CLI --yes writes a fresh repository setup that passes doctor with no setup warnings', async () => {
     const repo = makeGitRepo();
     const preview = binRun(['init', '.', '--review-mode', 'host', '--json'], repo);
     const previewParsed = JSON.parse(preview.stdout);
@@ -305,7 +305,7 @@ describe('init guide CLI and doctor-clean setup', () => {
     const config = validateConfig(JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8')));
     assert.equal(config.ok, true);
     const recommendations = collectSetupDoctorRecommendations(repo, config.config);
-    assert.deepEqual(recommendations, []);
+    assert.deepEqual(recommendations, [], 'fresh repository setup must pass doctor with no setup warnings');
   });
 
   it('publishes --from, --review-mode, and --publisher in schema metadata', () => {
