@@ -10,6 +10,7 @@ import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../manage
 import { getRepoRoot } from '../repo/index.js';
 import { reviewModeOf } from '../review_mode.js';
 import { adoptFromSource } from './from_source.js';
+import { applyFreshSetupPolicy } from './fresh_setup.js';
 import {
   answersFromPolicy,
   applyQuestionAnswersToPolicy,
@@ -23,6 +24,12 @@ import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
 export { detectLegacyState } from './legacy_state.js';
 export { collectSetupDoctorRecommendations } from './setup_readiness.js';
 export { resolveContainedFromPath, parseAdoptedConfig, classifyFromSpec } from './from_source.js';
+export {
+  applyFreshSetupPolicy,
+  detectRepositoryQualityGate,
+  freshSetupFirstPullRequestReadiness,
+  freshSetupConfigIdentity,
+} from './fresh_setup.js';
 export type {
   InitAction,
   InitActionOperation,
@@ -141,6 +148,8 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
     || policy.reviewRequestText !== undefined
     || policy.reviewMode !== undefined
     || policy.reviewAdapter !== undefined
+    || policy.reviewProfile !== undefined
+    || policy.reviewLanes !== undefined
     || policy.reviewModels !== undefined
     || policy.reviewRoute !== undefined
     || policy.reviewFailover !== undefined
@@ -153,6 +162,8 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
       ...(policy.reviewRequestText !== undefined ? { requestText: policy.reviewRequestText } : {}),
       ...(policy.reviewMode !== undefined ? { mode: policy.reviewMode } : {}),
       ...(policy.reviewAdapter !== undefined ? { adapter: policy.reviewAdapter } : {}),
+      ...(policy.reviewProfile !== undefined ? { profile: policy.reviewProfile } : {}),
+      ...(policy.reviewLanes !== undefined ? { lanes: policy.reviewLanes } : {}),
       ...(policy.reviewModels !== undefined ? { models: policy.reviewModels } : {}),
       ...(policy.reviewRoute !== undefined ? { route: policy.reviewRoute } : {}),
       ...(policy.reviewFailover !== undefined ? { failover: policy.reviewFailover } : {}),
@@ -534,6 +545,14 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const fillAnswers = Boolean(options.guide) || Boolean(options.yes) || Boolean(options.useDefaults);
   const questions = fillAnswers ? fillUnansweredQuestions(askedQuestions) : askedQuestions;
   policy = applyQuestionAnswersToPolicy(policy, questions);
+  if (fillAnswers) {
+    policy = applyFreshSetupPolicy({
+      policy,
+      machine,
+      repoRoot,
+      fromAdopted: Boolean(options.from),
+    });
+  }
   const unanswered = unansweredQuestionIds(askedQuestions);
   const awaitingAnswers = Boolean(options.guide) && !options.yes;
   if (policy.reviewMode === 'isolated' && machine.installedHosts.length === 0 && answers.reviewMode === 'isolated') {

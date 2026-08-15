@@ -103,13 +103,11 @@ export function buildInitQuestions(input: {
   answers: InvocationAnswers;
   useDefaults?: boolean;
 }): InitQuestion[] {
-  const recommendedMode = input.useDefaults ? 'external' : recommendedReviewMode(input.machine);
-  const recommendedAudit = input.useDefaults ? true : recommendedManualUiAudit(input.machine);
-  const qualityControlValue = input.useDefaults ? false : recommendedQualityControl(input.machine);
+  const recommendedMode = recommendedReviewMode(input.machine);
+  const recommendedAudit = recommendedManualUiAudit(input.machine);
+  const qualityControlValue = recommendedQualityControl(input.machine);
   const recommendedPublisher: 'user' | 'github-app' | 'token' = 'user';
-  const recommendedReviewers = input.useDefaults || recommendedMode === 'external'
-    ? ['coderabbitai']
-    : [];
+  const recommendedReviewers: string[] = [];
 
   return [
     question({
@@ -137,9 +135,9 @@ export function buildInitQuestions(input: {
         { value: 'coderabbitai', label: 'CodeRabbit (external service)' },
         ...input.machine.installedHosts.map(host => ({ value: host, label: `${host} (installed on this machine)`, available: true })),
       ],
-      recommendation: recommendedReviewers.length === 0
+      recommendation: recommendedMode === 'isolated'
         ? 'Leave external reviewers empty. Isolated review uses host models on this machine.'
-        : 'Request the default external reviewer.',
+        : 'Leave external reviewers empty unless this repository already uses a review service.',
       recommendedValue: recommendedReviewers,
       answered: input.answers.reviewers !== undefined,
       value: input.answers.reviewers ?? null,

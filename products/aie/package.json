@@ -42,6 +42,7 @@
     "dist/",
     "assets/",
     "docs/migration.md",
+    "docs/review-modes.md",
     "prompts/",
     "README.md"
   ],

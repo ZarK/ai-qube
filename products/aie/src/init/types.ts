@@ -1,6 +1,6 @@
 import type { CiProviderKind, GateConfig, GitHubReviewPublisherConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
 import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_routing.js';
-import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewMode, ReviewModelsPolicy, ReviewRoutePolicy } from '../core/policy.js';
+import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewLanePolicy, ReviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewRoutePolicy } from '../core/policy.js';
 import type { InitTool } from '../init_content.js';
 import type { LegacyCategory } from '../legacy.js';
 
@@ -124,6 +124,8 @@ export interface InitPolicyOptions {
   reviewRequestText?: string;
   reviewMode?: ReviewMode;
   reviewAdapter?: ReviewAdapterKind;
+  reviewProfile?: ReviewProfileKind;
+  reviewLanes?: ReviewLanePolicy[];
   reviewModels?: ReviewModelsPolicy;
   reviewRoute?: ReviewRoutePolicy | null;
   reviewFailover?: ReviewFailoverPolicy | null;

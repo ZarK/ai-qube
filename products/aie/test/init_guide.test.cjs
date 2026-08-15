@@ -342,6 +342,15 @@ describe('init guide CLI and doctor-clean setup', () => {
     assert.equal(config.ok, true);
     const recommendations = collectSetupDoctorRecommendations(repo, config.config);
     assert.deepEqual(recommendations, [], 'fresh repository setup must pass doctor with no setup warnings');
+    if (parsed.setupSummary.reviewMode === 'isolated') {
+      assert.equal(config.config.reviewAdapter, 'local');
+      assert.equal(config.config.reviewProfile, 'local-focused');
+      assert.deepEqual(config.config.reviewLanes.map(lane => lane.id), ['issue-compliance', 'code-quality', 'security']);
+      assert.equal(config.config.reviewLanes.find(lane => lane.id === 'security').required, 'when-matched');
+    } else {
+      assert.equal(parsed.setupSummary.reviewMode, 'external');
+      assert.equal(config.config.reviewAdapter, 'github');
+    }
   });
 
   it('publishes --from, --review-mode, and --publisher in schema metadata', () => {
