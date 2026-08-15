@@ -2447,7 +2447,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const repo = makeGitRepo();
     const config = localReviewConfig();
     const evidence = localEvidence();
-    delete evidence.headSha;
+    evidence.headSha = undefined;
     const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, 'task-record-compliance.json'), `${JSON.stringify({ ...evidence.lanes[0], version: evidence.version, issueNumber: evidence.issueNumber, prNumber: evidence.prNumber, profile: evidence.profile, adapter: evidence.adapter }, null, 2)}\n`);
@@ -2645,7 +2645,8 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(disclosures, ['Configured PR review agents may contact external services before merge: @copilot.']);
     assert.ok(events.indexOf(disclosures.map(message => `disclosure: ${message}`)[0]) < events.indexOf('pr edit 12 --add-reviewer @copilot'));
     assert.ok(calls.some(args => args.join(' ') === 'pr edit 12 --add-reviewer @copilot'));
-    assert.ok(calls.some(args => args[0] === 'pr' && args[1] === 'comment' && args[4].includes('aie:pr-gate:copilot:abc123')));
+    assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.ok(calls.some(args => args[0] === 'api' && String(args[1]).includes('issues/12/comments') && args.includes('POST')));
     assert.equal(result.reviewers[0].requestedForHead, true);
     assert.equal(result.actions.find(action => action.kind === 'request-reviewer').status, 'completed');
   });
@@ -2881,7 +2882,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       if (args[0] === 'api' && args[1] === 'graphql') {
         const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
         if (queryArg) graphqlQueries.push(queryArg);
-        if (queryArg && queryArg.includes('viewerMergeHeadlineText')) {
+        if (queryArg?.includes('viewerMergeHeadlineText')) {
           return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: {} } } }), stderr: '' };
         }
         const after = args.find(arg => arg.startsWith('after='));

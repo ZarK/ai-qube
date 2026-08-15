@@ -399,17 +399,21 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     || value.blockers.length === 0)) return null;
   if (requestsChanges && (value.blockers.length === 0
     || value.severity !== 'high' && value.severity !== 'critical')) return null;
-  if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
-    && hasExactKeys(item, ['kind', 'path', 'sha256'])
-    && typeof item.kind === 'string' && item.kind.trim() !== ''
-    && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
-    && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
-  if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
-    && hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
-    && typeof item.kind === 'string' && CONTEXT_KIND_VALUES.has(item.kind)
-    && typeof item.source === 'string' && item.source.trim() !== ''
-    && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
-    && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
+  if (mode === 'final') {
+    if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
+      && hasExactKeys(item, ['kind', 'path', 'sha256'])
+      && typeof item.kind === 'string' && item.kind.trim() !== ''
+      && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
+      && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
+    if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
+      && hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
+      && typeof item.kind === 'string' && CONTEXT_KIND_VALUES.has(item.kind)
+      && typeof item.source === 'string' && item.source.trim() !== ''
+      && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
+      && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
+  } else if (!Array.isArray(value.artifacts) || !Array.isArray(value.contextReviewed)) {
+    return null;
+  }
   if (mode === 'final' && Array.isArray(value.findings) && value.findings.length > 0 && allClear) return null;
   const candidate: Record<string, unknown> = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;

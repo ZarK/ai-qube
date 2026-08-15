@@ -45,6 +45,21 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function userReviewRepo() {
+  const repo = makeGitRepo();
+  writeConfig(repo, {
+    version: 1,
+    providers: {
+      work: { kind: 'github' },
+      review: { kind: 'github' },
+      repository: { kind: 'local-git' },
+      ci: { kind: 'github' },
+      layout: { kind: 'local' },
+    },
+  });
+  return repo;
+}
+
 function commitTrustedBase(repo, remote = 'origin', branch = 'main') {
   execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'trusted base'], { cwd: repo, stdio: 'ignore' });
@@ -549,6 +564,7 @@ function makePrExec(options = {}) {
   const resolveThreadResults = [...(options.resolveThreadResults || [])];
   const reviewPayloads = [];
   let currentPr = prViews[0];
+  let nextCommentId = 900000;
   const threads = options.threads || [];
   const exec = async (args) => {
     calls.push(args);
@@ -579,7 +595,8 @@ function makePrExec(options = {}) {
       if (args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST') {
         const inputIndex = args.indexOf('--input');
         const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
-        const commentId = 900000 + (currentPr.comments || []).length;
+        reviewPayloads.push(payload);
+        const commentId = ++nextCommentId;
         const url = `https://github.com/example/repo/pull/12#issuecomment-${commentId}`;
         currentPr = {
           ...currentPr,
@@ -655,7 +672,28 @@ function makePrExec(options = {}) {
       const inputIndex = args.indexOf('--input');
       const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
       reviewPayloads.push({ update: args[1], ...payload });
-      return { args, exitCode: 0, stdout: JSON.stringify({ id: Number(args[1].split('/').at(-1)) }), stderr: '' };
+      const commentId = args[1].split('/').at(-1);
+      currentPr = {
+        ...currentPr,
+        comments: (currentPr.comments || []).map(comment => {
+          const url = comment.url || comment.html_url || '';
+          return url.endsWith(`#issuecomment-${commentId}`) ? { ...comment, body: payload.body } : comment;
+        }),
+      };
+      if (prViews.length > 0) prViews[0] = currentPr;
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: Number(commentId) }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/issues\/comments\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
+      const commentId = args[1].split('/').at(-1);
+      currentPr = {
+        ...currentPr,
+        comments: (currentPr.comments || []).filter(comment => {
+          const url = comment.url || comment.html_url || '';
+          return !url.endsWith(`#issuecomment-${commentId}`);
+        }),
+      };
+      if (prViews.length > 0) prViews[0] = currentPr;
+      return { args, exitCode: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
       return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };
@@ -679,20 +717,20 @@ function makePrExec(options = {}) {
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
       const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
-      if (queryArg && queryArg.includes('unresolveReviewThread')) {
+      if (queryArg?.includes('unresolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { unresolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: false } } } }), stderr: '' };
       }
-      if (queryArg && queryArg.includes('minimizeComment')) {
+      if (queryArg?.includes('minimizeComment')) {
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }), stderr: '' };
       }
-      if (queryArg && queryArg.includes('resolveReviewThread')) {
+      if (queryArg?.includes('resolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
         const queuedResult = resolveThreadResults.shift();
         if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
       }
-      if (queryArg && queryArg.includes('viewerMergeHeadlineText')) {
+      if (queryArg?.includes('viewerMergeHeadlineText')) {
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: options.mergeUiState || {} } } }), stderr: '' };
       }
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
@@ -824,6 +862,7 @@ module.exports = {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  userReviewRepo,
   binRun,
   writeConfig,
   commitTrustedBase,
