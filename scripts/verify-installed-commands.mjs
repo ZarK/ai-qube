@@ -250,9 +250,6 @@ export function runInstalledIssueCommands(prefix) {
           const parsed = JSON.parse(probed.stdout);
           const blob = JSON.stringify(parsed);
           assertNoSourceCheckoutRunner(blob, "init dry-run");
-          if (blob.includes("qube aie") === false && driver === "aie") {
-            // init JSON may not echo the instruction body; the command still started.
-          }
         } catch (error) {
           if (error?.reasonCode === "source-runner") throw error;
         }
