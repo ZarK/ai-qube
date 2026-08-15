@@ -456,6 +456,117 @@ describe('doctor diagnostics', () => {
     assert.match(diagnostics.reviewAgent.localRunner.nextAction, /spawnPrompt/);
   });
 
+  function isolatedLocalHostConfig() {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewMode = 'isolated';
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    config.localReviewAgents = ['grok', 'codex'];
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: null };
+    config.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+    return config;
+  }
+
+  function readyProbe(host, model) {
+    return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: true, diagnostic: null };
+  }
+
+  it('reports isolated review as ready when Grok and Codex routes probe ready', () => {
+    const config = isolatedLocalHostConfig();
+    const diagnostics = buildGateReadinessDiagnostics(config, {
+      ghAuthenticated: true,
+      probeRoute: readyProbe,
+    });
+    const workflow = buildWorkflowReadiness({
+      config,
+      configValid: true,
+      labelsOk: true,
+      queueDriftCount: 0,
+      queueMultipleInProgress: false,
+      queueError: undefined,
+      lifecycle: {
+        branchNamingValid: true,
+        inProgressIssueCount: 0,
+        activeIssueNumber: null,
+        activeIssueBranch: null,
+        currentBranchMatchesActiveIssue: null,
+        linkedWorktreeBlocked: false,
+        openPullRequestCheckEnabled: true,
+        baseBranchFresh: true,
+        queueError: undefined,
+        lifecycleCommandsReady: true,
+      },
+      gateReadiness: diagnostics,
+      instructions: {
+        agents: false,
+        agentsManaged: false,
+        claude: false,
+        claudeManaged: false,
+        opencodeMakeItSo: false,
+        opencodeMakeItSoManaged: false,
+        opencodeMakeitsoAlias: false,
+        opencodeMakeitsoAliasManaged: false,
+        codexReviewFocusAgent: false,
+        codexReviewFocusAgentManaged: false,
+        targets: [],
+      },
+      dirty: { dirty: false, entries: [] },
+      currentBranch: 'main',
+      blockingPullRequests: [],
+      evidence: { head: null, lanes: [] },
+    });
+    const byStage = Object.fromEntries(workflow.stages.map(stage => [stage.stage, stage]));
+
+    assert.equal(diagnostics.reviewAgent.mode, 'isolated');
+    assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRun, true);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /aie pr gate/);
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction, /spawnPrompt/);
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction, /Codex subagent/);
+    assert.equal(byStage.review.status, 'ready');
+    assert.equal(workflow.review.state, 'local-lanes');
+    assert.notEqual(workflow.review.state, 'fallback-only');
+  });
+
+  it('does not report isolated review ready when a route probe is blocked', () => {
+    const config = isolatedLocalHostConfig();
+    const diagnostics = buildGateReadinessDiagnostics(config, {
+      ghAuthenticated: true,
+      probeRoute: (host, model) => (host === 'grok'
+        ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: 'Grok route is blocked.' }
+        : readyProbe(host, model)),
+    });
+
+    assert.notEqual(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.ok(diagnostics.reviewAgent.localRunner.readiness === 'needs-action' || diagnostics.reviewAgent.localRunner.readiness === 'missing');
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /spawnPrompt/);
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /paste/);
+  });
+
+  it('does not report isolated review ready when no route targets exist', () => {
+    const config = isolatedLocalHostConfig();
+    config.reviewRoute = null;
+    config.reviewFailover = null;
+    config.reviewModels.review = {};
+    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true, probeRoute: readyProbe });
+
+    assert.notEqual(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.ok(diagnostics.reviewAgent.localRunner.readiness === 'needs-action' || diagnostics.reviewAgent.localRunner.readiness === 'missing');
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /spawnPrompt/);
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /local-command review lane command/);
+  });
+
   it('does not claim commandless local-host review support without configured Codex agent', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
