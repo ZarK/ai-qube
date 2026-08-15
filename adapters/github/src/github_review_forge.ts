@@ -3683,6 +3683,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       ?? '';
     if (!handle) throw new Error('apply GitHub review action failed: missing reviewer handle. Likely cause: the review request action was not planned with a handle. Next action: rerun `aie pr gate <pr> --dry-run` and inspect the generated review action details.');
     const bookkeepingOnly = requestKind === 'github-reviewer' || body.includes('Executor recorded a configured PR reviewer request');
+    if (bookkeepingOnly && (headSha === '' || headSha === 'UNKNOWN')) {
+      throw new Error(`apply GitHub review action failed: missing current PR head for ${handle}. Likely cause: the review request action was planned without a head SHA. Next action: rerun \`aie pr gate ${prNumber} --dry-run\` and inspect the generated review action details.`);
+    }
     if (requestKind === 'github-reviewer') {
       ensureGhSuccess(`gh pr edit ${prNumber} --add-reviewer ${handle}`, await runGh(['pr', 'edit', String(prNumber), '--add-reviewer', handle], this.options));
       await this.recordReviewerRequestOnStatusComment({ prNumber, reviewerId: reviewerKey, headSha });
@@ -3748,12 +3751,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     const requests = already
       ? prior.requests
       : [...prior.requests, { reviewerId: input.reviewerId, head: input.headSha, at: new Date().toISOString() }].slice(-40);
-    const latestRound = prior.rounds.at(-1);
+    const headRound = prior.rounds.find(round => round.head === input.headSha);
     const persisted = await this.persistStatusComment({
       repositoryName: resolved.repositoryName,
       prNumber: input.prNumber,
       headSha: input.headSha,
-      verdict: latestRound?.verdict ?? 'pending',
+      verdict: headRound?.verdict ?? 'pending',
       rounds: prior.rounds,
       requests,
       existing: trusted[0],
@@ -3775,7 +3778,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       repositoryName: resolved.repositoryName,
       prNumber: input.prNumber,
       headSha: input.headSha,
-      verdict: merged.rounds.at(-1)?.verdict ?? 'pending',
+      verdict: merged.rounds.find(round => round.head === input.headSha)?.verdict ?? 'pending',
       rounds: merged.rounds,
       requests: merged.requests,
       existing: afterTrusted[0],

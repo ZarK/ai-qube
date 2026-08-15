@@ -283,6 +283,39 @@ describe("github reviewer request status comment", () => {
     assert.equal(payload.requests[0].head, "abc123");
   });
 
+  it("does not reuse a prior-head round verdict when recording a new-head request", async () => {
+    const existing = [
+      `<!-- qube-pr-status:${JSON.stringify({
+        version: 1,
+        prNumber: 12,
+        rounds: [{ head: "old111", verdict: "approve" }],
+        requests: [{ reviewerId: "copilot", head: "old111", at: "2026-08-01T00:00:00.000Z" }],
+      })} -->`,
+      "",
+      "Review status: approve.",
+      "Head: old111.",
+    ].join("\n");
+    const fixture = createReviewRequestFixture({
+      comments: [{
+        author: { login: "executor" },
+        body: existing,
+        url: "https://github.com/example/repo/pull/12#issuecomment-9",
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, policy(["@copilot"]));
+    await provider.apply(plan);
+
+    const payload = parseStatusPayload(statusComments(fixture.comments)[0].body);
+    assert.equal(statusComments(fixture.comments).length, 1);
+    assert.deepEqual(payload.rounds, [{ head: "old111", verdict: "approve" }]);
+    assert.ok(payload.requests.some(request => request.reviewerId === "copilot" && request.head === "abc123"));
+    assert.match(statusComments(fixture.comments)[0].body, /Review status: pending\./);
+    assert.match(statusComments(fixture.comments)[0].body, /Head: abc123\./);
+    assert.doesNotMatch(statusComments(fixture.comments)[0].body, /Review status: approve\./);
+  });
+
   it("completes after one create when a reread does not yet see the status comment", async () => {
     const fixture = createReviewRequestFixture();
     const exec = async (args, cwd, options) => {
