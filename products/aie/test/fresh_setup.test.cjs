@@ -76,6 +76,7 @@ describe('fresh setup defaults', () => {
       'when-matched',
       'package.json',
       'waitMinutes` is `0`',
+      'localAgents` is empty',
       'two rounds',
       'manualUiAudit',
       'user publisher',

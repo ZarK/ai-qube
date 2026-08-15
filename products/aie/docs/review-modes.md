@@ -54,7 +54,7 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 - `policy.reviews.profile` is `local-focused`.
 - `policy.reviews.severityThreshold` is `high`. Advisory findings never block merge.
 - `policy.reviews.agents` is empty. Isolated review does not request an external review service.
-- `policy.reviews.localAgents` lists the review hosts installed on this machine.
+- `policy.reviews.localAgents` is empty. Isolated review uses `route` and `models`. Host mode writes the installed review hosts here.
 - `policy.reviews.waitMinutes` is `0`. Isolated review does not wait for an external reviewer.
 - `policy.reviews.route` points at the first installed host, tier `review`, `timeoutSeconds` `900`, `maxTurns` `16`.
 - `policy.reviews.models.review` records a live catalog model for each installed host that can list models. Setup validates the model before write.
