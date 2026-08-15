@@ -103,7 +103,7 @@ describe('init guide questions', () => {
     assert.equal(reviewMode.answered, true);
     assert.equal(reviewMode.value, 'host');
     assert.equal(uiAudit.answered, true);
-    assert.equal(uiAudit.value, false);
+    assert.equal(uiAudit.value, 'false');
     assert.ok(result.unansweredQuestionIds.includes('publisher'));
     assert.ok(!result.unansweredQuestionIds.includes('review-mode'));
     assert.equal(result.setupSummary.reviewMode, 'host');
@@ -117,6 +117,13 @@ describe('init guide questions', () => {
     const reviewMode = questions.find(item => item.id === 'review-mode');
     assert.equal(reviewMode.recommendedValue, 'external');
     assert.equal(reviewMode.options.find(option => option.value === 'isolated').available, false);
+    for (const item of questions) {
+      if (typeof item.recommendedValue !== 'string') continue;
+      assert.ok(
+        item.options.some(option => option.value === item.recommendedValue),
+        `${item.id} recommendedValue must match an option value`,
+      );
+    }
   });
 
   it('rejects isolated mode when the invocation asked for it without an installed host', async () => {

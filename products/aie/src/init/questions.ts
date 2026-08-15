@@ -157,14 +157,18 @@ export function buildInitQuestions(input: {
         { value: 'on', label: 'Record Quality Control intent. Requires aiq and at least one quality gate command.' },
       ],
       recommendation: qualityControlValue
-        ? 'Record Quality Control. The aiq command is available on this machine.'
-        : 'Leave Quality Control off until aiq and a quality gate command exist.',
-      recommendedValue: qualityControlValue,
+        ? 'Record Quality Control. A quality gate command is already selected.'
+        : 'Leave Quality Control off until a quality gate command is recorded and aiq is available.',
+      recommendedValue: qualityControlValue ? 'on' : 'off',
       answered: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined,
-      value: input.answers.qualityControl ?? (input.answers.qualityGates !== undefined ? input.answers.qualityGates.length > 0 : null),
+      value: input.answers.qualityControl !== undefined
+        ? (input.answers.qualityControl ? 'on' : 'off')
+        : input.answers.qualityGates !== undefined
+          ? (input.answers.qualityGates.length > 0 ? 'on' : 'off')
+          : null,
       reason: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined
         ? 'The invocation already selected quality gates.'
-        : 'Init recommends Quality Control only when aiq is installed.',
+        : 'Init recommends Quality Control off for a fresh setup. Record a quality gate command when the repository has one.',
     }),
     question({
       id: 'ui-audit',
@@ -176,9 +180,9 @@ export function buildInitQuestions(input: {
       recommendation: recommendedAudit
         ? 'Enable manual UI audit. This repository looks like UI and agent-browser is on PATH.'
         : uiAuditRecommendation(input.machine),
-      recommendedValue: recommendedAudit,
+      recommendedValue: recommendedAudit ? 'true' : 'false',
       answered: input.answers.manualUiAudit !== undefined,
-      value: input.answers.manualUiAudit ?? null,
+      value: input.answers.manualUiAudit === undefined ? null : (input.answers.manualUiAudit ? 'true' : 'false'),
       reason: input.answers.manualUiAudit !== undefined
         ? 'The invocation already selected the UI audit policy.'
         : 'Init recommends UI audit only when the repository looks like UI and agent-browser is available.',
@@ -189,6 +193,12 @@ export function buildInitQuestions(input: {
 function uiAuditRecommendation(guide: GuideMachine): string {
   if (!guide.hasUserFacingUi) return 'Leave UI audit off. This repository does not look like user-facing UI.';
   return 'Leave UI audit off. This repository looks like UI, but agent-browser is not on PATH.';
+}
+
+function asEnabledFlag(value: InitQuestion['value']): boolean | null {
+  if (value === true || value === 'true' || value === 'on') return true;
+  if (value === false || value === 'false' || value === 'off') return false;
+  return null;
 }
 
 function question(input: InitQuestion): InitQuestion {
@@ -223,8 +233,14 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
       if (item.value === 'user') next.publisher = { mode: 'user' };
       // github-app and token require extra fields; those must arrive through --from or review setup flags.
     }
-    if (item.id === 'quality-gate' && typeof item.value === 'boolean' && next.qualityControl === undefined) next.qualityControl = item.value;
-    if (item.id === 'ui-audit' && typeof item.value === 'boolean' && next.manualUiAudit === undefined) next.manualUiAudit = item.value;
+    if (item.id === 'quality-gate' && next.qualityControl === undefined) {
+      const enabled = asEnabledFlag(item.value);
+      if (enabled !== null) next.qualityControl = enabled;
+    }
+    if (item.id === 'ui-audit' && next.manualUiAudit === undefined) {
+      const enabled = asEnabledFlag(item.value);
+      if (enabled !== null) next.manualUiAudit = enabled;
+    }
   }
   return next;
 }
