@@ -202,10 +202,11 @@ function isWindowsPlatform(platform: NodeJS.Platform): boolean {
 }
 
 function isWindowsLauncher(filePath: string): boolean {
-  return ['.cmd', '.bat', '.com'].includes(extname(filePath).toLowerCase());
+  return ['.cmd', '.bat'].includes(extname(filePath).toLowerCase());
 }
 
 function quoteCmdArgument(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
   return `"${value.replace(/"/g, '""')}"`;
 }
 
@@ -219,9 +220,10 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   const wrapLauncher = isWindowsPlatform(platform) && isWindowsLauncher(resolved);
   if (wrapLauncher) {
     const commandLine = [resolved, ...options.command.slice(1)].map(quoteCmdArgument).join(' ');
+    const comspec = env.ComSpec || env.COMSPEC || process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
     return {
-      command: env.ComSpec && env.ComSpec.trim() !== '' ? env.ComSpec : 'cmd.exe',
-      args: ['/d', '/s', '/c', commandLine],
+      command: comspec,
+      args: ['/d', '/s', '/c', `"${commandLine}"`],
       cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
       detached: true,
       windowsHide: true,
@@ -667,7 +669,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
       };
     }
     attempts += 1;
-    const result = await fetchReady(options.fetchImpl ?? fetch, options.url);
+    const result = await fetchReady(options.fetchImpl, options.url);
     lastStatus = result.httpStatus;
     lastError = result.error;
     if (result.ready) {

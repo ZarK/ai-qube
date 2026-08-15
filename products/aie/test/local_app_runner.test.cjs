@@ -69,8 +69,7 @@ describe('local app runner service', () => {
     assert.equal(plan.args[0], '/d');
     assert.equal(plan.args[1], '/s');
     assert.equal(plan.args[2], '/c');
-    assert.match(plan.args[3], /pnpm\.cmd/i);
-    assert.match(plan.args[3], /quoted ""arg""/);
+    assert.match(plan.args[3], /^".*pnpm\.cmd.*quoted ""arg"".*"$/i);
     assert.equal(plan.shell, false);
     assert.equal(plan.windowsVerbatimArguments, true);
   });
@@ -440,7 +439,7 @@ describe('local app runner service', () => {
     }
   });
 
-  it('waits for a hostname URL when the server answers on IPv6 localhost', async () => {
+  it('waits for a hostname URL when the server answers on IPv6 localhost', async (t) => {
     const { runPaths, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
     const paths = runPaths(root, 'ui-audit');
@@ -461,13 +460,23 @@ describe('local app runner service', () => {
       response.writeHead(200);
       response.end('ok');
     });
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen({ host: '::1', port: 0 }, resolve);
-    }).catch(() => null);
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen({ host: '::1', port: 0 }, resolve);
+      });
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+      if (code === 'EADDRNOTAVAIL' || code === 'EAFNOSUPPORT') {
+        t.skip('IPv6 localhost is not available in this environment');
+        return;
+      }
+      throw error;
+    }
     const address = server.address();
     if (!address || typeof address === 'string') {
       server.close();
+      t.skip('IPv6 localhost did not bind a port');
       return;
     }
     try {
