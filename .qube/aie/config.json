@@ -80,6 +80,7 @@
     },
     "reviews": {
       "adapter": "local",
+      "mode": "isolated",
       "profile": "local-focused",
       "severityThreshold": "high",
       "promptFragments": {

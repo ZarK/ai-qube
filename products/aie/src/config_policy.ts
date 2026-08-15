@@ -29,6 +29,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
     shipping: { ...config.normalizedPolicy.shipping, autonomousMode: config.autonomousMode },
     reviews: {
       adapter: config.reviewAdapter,
+      mode: config.reviewMode,
       profile: config.reviewProfile,
       severityThreshold: config.reviewSeverityThreshold,
       promptFragments: {

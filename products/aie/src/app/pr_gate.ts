@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
+import { reviewModeOf } from '../review_mode.js';
 import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { getIssue, loadPullRequestBody, type GhExec } from '../providers/github_adapter_exports.js';
@@ -484,6 +485,7 @@ function remoteReviewEnabled(config: Config): boolean {
 }
 
 function localReviewRequired(config: Config): boolean {
+  if (reviewModeOf(config) === 'external') return false;
   return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.reviewProfile !== 'local-shadow';
 }
 

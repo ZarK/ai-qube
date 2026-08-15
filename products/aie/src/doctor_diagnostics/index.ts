@@ -5,7 +5,8 @@ import { suggestBranchName, validateBranchPattern } from '../branch.js';
 import type { Config, GateKind, GateStage } from '../config/index.js';
 import type { BaseRefStatus, InstructionStatus } from '../repo/index.js';
 import type { GitHubIssue } from '../providers/github_adapter_exports.js';
-import { MANAGED_START } from '../managed_file.js';
+import { MANAGED_START, readManagedToolVersion } from '../managed_file.js';
+import { readAiePackageVersion, reviewModeOf } from '../review_mode.js';
 import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.js';
 import { redact } from '../redact.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
@@ -370,6 +371,25 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
         promptFragments: descriptorSummary.promptFragments,
       },
       adapter: config.reviewAdapter,
+      mode: reviewModeOf(config),
+      modeSource: config.reviewMode ? 'configured' : 'inferred',
+      models: Object.values(config.reviewModels.review).map(binding => binding.model).filter(model => model.trim() !== ''),
+      publisherLogin: config.providers.review.publisher?.githubApp?.login
+        ?? config.providers.review.publisher?.token?.login
+        ?? null,
+      instructionToolVersion: [join(options.evidenceRoot ?? process.cwd(), 'AGENTS.md'), join(options.evidenceRoot ?? process.cwd(), 'CLAUDE.md')]
+        .filter(path => existsSync(path))
+        .map(path => readManagedToolVersion(readFileSync(path, 'utf8')))
+        .find(version => version !== null) ?? null,
+      runningToolVersion: readAiePackageVersion(),
+      instructionStale: (() => {
+        const installed = [join(options.evidenceRoot ?? process.cwd(), 'AGENTS.md'), join(options.evidenceRoot ?? process.cwd(), 'CLAUDE.md')]
+          .filter(path => existsSync(path))
+          .map(path => readManagedToolVersion(readFileSync(path, 'utf8')))
+          .find(version => version !== null) ?? null;
+        return installed !== readAiePackageVersion();
+      })(),
+      instructionRefreshCommand: 'aie init . --force',
       profile: effectiveReviewProfile,
       severityThreshold: config.reviewSeverityThreshold,
       reviewers: defaultOracle ? ['oracle'] : configuredReviewers,

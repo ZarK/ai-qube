@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { mkdir, open, readFile, rename, rm } from 'fs/promises';
 import { dirname } from 'path';
+import { readAiePackageVersion } from './review_mode.js';
 
 export const MANAGED_SECTION_VERSION = 1;
 export const MANAGED_START = '<!-- BEGIN EXECUTOR MANAGED SECTION -->';
@@ -11,8 +12,10 @@ interface ManagedMarkers {
   start: string;
   end: string;
   version: string;
+  tool: (value: string) => string;
   checksum: (value: string) => string;
   versionPattern: RegExp;
+  toolPattern: RegExp;
   checksumPattern: RegExp;
 }
 
@@ -21,16 +24,20 @@ const MANAGED_MARKERS: Record<ManagedCommentStyle, ManagedMarkers> = {
     start: MANAGED_START,
     end: MANAGED_END,
     version: `<!-- executor-managed-version: ${MANAGED_SECTION_VERSION} -->`,
+    tool: value => `<!-- executor-managed-tool: ${value} -->`,
     checksum: value => `<!-- executor-managed-checksum: ${value} -->`,
     versionPattern: /<!--\s*executor-managed-version:\s*\d+\s*-->/,
+    toolPattern: /<!--\s*executor-managed-tool:\s*([^\s]+)\s*-->/,
     checksumPattern: /<!--\s*executor-managed-checksum:\s*([a-f0-9]+)\s*-->/,
   },
   hash: {
     start: '# BEGIN EXECUTOR MANAGED SECTION',
     end: '# END EXECUTOR MANAGED SECTION',
     version: `# executor-managed-version: ${MANAGED_SECTION_VERSION}`,
+    tool: value => `# executor-managed-tool: ${value}`,
     checksum: value => `# executor-managed-checksum: ${value}`,
     versionPattern: /#\s*executor-managed-version:\s*\d+/,
+    toolPattern: /#\s*executor-managed-tool:\s*([^\s]+)/,
     checksumPattern: /#\s*executor-managed-checksum:\s*([a-f0-9]+)/,
   },
 };
@@ -133,11 +140,20 @@ export function renderManagedSection(generatedBody: string, commentStyle: Manage
   return [
     markers.start,
     markers.version,
+    markers.tool(readAiePackageVersion()),
     markers.checksum(checksum(normalizeForChecksum(body))),
     body.trimEnd(),
     markers.end,
     '',
   ].join('\n');
+}
+
+export function readManagedToolVersion(content: string): string | null {
+  for (const markers of Object.values(MANAGED_MARKERS)) {
+    const match = content.match(markers.toolPattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }
 
 function parseManagedSection(content: string): ParsedSection | null {
@@ -158,6 +174,7 @@ function parseManagedSection(content: string): ParsedSection | null {
   const checksumMatch = inner.match(markers.checksumPattern);
   const body = normalizeBody(inner
     .replace(markers.versionPattern, '')
+    .replace(markers.toolPattern, '')
     .replace(markers.checksumPattern, '')
     .replace(/^\s*\n/, '')
     .trimEnd());

@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import type { ModelRoutingPolicy } from '../core/model_routing.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
@@ -158,6 +158,7 @@ export interface ReviewSourceConfig {
 
 export interface ReviewConfig {
   adapter: ReviewAdapterKind;
+  mode: ReviewMode | null;
   profile: ReviewProfileKind;
   severityThreshold: ReviewSeverityThreshold;
   promptFragments: ReviewPromptFragments;
@@ -256,6 +257,7 @@ export interface Config extends ConfigFileShape {
   ignoredAutomationAuthors: string[];
   reviewAgents: string[];
   reviewAdapter: ReviewAdapterKind;
+  reviewMode: ReviewMode | null;
   reviewProfile: ReviewProfileKind;
   reviewSeverityThreshold: ReviewSeverityThreshold;
   reviewPromptFragments: ReviewPromptFragments;

@@ -64,6 +64,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
     },
     reviews: {
       adapter: 'github',
+      mode: null,
       profile: 'remote-compatible',
       severityThreshold: 'high',
       promptFragments: {
@@ -330,6 +331,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     shipping: { ...policy.shipping },
     reviews: {
       adapter: policy.reviews.adapter,
+      mode: policy.reviews.mode,
       profile: policy.reviews.profile,
       severityThreshold: policy.reviews.severityThreshold,
       promptFragments: {
@@ -402,6 +404,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     ignoredAutomationAuthors: [...policy.branch.ignoredAutomationAuthors],
     reviewAgents: [...policy.reviews.agents],
     reviewAdapter: policy.reviews.adapter,
+    reviewMode: policy.reviews.mode,
     reviewProfile: policy.reviews.profile,
     reviewSeverityThreshold: policy.reviews.severityThreshold,
     reviewPromptFragments: {

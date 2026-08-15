@@ -829,3 +829,23 @@ describe('config validation', () => {
     assert.ok(result.errors.some((entry) => entry.path.endsWith('config.local.json') && entry.message.includes('local overlay')));
   });
 });
+
+describe('review mode config', () => {
+  it('accepts external, host, and isolated review modes', () => {
+    for (const mode of ['external', 'host', 'isolated']) {
+      const file = defaultFile();
+      file.policy.reviews.mode = mode;
+      const result = validateConfig(file);
+      assert.equal(result.ok, true, result.errors.map(error => error.message).join('\n'));
+      assert.equal(result.config.reviewMode, mode);
+    }
+  });
+
+  it('rejects an unknown review mode', () => {
+    const file = defaultFile();
+    file.policy.reviews.mode = 'codex';
+    const result = validateConfig(file);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.mode' && error.message.includes('external, host, or isolated')));
+  });
+});

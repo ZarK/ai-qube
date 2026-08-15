@@ -19,6 +19,11 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   lines.push(`Compatibility wrappers: installed=${diagnostics.migrationReadiness.wrapperState.installed}, stale=${diagnostics.migrationReadiness.wrapperState.stale}`);
   lines.push(`Remaining legacy references: ${diagnostics.migrationReadiness.remainingLegacyReferences.count}`);
   lines.push(`Manual UI audit: ${readiness.audit.manualUiAudit ? readiness.audit.readiness : 'disabled'}; agent-browser=${readiness.audit.agentBrowser.state}; screenshot upload=${readiness.audit.screenshotUpload}`);
+  const reviewMode = readiness.reviewAgent;
+  const instructionVersion = reviewMode.instructionStale
+    ? `${reviewMode.instructionToolVersion ?? 'missing'} (stale; ${reviewMode.instructionRefreshCommand})`
+    : reviewMode.runningToolVersion;
+  lines.push(`Review mode: ${reviewMode.mode} (${reviewMode.modeSource}); reviewers=${[...reviewMode.reviewers, ...reviewMode.localReviewers].filter(name => name.trim() !== '').join(', ') || 'none'}; models=${reviewMode.models.join(', ') || 'none'}; publisher=${reviewMode.publisherLogin ?? 'none'}; instructions=${instructionVersion}; tool=${reviewMode.runningToolVersion}`);
   lines.push(`Review-agent gate: reviewers=${readiness.reviewAgent.reviewers.join(', ')}, fallback=${readiness.reviewAgent.fallbackPromptAvailable ? 'available' : 'missing'}, external-services=${readiness.reviewAgent.externalServices.length}`);
   lines.push(`PR review gate: ${readiness.prReview.readiness}; reviewers=${readiness.prReview.reviewers.length}; wait=${readiness.prReview.reviewWaitMinutes} minutes; gh=${readiness.prReview.ghAuthenticated ? 'authenticated' : 'not authenticated'}`);
   lines.push(`Review preflight: ${readiness.reviewPreflight.readiness}; disk=${readiness.reviewPreflight.checks.disk.readiness}; dist=${readiness.reviewPreflight.checks.dist.readiness}; loose-objects=${readiness.reviewPreflight.checks.gitObjects.readiness}; gh-review-auth=${readiness.reviewPreflight.checks.githubReviewAuth.readiness}; route-probes=${readiness.reviewPreflight.checks.routeProbes.readiness}`);
