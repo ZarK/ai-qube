@@ -37,8 +37,9 @@ async function readVersion(packageJsonPath) {
 }
 
 const qubeCoreVersion = await readVersion("packages/qube-core/package.json");
+const qubeVersion = await readVersion("products/qube/package.json");
 
-process.stdout.write("QUBE 0.2.0 publish plan\n");
+process.stdout.write(`QUBE ${qubeVersion} publish plan\n`);
 process.stdout.write("=======================\n\n");
 process.stdout.write("Adapter model: adapters are separate npm packages sourced from this monorepo.\n");
 process.stdout.write("They are optionalDependencies on @tjalve/aie and installed on demand.\n");
@@ -50,7 +51,13 @@ process.stdout.write("git pull --ff-only origin main\n");
 process.stdout.write("pnpm install --frozen-lockfile --ignore-scripts\n");
 process.stdout.write("pnpm run verify\n\n");
 
-process.stdout.write("1) First-time seed publishes (npm OTP required; configure trusted publisher after each new package)\n");
+process.stdout.write("1) Preferred: publish the current packages as one set\n");
+process.stdout.write(`git tag publish-set-v${qubeVersion}\n`);
+process.stdout.write(`git push origin publish-set-v${qubeVersion}\n`);
+process.stdout.write("# Approve the staged set in the npm UI after the workflow finishes.\n");
+process.stdout.write("# The workflow packs the set, installs it into a temp prefix, and checks that qube, aie, aib, aiu, and aiq start.\n\n");
+
+process.stdout.write("2) First-time seed publishes (npm OTP required; configure trusted publisher after each new package)\n");
 for (const entry of seedPackages) {
   const version = await readVersion(`${entry.dir}/package.json`);
   process.stdout.write(`# ${entry.filter}@${version}\n`);
@@ -61,7 +68,7 @@ for (const entry of seedPackages) {
   process.stdout.write(`cd ${backToRoot}\n\n`);
 }
 
-process.stdout.write("2) Staged trusted publishes (after npm trusted publisher is configured per package)\n");
+process.stdout.write("3) Optional single-package staged publishes\n");
 for (const key of stagedPackages) {
   let version;
   if (key === "qube-cli") version = await readVersion("packages/qube-cli/package.json");
@@ -79,9 +86,8 @@ for (const key of stagedPackages) {
   process.stdout.write(`# Approve staged package in npm UI for publish-${key}-v${version}\n\n`);
 }
 
-process.stdout.write("3) Recommended consumer install (global npm example)\n");
+process.stdout.write("4) Recommended consumer install (global npm example)\n");
 const aieVersion = await readVersion("products/aie/package.json");
-const qubeVersion = await readVersion("products/qube/package.json");
 process.stdout.write(`npm install -g --ignore-scripts @tjalve/qube@${qubeVersion}\n`);
 process.stdout.write("# or minimal executor stack:\n");
 const githubAdapterVersion = await readVersion("adapters/github/package.json");
@@ -91,4 +97,5 @@ process.stdout.write(`npm install -g --ignore-scripts @tjalve/aie@${aieVersion} 
 process.stdout.write("Notes:\n");
 process.stdout.write("- Seed qube-core before any adapter seed publish.\n");
 process.stdout.write("- Re-run seed publishes only for package names that do not exist on npm yet.\n");
-process.stdout.write("- After the first wave, use publish-* tags only (no local npm publish).\n");
+process.stdout.write("- After the first wave, prefer publish-set-v<qubeVersion>. Use publish-* tags only for a single package.\n");
+process.stdout.write("- Do not publish from a local shell after the first seed. The maintainer pushes a tag.\n");

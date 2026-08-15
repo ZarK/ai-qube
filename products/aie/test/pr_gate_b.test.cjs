@@ -488,7 +488,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(pendingResult.localReviewRunner.lanes[0].promptStackHash, passedResult.localReviewRunner.lanes[0].promptStackHash);
   });
 
-  it('uses the source checkout runner in Codex spawn publish commands when available', async () => {
+  it('uses installed qube aie in Codex spawn publish commands even when a workspace runner exists', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'bin'), { recursive: true });
     writeFileSync(join(repo, 'products', 'aie', 'bin', 'run'), '');
@@ -497,12 +497,12 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
-    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `node products/aie/bin/run pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
-    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, publish provider-visible feedback with: node products\/aie\/bin\/run pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, publish provider-visible feedback with: qube aie pr review publish 12 --lane/);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Prompt stack hash for runnerProvenance\.promptStackHash: [a-f0-9]{64}\./);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `node products\/aie\/bin\/run pr review publish 12 --lane/);
-    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `qube aie pr review publish/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `qube aie pr review publish 12 --lane/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /products\/aie\/bin\/run/);
   });
 
   it('plans commandless Codex local-host lanes per linked issue', async () => {

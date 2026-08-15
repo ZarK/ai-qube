@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq-internal-hook",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,8 +18,8 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@tjalve/aiq": "0.2.3",
-    "@tjalve/qube-cli": "0.2.0"
+    "@tjalve/aiq": "0.2.4",
+    "@tjalve/qube-cli": "0.2.1"
   },
   "repository": {
     "type": "git",

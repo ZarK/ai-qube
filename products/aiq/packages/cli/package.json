@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
   "license": "MIT",
   "author": "tjalve",
@@ -59,7 +59,7 @@
   },
   "dependencies": {
     "@biomejs/biome": "1.9.4",
-    "@tjalve/qube-cli": "0.2.0",
+    "@tjalve/qube-cli": "0.2.1",
     "htmlhint": "1.9.2",
     "node-sql-parser": "5.4.0",
     "prettier": "3.8.1",

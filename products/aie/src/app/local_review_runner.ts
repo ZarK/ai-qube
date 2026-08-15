@@ -325,9 +325,8 @@ async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInp
   });
 }
 
-function localAieCliPrefix(config: Config, repoRoot: string): string {
-  const workspaceRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
-  return renderAieCliPrefix(config, workspaceRunner);
+function localAieCliPrefix(config: Config, _repoRoot: string): string {
+  return renderAieCliPrefix(config);
 }
 
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane), configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection): LocalReviewLaneRun {
