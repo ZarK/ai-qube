@@ -177,6 +177,29 @@ export function loadAuditReviewRecord(input: {
   return { directory, state, missing, notes, observation, screenshots, stamp, digest };
 }
 
+export function withVisualAuditContext(input: {
+  lane: string;
+  repoRoot: string;
+  issueNumber: number;
+  headSha: string;
+  contextLines: readonly string[];
+  homeDirectory?: string;
+  manualUiAudit?: boolean;
+}): string[] {
+  if (input.lane !== VISUAL_REVIEW_LANE) return [...input.contextLines];
+  return [
+    ...input.contextLines,
+    ...auditReviewContextLines({
+      repoRoot: input.repoRoot,
+      issueNumber: input.issueNumber,
+      headSha: input.headSha,
+      homeDirectory: input.homeDirectory,
+      manualUiAudit: input.manualUiAudit ?? readManualUiAuditPolicy(input.repoRoot),
+      uiLaneActive: true,
+    }),
+  ];
+}
+
 export function auditReviewContextLines(input: AuditReviewContextInput): string[] {
   const record = loadAuditReviewRecord({
     issueNumber: input.issueNumber,
@@ -226,7 +249,7 @@ function completeEvidenceLines(record: AuditReviewRecord, headSha: string): stri
     `Audit evidence directory: ${redact(record.directory)}.`,
     `Evidence digest: ${record.digest}.`,
     `PR head: ${headSha}.`,
-    record.stamp ? `Trusted head stamp: ${record.stamp.headSha}.` : 'Trusted head stamp: none.',
+    record.stamp ? `Bound head stamp: ${record.stamp.headSha}.` : 'Bound head stamp: none.',
     `Screenshots (${record.screenshots.length}): ${screenshots.join('; ') || 'none'}.`,
     'browser-observation.md:',
     redact(boundText(record.observation) ?? ''),

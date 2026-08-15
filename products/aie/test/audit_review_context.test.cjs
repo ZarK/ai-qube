@@ -14,6 +14,7 @@ const {
   loadAuditReviewRecord,
   parseAuditHeadStamp,
   shasReferToSameCommit,
+  withVisualAuditContext,
   writeAuditHeadStamp,
 } = require('../dist/app/audit_review_context.js');
 const { runUiAudit } = require('../dist/audit.js');
@@ -201,5 +202,31 @@ describe('audit review context', () => {
     assert.match(visual.promptText, /Recorded UI audit evidence is complete/);
     assert.match(visual.promptText, /settings\.png/);
     assert.match(visual.promptText, /Opened settings/);
+  });
+
+  it('merges audit evidence into the isolated-route prompt context for the visual lane only', () => {
+    const { home, repo } = homeRepo();
+    writeCompleteEvidence(home, repo, 548, { observation: 'Opened settings.\n' });
+    const visual = withVisualAuditContext({
+      lane: 'ui-ux-accessibility',
+      repoRoot: repo,
+      issueNumber: 548,
+      headSha: 'abcdef1234567',
+      contextLines: ['shared context'],
+      homeDirectory: home,
+      manualUiAudit: true,
+    }).join('\n');
+    assert.match(visual, /shared context/);
+    assert.match(visual, /Recorded UI audit evidence is complete/);
+    const other = withVisualAuditContext({
+      lane: 'code-quality',
+      repoRoot: repo,
+      issueNumber: 548,
+      headSha: 'abcdef1234567',
+      contextLines: ['shared context'],
+      homeDirectory: home,
+      manualUiAudit: true,
+    }).join('\n');
+    assert.equal(other, 'shared context');
   });
 });
