@@ -97,6 +97,68 @@ describe("installed command verification", () => {
     }
   });
 
+  it("accepts a prefix bin symlink that stays inside the install prefix", {
+    skip: process.platform === "win32",
+  }, () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-link-in-"));
+    try {
+      const targetDir = path.join(prefix, "lib", "node_modules", "@tjalve", "aib");
+      mkdirSync(targetDir, { recursive: true });
+      const target = path.join(targetDir, "run");
+      writeFileSync(target, "#!/bin/sh\necho aib-ok\n");
+      chmodSync(target, 0o755);
+      const binDir = path.join(prefix, "bin");
+      mkdirSync(binDir, { recursive: true });
+      symlinkSync(target, path.join(binDir, "aib"));
+      assert.equal(resolveInstalledCommand(prefix, "aib"), path.join(binDir, "aib"));
+      const probed = probeInstalledCommand(prefix, "aib");
+      assert.equal(probed.status, 0);
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a relative prefix bin symlink that stays inside the install prefix", {
+    skip: process.platform === "win32",
+  }, () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-link-rel-"));
+    try {
+      const targetDir = path.join(prefix, "lib", "node_modules", "@tjalve", "aib");
+      mkdirSync(targetDir, { recursive: true });
+      const target = path.join(targetDir, "run");
+      writeFileSync(target, "#!/bin/sh\necho aib-ok\n");
+      chmodSync(target, 0o755);
+      const binDir = path.join(prefix, "bin");
+      mkdirSync(binDir, { recursive: true });
+      symlinkSync(path.relative(binDir, target), path.join(binDir, "aib"));
+      assert.equal(resolveInstalledCommand(prefix, "aib"), path.join(binDir, "aib"));
+      const probed = probeInstalledCommand(prefix, "aib");
+      assert.equal(probed.status, 0);
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a prefix bin symlink that leaves the install prefix", {
+    skip: process.platform === "win32",
+  }, () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-link-out-"));
+    const outside = mkdtempSync(path.join(os.tmpdir(), "qube-verify-outside-"));
+    try {
+      const target = path.join(outside, "escape");
+      writeFileSync(target, "#!/bin/sh\necho escaped\n");
+      chmodSync(target, 0o755);
+      const binDir = path.join(prefix, "bin");
+      mkdirSync(binDir, { recursive: true });
+      symlinkSync(target, path.join(binDir, "aib"));
+      assert.equal(resolveInstalledCommand(prefix, "aib"), null);
+      assert.throws(() => probeInstalledCommand(prefix, "aib"), { reasonCode: "missing-command" });
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("rejects source-checkout runner text", () => {
     assert.throws(() => assertNoSourceCheckoutRunner("run `node products/aie/bin/run doctor`", "init"), {
       reasonCode: "source-runner",

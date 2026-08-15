@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -97,15 +98,49 @@ export function installedBinDir(prefix) {
   return prefixBinDir(prefix);
 }
 
+function pathInsideRoot(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isUsableCommandPath(prefix, candidate) {
+  let info;
+  try {
+    info = lstatSync(candidate);
+  } catch {
+    return false;
+  }
+  if (info.isFile()) return true;
+  if (!info.isSymbolicLink()) return false;
+  let target;
+  try {
+    target = realpathSync.native(candidate);
+  } catch {
+    return false;
+  }
+  let prefixRoot;
+  try {
+    prefixRoot = realpathSync.native(prefix);
+  } catch {
+    prefixRoot = path.resolve(prefix);
+  }
+  if (!pathInsideRoot(prefixRoot, target)) return false;
+  try {
+    return statSync(target).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function resolveInstalledCommand(prefix, command) {
   const binDir = installedBinDir(prefix);
   const names = process.platform === "win32" ? [`${command}.cmd`, command] : [command];
   for (const name of names) {
     const candidate = path.join(binDir, name);
-    if (existsSync(candidate) && lstatSync(candidate).isFile()) return candidate;
+    if (isUsableCommandPath(prefix, candidate)) return candidate;
   }
   const moduleBin = path.join(prefix, "node_modules", ".bin", process.platform === "win32" ? `${command}.cmd` : command);
-  if (existsSync(moduleBin) && lstatSync(moduleBin).isFile()) return moduleBin;
+  if (isUsableCommandPath(prefix, moduleBin)) return moduleBin;
   return null;
 }
 
