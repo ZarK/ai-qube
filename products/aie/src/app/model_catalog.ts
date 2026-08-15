@@ -1,6 +1,6 @@
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import type { ReviewModelsPolicy } from '../core/policy.js';
-import { getReviewHostAdapter, parseGrokModelCatalog, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
+import { getReviewHostAdapter, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
 import { resolveModelHostExecutableSync } from './model_review_runner.js';
 import { execFileSync } from 'node:child_process';
 
@@ -74,22 +74,6 @@ export function listHostModels(
       models: [],
       diagnostic: error instanceof Error ? error.message : String(error),
     };
-  }
-  if (host === 'grok') {
-    try {
-      const catalog = parseGrokModelCatalog(runCommand(executable, [...prefixArgs, 'models']));
-      if (!catalog) {
-        return { host, status: 'blocked', models: [], diagnostic: 'The grok model catalog output was unrecognized.' };
-      }
-      return { host, status: 'ready', models: catalog, diagnostic: null };
-    } catch (error: unknown) {
-      return {
-        host,
-        status: 'blocked',
-        models: [],
-        diagnostic: error instanceof Error ? error.message : 'The grok model catalog could not be read.',
-      };
-    }
   }
   if (typeof adapter.listCatalog === 'function') {
     try {

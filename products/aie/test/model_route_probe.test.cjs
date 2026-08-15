@@ -52,6 +52,36 @@ describe('model route probe', () => {
     assert.match(check.diagnostic, /Update the trusted review model configuration/);
   });
 
+  it('reports ready when the Codex CLI lists the configured model', () => {
+    const check = probeModelRoute('codex', 'gpt-5.6-luna', (_executable, args) => {
+      if (args[0] === '--version') return 'codex-cli 0.1.0\n';
+      if (args[0] === 'debug' && args[1] === 'models') return JSON.stringify({ models: [{ slug: 'gpt-5.6-luna' }] });
+      throw new Error(`unexpected probe command: ${args.join(' ')}`);
+    }, () => 'codex-cli');
+    assert.equal(check.status, 'ready');
+    assert.equal(check.modelListed, true);
+    assert.equal(check.diagnostic, null);
+  });
+
+  it('blocks when the configured model is missing from the Codex catalog', () => {
+    const check = probeModelRoute('codex', 'gpt-missing', (_executable, args) => {
+      if (args[0] === '--version') return 'codex-cli 0.1.0\n';
+      return JSON.stringify({ models: [{ slug: 'gpt-5.6-luna' }] });
+    }, () => 'codex-cli');
+    assert.equal(check.status, 'blocked');
+    assert.equal(check.modelListed, false);
+    assert.match(check.diagnostic, /gpt-missing/);
+  });
+
+  it('stays ready when the Codex catalog cannot be read', () => {
+    const check = probeModelRoute('codex', 'gpt-5.6-luna', (_executable, args) => {
+      if (args[0] === '--version') return 'codex-cli 0.1.0\n';
+      throw new Error('debug models failed');
+    }, () => 'codex-cli');
+    assert.equal(check.status, 'ready');
+    assert.equal(check.modelListed, null);
+  });
+
   it('blocks when the grok catalog cannot be read or parsed', () => {
     const unreadable = probeModelRoute('grok', 'grok-4.5', (executable, args) => {
       if (args[0] === '--version') return 'grok 0.2.102\n';
@@ -133,16 +163,21 @@ describe('model route probe', () => {
     }
   });
 
-  it('probes codex through the shared shim-aware resolution with version only', () => {
+  it('probes Codex through the shared shim-aware resolution and the debug models catalog', () => {
     const commands = [];
     const check = probeModelRoute('codex', 'gpt-5.6-luna', (executable, args) => {
       commands.push([executable, ...args]);
-      return 'codex-cli 0.144.5\n';
+      if (args.includes('--version')) return 'codex-cli 0.144.5\n';
+      if (args.includes('debug')) return JSON.stringify({ models: [{ slug: 'gpt-5.6-luna' }] });
+      throw new Error(`unexpected probe command: ${args.join(' ')}`);
     }, () => ({ executable: 'node-cli', prefixArgs: ['codex.js'] }));
     assert.equal(check.status, 'ready');
     assert.equal(check.executable, 'node-cli');
-    assert.equal(check.modelListed, null);
+    assert.equal(check.modelListed, true);
     assert.equal(check.version, 'codex-cli 0.144.5');
-    assert.deepEqual(commands, [['node-cli', 'codex.js', '--version']]);
+    assert.deepEqual(commands, [
+      ['node-cli', 'codex.js', '--version'],
+      ['node-cli', 'codex.js', 'debug', 'models'],
+    ]);
   });
 });

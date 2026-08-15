@@ -5,7 +5,7 @@ import { commandExistsOnPath, detectInstalledRoutingHostsOnPath } from '../app/m
 import type { ReviewMode } from '../core/policy.js';
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
-import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitSetupSummary } from './types.js';
+import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
 import type { InitTool } from '../init_content.js';
 
 export interface GuideMachine {
@@ -19,6 +19,7 @@ export interface GuideMachine {
 export interface InvocationAnswers {
   reviewMode?: ReviewMode;
   reviewers?: string[];
+  reviewModels?: string[];
   publisher?: 'user' | 'github-app' | 'token';
   qualityGates?: string[];
   qualityControl?: boolean;
@@ -85,6 +86,11 @@ export function answersFromPolicy(policy: InitPolicyOptions | undefined): Invoca
   const answers: InvocationAnswers = {};
   if (policy?.reviewMode !== undefined) answers.reviewMode = policy.reviewMode;
   if (policy?.reviewAgents !== undefined) answers.reviewers = [...policy.reviewAgents];
+  if (policy?.reviewModels !== undefined) {
+    answers.reviewModels = Object.entries(policy.reviewModels.review ?? {}).flatMap(([host, binding]) => (
+      binding?.model ? [`${host}:${binding.model}`] : []
+    ));
+  }
   if (policy?.publisher?.mode !== undefined) answers.publisher = policy.publisher.mode;
   if (policy?.qualityGates !== undefined) answers.qualityGates = [...policy.qualityGates];
   if (policy?.qualityControl !== undefined) answers.qualityControl = policy.qualityControl;
@@ -130,11 +136,6 @@ export function buildInitQuestions(input: {
       options: [
         { value: 'coderabbitai', label: 'CodeRabbit (external service)' },
         ...input.machine.installedHosts.map(host => ({ value: host, label: `${host} (installed on this machine)`, available: true })),
-        ...input.machine.installedHosts.flatMap(host => (input.machine.liveModels?.[host] ?? []).map(model => ({
-          value: `${host}:${model}`,
-          label: `${host} model ${model} (live catalog)`,
-          available: true,
-        }))),
       ],
       recommendation: recommendedReviewers.length === 0
         ? 'Leave external reviewers empty. Isolated review uses host models on this machine.'
@@ -145,6 +146,18 @@ export function buildInitQuestions(input: {
       reason: input.answers.reviewers !== undefined
         ? 'The invocation already selected reviewers.'
         : 'Init recommends reviewers that match the selected review mode.',
+    }),
+    question({
+      id: 'review-models',
+      prompt: 'Which live host models should isolated review use?',
+      options: liveModelOptions(input.machine),
+      recommendation: liveModelRecommendation(input.machine),
+      recommendedValue: liveModelRecommendationValue(input.machine),
+      answered: input.answers.reviewModels !== undefined,
+      value: input.answers.reviewModels ?? null,
+      reason: input.answers.reviewModels !== undefined
+        ? 'The invocation already selected review models.'
+        : 'Init presents each host catalog so the agent can choose a model the host currently serves.',
     }),
     question({
       id: 'publisher',
@@ -208,6 +221,41 @@ function uiAuditRecommendation(guide: GuideMachine): string {
   return 'Leave UI audit off. This repository looks like UI, but agent-browser is not on PATH.';
 }
 
+function liveModelOptions(machine: GuideMachine): InitQuestionOption[] {
+  const options = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => ({
+    value: `${host}:${model}`,
+    label: `${host} currently serves ${model}.`,
+    available: true,
+  })));
+  return options.length > 0 ? options : [{ value: 'none', label: 'No live host catalog is available.', available: false }];
+}
+
+function liveModelRecommendation(machine: GuideMachine): string {
+  const first = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+  return first
+    ? `Use a model from the live catalog. Example: ${first}.`
+    : 'No live catalog is available. Leave review models unconfigured until a host can list models.';
+}
+
+function liveModelRecommendationValue(machine: GuideMachine): string[] {
+  const first = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+  return first ? [first] : [];
+}
+
+function reviewModelsFromAnswers(values: string[]): NonNullable<InitPolicyOptions['reviewModels']> {
+  const review: NonNullable<InitPolicyOptions['reviewModels']>['review'] = {};
+  for (const value of values) {
+    const separator = value.indexOf(':');
+    if (separator <= 0) continue;
+    const host = value.slice(0, separator);
+    const model = value.slice(separator + 1).trim();
+    if (host === 'codex' || host === 'claude-code' || host === 'opencode' || host === 'grok') {
+      if (model) review[host] = { model, effort: null };
+    }
+  }
+  return { review, economy: {}, synthesis: {} };
+}
+
 function asEnabledFlag(value: InitQuestion['value']): boolean | null {
   if (value === true || value === 'true' || value === 'on') return true;
   if (value === false || value === 'false' || value === 'off') return false;
@@ -241,7 +289,13 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
   for (const item of questions) {
     if (!item.answered) continue;
     if (item.id === 'review-mode' && isReviewMode(item.value) && next.reviewMode === undefined) next.reviewMode = item.value;
-    if (item.id === 'reviewers' && Array.isArray(item.value) && next.reviewAgents === undefined) next.reviewAgents = item.value;
+    if (item.id === 'reviewers' && Array.isArray(item.value) && next.reviewAgents === undefined) {
+      next.reviewAgents = item.value.filter(value => !value.includes(':'));
+    }
+    if (item.id === 'review-models' && Array.isArray(item.value) && next.reviewModels === undefined) {
+      const mapped = reviewModelsFromAnswers(item.value);
+      if (Object.keys(mapped.review).length > 0) next.reviewModels = mapped;
+    }
     if (item.id === 'publisher' && (item.value === 'user' || item.value === 'github-app' || item.value === 'token') && next.publisher === undefined) {
       if (item.value === 'user') next.publisher = { mode: 'user' };
       // github-app and token require extra fields; those must arrive through --from or review setup flags.

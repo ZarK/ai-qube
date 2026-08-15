@@ -15,7 +15,7 @@ const {
   parseAdoptedConfig,
   classifyFromSpec,
 } = require('../dist/init/index.js');
-const { buildInitQuestions } = require('../dist/init/questions.js');
+const { applyQuestionAnswersToPolicy, buildInitQuestions } = require('../dist/init/questions.js');
 const { configToFileShape, getDefaults, validateConfig } = require('../dist/config/index.js');
 
 function makeGitRepo() {
@@ -75,9 +75,9 @@ describe('init guide questions', () => {
     assert.equal(result.ok, true);
     assert.equal(result.awaitingAnswers, true);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
-    assert.deepEqual(result.questions.map(item => item.id), ['review-mode', 'reviewers', 'publisher', 'quality-gate', 'ui-audit']);
+    assert.deepEqual(result.questions.map(item => item.id), ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit']);
     assert.ok(result.questions.every(item => item.prompt && item.recommendation && Array.isArray(item.options)));
-    assert.deepEqual(result.unansweredQuestionIds, ['review-mode', 'reviewers', 'publisher', 'quality-gate', 'ui-audit']);
+    assert.deepEqual(result.unansweredQuestionIds, ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit']);
     assert.equal(result.setupSummary.manualUiAudit, false);
     assert.equal(result.setupSummary.qualityControl, false);
     assert.equal(result.setupSummary.reviewMode, 'isolated');
@@ -109,7 +109,7 @@ describe('init guide questions', () => {
     assert.equal(result.setupSummary.reviewMode, 'host');
   });
 
-  it('includes live host models in the reviewers question', () => {
+  it('includes live host models in the review-models question, not reviewers', () => {
     const questions = buildInitQuestions({
       machine: {
         installedHosts: ['grok'],
@@ -120,7 +120,22 @@ describe('init guide questions', () => {
       },
       answers: {},
     });
-    assert.ok(questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok:grok-4.5'));
+    const models = questions.find(item => item.id === 'review-models');
+    assert.ok(models.options.some(option => option.value === 'grok:grok-4.5'));
+    assert.ok(!questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok:grok-4.5'));
+  });
+
+  it('writes live host models to reviewModels and never to reviewAgents', () => {
+    const policy = applyQuestionAnswersToPolicy({}, [
+      { id: 'reviewers', answered: true, value: ['coderabbitai', 'grok:grok-4.5'] },
+      { id: 'review-models', answered: true, value: ['grok:grok-4.5'] },
+    ]);
+    assert.deepEqual(policy.reviewAgents, ['coderabbitai']);
+    assert.deepEqual(policy.reviewModels.review.grok, { model: 'grok-4.5', effort: null });
+    const empty = applyQuestionAnswersToPolicy({}, [
+      { id: 'review-models', answered: true, value: [] },
+    ]);
+    assert.equal(empty.reviewModels, undefined);
   });
 
   it('does not recommend isolated when no review host is installed', () => {
