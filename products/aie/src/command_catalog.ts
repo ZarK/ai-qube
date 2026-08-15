@@ -185,7 +185,7 @@ const COMMAND_DEFINITIONS = [
     mutationTargets: ['local-files'],
     supportsJson: true,
     supportsDryRun: true,
-    examples: ['aie init . --dry-run', 'aie init . --json', 'aie init . --defaults --yes', 'aie init . --tool all --naming-rules', 'aie init . --tool opencode --opencode-command-alias', 'aie init . --no-milestone-ordering --package-age-days 7'],
+    examples: ['aie init . --json', 'aie init . --yes --json', 'aie init . --defaults --yes', 'aie init . --from known-good --yes', 'aie init . --review-mode isolated --yes', 'aie init . --tool all --naming-rules', 'aie init . --tool opencode --opencode-command-alias', 'aie init . --no-milestone-ordering --package-age-days 7'],
   },
   {
     name: 'gates',

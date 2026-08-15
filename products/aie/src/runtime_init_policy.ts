@@ -8,6 +8,7 @@ import {
   type ModelRoutingHostId,
 } from './core/model_routing.js';
 import { detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
+import { isReviewMode } from './review_mode.js';
 import { numberFlag, stringFlag, stringListFlag } from './runtime_result.js';
 
 function readBooleanFlag(context: RuntimeCommandContext, name: string): boolean | undefined {
@@ -69,7 +70,31 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
   addInstructionPolicy(context, policy);
   addSupplyChainPolicy(context, policy);
   addModelRoutingPolicy(context, policy);
+  addReviewGuidePolicy(context, policy);
   return policy;
+}
+
+function addReviewGuidePolicy(context: RuntimeCommandContext, policy: InitPolicyOptions): void {
+  const reviewMode = stringFlag(context, 'review-mode');
+  if (reviewMode !== undefined) {
+    if (!isReviewMode(reviewMode)) {
+      throw new Error('--review-mode must be external, host, or isolated.');
+    }
+    policy.reviewMode = reviewMode;
+  }
+  const publisher = stringFlag(context, 'publisher');
+  if (publisher !== undefined) {
+    if (publisher !== 'user' && publisher !== 'github-app' && publisher !== 'token') {
+      throw new Error('--publisher must be user, github-app, or token.');
+    }
+    if (publisher === 'github-app') {
+      throw new Error('--publisher github-app requires a complete GitHub App publisher. Run `aie review setup github-app` or adopt one with --from.');
+    }
+    if (publisher === 'token') {
+      throw new Error('--publisher token requires a complete token publisher. Run `aie review setup token` or adopt one with --from.');
+    }
+    policy.publisher = { mode: 'user' };
+  }
 }
 
 function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolicyOptions): void {

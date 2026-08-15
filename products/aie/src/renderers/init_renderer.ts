@@ -14,6 +14,21 @@ export function formatInitHuman(result: InitResult): string {
   lines.push(`Tools: ${result.selectedTools.length > 0 ? result.selectedTools.join(', ') : 'none'}`);
   lines.push(`Policy: naming rules ${result.policy.namingRules ? 'enabled' : 'disabled'}, milestone ordering ${result.policy.milestoneOrdering ? 'enabled' : 'disabled'}, supply-chain safety ${result.policy.supplyChainSafety ? 'enabled' : 'disabled'}, OpenCode command alias ${result.policy.opencodeCommandAlias ? 'enabled' : 'disabled'}`);
   lines.push(`Config: ${result.configPath}`);
+  if (result.setupSummary) {
+    lines.push(`Setup: review mode ${result.setupSummary.reviewMode}, publisher ${result.setupSummary.publisher}, reviewers ${result.setupSummary.reviewers.join(', ') || 'none'}, quality control ${result.setupSummary.qualityControl ? 'enabled' : 'disabled'}, UI audit ${result.setupSummary.manualUiAudit ? 'enabled' : 'disabled'}`);
+  }
+  if (result.from) {
+    lines.push(`Adopted from: ${result.from.source} (${result.from.kind})`);
+    lines.push(...formatList('Adjustments', result.from.adjustments));
+  }
+  if (result.questions.length > 0) {
+    lines.push(result.awaitingAnswers ? 'Questions:' : 'Answered questions:');
+    for (const item of result.questions) {
+      const state = item.answered ? `answered=${String(item.value)}` : `recommended=${String(item.recommendedValue)}`;
+      lines.push(`  ${item.id}: ${item.prompt} (${state})`);
+      lines.push(`    ${item.recommendation}`);
+    }
+  }
   lines.push('Actions:');
   if (result.actions.length === 0) lines.push('  None.');
   for (const action of result.actions) {

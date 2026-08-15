@@ -8,10 +8,37 @@ import { getAgentHostProfiles } from '../agent_hosts.js';
 import { renderInitFiles } from '../init_renderer.js';
 import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
 import { getRepoRoot } from '../repo/index.js';
+import { reviewModeOf } from '../review_mode.js';
+import { adoptFromSource } from './from_source.js';
+import {
+  answersFromPolicy,
+  applyQuestionAnswersToPolicy,
+  buildInitQuestions,
+  buildSetupSummary,
+  detectGuideMachine,
+  fillUnansweredQuestions,
+  unansweredQuestionIds,
+} from './questions.js';
 import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
 export { detectLegacyState } from './legacy_state.js';
-export type { InitAction, InitActionOperation, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyChoice, LegacyState } from './types.js';
-import type { InitAction, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyState } from './types.js';
+export { collectSetupDoctorRecommendations } from './setup_readiness.js';
+export { resolveContainedFromPath, parseAdoptedConfig, classifyFromSpec } from './from_source.js';
+export type {
+  InitAction,
+  InitActionOperation,
+  InitActionStatus,
+  InitFromReport,
+  InitOptions,
+  InitPolicyOptions,
+  InitPolicySummary,
+  InitQuestion,
+  InitQuestionId,
+  InitResult,
+  InitSetupSummary,
+  LegacyChoice,
+  LegacyState,
+} from './types.js';
+import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPolicyOptions, InitPolicySummary, InitQuestion, InitResult, LegacyState } from './types.js';
 
 interface PlannedWrite {
   actionId: string;
@@ -108,12 +135,35 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
     policyRecord.shipping = mergeNestedRecord(policyRecord.shipping, { autonomousMode: policy.autonomousMode });
   }
 
-  if (policy.reviewAgents !== undefined || policy.reviewWaitMinutes !== undefined || policy.reviewRequestText !== undefined) {
+  if (
+    policy.reviewAgents !== undefined
+    || policy.reviewWaitMinutes !== undefined
+    || policy.reviewRequestText !== undefined
+    || policy.reviewMode !== undefined
+    || policy.reviewAdapter !== undefined
+    || policy.reviewModels !== undefined
+    || policy.reviewRoute !== undefined
+    || policy.reviewFailover !== undefined
+    || policy.localReviewAgents !== undefined
+  ) {
     policyRecord.reviews = mergeNestedRecord(policyRecord.reviews, {
       ...(policy.reviewAgents !== undefined ? { agents: policy.reviewAgents } : {}),
+      ...(policy.localReviewAgents !== undefined ? { localAgents: policy.localReviewAgents } : {}),
       ...(policy.reviewWaitMinutes !== undefined ? { waitMinutes: policy.reviewWaitMinutes } : {}),
       ...(policy.reviewRequestText !== undefined ? { requestText: policy.reviewRequestText } : {}),
+      ...(policy.reviewMode !== undefined ? { mode: policy.reviewMode } : {}),
+      ...(policy.reviewAdapter !== undefined ? { adapter: policy.reviewAdapter } : {}),
+      ...(policy.reviewModels !== undefined ? { models: policy.reviewModels } : {}),
+      ...(policy.reviewRoute !== undefined ? { route: policy.reviewRoute } : {}),
+      ...(policy.reviewFailover !== undefined ? { failover: policy.reviewFailover } : {}),
     });
+  }
+
+  if (policy.publisher !== undefined) {
+    const providers = mergeNestedRecord(record.providers, {});
+    const review = mergeNestedRecord(providers.review, { publisher: policy.publisher });
+    providers.review = review;
+    record.providers = providers;
   }
 
   if (policy.gates !== undefined || policy.qualityGates !== undefined || policy.qualityControl !== undefined) {
@@ -149,6 +199,20 @@ function defaultsRecord(): Record<string, unknown> {
   return configToFileShape(getDefaults()) as unknown as Record<string, unknown>;
 }
 
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function emptyGuideFields(): Pick<InitResult, 'questions' | 'unansweredQuestionIds' | 'setupSummary' | 'from' | 'awaitingAnswers'> {
+  return {
+    questions: [],
+    unansweredQuestionIds: [],
+    setupSummary: null,
+    from: null,
+    awaitingAnswers: false,
+  };
+}
+
 function generatedConfigInvalidReason(operation: string, path: string, message: string): string {
   return `Failed while ${operation}. Likely cause: invalid generated policy value at ${path}: ${message}. Next action: check supplied init policy flags or rerun with --defaults --yes.`;
 }
@@ -160,8 +224,14 @@ function configFromPolicy(policy: InitPolicyOptions | undefined): Config {
   return validation.config ?? getDefaults();
 }
 
-function mergeConfig(raw: Record<string, unknown> | null, force: boolean, policy: InitPolicyOptions | undefined): ConfigMergeResult {
-  const defaults = defaultsRecord();
+function mergeConfig(
+  raw: Record<string, unknown> | null,
+  force: boolean,
+  policy: InitPolicyOptions | undefined,
+  base: Record<string, unknown> = defaultsRecord(),
+  preferBase = false,
+): ConfigMergeResult {
+  const defaults = cloneRecord(base);
   applyPolicyToRecord(defaults, policy);
   const defaultValidation = validateConfig(defaults);
   if (!defaultValidation.ok || !defaultValidation.config) {
@@ -174,7 +244,18 @@ function mergeConfig(raw: Record<string, unknown> | null, force: boolean, policy
       config: getDefaults(),
     };
   }
-  if (raw === null) return { ok: true, content: formatConfig(defaults), changed: true, reason: 'Config file will be created with Executor defaults, provider selections, and selected policy.', config: defaultValidation.config };
+  if (raw === null) return { ok: true, content: formatConfig(defaults), changed: true, reason: preferBase ? 'Config file will be created from the adopted policy and selected answers.' : 'Config file will be created with Executor defaults, provider selections, and selected policy.', config: defaultValidation.config };
+  if (preferBase) {
+    const content = formatConfig(defaults);
+    const currentContent = formatConfig(raw);
+    return {
+      ok: true,
+      content,
+      changed: content !== currentContent,
+      reason: content === currentContent ? 'Adopted policy already matches the destination config.' : 'Config will be replaced with the adopted policy and selected answers.',
+      config: defaultValidation.config,
+    };
+  }
   const validation = validateConfig(raw);
   if (!validation.ok && !force) {
     const first = validation.errors[0];
@@ -253,7 +334,14 @@ function makeAction(input: Omit<InitAction, 'status'> & { status?: InitActionSta
   return { ...input, status: input.status ?? (input.operation === 'unchanged' ? 'skipped' : input.operation === 'blocked' ? 'blocked' : 'planned') };
 }
 
-async function planConfig(repoRoot: string, force: boolean, warnings: string[], policy: InitPolicyOptions | undefined): Promise<{ action: InitAction; write?: PlannedWrite; config: Config }> {
+async function planConfig(
+  repoRoot: string,
+  force: boolean,
+  warnings: string[],
+  policy: InitPolicyOptions | undefined,
+  base: Record<string, unknown> = defaultsRecord(),
+  preferBase = false,
+): Promise<{ action: InitAction; write?: PlannedWrite; config: Config }> {
   const configPath = join(repoRoot, AIE_CONFIG_FILENAME);
   const configRead = await readConfig(configPath);
   const fallbackConfig = configFromPolicy(policy);
@@ -274,7 +362,7 @@ async function planConfig(repoRoot: string, force: boolean, warnings: string[], 
     }
     warnings.push('Existing config could not be parsed and will be replaced because --force is set.');
   }
-  const merged = mergeConfig(configRead.raw, force, policy);
+  const merged = mergeConfig(configRead.raw, force, policy, base, preferBase);
   if (!merged.ok || merged.content === null) {
     return {
       action: makeAction({ id: 'config', path: relativePath(repoRoot, configPath), kind: 'config', operation: 'blocked', managedSection: false, conflict: true, reason: merged.reason }),
@@ -356,19 +444,129 @@ async function planManagedFile(input: {
     : { action };
 }
 
-function nextCommand(resultOk: boolean): string {
+function nextCommand(resultOk: boolean, awaitingAnswers = false): string {
+  if (awaitingAnswers) return 'Answer the remaining questions in the host, then rerun `aie init <target> --yes --json` with those flags. Init does not write until --yes is set.';
   if (!resultOk) return 'Resolve blocked file actions or rerun `qube aie init . --dry-run --force` to review forced updates.';
   return 'Run `qube aie doctor --json` to verify repository setup, then `qube aie queue --json` to inspect issue work.';
+}
+
+function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof answersFromPolicy> {
+  const validation = validateConfig(record);
+  if (!validation.config) return {};
+  const config = validation.config;
+  return {
+    reviewMode: reviewModeOf(config),
+    reviewers: [...config.reviewAgents],
+    publisher: config.providers.review.publisher?.mode ?? 'user',
+    qualityGates: [...config.qualityGates],
+    qualityControl: config.qualityControl,
+    manualUiAudit: config.manualUiAudit,
+  };
+}
+
+function publisherSummary(config: Config): string {
+  const publisher = config.providers.review.publisher;
+  if (!publisher) return 'user (not configured)';
+  if (publisher.mode === 'github-app') return publisher.githubApp?.login ? `github-app (${publisher.githubApp.login})` : 'github-app';
+  if (publisher.mode === 'token') return publisher.token?.login ? `token (${publisher.token.login})` : 'token';
+  return 'user';
 }
 
 async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
   const repoRoot = getRepoRoot(targetPath);
   const selectedTools = uniqueTools(parseInitTool(options.tool) ?? []);
-  const fallbackConfig = configFromPolicy(options.policy);
   const warnings: string[] = [];
   const actions: InitAction[] = [];
   const writes: PlannedWrite[] = [];
+  const machine = detectGuideMachine({
+    repoRoot,
+    installedHosts: options.installedHosts,
+    agentBrowserAvailable: options.agentBrowserAvailable,
+    aiqAvailable: options.aiqAvailable,
+  });
+  let fromReport: InitFromReport | null = null;
+  let baseRecord = defaultsRecord();
+  let policy = options.policy ? { ...options.policy } : {};
+
+  if (options.from) {
+    const adopted = await adoptFromSource({
+      spec: options.from,
+      cwd: options.cwd ?? process.cwd(),
+      fetchRepoConfig: options.fetchRepoConfig,
+      machine,
+    });
+    if (!adopted.ok) {
+      const fallbackConfig = configFromPolicy(policy);
+      return {
+        result: {
+          ok: false,
+          command: 'init',
+          dryRun: options.dryRun,
+          forced: options.force,
+          target: options.target,
+          repoRoot,
+          selectedTools,
+          policy: policySummary(fallbackConfig),
+          configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
+          actions,
+          legacy: [],
+          plannedChanges: [],
+          completedChanges: [],
+          skippedActions: [],
+          warnings,
+          errors: [adopted.error],
+          nextCommand: 'Pass a path relative to the working directory or an owner/repo slug, then rerun `aie init --from`.',
+          ...emptyGuideFields(),
+        },
+        writes,
+      };
+    }
+    baseRecord = adopted.record;
+    fromReport = adopted.report;
+    warnings.push(...adopted.report.adjustments);
+  }
+
+  const flagAnswers = answersFromPolicy(policy);
+  const fromAnswers = options.from ? answersFromRecord(baseRecord) : {};
+  const answers = { ...fromAnswers, ...flagAnswers };
+  const askedQuestions = buildInitQuestions({ machine, answers, useDefaults: options.useDefaults });
+  const fillAnswers = Boolean(options.guide) || Boolean(options.yes) || Boolean(options.useDefaults);
+  const questions = fillAnswers ? fillUnansweredQuestions(askedQuestions) : askedQuestions;
+  policy = applyQuestionAnswersToPolicy(policy, questions);
+  const unanswered = unansweredQuestionIds(askedQuestions);
+  const awaitingAnswers = Boolean(options.guide) && !options.yes;
+  if (policy.reviewMode === 'isolated' && machine.installedHosts.length === 0 && answers.reviewMode === 'isolated') {
+    const fallbackConfig = configFromPolicy(policy);
+    return {
+      result: {
+        ok: false,
+        command: 'init',
+        dryRun: options.dryRun,
+        forced: options.force,
+        target: options.target,
+        repoRoot,
+        selectedTools,
+        policy: policySummary(fallbackConfig),
+        configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
+        actions,
+        legacy: [],
+        plannedChanges: [],
+        completedChanges: [],
+        skippedActions: [],
+        warnings,
+        errors: ['Review mode isolated requires an installed review host: codex, claude-code, opencode, or grok.'],
+        nextCommand: 'Install a review host or pass --review-mode external or --review-mode host.',
+        questions: askedQuestions,
+        unansweredQuestionIds: unanswered,
+        setupSummary: null,
+        from: fromReport,
+        awaitingAnswers: false,
+      },
+      writes,
+    };
+  }
+  const fallbackConfig = configFromPolicy(policy);
 
   if (selectedTools.length === 0) {
     const configPath = join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME);
@@ -391,6 +589,11 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         warnings,
         errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, grok-build, or all.`],
         nextCommand: 'Run `qube aie init --help` to see supported tool values.',
+        questions,
+        unansweredQuestionIds: unanswered,
+        setupSummary: null,
+        from: fromReport,
+        awaitingAnswers: false,
       },
       writes,
     };
@@ -417,12 +620,17 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         warnings,
         errors: ['Target is not inside a git repository. Run `qube aie init .` from the repository checkout.'],
         nextCommand: 'Change to a git repository root, then rerun `qube aie init . --dry-run`.',
+        questions,
+        unansweredQuestionIds: unanswered,
+        setupSummary: null,
+        from: fromReport,
+        awaitingAnswers: false,
       },
       writes,
     };
   }
 
-  const configPlan = await planConfig(repoRoot, options.force, warnings, options.policy);
+  const configPlan = await planConfig(repoRoot, options.force, warnings, policy, baseRecord, Boolean(options.from));
   const config = configPlan.config;
   const selectedProfiles = await getAgentHostProfiles(selectedTools);
   actions.push(configPlan.action);
@@ -459,17 +667,26 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   }
 
   const errors = actions.filter(action => action.status === 'blocked').map(action => `${action.path}: ${action.reason}`);
+  const setupSummary = buildSetupSummary({
+    reviewMode: reviewModeOf(config),
+    reviewers: config.reviewAgents,
+    publisher: publisherSummary(config),
+    qualityGates: config.qualityGates,
+    qualityControl: config.qualityControl,
+    manualUiAudit: config.manualUiAudit,
+    tools: selectedTools,
+  });
   return {
     result: {
       ok: errors.length === 0,
       command: 'init',
-      dryRun: options.dryRun,
+      dryRun: options.dryRun || awaitingAnswers,
       forced: options.force,
       target: options.target,
       repoRoot,
       selectedTools,
       policy: policySummary(config),
-        configPath: join(repoRoot, AIE_CONFIG_FILENAME),
+      configPath: join(repoRoot, AIE_CONFIG_FILENAME),
       actions,
       legacy,
       plannedChanges: actions.filter(action => action.status === 'planned').map(actionText),
@@ -477,10 +694,15 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       skippedActions: actions.filter(action => action.status === 'skipped').map(actionText),
       warnings,
       errors,
-      nextCommand: nextCommand(errors.length === 0),
+      nextCommand: nextCommand(errors.length === 0, awaitingAnswers),
       modelRouting: resolveModelRouting(config.modelRouting, config.reviewModels, detectInstalledRoutingHostsOnPath()),
+      questions: awaitingAnswers ? askedQuestions : questions,
+      unansweredQuestionIds: unanswered,
+      setupSummary,
+      from: fromReport,
+      awaitingAnswers,
     },
-    writes,
+    writes: awaitingAnswers ? [] : writes,
   };
 }
 
@@ -491,7 +713,7 @@ export async function buildInitPlan(options: InitOptions): Promise<InitResult> {
 export async function runInit(options: InitOptions): Promise<InitResult> {
   const built = await prepareInitPlan(options);
   const result = built.result;
-  if (!result.ok || options.dryRun) return result;
+  if (!result.ok || options.dryRun || result.awaitingAnswers) return result;
   const completedChanges: string[] = [];
   const errors: string[] = [];
   const actions = result.actions.map(action => ({ ...action }));

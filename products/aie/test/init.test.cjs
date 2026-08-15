@@ -1263,6 +1263,9 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--force'));
     assert.ok(metadata.flags.includes('--yes'));
     assert.ok(metadata.flags.includes('--defaults'));
+    assert.ok(metadata.flags.includes('--from'));
+    assert.ok(metadata.flags.includes('--review-mode'));
+    assert.ok(metadata.flags.includes('--publisher'));
     assert.ok(metadata.flags.includes('--tool'));
     assert.ok(metadata.flags.includes('--naming-rules'));
     assert.ok(metadata.flags.includes('--opencode-command-alias'));
@@ -1293,7 +1296,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);
