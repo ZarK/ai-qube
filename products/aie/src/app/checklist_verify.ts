@@ -105,6 +105,22 @@ async function currentPrContext(cwd?: string, exec?: GhExec): Promise<ChecklistV
   return { number: parsed.number, title: parsed.title, url: parsed.url, headSha: parsed.headRefOid };
 }
 
+export function evidenceJsonTemplate(issue: GitHubIssue, criterion: ChecklistItem, pr: ChecklistVerifyPrContext | null): string {
+  return `${JSON.stringify({
+    version: 1,
+    issueNumber: issue.number,
+    criterionIndex: criterion.index,
+    criterionText: criterion.text,
+    headSha: pr?.headSha ?? '<current-pr-head-sha>',
+    reviewer: { id: '<reviewer-or-runner-id>' },
+    reviewedSources: ['<source-1>'],
+    artifacts: ['<artifact-1>'],
+    recommendation: 'approve',
+    recordedAt: '<iso-8601-timestamp>',
+    promptStack: [{ id: 'acceptance/verify-criterion' }],
+  }, null, 2)}\n`;
+}
+
 function buildPrompt(issue: GitHubIssue, criterion: ChecklistItem, pr: ChecklistVerifyPrContext | null): RenderedAgentPrompt {
   const prLine = pr ? `Current PR: #${pr.number} ${pr.title} ${pr.url} head ${pr.headSha}` : 'Current PR: not detected for the current branch.';
   return renderAgentPrompt({
@@ -116,6 +132,8 @@ function buildPrompt(issue: GitHubIssue, criterion: ChecklistItem, pr: Checklist
       `Criterion #${criterion.index}: ${criterion.text}`,
       prLine,
       'Required evidence: reviewed sources, artifacts, reviewer or runner provenance, recommendation, timestamp, and prompt stack.',
+      'Fill every field in this evidence JSON template, write it to a file, then pass --evidence <file>:',
+      evidenceJsonTemplate(issue, criterion, pr),
       `Issue body:\n${issue.body}`,
     ],
     outputContract: 'Return acceptance verification evidence JSON for exactly this issue checklist criterion.',

@@ -110,6 +110,35 @@ describe('issue checklist mutation', () => {
     assert.match(result.prompt.outputContract, /acceptance verification evidence JSON/);
   });
 
+  it('prints a complete evidence JSON template that verifies on the first filled copy', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-template-'));
+    const exec = makeExec({
+      [issueViewKey(93)]: success([], JSON.stringify(issue(93, 'Issue body\n- [ ] Acceptance A'))),
+      'pr view --json number,title,url,headRefOid': success([], JSON.stringify({
+        number: 12,
+        title: 'PR',
+        url: 'https://github.com/example/repo/pull/12',
+        headRefOid: 'abc123',
+      })),
+    });
+
+    const prompt = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', dryRun: true, promptOnly: true, exec });
+    const match = prompt.prompt.text.match(/\{\s*"version": 1[\s\S]*?"promptStack": \[[\s\S]*?\]\s*\}/);
+    assert.ok(match, 'prompt must include the fillable evidence JSON template');
+    const template = JSON.parse(match[0]);
+    template.reviewer = { id: 'implementer-verification' };
+    template.reviewedSources = ['issue:93'];
+    template.artifacts = ['terminal-log'];
+    template.recordedAt = '2026-08-15T19:00:00.000Z';
+    const evidence = join(repo, 'evidence.json');
+    writeFileSync(evidence, `${JSON.stringify(template, null, 2)}\n`);
+
+    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec });
+
+    assert.equal(result.evidence.status, 'valid', result.evidence.errors.join('; '));
+    assert.equal(result.mutation.status, 'planned');
+  });
+
   it('validates evidence before planning one checked mutation', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
     const evidence = join(repo, 'evidence.json');

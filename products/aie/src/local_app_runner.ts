@@ -1,7 +1,11 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
+import { dirname, extname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { resolveExecutable } from '@tjalve/qube-core';
 import { processIdentity } from './local_app_runner_process.js';
 import type {
   AttemptLogPaths,
@@ -193,14 +197,50 @@ function resolveWorkingDirectory(repoRoot: string, cwd: string | undefined): str
   return resolve(repoRoot, input);
 }
 
+function isWindowsPlatform(platform: NodeJS.Platform): boolean {
+  return platform === 'win32';
+}
+
+function isWindowsLauncher(filePath: string): boolean {
+  return ['.cmd', '.bat'].includes(extname(filePath).toLowerCase());
+}
+
+function quoteCmdArgument(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(options.repoRoot, options.name)): SpawnPlan {
   if (options.command.length === 0) throw new Error('missing app command after `--`; example: aie run start --name ui-audit -- npm run dev');
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const requested = options.command[0];
+  const lookup = resolveExecutable(requested, { env, platform });
+  const resolved = lookup.status === 'found' && lookup.resolvedPath ? lookup.resolvedPath : null;
+  const wrapLauncher = isWindowsPlatform(platform) && resolved !== null && isWindowsLauncher(resolved);
+  if (wrapLauncher) {
+    const commandLine = [resolved, ...options.command.slice(1)].map(quoteCmdArgument).join(' ');
+    const comspec = env.ComSpec || env.COMSPEC || process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
+    return {
+      command: comspec,
+      args: ['/d', '/s', '/c', `"${commandLine}"`],
+      cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
+      detached: true,
+      windowsHide: true,
+      shell: false,
+      windowsVerbatimArguments: true,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+    };
+  }
   return {
-    command: options.command[0],
+    command: requested,
     args: options.command.slice(1),
     cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
     detached: true,
     windowsHide: true,
+    shell: false,
+    windowsVerbatimArguments: false,
     stdoutPath: paths.stdoutPath,
     stderrPath: paths.stderrPath,
   };
@@ -212,7 +252,7 @@ function metadataFromPlan(options: RunStartOptions, paths: RunPaths, plan: Spawn
     version: 1,
     name: validateName(options.name),
     pid,
-    command: [plan.command, ...plan.args],
+    command: options.command,
     cwd: plan.cwd,
     startedAt: (options.now ?? new Date()).toISOString(),
     platform,
@@ -345,7 +385,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       command: 'run start',
       dryRun: options.dryRun === true,
       name: validateName(options.name),
-      commandLine: [plan.command, ...plan.args],
+      commandLine: options.command,
       cwd: plan.cwd,
       pid: existing?.pid ?? null,
       attemptId: existing?.attemptId ?? existingPaths.attemptId,
@@ -365,7 +405,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       command: 'run start',
       dryRun: true,
       name: validateName(options.name),
-      commandLine: [plan.command, ...plan.args],
+      commandLine: options.command,
       cwd: plan.cwd,
       pid: null,
       attemptId,
@@ -392,6 +432,8 @@ export function runStart(options: RunStartOptions): RunStartResult {
       cwd: plan.cwd,
       detached: plan.detached,
       windowsHide: plan.windowsHide,
+      windowsVerbatimArguments: plan.windowsVerbatimArguments,
+      shell: plan.shell,
       stdio: ['ignore', stdout, stderr],
     });
     safeClose(stdout);
@@ -407,7 +449,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
         command: 'run start',
         dryRun: false,
         name: validateName(options.name),
-        commandLine: [plan.command, ...plan.args],
+        commandLine: options.command,
         cwd: plan.cwd,
         pid: null,
         attemptId,
@@ -429,7 +471,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
         command: 'run start',
         dryRun: false,
         name: validateName(options.name),
-        commandLine: [plan.command, ...plan.args],
+        commandLine: options.command,
         cwd: plan.cwd,
         pid: child.pid,
         attemptId,
@@ -465,7 +507,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
       command: 'run start',
       dryRun: false,
       name: validateName(options.name),
-      commandLine: [plan.command, ...plan.args],
+      commandLine: options.command,
       cwd: plan.cwd,
       pid: null,
       attemptId,
@@ -478,13 +520,76 @@ export function runStart(options: RunStartOptions): RunStartResult {
   }
 }
 
-async function fetchReady(fetchImpl: typeof fetch, url: string): Promise<{ ready: boolean; httpStatus: number | null; error?: string }> {
+function requestReady(url: URL, hostname: string, family?: 4 | 6): Promise<{ ready: boolean; httpStatus: number | null; error?: string }> {
+  const lib = url.protocol === 'https:' ? https : http;
+  const port = url.port !== '' ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
+  return new Promise(resolve => {
+    const request = lib.request({
+      hostname,
+      port,
+      path: `${url.pathname}${url.search}`,
+      method: 'GET',
+      family,
+      timeout: 2000,
+      headers: { Host: url.host },
+      servername: url.hostname,
+    }, response => {
+      response.resume();
+      const status = response.statusCode ?? 0;
+      resolve({ ready: status >= 200 && status < 500, httpStatus: status });
+    });
+    request.on('error', error => {
+      resolve({ ready: false, httpStatus: null, error: error instanceof Error ? error.message : String(error) });
+    });
+    request.on('timeout', () => {
+      request.destroy();
+      resolve({ ready: false, httpStatus: null, error: `Timed out connecting to ${url.href}` });
+    });
+    request.end();
+  });
+}
+
+async function probeReady(url: string): Promise<{ ready: boolean; httpStatus: number | null; error?: string }> {
+  let parsed: URL;
   try {
-    const response = await fetchImpl(url);
-    return { ready: response.status >= 200 && response.status < 500, httpStatus: response.status };
+    parsed = new URL(url);
   } catch (err: unknown) {
     return { ready: false, httpStatus: null, error: err instanceof Error ? err.message : String(err) };
   }
+  if (parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0') {
+    return requestReady(parsed, parsed.hostname, 4);
+  }
+  if (parsed.hostname === '::1' || parsed.hostname === '[::1]') {
+    return requestReady(parsed, '::1', 6);
+  }
+  try {
+    const addresses = await dnsLookup(parsed.hostname, { all: true, verbatim: true });
+    if (addresses.length === 0) return requestReady(parsed, parsed.hostname);
+    let lastError: string | undefined;
+    let lastStatus: number | null = null;
+    for (const entry of addresses) {
+      const family = entry.family === 6 ? 6 : entry.family === 4 ? 4 : undefined;
+      const result = await requestReady(parsed, entry.address, family);
+      if (result.ready) return result;
+      lastError = result.error;
+      lastStatus = result.httpStatus;
+    }
+    return { ready: false, httpStatus: lastStatus, error: lastError };
+  } catch (err: unknown) {
+    return requestReady(parsed, parsed.hostname);
+  }
+}
+
+async function fetchReady(fetchImpl: typeof fetch | undefined, url: string): Promise<{ ready: boolean; httpStatus: number | null; error?: string }> {
+  if (fetchImpl) {
+    try {
+      const response = await fetchImpl(url);
+      return { ready: response.status >= 200 && response.status < 500, httpStatus: response.status };
+    } catch (err: unknown) {
+      return { ready: false, httpStatus: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  return probeReady(url);
 }
 
 function isLocalReadinessUrl(input: string): boolean {
@@ -564,7 +669,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
       };
     }
     attempts += 1;
-    const result = await fetchReady(options.fetchImpl ?? fetch, options.url);
+    const result = await fetchReady(options.fetchImpl, options.url);
     lastStatus = result.httpStatus;
     lastError = result.error;
     if (result.ready) {
