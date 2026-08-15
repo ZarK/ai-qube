@@ -473,6 +473,41 @@ describe('model review runner', () => {
     assert.equal(multipleFinalObjects.evidence, null);
     assert.equal(multipleFinalObjects.reasonCode, 'model-route-contract-mismatch');
 
+    const progressThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({
+          text: `${JSON.stringify({
+            issueNumber: 309,
+            prNumber: 310,
+            headSha: 'abc123',
+            lane: 'code-quality',
+            status: 'pending',
+            severity: 'none',
+            recommendation: 'pending',
+            summary: 'Inspection in progress.',
+            blockers: [],
+            findings: [],
+            artifacts: [{ kind: 'progress', path: 'command:pending', sha256: null }],
+            commands: [],
+            surfaces: [],
+            contextReviewed: [{ kind: 'diff', source: 'lane-prompt-bundle', trust: 'untrusted-task-input', freshness: 'current' }],
+            toolsUsed: [],
+            completeness: 'Progress snapshot only.',
+            preconditions: [],
+          })}${JSON.stringify(laneResult())}`,
+          sessionId: 'progress-then-final',
+        }),
+      }),
+    });
+    assert.equal(progressThenFinal.error, null);
+    assert.equal(progressThenFinal.evidence.status, 'passed');
+
     const contradictoryPending = { ...laneResult(), status: 'pending', recommendation: 'pending', blockers: ['Contradictory blocker.'] };
     const contradictorySequence = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
