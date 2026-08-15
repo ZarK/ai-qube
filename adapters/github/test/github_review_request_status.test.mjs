@@ -167,7 +167,7 @@ describe("github reviewer request status comment", () => {
     assert.equal(replay.actions[0].details.requestedForHead, true);
   });
 
-  it("keeps one request record when two applies race the same head", async () => {
+  it("two concurrent gate runs do not produce duplicate records for the same head", async () => {
     const fixture = createReviewRequestFixture();
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
     const snapshot = await provider.loadPullRequestReview(12);
