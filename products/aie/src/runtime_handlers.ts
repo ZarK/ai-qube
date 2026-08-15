@@ -310,12 +310,16 @@ async function handleView(context: Parameters<RuntimeCommandHandler>[0]) {
 async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
   const target = stringArg(context, 'target');
   if (!target || isHelpToken(target)) {
-    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
-      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
+      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       commandDescription('init'),
       '',
       'Behavior:',
-      '  Builds one init plan for config and instruction-file updates before writing anything.',
+      '  Emits a machine-readable question set for review mode, reviewers, publisher, quality gates, and UI audit.',
+      '  Consumes answers already present on the invocation and does not ask those again.',
+      '  Does not write until --yes is set. --defaults --yes writes shipped defaults.',
+      '  --from adopts another repository policy, re-validates it on this machine, and reports adjustments.',
+      '  --from paths must stay under the working directory. Absolute paths, parent-directory segments, and symlink escapes are rejected.',
       '  Managed sections preserve user-authored content outside Executor markers.',
       '  Unmanaged conflicts are blocked unless --force is supplied.',
       '  --dry-run shows planned local-file changes without writing.',
@@ -325,7 +329,17 @@ async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
     ]);
   }
   try {
-    const result = await runInit({ target, tool: stringFlag(context, 'tool') ?? 'opencode', dryRun: readBooleanFlag(context, 'dry-run'), force: readBooleanFlag(context, 'force'), policy: policyFromRuntimeFlags(context) });
+    const result = await runInit({
+      target,
+      tool: stringFlag(context, 'tool') ?? 'opencode',
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      force: readBooleanFlag(context, 'force'),
+      yes: readBooleanFlag(context, 'yes'),
+      useDefaults: readBooleanFlag(context, 'defaults'),
+      from: stringFlag(context, 'from'),
+      guide: true,
+      policy: policyFromRuntimeFlags(context),
+    });
     return commandResult(context, result, formatInitHuman(result), result.ok ? 0 : 1);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
@@ -677,7 +691,7 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
     return commandFailure(context, { ok: false, command: 'pr review publish', error: message }, message);
   }
   const issueArg = stringFlag(context, 'issue');
-  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
+  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : Number.NaN;
   const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr review publish', loaded, 'Fix the selected Executor config, then rerun lane publish.');
@@ -726,7 +740,7 @@ async function handlePrReviewPublishSummary(context: Parameters<RuntimeCommandHa
     return commandFailure(context, { ok: false, command: 'pr review publish-summary', error: message }, message);
   }
   const issueArg = stringFlag(context, 'issue');
-  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
+  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : Number.NaN;
   const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr review publish-summary', loaded, 'Fix the selected Executor config, then rerun the round summary publish.');

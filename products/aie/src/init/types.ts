@@ -1,5 +1,6 @@
-import type { CiProviderKind, GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
+import type { CiProviderKind, GateConfig, GitHubReviewPublisherConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
 import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_routing.js';
+import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewMode, ReviewModelsPolicy, ReviewRoutePolicy } from '../core/policy.js';
 import type { InitTool } from '../init_content.js';
 import type { LegacyCategory } from '../legacy.js';
 
@@ -28,6 +29,42 @@ export interface LegacyState {
   nextCommand: string;
 }
 
+export type InitQuestionId = 'review-mode' | 'reviewers' | 'publisher' | 'quality-gate' | 'ui-audit';
+
+export interface InitQuestionOption {
+  value: string;
+  label: string;
+  available?: boolean;
+}
+
+export interface InitQuestion {
+  id: InitQuestionId;
+  prompt: string;
+  options: InitQuestionOption[];
+  recommendation: string;
+  recommendedValue: string | string[] | boolean | null;
+  answered: boolean;
+  value: string | string[] | boolean | null;
+  reason: string;
+}
+
+export interface InitSetupSummary {
+  reviewMode: ReviewMode;
+  reviewers: string[];
+  publisher: string;
+  qualityGates: string[];
+  qualityControl: boolean;
+  manualUiAudit: boolean;
+  tools: InitTool[];
+}
+
+export interface InitFromReport {
+  source: string;
+  kind: 'path' | 'repo';
+  sourceDigest: string;
+  adjustments: string[];
+}
+
 export interface InitResult {
   ok: boolean;
   command: 'init';
@@ -47,6 +84,11 @@ export interface InitResult {
   errors: string[];
   nextCommand: string;
   modelRouting?: ModelRoutingResolution;
+  questions: InitQuestion[];
+  unansweredQuestionIds: InitQuestionId[];
+  setupSummary: InitSetupSummary | null;
+  from: InitFromReport | null;
+  awaitingAnswers: boolean;
 }
 
 export interface InitPolicySummary {
@@ -80,6 +122,13 @@ export interface InitPolicyOptions {
   reviewAgents?: string[];
   reviewWaitMinutes?: number;
   reviewRequestText?: string;
+  reviewMode?: ReviewMode;
+  reviewAdapter?: ReviewAdapterKind;
+  reviewModels?: ReviewModelsPolicy;
+  reviewRoute?: ReviewRoutePolicy | null;
+  reviewFailover?: ReviewFailoverPolicy | null;
+  localReviewAgents?: string[];
+  publisher?: GitHubReviewPublisherConfig;
   opencodeCommandAlias?: boolean;
   manualUiAudit?: boolean;
   uiAuditAppLaunch?: string;
@@ -100,4 +149,12 @@ export interface InitOptions {
   force: boolean;
   policy?: InitPolicyOptions;
   cwd?: string;
+  from?: string;
+  yes?: boolean;
+  useDefaults?: boolean;
+  guide?: boolean;
+  fetchRepoConfig?: (slug: string) => Promise<string>;
+  installedHosts?: readonly string[];
+  agentBrowserAvailable?: boolean;
+  aiqAvailable?: boolean;
 }
