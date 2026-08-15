@@ -138,6 +138,7 @@ describe('release readiness repository fixtures', () => {
     assert.match(claude, /`qube aie complete <issue>`/);
     assert.doesNotMatch(agents, /products\/aie\/bin\/run/);
     assert.doesNotMatch(claude, /node products\/aie\/bin\/run/);
+    assert.doesNotMatch(`${agents}\n${claude}`, /source checkout path/);
   });
 
   it('keeps shipped docs and generated instructions product-generic', async () => {

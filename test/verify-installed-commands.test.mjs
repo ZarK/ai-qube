@@ -80,6 +80,7 @@ describe("installed command verification", () => {
   });
 
   it("probes installed shims and fails when a command does not start", async () => {
+    // Released packages must start; a broken installed-command state fails the release process.
     const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-prefix-"));
     try {
       writeShim(prefix, "qube", "echo qube-ok");
