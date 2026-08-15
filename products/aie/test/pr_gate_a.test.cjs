@@ -479,7 +479,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const result = await runPrGate(config, { prNumber: 12, exec });
 
     assert.equal(result.status, 'complete');
-    assert.match(result.nextAction, /Ship-ready at the current head/);
+    assert.match(result.nextAction, /Merge this pull request/);
   });
 
   it('completes local-only PR gates when provider-visible local review is approved', async () => {
@@ -1289,7 +1289,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(result.reviewParticipantRollup.hostLaneExpected > 0);
     assert.equal(result.shipReady.ready, true);
     assert.equal(result.shipReady.advisoryCount, 0);
-    assert.match(result.nextAction, /Ship-ready/);
+    assert.match(result.nextAction, /Merge this pull request/);
     assert.ok(result.localReviewPublish.status === 'skipped' || result.localReviewPublish.status === 'published');
     assert.ok(result.roundSummary);
     assert.ok(result.roundSummary.status === 'published' || result.roundSummary.status === 'skipped' || result.roundSummary.status === 'failed');

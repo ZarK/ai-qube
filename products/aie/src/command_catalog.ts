@@ -438,6 +438,18 @@ const COMMAND_DEFINITIONS = [
     examples: ['aie pr gate 12 --dry-run', 'aie pr gate 12 --json', 'aie pr gate 12'],
   },
   {
+    name: 'pr lane rerun',
+    description: 'Re-execute exactly one review lane for the current pull request head, once. Does not retry and does not run other lanes.',
+    args: ['pr', 'lane'],
+    flags: ['--json', '--dry-run', '--help'],
+    mutationTargets: ['github', 'local-files'],
+    supportsJson: true,
+    supportsDryRun: true,
+    externalServices: ['github'],
+    stableErrorKinds: ['parse-error', 'config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie pr lane rerun 12 issue-compliance', 'aie pr lane rerun 12 code-quality --json', 'aie pr lane rerun 12 security --dry-run'],
+  },
+  {
     name: 'pr batch',
     description: 'Aggregate current-head lane findings into one ranked cross-lane fix batch without executing lanes or mutating the provider. Read-only.',
     args: ['pr'],
