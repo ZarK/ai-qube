@@ -339,6 +339,10 @@ export function recommendationStatusRule(): string {
   return Object.entries(RECOMMENDATION_STATUS_PAIRS).map(([recommendation, statuses]) => `${recommendation} requires status ${statuses.join(' or ')}`).join('; ');
 }
 
+export function isLocalReviewLaneId(value: unknown): value is LocalReviewLaneId {
+  return readLaneId(value) !== null;
+}
+
 function readLaneId(value: unknown): LocalReviewLaneId | null {
   if (
     value === 'task-record-compliance' ||

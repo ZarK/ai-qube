@@ -124,6 +124,10 @@ interface LocalReviewRunnerInput {
   includePrompts?: boolean;
   homeDirectory?: string;
   forceFullReview?: boolean;
+  /** Re-execute these lanes even when current-head evidence already exists. */
+  forceLanes?: readonly string[];
+  /** When set, plan and execute only these lanes. */
+  onlyLanes?: readonly string[];
   exec?: PrGateExec;
   contextLines?: readonly string[];
   changedPaths?: readonly string[];
@@ -523,7 +527,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const opencode = await probeOpenCodeReviewCapability();
   const profile = effectiveProfile(config, input.required, input.shadow);
-  const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
+  const activeLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
+  const requiredLanes = input.onlyLanes && input.onlyLanes.length > 0
+    ? activeLanes.filter(lane => input.onlyLanes?.includes(lane))
+    : activeLanes;
   const suppressions = {
     optedOut: config.reviewLanes.filter(lane => lane.optOut === true).map(lane => lane.id),
     lanes: config.reviewLanes
@@ -639,12 +646,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedLaneModelTier(config, lane), laneConfiguredFragments(config, lane)));
         continue;
       }
-      const reused = reuseLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, riskCardFragments, null);
+      const forceThisLane = (input.forceLanes ?? []).includes(lane);
+      const reused = forceThisLane
+        ? null
+        : reuseLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, riskCardFragments, null);
       if (reused) {
         lanes.push(reused);
         continue;
       }
-      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written, riskCardFragments, deltaTriage);
+      const carried = forceThisLane
+        ? null
+        : await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written, riskCardFragments, deltaTriage);
       if (carried) {
         lanes.push(carried);
         continue;
@@ -690,12 +702,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
         continue;
       }
-      const reused = reuseLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, includePrompt, [issueNumber], riskCardFragments, route);
+      const forceThisLane = (input.forceLanes ?? []).includes(lane);
+      const reused = forceThisLane
+        ? null
+        : reuseLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, includePrompt, [issueNumber], riskCardFragments, route);
       if (reused) {
         lanes.push(reused);
         continue;
       }
-      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written, riskCardFragments, deltaTriage);
+      const carried = forceThisLane
+        ? null
+        : await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written, riskCardFragments, deltaTriage);
       if (carried) {
         lanes.push(carried);
         continue;

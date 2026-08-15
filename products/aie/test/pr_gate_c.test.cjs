@@ -2738,7 +2738,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(result.status, 'complete');
     assert.equal(result.reviewers[0].requestedForHead, true);
     assert.equal(result.reviewers[0].pending, false);
-    assert.match(result.nextAction, /Ship-ready at the current head/);
+    assert.match(result.nextAction, /Merge this pull request/);
   });
 
   it('does not trust spoofed marker comments as reviewer requests', async () => {

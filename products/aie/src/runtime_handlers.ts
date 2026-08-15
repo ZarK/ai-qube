@@ -11,6 +11,7 @@ import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
 import { formatPrTriage, runPrTriageService } from './app/pr_triage.js';
 import { formatPrBatch, runPrBatchService } from './app/pr_batch.js';
+import { formatPrLaneRerun, runPrLaneRerunService } from './app/pr_lane_rerun.js';
 import { formatReviewFeedback, runReviewFeedback } from './app/review_feedback.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
@@ -763,6 +764,47 @@ async function handlePrReviewPublishSummary(context: Parameters<RuntimeCommandHa
   }
 }
 
+async function handlePrLaneRerun(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  const lane = stringArg(context, 'lane');
+  if (isHelpToken(pr) || isHelpToken(lane)) {
+    return usageResult(context, 'pr lane rerun', 'aie pr lane rerun <pr> <lane> [--dry-run] [--json]', [
+      'Usage: aie pr lane rerun <pr> <lane> [--dry-run] [--json]',
+      '',
+      'Re-execute exactly one review lane for the current pull request head, once.',
+      'Examples:',
+      ...commandExamples('pr lane rerun').map(example => `  ${example}`),
+    ]);
+  }
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie pr lane rerun 12 issue-compliance --dry-run\` or \`aie pr lane rerun --help\`.`;
+    return commandFailure(context, { ok: false, command: 'pr lane rerun', error: message }, message);
+  }
+  if (prNumber === null || !lane) {
+    const message = 'Failed to run `aie pr lane rerun`: missing pull request number or lane. Likely cause: no PR or lane argument was provided. Next action: run `aie pr lane rerun 12 issue-compliance --dry-run` or `aie pr lane rerun --help`.';
+    return commandFailure(context, { ok: false, command: 'pr lane rerun', error: message, usage: 'aie pr lane rerun <pr> <lane> [--dry-run] [--json]', examples: commandExamples('pr lane rerun') }, message);
+  }
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr lane rerun', loaded, 'Fix the selected Executor config, then rerun the named lane.');
+  try {
+    const result = await runPrLaneRerunService(loaded.config ?? getDefaults(), {
+      prNumber,
+      lane,
+      repoRoot: loaded.root,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+    });
+    return commandResult(context, result, formatPrLaneRerun(result), result.ok ? 0 : 1);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to rerun lane ${lane} for pull request #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication and the lane id, then rerun \`aie pr lane rerun ${prNumber} ${lane} --dry-run\`.`;
+    return commandFailure(context, { ok: false, command: 'pr lane rerun', pr: prNumber, lane, error: message }, message);
+  }
+}
+
 async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
   if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--full-review] [--json]', [
@@ -887,9 +929,11 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr batch <pr>` after lane results land to fix every blocking finding in one commit before the next round.', 'Use `aie pr triage <pr>` when the gate reports ship-ready with residual advisories for the disposition report; fix cheap ones now or drop them — never open a new issue.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr lane rerun <pr> <lane>` to re-execute one unusable lane at the current head, once.', 'Use `aie pr batch <pr>` after lane results land to fix every blocking finding in one commit before the next round.', 'Use `aie pr triage <pr>` when the gate reports ship-ready with residual advisories for the disposition report; fix cheap ones now or drop them — never open a new issue.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
+  'pr lane': topic(['Use `aie pr lane rerun <pr> <lane>` to re-execute one review lane at the current head, once.']),
+  'pr lane rerun': handlePrLaneRerun,
   'pr review publish': handlePrReviewPublish,
   'pr review publish-summary': handlePrReviewPublishSummary,
   'pr batch': handlePrBatch,

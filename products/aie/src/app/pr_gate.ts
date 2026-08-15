@@ -4,6 +4,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import { reviewModeOf } from '../review_mode.js';
+import { computePrGateNextAction } from './pr_gate_next_action.js';
 import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { getIssue, loadPullRequestBody, type GhExec } from '../providers/github_adapter_exports.js';
@@ -1141,17 +1142,29 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // shipReady is the authoritative merge-readiness contract; its nextAction and the
   // top-level nextAction always agree so automation cannot read two different plans.
   const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
+  const shipReadyVerdict = shipReadyReasons.length === 0;
+  const hostRequestRecorded = reviewParticipantObservations.some(observation => observation.participant.kind === 'host-request' && observation.requestedForHead);
+  const inconclusiveLanes = [...new Set(localReview.evidence.flatMap(evidence => evidence.lanes.filter(lane => lane.status === 'inconclusive').map(lane => lane.id)))];
+  const fallbackNextAction = shipReadyVerdict
+    ? (advisoryCount > 0
+      ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with ${advisoryCount} residual advisory finding(s). Fix cheap advisories now, or drop them and fold anything real into already-queued Ready work — never open a new issue; run \`aie pr triage ${options.prNumber}\` for the disposition report, then merge.`
+      : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
+        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
+        : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`)
+    : legacyNextAction;
+  const resolvedNextAction = computePrGateNextAction({
+    shipReady: shipReadyVerdict,
+    twoRoundMergeMet: false,
+    hostRequestRecorded,
+    inconclusiveLanes,
+    prNumber: options.prNumber,
+    fallback: fallbackNextAction,
+  });
   const shipReady: PrGateShipReady = {
-    ready: shipReadyReasons.length === 0,
+    ready: shipReadyVerdict,
     advisoryCount,
     reasons: shipReadyReasons,
-    nextAction: shipReadyReasons.length > 0
-      ? legacyNextAction
-      : advisoryCount > 0
-        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with ${advisoryCount} residual advisory finding(s). Fix cheap advisories now, or drop them and fold anything real into already-queued Ready work — never open a new issue; run \`aie pr triage ${options.prNumber}\` for the disposition report, then merge.`
-        : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
-          ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
-          : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
+    nextAction: resolvedNextAction,
   };
   if (!dryRun) {
     writeLocalReviewPublishEvidence({
