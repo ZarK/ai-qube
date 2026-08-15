@@ -80,6 +80,13 @@ export interface ResolvePublisherOptions {
     timeoutMs?: number;
   }) => Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }>;
   readonly fetchTokenIdentity?: (token: string) => Promise<{ login: string | null; type: string | null }>;
+  readonly fetchAppIdentity?: (input: {
+    jwt: string;
+    appId: string;
+    installationId: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }) => Promise<{ login: string | null; type: string | null }>;
 }
 
 const DEFAULT_PUBLISHER_CONFIG: GitHubReviewPublisherConfig = Object.freeze({ mode: 'user' });
@@ -255,13 +262,77 @@ async function defaultFetchInstallationToken(input: {
   }
 }
 
+function botLoginFromSlug(slug: string | null | undefined): { login: string; type: 'Bot' } | null {
+  const trimmed = typeof slug === 'string' ? slug.trim() : '';
+  if (trimmed === '') return null;
+  return { login: `${trimmed}[bot]`, type: 'Bot' };
+}
+
+async function defaultFetchAppIdentity(
+  jwt: string,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ login: string | null; type: string | null }> {
+  // Installation tokens cannot call /user or GET /installation (404). The signed
+  // app JWT can read GET /app, whose slug is the live bot actor.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (limits.signal) {
+    if (limits.signal.aborted) controller.abort();
+    else limits.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  if (typeof limits.timeoutMs === 'number' && limits.timeoutMs > 0) {
+    timer = setTimeout(() => controller.abort(), limits.timeoutMs);
+  }
+  try {
+    const response = await fetch('https://api.github.com/app', {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${jwt}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'qube-github-review-publisher',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) return { login: null, type: null };
+    const parsed: unknown = JSON.parse(await response.text());
+    if (!isRecord(parsed)) return { login: null, type: null };
+    return botLoginFromSlug(typeof parsed.slug === 'string' ? parsed.slug : null) ?? { login: null, type: null };
+  } catch {
+    return { login: null, type: null };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (limits.signal) limits.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function resolveAppBotIdentity(
+  jwt: string,
+  token: string,
+  app: GitHubAppPublisherConfig,
+  options: ResolvePublisherOptions,
+  limits: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<{ login: string | null; type: string | null }> {
+  const fromApp = options.fetchAppIdentity
+    ? await options.fetchAppIdentity({
+      jwt,
+      appId: app.appId,
+      installationId: app.installationId,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+    })
+    : await defaultFetchAppIdentity(jwt, limits);
+  if (fromApp.login) return fromApp;
+  return fetchInstallationIdentity(token, options.cwd, options.exec, limits);
+}
+
 async function fetchInstallationIdentity(
   token: string,
   cwd?: string,
   exec?: GhExec,
   limits: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<{ login: string | null; type: string | null }> {
-  // Installation tokens cannot call /user; resolve the bot identity from /installation.
+  // Fallback only: GET /installation is 404 for current installation tokens.
   try {
     const installation = await runGh(['api', 'installation', '-H', 'Accept: application/vnd.github+json'], {
       cwd,
@@ -273,10 +344,8 @@ async function fetchInstallationIdentity(
     if (installation.exitCode !== 0) return { login: null, type: null };
     const parsed = JSON.parse(installation.stdout) as unknown;
     if (!isRecord(parsed)) return { login: null, type: null };
-    // Installation tokens act as the GitHub App bot, not the installation target
-    // account (user/org). Prefer app_slug for the bot actor login.
-    const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug.trim() : '';
-    if (slug !== '') return { login: `${slug}[bot]`, type: 'Bot' };
+    const fromSlug = botLoginFromSlug(typeof parsed.app_slug === 'string' ? parsed.app_slug : null);
+    if (fromSlug) return fromSlug;
     // Never use the installation target account login. That login cannot
     // match the bot's own review events, so using it as trustedMarkerAuthor
     // fails open and duplicates every republish.
@@ -524,10 +593,11 @@ export async function resolveGitHubReviewPublisher(
           timeoutMs: options.timeoutMs,
         });
 
-      // Installation tokens cannot call /user; resolve bot identity directly.
+      // Prefer the signed /app slug. Installation tokens cannot call /user and
+      // GET /installation returns 404, so that path is only a fallback.
       const identityLookup = options.fetchTokenIdentity
         ? await options.fetchTokenIdentity(minted.token)
-        : await fetchInstallationIdentity(minted.token, options.cwd, options.exec, probeLimits);
+        : await resolveAppBotIdentity(jwt, minted.token, app, options, probeLimits);
       const configuredLogin = normalizeLogin(app.login ?? null);
       const login = normalizeLogin(identityLookup.login ?? configuredLogin ?? null);
       if (!login) {

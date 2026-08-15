@@ -39,6 +39,7 @@ const {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  userReviewRepo,
   binRun,
   writeConfig,
   commitTrustedBase,
@@ -1768,13 +1769,14 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('surfaces current-head QUBE local review comments in PR view feedback', async () => {
+    const repo = userReviewRepo();
     const pr = cleanLocalPr({
       reviewDecision: 'APPROVED',
       comments: [localReviewComment({ recommendation: 'approve', status: 'passed', summary: 'all local lanes passed' })],
     });
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrViewService({ prNumber: 12, exec });
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(result.feedback.length, 1);
     assert.equal(result.feedback[0].source, 'comment');

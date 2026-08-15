@@ -45,6 +45,21 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function userReviewRepo() {
+  const repo = makeGitRepo();
+  writeConfig(repo, {
+    version: 1,
+    providers: {
+      work: { kind: 'github' },
+      review: { kind: 'github' },
+      repository: { kind: 'local-git' },
+      ci: { kind: 'github' },
+      layout: { kind: 'local' },
+    },
+  });
+  return repo;
+}
+
 function commitTrustedBase(repo, remote = 'origin', branch = 'main') {
   execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'trusted base'], { cwd: repo, stdio: 'ignore' });
@@ -847,6 +862,7 @@ module.exports = {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  userReviewRepo,
   binRun,
   writeConfig,
   commitTrustedBase,

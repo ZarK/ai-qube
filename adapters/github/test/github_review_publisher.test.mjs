@@ -71,6 +71,37 @@ describe('github review publisher', () => {
     assert.equal(JSON.stringify(withKey.identity).includes('BEGIN'), false);
   });
 
+  it('resolves github-app bot login from the signed app slug', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+        login: 'QUBE-Review-Publisher[bot]',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'alice',
+      }),
+      fetchAppIdentity: async ({ jwt, appId, installationId }) => {
+        assert.equal(appId, '99');
+        assert.equal(installationId, '1001');
+        assert.equal(jwt.split('.').length, 3);
+        return { login: 'qube-review[bot]', type: 'Bot' };
+      },
+    });
+
+    assert.equal(resolved.identity.login, 'qube-review[bot]');
+    assert.equal(resolved.identity.credentialVerified, true);
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+  });
+
   it('resolves github-app identity via /installation without a known-invalid /user call', async () => {
     process.env.QUBE_TEST_APP_KEY = privateKey;
     const calls = [];
@@ -88,6 +119,7 @@ describe('github review publisher', () => {
         permissions: { pull_requests: 'write' },
         accountLogin: 'review-bot[bot]',
       }),
+      fetchAppIdentity: async () => ({ login: null, type: null }),
       // Installation tokens use /installation only; /user is not a valid endpoint for them.
       exec: async (args) => {
         calls.push(args.join(' '));
@@ -185,6 +217,7 @@ describe('github review publisher', () => {
         permissions: { pull_requests: 'write' },
         accountLogin: 'alice',
       }),
+      fetchAppIdentity: async () => ({ login: null, type: null }),
       exec: async (args) => {
         if (args.includes('installation')) {
           return {
@@ -219,6 +252,7 @@ describe('github review publisher', () => {
         token: 'ghs_test_installation_token_value_not_for_output',
         permissions: { pull_requests: 'write' },
       }),
+      fetchAppIdentity: async () => ({ login: null, type: null }),
       exec: async (args) => {
         if (args.includes('user')) {
           const error = new Error('HTTP 403');

@@ -40,6 +40,7 @@ const {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  userReviewRepo,
   binRun,
   writeConfig,
   commitTrustedBase,
@@ -253,9 +254,10 @@ describe('PR body service', { concurrency: 4 }, () => {
       ],
       latestReviews: [],
     });
+    const repo = userReviewRepo();
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrViewService({ prNumber: 12, exec });
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(result.feedback.length, 0);
     assert.equal(result.laneReviews.length, 1);
@@ -271,9 +273,10 @@ describe('PR body service', { concurrency: 4 }, () => {
     const pr = basePr({
       comments: [{ author: { login: 'executor' }, body: `${marker}\n\n# QUBE review round summary: approve`, url: 'https://github.com/example/repo/pull/12#issuecomment-9', createdAt: '2026-01-01T00:00:00Z' }],
     });
+    const repo = userReviewRepo();
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrViewService({ prNumber: 12, exec });
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
 
     assert.deepEqual(result.roundSummary, { head: 'abc123', round: 'round-1', url: 'https://github.com/example/repo/pull/12#issuecomment-9', stale: false });
     assert.match(formatPrView(result), /Round summary: head=abc123; round=round-1; stale=no; https:\/\/github\.com\/example\/repo\/pull\/12#issuecomment-9/);
