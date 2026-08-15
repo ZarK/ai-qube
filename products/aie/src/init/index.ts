@@ -20,6 +20,7 @@ import {
   unansweredQuestionIds,
 } from './questions.js';
 import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
+import { planLocalRuntimeGitignoreUpdate } from './local_runtime_gitignore.js';
 export { detectLegacyState } from './legacy_state.js';
 export { collectSetupDoctorRecommendations } from './setup_readiness.js';
 export { resolveContainedFromPath, parseAdoptedConfig, classifyFromSpec } from './from_source.js';
@@ -397,6 +398,23 @@ function missingNpmrcSettings(existingContent: string): string[] {
   return missing;
 }
 
+async function planLocalRuntimeGitignore(repoRoot: string): Promise<{ action: InitAction; write?: PlannedWrite }> {
+  const path = join(repoRoot, '.gitignore');
+  const existingContent = await readTextIfPresent(path);
+  const planned = planLocalRuntimeGitignoreUpdate(existingContent);
+  const action = makeAction({
+    id: 'local-runtime-gitignore',
+    path: relativePath(repoRoot, path),
+    kind: 'config',
+    operation: planned.operation,
+    managedSection: false,
+    conflict: false,
+    reason: planned.reason,
+  });
+  if (planned.operation === 'unchanged' || planned.content === null) return { action };
+  return { action, write: { actionId: action.id, path, content: planned.content } };
+}
+
 async function planPackageManagerDefaults(repoRoot: string, force: boolean): Promise<{ action: InitAction; write?: PlannedWrite }> {
   const path = join(repoRoot, '.npmrc');
   const existingContent = await readTextIfPresent(path);
@@ -653,6 +671,10 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const selectedProfiles = await getAgentHostProfiles(selectedTools);
   actions.push(configPlan.action);
   if (configPlan.write) writes.push(configPlan.write);
+
+  const gitignorePlan = await planLocalRuntimeGitignore(repoRoot);
+  actions.push(gitignorePlan.action);
+  if (gitignorePlan.write) writes.push(gitignorePlan.write);
 
   const legacy = await detectLegacyState(repoRoot, config, selectedTools);
   actions.push(...legacyActions(legacy));

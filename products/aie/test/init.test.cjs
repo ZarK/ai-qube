@@ -67,7 +67,7 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     assert.equal(result.dryRun, true);
     assert.deepEqual(result.selectedTools, ['opencode']);
-    assert.deepEqual(result.actions.map(action => action.path), [join('.qube', 'aie', 'config.json'), 'AGENTS.md', opencodeCommandPath('make-it-so.md')]);
+    assert.deepEqual(result.actions.map(action => action.path), [join('.qube', 'aie', 'config.json'), '.gitignore', 'AGENTS.md', opencodeCommandPath('make-it-so.md')]);
     assert.equal(result.actions.every(action => action.status === 'planned'), true);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
@@ -94,6 +94,7 @@ describe('init service', () => {
     assert.deepEqual(planned.selectedTools, ['grok-build']);
     assert.deepEqual(planned.actions.map(action => action.path), [
       join('.qube', 'aie', 'config.json'),
+      '.gitignore',
       'AGENTS.md',
       '.grok/commands/make-it-so.md',
       '.grok/skills/make-it-so/SKILL.md',
@@ -171,7 +172,7 @@ describe('init service', () => {
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.completedChanges.length, 3);
+    assert.equal(result.completedChanges.length, 4);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.equal(agents.startsWith(userContent), true);
     assert.match(agents, /Keep this local rule\./);
@@ -397,6 +398,7 @@ describe('init service', () => {
     assert.equal(planned.policy.opencodeCommandAlias, true);
     assert.deepEqual(planned.actions.map(action => action.path), [
       join('.qube', 'aie', 'config.json'),
+      '.gitignore',
       'AGENTS.md',
       'CLAUDE.md',
       opencodeCommandPath('make-it-so.md'),
@@ -428,6 +430,7 @@ describe('init service', () => {
     assert.equal(planned.ok, true);
     assert.deepEqual(planned.actions.map(action => action.path), [
       join('.qube', 'aie', 'config.json'),
+      '.gitignore',
       'AGENTS.md',
       pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
       pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
@@ -1334,7 +1337,7 @@ describe('init command metadata', () => {
     assert.equal(parsed.dryRun, true);
     assert.deepEqual(parsed.selectedTools, ['opencode']);
     assert.equal(parsed.policy.namingRules, false);
-    assert.equal(parsed.actions.length, 3);
+    assert.equal(parsed.actions.length, 4);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
