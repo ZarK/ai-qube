@@ -216,8 +216,8 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   const platform = options.platform ?? process.platform;
   const requested = options.command[0];
   const lookup = resolveExecutable(requested, { env, platform });
-  const resolved = lookup.resolvedPath ?? requested;
-  const wrapLauncher = isWindowsPlatform(platform) && isWindowsLauncher(resolved);
+  const resolved = lookup.status === 'found' && lookup.resolvedPath ? lookup.resolvedPath : null;
+  const wrapLauncher = isWindowsPlatform(platform) && resolved !== null && isWindowsLauncher(resolved);
   if (wrapLauncher) {
     const commandLine = [resolved, ...options.command.slice(1)].map(quoteCmdArgument).join(' ');
     const comspec = env.ComSpec || env.COMSPEC || process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';

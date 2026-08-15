@@ -81,12 +81,12 @@ describe('local app runner service', () => {
     const plan = buildSpawnPlan({
       repoRoot: root,
       name: 'ui-audit',
-      command: ['missing-launcher', 'dev'],
+      command: ['pnpm.cmd', 'dev'],
       platform: 'win32',
       env: { PATH: join(root, 'empty-bin'), PATHEXT: '.CMD;.EXE', OS: 'Windows_NT' },
     }, paths);
 
-    assert.equal(plan.command, 'missing-launcher');
+    assert.equal(plan.command, 'pnpm.cmd');
     assert.deepEqual(plan.args, ['dev']);
     assert.equal(plan.shell, false);
   });
