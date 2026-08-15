@@ -133,6 +133,30 @@ describe('review source contract', () => {
     assert.deepEqual(readiness.missing, []);
   });
 
+  it('treats a GitHub bot login with or without the [bot] suffix as the same status-comment author', () => {
+    const reviewerSource = { id: 'trusted-marker-source', identity: 'reviewer', expected: ['alice'], blocking: true, markers: 'trusted', enabled: true };
+    const item = reviewItemWith({
+      trustedMetadata: {
+        trustedMarkerAuthor: 'review-bot',
+        comments: [{
+          author: 'review-bot[bot]',
+          body: `<!-- qube-pr-status:${JSON.stringify({
+            version: 1,
+            prNumber: 12,
+            rounds: [],
+            requests: [{ reviewerId: 'alice', head: 'abc123', at: '2026-08-15T00:00:00.000Z' }],
+          })} -->\nReview status: pending.`,
+        }],
+      },
+    });
+
+    const readiness = evaluateReviewSourceContract([reviewerSource], item, 'abc123').sources[0];
+
+    assert.equal(readiness.satisfied, true);
+    assert.deepEqual(readiness.received, ['alice']);
+    assert.deepEqual(readiness.missing, []);
+  });
+
   it('does not treat a forged status-comment request as a current-head reviewer record', () => {
     const reviewerSource = { id: 'trusted-marker-source', identity: 'reviewer', expected: ['alice'], blocking: true, markers: 'trusted', enabled: true };
     const item = reviewItemWith({

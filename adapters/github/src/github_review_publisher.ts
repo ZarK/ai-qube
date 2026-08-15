@@ -599,7 +599,8 @@ export async function resolveGitHubReviewPublisher(
         ? await options.fetchTokenIdentity(minted.token)
         : await resolveAppBotIdentity(jwt, minted.token, app, options, probeLimits);
       const configuredLogin = normalizeLogin(app.login ?? null);
-      const login = normalizeLogin(identityLookup.login ?? configuredLogin ?? null);
+      const lookedUpLogin = normalizeLogin(identityLookup.login);
+      const login = lookedUpLogin ?? configuredLogin;
       if (!login) {
         return {
           accessToken: minted.token,
@@ -628,7 +629,7 @@ export async function resolveGitHubReviewPublisher(
           login,
           permissionStatus: hasPermission ? 'ok' : 'missing',
           formalEventCapability: hasPermission,
-          credentialVerified: true,
+          credentialVerified: lookedUpLogin !== null,
           fallbackReason: hasPermission
             ? null
             : 'GitHub App installation lacks pull_requests write permission; formal review events are unavailable.',

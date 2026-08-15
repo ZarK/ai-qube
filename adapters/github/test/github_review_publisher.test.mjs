@@ -198,6 +198,7 @@ describe('github review publisher', () => {
 
     assert.equal(resolved.identity.login, 'review-bot[bot]');
     assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.identity.credentialVerified, false);
     assert.equal(resolved.identity.fallbackReason, null);
   });
 
