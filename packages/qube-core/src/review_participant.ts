@@ -200,8 +200,42 @@ function markerPrefix(reviewerId: string): string {
   return `<!-- aie:pr-gate:${reviewerId}:`;
 }
 
+function parseStatusCommentRequests(body: string | null): Array<{ reviewerId: string; head: string }> {
+  const text = body ?? "";
+  const prefix = "<!-- qube-pr-status:";
+  const start = text.indexOf(prefix);
+  if (start < 0) return [];
+  const jsonStart = start + prefix.length;
+  const end = text.indexOf(" -->", jsonStart);
+  if (end < 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(text.slice(jsonStart, end));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const requests = (parsed as { requests?: unknown }).requests;
+    if (!Array.isArray(requests)) return [];
+    return requests.flatMap(entry => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const reviewerId = (entry as { reviewerId?: unknown }).reviewerId;
+      const head = (entry as { head?: unknown }).head;
+      if (typeof reviewerId !== "string" || reviewerId.trim() === "" || typeof head !== "string" || head.trim() === "") return [];
+      return [{ reviewerId, head }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function trustedStatusRequests(comments: ReturnType<typeof trustedComments>, reviewerId: string, trustedAuthor: string | null): Array<{ reviewerId: string; head: string }> {
+  if (trustedAuthor === null) return [];
+  return comments.flatMap(comment => {
+    if (comment.author !== trustedAuthor) return [];
+    return parseStatusCommentRequests(comment.body).filter(request => request.reviewerId === reviewerId);
+  });
+}
+
 function hasTrustedMarker(comments: ReturnType<typeof trustedComments>, reviewerId: string, headSha: string, trustedAuthor: string | null): boolean {
   if (trustedAuthor === null) return false;
+  if (trustedStatusRequests(comments, reviewerId, trustedAuthor).some(request => request.head === headSha)) return true;
   const marker = `${markerPrefix(reviewerId)}${headSha} -->`;
   return comments.some(comment => comment.author === trustedAuthor && (comment.body ?? "").includes(marker));
 }
@@ -209,6 +243,8 @@ function hasTrustedMarker(comments: ReturnType<typeof trustedComments>, reviewer
 function hasStaleTrustedMarker(comments: ReturnType<typeof trustedComments>, reviewerId: string, headSha: string, trustedAuthor: string | null): boolean {
   if (hasTrustedMarker(comments, reviewerId, headSha, trustedAuthor)) return false;
   if (trustedAuthor === null) return false;
+  const statusRequests = trustedStatusRequests(comments, reviewerId, trustedAuthor);
+  if (statusRequests.some(request => request.head !== headSha) && !statusRequests.some(request => request.head === headSha)) return true;
   const prefix = markerPrefix(reviewerId);
   return comments.some(comment => comment.author === trustedAuthor && (comment.body ?? "").includes(prefix));
 }

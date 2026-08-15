@@ -84,24 +84,124 @@ const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
 
-function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
+interface StatusCommentRequest {
+  reviewerId: string;
+  head: string;
+  at: string;
+}
+
+function parseStatusCommentPayload(body: string | undefined): { rounds: Array<{ head: string; verdict: string }>; requests: StatusCommentRequest[] } {
   const text = body ?? '';
   const prefix = '<!-- qube-pr-status:';
   const start = text.indexOf(prefix);
-  if (start < 0) return [];
+  if (start < 0) return { rounds: [], requests: [] };
   const jsonStart = start + prefix.length;
   const end = text.indexOf(' -->', jsonStart);
-  if (end < 0) return [];
+  if (end < 0) return { rounds: [], requests: [] };
   try {
     const parsed: unknown = JSON.parse(text.slice(jsonStart, end));
-    if (!isRecord(parsed) || !Array.isArray(parsed.rounds)) return [];
-    return parsed.rounds
-      .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
-      .map(entry => ({ head: entry.head, verdict: entry.verdict }))
-      .slice(-20);
+    if (!isRecord(parsed)) return { rounds: [], requests: [] };
+    const rounds = Array.isArray(parsed.rounds)
+      ? parsed.rounds
+        .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
+        .map(entry => ({ head: entry.head, verdict: entry.verdict }))
+        .slice(-20)
+      : [];
+    const requests = Array.isArray(parsed.requests)
+      ? parsed.requests
+        .filter((entry): entry is StatusCommentRequest => isRecord(entry) && typeof entry.reviewerId === 'string' && entry.reviewerId.trim() !== '' && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.at === 'string' && entry.at.trim() !== '')
+        .map(entry => ({ reviewerId: entry.reviewerId, head: entry.head, at: entry.at }))
+        .slice(-40)
+      : [];
+    return { rounds, requests };
   } catch {
-    return [];
+    return { rounds: [], requests: [] };
   }
+}
+
+function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
+  return parseStatusCommentPayload(body).rounds;
+}
+
+function isTrustedStatusComment(comment: RawComment, trustedAuthor: TrustedAuthorInput): boolean {
+  return authorIsTrusted(comment.author?.login, trustedAuthor) && (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`);
+}
+
+function trustedStatusComments(comments: readonly RawComment[], trustedAuthor: TrustedAuthorInput): RawComment[] {
+  return comments.filter(comment => isTrustedStatusComment(comment, trustedAuthor));
+}
+
+function mergeStatusCommentPayloads(comments: readonly RawComment[]): { rounds: Array<{ head: string; verdict: string }>; requests: StatusCommentRequest[] } {
+  const roundHeads: string[] = [];
+  const verdicts = new Map<string, string>();
+  const requestKeys = new Set<string>();
+  const requests: StatusCommentRequest[] = [];
+  for (const comment of comments) {
+    const payload = parseStatusCommentPayload(comment.body);
+    for (const round of payload.rounds) {
+      if (!verdicts.has(round.head)) roundHeads.push(round.head);
+      verdicts.set(round.head, round.verdict);
+    }
+    for (const request of payload.requests) {
+      const key = `${request.reviewerId}\0${request.head}`;
+      if (requestKeys.has(key)) continue;
+      requestKeys.add(key);
+      requests.push(request);
+    }
+  }
+  return {
+    rounds: roundHeads.map(head => ({ head, verdict: verdicts.get(head) ?? 'pending' })).slice(-20),
+    requests: requests.slice(-40),
+  };
+}
+
+function hasStatusRequest(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: TrustedAuthorInput): boolean {
+  const reviewerKey = reviewerId(reviewer);
+  return trustedStatusComments(comments, trustedAuthor)
+    .some(comment => parseStatusCommentPayload(comment.body).requests.some(request => request.reviewerId === reviewerKey && request.head === headSha));
+}
+
+function hasStaleStatusRequest(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: TrustedAuthorInput): boolean {
+  const reviewerKey = reviewerId(reviewer);
+  const requests = trustedStatusComments(comments, trustedAuthor)
+    .flatMap(comment => parseStatusCommentPayload(comment.body).requests.filter(request => request.reviewerId === reviewerKey));
+  return requests.some(request => request.head !== headSha) && !requests.some(request => request.head === headSha);
+}
+
+function renderStatusComment(input: {
+  prNumber: number;
+  headSha: string;
+  verdict: string;
+  rounds: Array<{ head: string; verdict: string }>;
+  requests: StatusCommentRequest[];
+}): string {
+  const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber, rounds: input.rounds, requests: input.requests })} -->`;
+  const history = input.rounds.map(round => `- ${round.head.slice(0, 12)}: ${round.verdict}`).join('\n');
+  const requestHistory = input.requests.length === 0
+    ? '- none'
+    : input.requests.map(request => `- ${request.head.slice(0, 12)}: @${request.reviewerId} at ${request.at}`).join('\n');
+  return [
+    marker,
+    '',
+    `Review status: ${input.verdict}.`,
+    `Head: ${input.headSha}.`,
+    '',
+    '<details>',
+    '<summary>Round history</summary>',
+    '',
+    history || '- none',
+    '',
+    '</details>',
+    '',
+    '<details>',
+    '<summary>Reviewer requests</summary>',
+    '',
+    requestHistory,
+    '',
+    '</details>',
+    '',
+    `Rerun: \`aie pr gate ${input.prNumber}\`.`,
+  ].join('\n');
 }
 
 export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
@@ -442,11 +542,13 @@ function trustedMarkerComment(comment: RawComment, trustedAuthor: TrustedAuthorI
 }
 
 function hasMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: TrustedAuthorInput): boolean {
+  if (hasStatusRequest(comments, reviewer, headSha, trustedAuthor)) return true;
   return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(markerFor(reviewer, headSha)));
 }
 
 function hasStaleMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: TrustedAuthorInput): boolean {
   if (hasMarker(comments, reviewer, headSha, trustedAuthor)) return false;
+  if (hasStaleStatusRequest(comments, reviewer, headSha, trustedAuthor)) return true;
   const prefix = `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:`;
   return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(prefix));
 }
@@ -1777,7 +1879,7 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
     kind: 'request-review',
     target: { kind: 'review-item', id: input.item.key.id },
     mutation: 'review-provider',
-    description: skipped ? `${handle} is already requested or has reviewed the current PR head.` : trigger === 'github-reviewer' ? `Request ${handle} as a GitHub pull request reviewer and record an idempotency marker for head ${headRefOid}.` : hostParticipant ? `Post an idempotent marker-only PR comment recording the ${handle} host review request for head ${headRefOid}.` : `Post an idempotent PR comment to trigger ${handle} for head ${headRefOid}.`,
+    description: skipped ? `${handle} is already requested or has reviewed the current PR head.` : trigger === 'github-reviewer' ? `Request ${handle} as a GitHub pull request reviewer and record the request on the status comment for head ${headRefOid}.` : hostParticipant ? `Record the ${handle} host review request on the status comment for head ${headRefOid}.` : `Post an idempotent PR comment to trigger ${handle} for head ${headRefOid}.`,
     expectedResult: skipped ? `${handle} review request remains idempotent for the current PR head.` : `${handle} is requested for PR review without trusting review feedback as workflow authority.`,
     status: skipped ? 'skipped' : 'planned',
     details: {
@@ -1789,6 +1891,7 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
       requestedForHead: input.requestedForHead,
       staleRequest: input.staleRequest,
       pending: input.pending,
+      headSha: headRefOid,
       marker: body.marker,
       body: body.body,
     },
@@ -3149,41 +3252,64 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     trustedMarkerAuthor: string;
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
   }): Promise<void> {
-    const priorRounds = parseStatusCommentRounds(input.comments.find(comment => (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`))?.body);
+    const comments = await this.getIssueComments(input.repositoryName, input.prNumber);
+    const trusted = trustedStatusComments(comments, input.trustedMarkerAuthor);
+    const prior = mergeStatusCommentPayloads(trusted);
     const rounds = [
-      ...priorRounds.filter(round => round.head !== input.headSha),
+      ...prior.rounds.filter(round => round.head !== input.headSha),
       { head: input.headSha, verdict: input.verdict },
     ];
-    const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber, rounds })} -->`;
-    const history = rounds.map(round => `- ${round.head.slice(0, 12)}: ${round.verdict}`).join('\n');
-    const body = [
-      marker,
-      '',
-      `Review status: ${input.verdict}.`,
-      `Head: ${input.headSha}.`,
-      '',
-      '<details>',
-      '<summary>Round history</summary>',
-      '',
-      history,
-      '',
-      '</details>',
-      '',
-      `Rerun: \`aie pr gate ${input.prNumber}\`.`,
-    ].join('\n');
-    const existing = input.comments.find(comment => authorIsTrusted(comment.author?.login, input.trustedMarkerAuthor) && (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`));
-    const commentId = existing ? issueCommentIdFromUrl(existing.url) : null;
+    await this.persistStatusComment({
+      repositoryName: input.repositoryName,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      verdict: input.verdict,
+      rounds,
+      requests: prior.requests,
+      existing: trusted[0],
+      extras: trusted.slice(1),
+      ghOptions: input.ghOptions,
+    });
+  }
+
+  private async persistStatusComment(input: {
+    repositoryName: string;
+    prNumber: number;
+    headSha: string;
+    verdict: string;
+    rounds: Array<{ head: string; verdict: string }>;
+    requests: StatusCommentRequest[];
+    existing: RawComment | undefined;
+    extras: readonly RawComment[];
+    ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
+  }): Promise<void> {
+    const body = renderStatusComment({
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      verdict: input.verdict,
+      rounds: input.rounds,
+      requests: input.requests,
+    });
+    const commentId = input.existing ? issueCommentIdFromUrl(input.existing.url) : null;
     const payloadPath = reviewPayloadPath({ body });
     try {
       if (commentId) {
         const result = await runGh(['api', `repos/${input.repositoryName}/issues/comments/${commentId}`, '--method', 'PATCH', '--input', payloadPath], input.ghOptions);
         if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment update failed');
-        return;
+      } else {
+        const result = await runGh(['api', `repos/${input.repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], input.ghOptions);
+        if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment create failed');
       }
-      const result = await runGh(['api', `repos/${input.repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], input.ghOptions);
-      if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment create failed');
     } finally {
       cleanupReviewPayload(payloadPath);
+    }
+    for (const extra of input.extras) {
+      const extraId = issueCommentIdFromUrl(extra.url);
+      if (!extraId) continue;
+      const result = await runGh(['api', `repos/${input.repositoryName}/issues/comments/${extraId}`, '--method', 'DELETE'], input.ghOptions);
+      if (result.exitCode !== 0 && !/404|Not Found/i.test(`${result.stderr}\n${result.stdout}`)) {
+        throw new Error(result.stderr || result.stdout || 'gh api status comment delete failed');
+      }
     }
   }
 
@@ -3526,14 +3652,92 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   }
 
   private async applyAction(action: Action): Promise<void> {
-    const prNumber = action.target.id;
+    const prNumber = Number(action.target.id);
+    if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+      throw new Error(`apply GitHub review action failed: target id ${redactReviewKeyId(action.target.id)} is not a positive pull request number.`);
+    }
     const requestKind = getString(action.details, 'requestKind');
     const handle = getString(action.details, 'handle');
     const body = getString(action.details, 'body') ?? '';
+    const reviewerKey = getString(action.details, 'reviewerId') ?? (handle ? reviewerId(handle) : '');
+    const marker = getString(action.details, 'marker') ?? '';
+    const headSha = getString(action.details, 'headSha')
+      ?? marker.split(':').at(-1)?.replace(' -->', '')
+      ?? '';
     if (!handle) throw new Error('apply GitHub review action failed: missing reviewer handle. Likely cause: the review request action was not planned with a handle. Next action: rerun `aie pr gate <pr> --dry-run` and inspect the generated review action details.');
-    if (requestKind === 'github-reviewer') { ensureGhSuccess(`gh pr edit ${prNumber} --add-reviewer ${handle}`, await runGh(['pr', 'edit', prNumber, '--add-reviewer', handle], this.options)); if (body !== '') ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', prNumber, '--body', body], this.options)); return; }
-    if (requestKind === 'comment') { ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', prNumber, '--body', body], this.options)); return; }
+    const bookkeepingOnly = requestKind === 'github-reviewer' || body.includes('Executor recorded a configured PR reviewer request');
+    if (requestKind === 'github-reviewer') {
+      ensureGhSuccess(`gh pr edit ${prNumber} --add-reviewer ${handle}`, await runGh(['pr', 'edit', String(prNumber), '--add-reviewer', handle], this.options));
+      await this.recordReviewerRequestOnStatusComment({ prNumber, reviewerId: reviewerKey, headSha });
+      return;
+    }
+    if (requestKind === 'comment') {
+      if (!bookkeepingOnly && body !== '') {
+        ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', String(prNumber), '--body', body], this.options));
+      }
+      await this.recordReviewerRequestOnStatusComment({ prNumber, reviewerId: reviewerKey, headSha });
+      return;
+    }
     throw new Error(`apply GitHub review action failed: request kind ${requestKind ?? 'unknown'} is not supported. Likely cause: action.details.requestKind is invalid. Next action: regenerate the action plan with requestKind "github-reviewer" or "comment".`);
+  }
+
+  private async resolvePublisherForMutation(prNumber: number): Promise<{
+    repositoryName: string;
+    trustedMarkerAuthor: string;
+    ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
+  }> {
+    const repositoryName = (await this.getRepositoryIdentity()).nameWithOwner;
+    const rawPr = await this.getPullRequest(prNumber);
+    const publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
+      cwd: this.options.cwd,
+      exec: this.options.exec,
+      prAuthorLogin: rawPr.author?.login ?? null,
+      mint: true,
+    });
+    if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
+    const identityFailure = unresolvedAppPublisherReason(publisher);
+    if (identityFailure) throw new Error(identityFailure);
+    const trustedMarkerAuthor = trustedPublisherLogin(publisher, await this.currentLogin()) ?? '';
+    if (trustedMarkerAuthor === '') {
+      throw new Error('Publisher identity login is unresolved; reviewer request bookkeeping is withheld. Resolve the review publisher login, then rerun `aie pr gate`.');
+    }
+    return {
+      repositoryName,
+      trustedMarkerAuthor,
+      ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
+    };
+  }
+
+  private async recordReviewerRequestOnStatusComment(input: { prNumber: number; reviewerId: string; headSha: string }): Promise<void> {
+    if (input.reviewerId === '' || input.headSha === '' || input.headSha === 'UNKNOWN') return;
+    const { repositoryName, trustedMarkerAuthor, ghOptions } = await this.resolvePublisherForMutation(input.prNumber);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const comments = await this.getIssueComments(repositoryName, input.prNumber);
+      const trusted = trustedStatusComments(comments, trustedMarkerAuthor);
+      const prior = mergeStatusCommentPayloads(trusted);
+      const already = prior.requests.some(request => request.reviewerId === input.reviewerId && request.head === input.headSha);
+      if (already && trusted.length <= 1) return;
+      const requests = already
+        ? prior.requests
+        : [...prior.requests, { reviewerId: input.reviewerId, head: input.headSha, at: new Date().toISOString() }].slice(-40);
+      const latestRound = prior.rounds.at(-1);
+      await this.persistStatusComment({
+        repositoryName,
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        verdict: latestRound?.verdict ?? 'pending',
+        rounds: prior.rounds,
+        requests,
+        existing: trusted[0],
+        extras: trusted.slice(1),
+        ghOptions,
+      });
+    }
+    const comments = await this.getIssueComments(repositoryName, input.prNumber);
+    const recorded = mergeStatusCommentPayloads(trustedStatusComments(comments, trustedMarkerAuthor));
+    if (!recorded.requests.some(request => request.reviewerId === input.reviewerId && request.head === input.headSha)) {
+      throw new Error('reviewer request record could not be written to the status comment after concurrent updates. Rerun `aie pr gate` for the current PR head.');
+    }
   }
 
   private async getRepositoryIdentity(): Promise<{ nameWithOwner: string; url: string }> {
