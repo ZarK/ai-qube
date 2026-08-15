@@ -142,17 +142,17 @@ export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = 
   };
 }
 
-function runShell(command, cwd) {
-  const result = spawnSync(command, {
+function runArgv(command, args, cwd) {
+  const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
-    shell: true,
+    shell: process.platform === "win32",
     timeout: 600_000,
     windowsHide: true,
   });
   if (result.status !== 0) {
     throw Object.assign(
-      new Error((result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `${command} failed.`),
+      new Error((result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `${command} ${args.join(" ")} failed.`),
       { reasonCode: "pack-failed" }
     );
   }
@@ -167,11 +167,11 @@ export function packPublishPackages(repoRoot, packages, packDir) {
     const packageDir = assertSourcePathSafe(repoRoot, entry.path, entry.packageKey);
     const manifest = path.join(packageDir, "package.json");
     const before = new Set(readdirSync(packDir));
-    runShell(`node "${path.join(repoRoot, "scripts", "resolve-publish-dependencies.mjs")}" "${manifest}"`, repoRoot);
+    runArgv(process.execPath, [path.join(repoRoot, "scripts", "resolve-publish-dependencies.mjs"), manifest], repoRoot);
     try {
-      runShell(`npm pack --ignore-scripts --pack-destination "${packDir}"`, packageDir);
+      runArgv("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], packageDir);
     } finally {
-      runShell(`node "${path.join(repoRoot, "scripts", "restore-publish-dependencies.mjs")}" "${manifest}"`, repoRoot);
+      runArgv(process.execPath, [path.join(repoRoot, "scripts", "restore-publish-dependencies.mjs"), manifest], repoRoot);
     }
     const created = readdirSync(packDir).filter(name => !before.has(name) && name.endsWith(".tgz"));
     if (created.length !== 1) {
