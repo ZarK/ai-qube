@@ -1,6 +1,6 @@
 <!-- BEGIN EXECUTOR MANAGED SECTION -->
 <!-- executor-managed-version: 1 -->
-<!-- executor-managed-checksum: 4755ad53560ed6c8811fe217c4dfaf0919ef30468015504dc46a2d03208aa95a -->
+<!-- executor-managed-checksum: d2a6a845650f9ada2ab59abfbf8fdfcbf4b42f8117acdbf9e5f9f80162c5d94c -->
 ## Executor Issue Workflow
 
 This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through `aie` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
@@ -37,9 +37,12 @@ Work cycle:
 PR review and merge cadence:
 
 - Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.
+- Blocking findings are limited to: correctness bugs, security or trust risks, broken required CI or checks, and failed acceptance criteria of the active issue. Everything else is advisory.
 - Treat non-blocking polish (advisory findings, nits, style preferences) as: fix it in the same pull request when cheap, otherwise drop it, or fold it into an already-queued Ready issue if it genuinely matches that scope. Never open a new GitHub issue to track review or audit leftovers.
 - Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this in-PR fix-or-drop disposition; they do not suggest or automate `gh issue create`, and neither should you.
-- Target a few strong review rounds on the active issue, then complete it. Prefer shipping the Ready queue over repeated review rounds on one pull request; if a lane keeps surfacing new findings past a couple of rounds, stop and report the blocker instead of looping.
+- Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the head. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.
+- While a review gate or review lane runs, do not edit files, commit, or move the branch head; isolated lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.
+- Commit only intentional, issue-scoped changes. Never commit unrelated untracked files that accumulate in the working tree.
 
 Analysis and discovered work:
 
