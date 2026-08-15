@@ -77,7 +77,16 @@ export function resolveRepoRoot(requested) {
 }
 
 export function assertPackDirOutsideCheckout(repoRoot, packDir) {
-  assertPrefixOutsideCheckout(repoRoot, packDir);
+  try {
+    assertPrefixOutsideCheckout(repoRoot, packDir);
+  } catch (error) {
+    if (error?.reasonCode === "prefix-inside-checkout") {
+      throw Object.assign(new Error("Pack directory must be outside the source checkout."), {
+        reasonCode: "pack-dir-inside-checkout",
+      });
+    }
+    throw error;
+  }
 }
 
 export function installedBinDir(prefix) {

@@ -54,10 +54,10 @@ describe("installed command verification", () => {
         reasonCode: "prefix-inside-checkout",
       });
       assert.throws(() => assertPackDirOutsideCheckout(fixture, path.join(fixture, "packs")), {
-        reasonCode: "prefix-inside-checkout",
+        reasonCode: "pack-dir-inside-checkout",
       });
       assert.throws(() => assertPackDirOutsideCheckout(repoRoot, path.join(repoRoot, "tmp-pack")), {
-        reasonCode: "prefix-inside-checkout",
+        reasonCode: "pack-dir-inside-checkout",
       });
     } finally {
       rmSync(fixture, { recursive: true, force: true });

@@ -45,7 +45,7 @@ for (const key of seedKeys) {
   const version = await readVersion(entry.packageJson);
   process.stdout.write(`# ${entry.filter}@${version}\n`);
   process.stdout.write(`pnpm --filter ${entry.filter} run verify\n`);
-  const backToRoot = entry.path.startsWith("packages/") ? ".." : "../..";
+  const backToRoot = "../..";
   process.stdout.write(`cd ${entry.path}\n`);
   process.stdout.write(`npm publish --access public --provenance=false --otp <otp>\n`);
   process.stdout.write(`cd ${backToRoot}\n\n`);
