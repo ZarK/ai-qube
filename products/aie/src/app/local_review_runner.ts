@@ -17,6 +17,7 @@ import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './m
 import { defaultRereviewMode } from '../config/schema.js';
 import { reviewModeOf } from '../review_mode.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
+import { auditReviewContextLines, readManualUiAuditPolicy, VISUAL_REVIEW_LANE } from './audit_review_context.js';
 import { inspectAffected } from '../repo/index.js';
 import type { RepoAffectedResult } from '@tjalve/qube-core';
 import { buildReviewHeadDigest, reviewHeadDigestContextLines, writeReviewHeadDigest, type ReviewHeadDigest } from './review_head_digest.js';
@@ -110,6 +111,8 @@ export interface LocalReviewRunResult {
   summary: string;
 }
 
+let auditHomeDirectory: string | undefined;
+
 interface LocalReviewRunnerInput {
   repoRoot: string;
   issueNumbers: readonly number[];
@@ -119,6 +122,7 @@ interface LocalReviewRunnerInput {
   shadow: boolean;
   dryRun: boolean;
   includePrompts?: boolean;
+  homeDirectory?: string;
   forceFullReview?: boolean;
   exec?: PrGateExec;
   contextLines?: readonly string[];
@@ -350,8 +354,19 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     };
   }
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
+  const visualAuditLines = lane === VISUAL_REVIEW_LANE
+    ? auditReviewContextLines({
+      repoRoot,
+      issueNumber: issueNumbers[0] ?? issueNumber,
+      headSha,
+      homeDirectory: auditHomeDirectory,
+      manualUiAudit: readManualUiAuditPolicy(repoRoot),
+      uiLaneActive: true,
+    })
+    : [];
+  const renderedContext = lane === VISUAL_REVIEW_LANE ? [...contextLines, ...visualAuditLines] : contextLines;
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, renderedContext, repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
   const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
@@ -507,6 +522,7 @@ async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => 
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
+  auditHomeDirectory = input.homeDirectory;
   const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const opencode = await probeOpenCodeReviewCapability();
   const profile = effectiveProfile(config, input.required, input.shadow);

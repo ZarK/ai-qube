@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 import { homedir } from 'os';
 import { Config } from './config/index.js';
@@ -66,6 +68,17 @@ export interface UiAuditOptions {
   dryRun?: boolean;
   prepare?: boolean;
   check?: boolean;
+  headSha?: string | null;
+}
+
+export const AUDIT_HEAD_STAMP_NAME = 'head-stamp.json';
+
+export function uiAuditEvidenceDirectory(issueNumber: number, repoRoot?: string, homeDirectory?: string): string {
+  return join(evidenceRoot(repoRoot, homeDirectory ?? homedir()), String(issueNumber));
+}
+
+export function hashAuditEvidencePayload(notes: string, observation: string, screenshots: readonly { name: string; bytes: number; sha256: string }[]): string {
+  return createHash('sha256').update(JSON.stringify({ notes, observation, screenshots })).digest('hex');
 }
 
 const SCREENSHOT_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
@@ -237,6 +250,51 @@ function disabledEvidence(directory: string, issueNumber: number): UiAuditEviden
   return withAuditEvidence(issueNumber, { ...readEvidence(directory, issueNumber), state: 'disabled', missing: [] });
 }
 
+function resolveAuditHeadSha(repoRoot: string | undefined, explicit: string | null | undefined): string | null {
+  if (explicit && explicit.trim() !== '') return explicit.trim();
+  if (!repoRoot) return null;
+  try {
+    const sha = execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return /^[a-f0-9]{7,40}$/i.test(sha) ? sha.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCompleteAuditStamp(directory: string, headSha: string): void {
+  const notesPath = join(directory, 'notes.md');
+  const observationPath = join(directory, 'browser-observation.md');
+  const screenshotsDirectory = join(directory, 'screenshots');
+  const notes = hasNonEmptyFile(notesPath) ? readFileSync(notesPath, 'utf8') : '';
+  const observation = hasNonEmptyFile(observationPath) ? readFileSync(observationPath, 'utf8') : '';
+  const screenshots = countScreenshots(screenshotsDirectory) === 0
+    ? []
+    : readdirSync(screenshotsDirectory)
+      .filter(name => SCREENSHOT_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension)))
+      .sort()
+      .flatMap(name => {
+        const path = join(screenshotsDirectory, name);
+        try {
+          const info = statSync(path);
+          if (!info.isFile()) return [];
+          return [{ name, bytes: info.size, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') }];
+        } catch {
+          return [];
+        }
+      });
+  const digest = hashAuditEvidencePayload(notes, observation, screenshots);
+  const path = join(directory, AUDIT_HEAD_STAMP_NAME);
+  const body = `${JSON.stringify({ version: 1, headSha: headSha.trim().toLowerCase(), digest }, null, 2)}\n`;
+  const tempPath = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tempPath, body, { encoding: 'utf8', flag: 'wx' });
+  renameSync(tempPath, path);
+}
+
 function createDirectory(path: string, dryRun: boolean, created: string[]): void {
   if (existsSync(path)) return;
   if (!dryRun) mkdirSync(path, { recursive: true });
@@ -277,6 +335,10 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
     createDirectory(screenshotsDirectory, dryRun, createdDirectories);
   }
   const evidence = config.manualUiAudit ? readEvidence(directory, options.issueNumber) : disabledEvidence(directory, options.issueNumber);
+  const headSha = resolveAuditHeadSha(options.repoRoot, options.headSha);
+  if (check && !dryRun && config.manualUiAudit && evidence.state === 'visual-analysis-recorded' && headSha) {
+    writeCompleteAuditStamp(directory, headSha);
+  }
   const result: UiAuditResult = {
     ok: true,
     command: 'audit ui',
