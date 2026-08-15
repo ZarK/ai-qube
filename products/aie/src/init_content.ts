@@ -95,9 +95,7 @@ function opencodeLocalReviewEnabled(config: Config): boolean {
 }
 
 function routedLocalReviewEnabled(config: Config): boolean {
-  if (!localReviewEnabled(config)) return false;
-  if (config.reviewLanes.some(lane => lane.runner === 'local-host' && lane.route !== null)) return true;
-  return config.reviewRoute !== null && (config.reviewLanes.length === 0 || config.reviewLanes.some(lane => lane.runner === 'local-host'));
+  return reviewModeOf(config) === 'isolated';
 }
 
 function renderOpenCodeLocalReviewBoundary(config: Config): string {

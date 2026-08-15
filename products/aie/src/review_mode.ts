@@ -1,11 +1,11 @@
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ReviewAdapterKind, ReviewRoutePolicy } from './core/policy.js';
+import type { ReviewAdapterKind, ReviewMode, ReviewRoutePolicy } from './core/policy.js';
 import type { Config } from './config/types.js';
 
-export const REVIEW_MODES = ['external', 'host', 'isolated'] as const;
-export type ReviewMode = (typeof REVIEW_MODES)[number];
+export const REVIEW_MODES: readonly ReviewMode[] = ['external', 'host', 'isolated'];
+export type { ReviewMode };
 
 export interface ReviewModeInputs {
   readonly mode?: ReviewMode | null;
@@ -15,7 +15,7 @@ export interface ReviewModeInputs {
 }
 
 export function isReviewMode(value: unknown): value is ReviewMode {
-  return value === 'external' || value === 'host' || value === 'isolated';
+  return REVIEW_MODES.includes(value as ReviewMode);
 }
 
 export function inferReviewMode(input: Omit<ReviewModeInputs, 'mode'>): ReviewMode {

@@ -383,11 +383,11 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
         .find(version => version !== null) ?? null,
       runningToolVersion: readAiePackageVersion(),
       instructionStale: (() => {
-        const installed = [join(options.evidenceRoot ?? process.cwd(), 'AGENTS.md'), join(options.evidenceRoot ?? process.cwd(), 'CLAUDE.md')]
+        const running = readAiePackageVersion();
+        const versions = [join(options.evidenceRoot ?? process.cwd(), 'AGENTS.md'), join(options.evidenceRoot ?? process.cwd(), 'CLAUDE.md')]
           .filter(path => existsSync(path))
-          .map(path => readManagedToolVersion(readFileSync(path, 'utf8')))
-          .find(version => version !== null) ?? null;
-        return installed !== readAiePackageVersion();
+          .map(path => readManagedToolVersion(readFileSync(path, 'utf8')));
+        return versions.length === 0 || versions.some(version => version !== running);
       })(),
       instructionRefreshCommand: 'aie init . --force',
       profile: effectiveReviewProfile,

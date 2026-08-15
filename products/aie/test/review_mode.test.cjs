@@ -74,6 +74,14 @@ describe('review mode doctor and init', () => {
     assert.equal(readiness.reviewAgent.instructionToolVersion, '0.0.1');
     assert.equal(readiness.reviewAgent.instructionStale, true);
     assert.match(readiness.reviewAgent.instructionRefreshCommand, /aie init \. --force/);
+
+    writeFileSync(join(repo, 'AGENTS.md'), renderManagedSection('## Executor Issue Workflow\n'));
+    writeFileSync(join(repo, 'CLAUDE.md'), readFileSync(join(repo, 'AGENTS.md'), 'utf8').replace(
+      /executor-managed-tool:\s*[^\s]+/,
+      'executor-managed-tool: 0.0.1',
+    ));
+    const mixed = buildGateReadinessDiagnostics(isolatedConfig(null), { ghAuthenticated: false, evidenceRoot: repo });
+    assert.equal(mixed.reviewAgent.instructionStale, true);
   });
 
   it('stamps the running tool version on a fresh init and names the active mode', async () => {
