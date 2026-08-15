@@ -206,6 +206,21 @@ describe("github reviewer request status comment", () => {
     }
   });
 
+  it("treats a GitHub bot login with or without the [bot] suffix as the same trusted author", async () => {
+    const fixture = createReviewRequestFixture({
+      comments: [{
+        author: { login: "executor[bot]" },
+        body: "<!-- aie:pr-gate:copilot:abc123 -->\nExecutor recorded a configured PR reviewer request for this PR head.",
+        url: "https://github.com/example/repo/pull/12#issuecomment-22",
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, policy(["@copilot"]));
+    assert.equal(plan.actions[0].status, "skipped");
+    assert.equal(plan.actions[0].details.requestedForHead, true);
+  });
+
   it("still treats a trusted legacy marker as a current-head request", async () => {
     const fixture = createReviewRequestFixture({
       comments: [{

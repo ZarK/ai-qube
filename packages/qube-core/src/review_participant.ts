@@ -251,7 +251,8 @@ function hasStaleTrustedMarker(comments: ReturnType<typeof trustedComments>, rev
 
 function authorMatches(author: string | null, reviewer: string): boolean {
   if (author === null) return false;
-  return author.toLowerCase().replace(/^@/, "") === reviewer.toLowerCase().replace(/^@/, "");
+  const normalize = (value: string) => value.toLowerCase().replace(/^@/, "").replace(/\[bot\]$/i, "");
+  return normalize(author) === normalize(reviewer);
 }
 
 function isPendingRemoteRequest(requests: string[], handle: string): boolean {

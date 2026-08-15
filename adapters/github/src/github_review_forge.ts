@@ -554,7 +554,8 @@ function hasStaleMarker(comments: RawComment[], reviewer: string, headSha: strin
 }
 
 function authorMatches(author: string, reviewer: string): boolean {
-  return author.toLowerCase().replace(/^@/, '') === reviewer.toLowerCase().replace(/^@/, '');
+  const normalize = (value: string) => value.toLowerCase().replace(/^@/, '').replace(/\[bot\]$/i, '');
+  return normalize(author) === normalize(reviewer);
 }
 
 function isCurrentReview(reviews: RawReview[], reviewer: string, headSha: string): boolean {
