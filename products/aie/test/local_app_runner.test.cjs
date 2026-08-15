@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
+const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -34,18 +35,61 @@ describe('local app runner service', () => {
     const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
     const paths = runPaths(root, 'ui-audit');
-    const plan = buildSpawnPlan({ repoRoot: root, name: 'ui-audit', cwd: 'apps/web', command: ['npm.cmd', 'run', 'dev'] }, paths);
+    const plan = buildSpawnPlan({ repoRoot: root, name: 'ui-audit', cwd: 'apps/web', command: ['npm.cmd', 'run', 'dev'], platform: 'linux' }, paths);
 
     assert.equal(plan.command, 'npm.cmd');
     assert.deepEqual(plan.args, ['run', 'dev']);
     assert.equal(plan.cwd, resolve(root, 'apps/web'));
     assert.equal(plan.detached, true);
     assert.equal(plan.windowsHide, true);
+    assert.equal(plan.shell, false);
     assert.equal(paths.metadataPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'metadata.json'));
     assert.equal(paths.currentAttemptPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'current-attempt.json'));
     assert.equal(paths.attemptId, null);
     assert.equal(paths.stdoutPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stdout.log'));
     assert.equal(paths.stderrPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stderr.log'));
+  });
+
+  it('resolves Windows launcher scripts and escapes them through cmd.exe', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const bin = join(root, 'win-bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'pnpm.cmd'), '@echo off\r\n');
+    const paths = runPaths(root, 'ui-audit');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      command: ['pnpm', 'dev', 'quoted "arg"'],
+      platform: 'win32',
+      env: { PATH: bin, PATHEXT: '.CMD;.EXE', OS: 'Windows_NT', ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    }, paths);
+
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.equal(plan.args[0], '/d');
+    assert.equal(plan.args[1], '/s');
+    assert.equal(plan.args[2], '/c');
+    assert.match(plan.args[3], /pnpm\.cmd/i);
+    assert.match(plan.args[3], /quoted ""arg""/);
+    assert.equal(plan.shell, false);
+    assert.equal(plan.windowsVerbatimArguments, true);
+  });
+
+  it('does not wrap a missing Windows launcher as a successful command', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const paths = runPaths(root, 'ui-audit');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      command: ['missing-launcher', 'dev'],
+      platform: 'win32',
+      env: { PATH: join(root, 'empty-bin'), PATHEXT: '.CMD;.EXE', OS: 'Windows_NT' },
+    }, paths);
+
+    assert.equal(plan.command, 'missing-launcher');
+    assert.deepEqual(plan.args, ['dev']);
+    assert.equal(plan.shell, false);
   });
 
   it('plans start without launching and reports persisted current-process status', async () => {
@@ -393,6 +437,95 @@ describe('local app runner service', () => {
       assert.ok(historic.logTail.stderr.some(line => /spawn error|ENOENT/.test(line)));
     } finally {
       runStop({ repoRoot: root, name: 'ui-audit' });
+    }
+  });
+
+  it('waits for a hostname URL when the server answers on IPv6 localhost', async () => {
+    const { runPaths, runWait } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const paths = runPaths(root, 'ui-audit');
+    mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.metadataPath, JSON.stringify({
+      version: 1,
+      name: 'ui-audit',
+      pid: process.pid,
+      command: [process.execPath],
+      cwd: root,
+      startedAt: '2026-06-18T00:00:00.000Z',
+      platform: process.platform,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      metadataPath: paths.metadataPath,
+    }, null, 2));
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200);
+      response.end('ok');
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host: '::1', port: 0 }, resolve);
+    }).catch(() => null);
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close();
+      return;
+    }
+    try {
+      const result = await runWait({
+        repoRoot: root,
+        name: 'ui-audit',
+        url: `http://localhost:${address.port}`,
+        timeoutSeconds: 3,
+        pollIntervalMs: 100,
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.status, 'ready');
+      assert.equal(result.httpStatus, 200);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('waits for an IPv4 localhost URL when the server answers on 127.0.0.1', async () => {
+    const { runPaths, runWait } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const paths = runPaths(root, 'ui-audit');
+    mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.metadataPath, JSON.stringify({
+      version: 1,
+      name: 'ui-audit',
+      pid: process.pid,
+      command: [process.execPath],
+      cwd: root,
+      startedAt: '2026-06-18T00:00:00.000Z',
+      platform: process.platform,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      metadataPath: paths.metadataPath,
+    }, null, 2));
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200);
+      response.end('ok');
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host: '127.0.0.1', port: 0 }, resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    try {
+      const result = await runWait({
+        repoRoot: root,
+        name: 'ui-audit',
+        url: `http://127.0.0.1:${address.port}`,
+        timeoutSeconds: 3,
+        pollIntervalMs: 100,
+      });
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.status, 'ready');
+      assert.equal(result.httpStatus, 200);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
     }
   });
 });

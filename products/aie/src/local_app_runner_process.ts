@@ -62,5 +62,14 @@ export function processIdentity(metadata: RunMetadata, platform = process.platfo
   if (!commandLine) return { state: 'unknown', commandLine: null };
   const expected = normalizeExecutableName(metadata.command[0] ?? '');
   const actual = commandLineExecutableName(commandLine);
-  return expected && actual === expected ? { state: 'running', commandLine } : { state: 'unknown', commandLine };
+  if (expected && actual === expected) return { state: 'running', commandLine };
+  if (expected && actual === 'cmd' && commandLineMentions(commandLine, expected)) {
+    return { state: 'running', commandLine };
+  }
+  return { state: 'unknown', commandLine };
+}
+
+function commandLineMentions(commandLine: string, expected: string): boolean {
+  const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[\\\\/"'\\s])${escaped}(?:\\.(?:cmd|exe|bat|ps1))?(?:["'\\s]|$)`, 'i').test(commandLine);
 }

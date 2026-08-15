@@ -37,6 +37,8 @@ export interface SpawnPlan {
   cwd: string;
   detached: boolean;
   windowsHide: boolean;
+  shell: boolean;
+  windowsVerbatimArguments: boolean;
   stdoutPath: string;
   stderrPath: string;
 }
@@ -109,6 +111,7 @@ export interface RunStartOptions {
   dryRun?: boolean;
   now?: Date;
   platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface RunNameOptions {
