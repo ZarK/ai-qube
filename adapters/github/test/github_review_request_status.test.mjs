@@ -283,6 +283,45 @@ describe("github reviewer request status comment", () => {
     assert.equal(payload.requests[0].head, "abc123");
   });
 
+  it("merges request history into one status comment when two trusted comments exist", async () => {
+    const first = [
+      `<!-- qube-pr-status:${JSON.stringify({
+        version: 1,
+        prNumber: 12,
+        rounds: [],
+        requests: [{ reviewerId: "copilot", head: "old111", at: "2026-08-01T00:00:00.000Z" }],
+      })} -->`,
+      "",
+      "Review status: pending.",
+    ].join("\n");
+    const second = [
+      `<!-- qube-pr-status:${JSON.stringify({
+        version: 1,
+        prNumber: 12,
+        rounds: [{ head: "abc123", verdict: "approve" }],
+        requests: [],
+      })} -->`,
+      "",
+      "Review status: approve.",
+    ].join("\n");
+    const fixture = createReviewRequestFixture({
+      comments: [
+        { author: { login: "executor" }, body: first, url: "https://github.com/example/repo/pull/12#issuecomment-11" },
+        { author: { login: "executor" }, body: second, url: "https://github.com/example/repo/pull/12#issuecomment-12" },
+      ],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, policy(["@coderabbitai"]));
+    await provider.apply(plan);
+
+    assert.equal(statusComments(fixture.comments).length, 1);
+    const payload = parseStatusPayload(statusComments(fixture.comments)[0].body);
+    assert.ok(payload.requests.some(request => request.reviewerId === "copilot" && request.head === "old111"));
+    assert.ok(payload.requests.some(request => request.reviewerId === "coderabbitai" && request.head === "abc123"));
+    assert.ok(payload.rounds.some(round => round.head === "abc123" && round.verdict === "approve"));
+  });
+
   it("does not reuse a prior-head round verdict when recording a new-head request", async () => {
     const existing = [
       `<!-- qube-pr-status:${JSON.stringify({

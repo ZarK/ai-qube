@@ -2164,7 +2164,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         prAuthorLogin,
         mint: true,
       });
-      if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
+      if (publisher.identity.login && !this.cachedPublisherLogin) this.cachedPublisherLogin = publisher.identity.login;
       const identityFailure = unresolvedAppPublisherReason(publisher);
       if (identityFailure) {
         return localReviewPublishResult({
@@ -2639,7 +2639,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         prAuthorLogin,
         mint: true,
       });
-      if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
+      if (publisher.identity.login && !this.cachedPublisherLogin) this.cachedPublisherLogin = publisher.identity.login;
       const identityFailure = unresolvedAppPublisherReason(publisher);
       if (identityFailure) {
         return roundSummaryPublishResult({
@@ -3266,7 +3266,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
   }): Promise<void> {
     const comments = await this.getIssueComments(input.repositoryName, input.prNumber);
-    const trusted = trustedStatusComments(comments, input.trustedMarkerAuthor);
+    const trustedAuthors: TrustedAuthorInput = [...new Set([
+      ...trustedAuthorsList(input.trustedMarkerAuthor),
+      ...(this.cachedPublisherLogin ? [this.cachedPublisherLogin] : []),
+    ])];
+    const trusted = trustedStatusComments(comments, trustedAuthors.length > 0 ? trustedAuthors : input.trustedMarkerAuthor);
     const prior = mergeStatusCommentPayloads(trusted);
     const rounds = [
       ...prior.rounds.filter(round => round.head !== input.headSha),
