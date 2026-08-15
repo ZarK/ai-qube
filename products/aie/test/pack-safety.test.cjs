@@ -118,7 +118,7 @@ describe('package publish surface safety', () => {
     assert.match(workflow, /console\.log\('verify=' \+ p\.verify\)/);
     assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
-    assert.match(stageScript, /npm stage publish \. --access public --ignore-scripts/);
+    assert.match(stageScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts"\]/);
     assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
     assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
     assert.doesNotMatch(workflow, /npm publish(?:\s|$)/);

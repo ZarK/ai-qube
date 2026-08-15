@@ -290,6 +290,9 @@ export async function runInstalledCommandVerification(input = {}) {
     packages = packages ?? [];
     const commands = input.commands ?? planCommands;
     if (commands.length === 0) {
+      if (!input.planPath) {
+        throw Object.assign(new Error("Provide --plan or --command."), { reasonCode: "usage" });
+      }
       report.ok = true;
       report.skipped = "no-command-packages";
       return report;

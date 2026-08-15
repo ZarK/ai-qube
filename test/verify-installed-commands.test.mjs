@@ -125,6 +125,21 @@ describe("installed command verification", () => {
     await assert.rejects(() => resolvePublishTag("publish-set-v0.0.0", repoRoot), /does not match/);
   });
 
+  it("fails closed when neither a plan nor commands are provided", async () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-empty-"));
+    try {
+      const report = await runInstalledCommandVerification({
+        repoRoot,
+        prefix,
+        skipPack: true,
+      });
+      assert.equal(report.ok, false);
+      assert.equal(report.reasonCode, "usage");
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a plan path outside the repository", async () => {
     const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-plan-"));
     try {

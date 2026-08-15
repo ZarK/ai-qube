@@ -7,29 +7,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PUBLISH_PACKAGES, PUBLISH_SET_ORDER } from "./publish-packages.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const seedPackages = [
-  { key: "qube-core", dir: "packages/qube-core", filter: "@tjalve/qube-core" },
-  { key: "qube-adapter-github", dir: "adapters/github", filter: "@tjalve/qube-adapter-github" },
-  { key: "qube-adapter-codex", dir: "adapters/codex", filter: "@tjalve/qube-adapter-codex" },
-  { key: "qube-adapter-opencode", dir: "adapters/opencode", filter: "@tjalve/qube-adapter-opencode" },
-  { key: "qube-adapter-claude-code", dir: "adapters/claude-code", filter: "@tjalve/qube-adapter-claude-code" },
-  { key: "qube-adapter-gitlab", dir: "adapters/gitlab", filter: "@tjalve/qube-adapter-gitlab" },
-  { key: "qube-adapter-linear", dir: "adapters/linear", filter: "@tjalve/qube-adapter-linear" },
-  { key: "qube-adapter-jira", dir: "adapters/jira", filter: "@tjalve/qube-adapter-jira" },
-  { key: "qube-adapter-jenkins", dir: "adapters/jenkins", filter: "@tjalve/qube-adapter-jenkins" },
-];
-
-const stagedPackages = [
-  "qube-cli",
-  "aib",
-  "aie",
-  "aiu",
-  "aiq",
-  "qube",
-  ...seedPackages.map(entry => entry.key),
-];
+const seedKeys = PUBLISH_SET_ORDER.filter(key => key === "qube-core" || key.startsWith("qube-adapter-"));
 
 async function readVersion(packageJsonPath) {
   const json = JSON.parse(await readFile(path.join(ROOT, packageJsonPath), "utf8"));
@@ -58,29 +40,21 @@ process.stdout.write("# Approve the staged set in the npm UI after the workflow 
 process.stdout.write("# The workflow packs the set, installs it into a temp prefix, and checks that qube, aie, aib, aiu, and aiq start.\n\n");
 
 process.stdout.write("2) First-time seed publishes (npm OTP required; configure trusted publisher after each new package)\n");
-for (const entry of seedPackages) {
-  const version = await readVersion(`${entry.dir}/package.json`);
+for (const key of seedKeys) {
+  const entry = PUBLISH_PACKAGES.get(key);
+  const version = await readVersion(entry.packageJson);
   process.stdout.write(`# ${entry.filter}@${version}\n`);
   process.stdout.write(`pnpm --filter ${entry.filter} run verify\n`);
-  const backToRoot = entry.dir.startsWith("packages/") ? ".." : "../..";
-  process.stdout.write(`cd ${entry.dir}\n`);
+  const backToRoot = entry.path.startsWith("packages/") ? ".." : "../..";
+  process.stdout.write(`cd ${entry.path}\n`);
   process.stdout.write(`npm publish --access public --provenance=false --otp <otp>\n`);
   process.stdout.write(`cd ${backToRoot}\n\n`);
 }
 
 process.stdout.write("3) Optional single-package staged publishes\n");
-for (const key of stagedPackages) {
-  let version;
-  if (key === "qube-cli") version = await readVersion("packages/qube-cli/package.json");
-  else if (key === "aib") version = await readVersion("products/aib/package.json");
-  else if (key === "aie") version = await readVersion("products/aie/package.json");
-  else if (key === "aiu") version = await readVersion("products/aiu/package.json");
-  else if (key === "aiq") version = await readVersion("products/aiq/packages/cli/package.json");
-  else if (key === "qube") version = await readVersion("products/qube/package.json");
-  else {
-    const entry = seedPackages.find(item => item.key === key);
-    version = entry ? await readVersion(`${entry.dir}/package.json`) : "?";
-  }
+for (const key of PUBLISH_SET_ORDER) {
+  const entry = PUBLISH_PACKAGES.get(key);
+  const version = await readVersion(entry.packageJson);
   process.stdout.write(`git tag publish-${key}-v${version}\n`);
   process.stdout.write(`git push origin publish-${key}-v${version}\n`);
   process.stdout.write(`# Approve staged package in npm UI for publish-${key}-v${version}\n\n`);

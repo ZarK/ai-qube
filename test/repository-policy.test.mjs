@@ -32,10 +32,15 @@ describe("repository policy", () => {
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
     assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
-    assert.match(workflow, /resolve-publish-dependencies\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
-    assert.match(workflow, /check-publish-manifest\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
-    assert.match(workflow, /npm stage publish \. --access public --ignore-scripts/);
-    assert.match(workflow, /restore-publish-dependencies\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
+    assert.match(workflow, /run-publish-plan\.mjs prepare publish-plan\.json/);
+    assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
+    assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
+    assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
+    const stageScript = read("scripts/run-publish-plan.mjs");
+    assert.match(stageScript, /resolve-publish-dependencies\.mjs/);
+    assert.match(stageScript, /check-publish-manifest\.mjs/);
+    assert.match(stageScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts"\]/);
+    assert.match(stageScript, /restore-publish-dependencies\.mjs/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.doesNotMatch(workflow, /(?:^|\s)npm publish(?:\s|$)/);
     assert.match(codeowners, /^\.npmrc @ZarK$/m);
@@ -59,7 +64,7 @@ describe("repository policy", () => {
     assert.match(rootPackage.scripts.verify, /verify:manifests/);
     assert.match(qubePackage.scripts.verify, /check-strict-package-json\.mjs/);
     assert.match(workflow, /pnpm run verify:manifests/);
-    assert.match(workflow, /node --test --test-concurrency=1 test\/local-install-qube\.test\.mjs test\/repository-policy\.test\.mjs/);
+    assert.match(workflow, /node --test --test-concurrency=1 test\/local-install-qube\.test\.mjs test\/repository-policy\.test\.mjs test\/publish-tag\.test\.mjs test\/verify-installed-commands\.test\.mjs/);
     assert.match(qubePackage.scripts.postpack, /restore-publish-dependencies\.mjs/);
   });
 
