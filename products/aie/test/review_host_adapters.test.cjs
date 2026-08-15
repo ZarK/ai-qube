@@ -101,6 +101,28 @@ describe('review host adapter registry', () => {
     assert.deepEqual(JSON.parse(parsed.text), lane);
   });
 
+  it('lists grok and Codex models through each adapter catalog', () => {
+    const grok = getReviewHostAdapter('grok');
+    assert.equal(typeof grok.listCatalog, 'function');
+    assert.deepEqual(grok.listCatalog({
+      executable: 'grok',
+      prefixArgs: [],
+      runCommand: () => 'Available models:\n- grok-4.5\n- grok-4\n',
+    }), ['grok-4.5', 'grok-4']);
+    const codex = getReviewHostAdapter('codex');
+    assert.equal(typeof codex.listCatalog, 'function');
+    assert.deepEqual(codex.listCatalog({
+      executable: 'codex',
+      prefixArgs: [],
+      runCommand: () => JSON.stringify({ models: [{ slug: 'gpt-5.6-luna' }, { slug: 'gpt-5.5' }, { slug: '  ' }] }),
+    }), ['gpt-5.6-luna', 'gpt-5.5']);
+    assert.equal(codex.listCatalog({
+      executable: 'codex',
+      prefixArgs: [],
+      runCommand: () => 'not-json',
+    }), null);
+  });
+
   it('reports no missing capabilities for the built-in codex and grok adapters', () => {
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('codex')), []);
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok')), []);

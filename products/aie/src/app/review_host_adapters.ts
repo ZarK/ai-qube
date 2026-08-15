@@ -66,6 +66,7 @@ export interface ReviewHostAdapter {
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;
   parseEnvelope(stdout: string): ReviewHostParsedEnvelope | null;
   probeAfterVersion(context: ReviewHostProbeContext): ReviewHostProbeResult;
+  listCatalog?(context: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null;
 }
 
 const CAPABILITY_FIELD: Record<ReviewHostCapabilityNeed, keyof ReviewHostCapabilities> = {
@@ -96,6 +97,23 @@ export function parseGrokModelCatalog(output: string): string[] | null {
       break;
     }
     models.push(match[1]);
+  }
+  return models.length > 0 ? models : null;
+}
+
+export function parseCodexModelCatalog(output: string): string[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.models)) return null;
+  const models: string[] = [];
+  for (const item of parsed.models) {
+    if (!isRecord(item) || typeof item.slug !== 'string') continue;
+    const slug = item.slug.trim();
+    if (slug !== '') models.push(slug);
   }
   return models.length > 0 ? models : null;
 }
@@ -252,10 +270,26 @@ const codexAdapter: ReviewHostAdapter = Object.freeze({
     return { args, stdin: context.prompt };
   },
   parseEnvelope: parseCodexOutput,
-  probeAfterVersion(): ReviewHostProbeResult {
-    // Codex exposes no model-catalog command, so model presence is verified at
-    // execution time; hosts without a configured model use the host default.
-    return { status: 'ready', modelListed: null, diagnostic: null };
+  probeAfterVersion({ model, executable, prefixArgs, runCommand }: ReviewHostProbeContext): ReviewHostProbeResult {
+    if (!model) return { status: 'ready', modelListed: null, diagnostic: null };
+    let catalog: string[] | null;
+    try {
+      catalog = parseCodexModelCatalog(runCommand(executable, [...prefixArgs, 'debug', 'models']));
+    } catch {
+      return { status: 'ready', modelListed: null, diagnostic: null };
+    }
+    if (!catalog) return { status: 'ready', modelListed: null, diagnostic: null };
+    if (!catalog.includes(model)) {
+      return {
+        status: 'blocked',
+        modelListed: false,
+        diagnostic: `Configured review model "${model}" is not in the Codex catalog (${sanitizeProbeText(catalog.join(', '))}). Update the trusted review model configuration to a listed model.`,
+      };
+    }
+    return { status: 'ready', modelListed: true, diagnostic: null };
+  },
+  listCatalog({ executable, prefixArgs, runCommand }: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null {
+    return parseCodexModelCatalog(runCommand(executable, [...prefixArgs, 'debug', 'models']));
   },
 });
 
@@ -326,6 +360,9 @@ const grokAdapter: ReviewHostAdapter = Object.freeze({
       };
     }
     return { status: 'ready', modelListed: true, diagnostic: null };
+  },
+  listCatalog({ executable, prefixArgs, runCommand }: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null {
+    return parseGrokModelCatalog(runCommand(executable, [...prefixArgs, 'models']));
   },
 });
 

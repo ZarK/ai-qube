@@ -9,6 +9,7 @@ const { describe, it } = require('node:test');
 const {
   buildModelReviewPrompt,
   buildModelRouteInvocation,
+  isolatedRawOutputPath,
   modelRouteEnvironment,
   runModelReview,
   runModelRouteProcess,
@@ -208,6 +209,14 @@ describe('model review runner', () => {
       const terminalArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'terminal', path: 'terminal:test run', sha256: null }] });
       assert.equal(terminalArtifact.evidence, null);
       assert.equal(terminalArtifact.reasonCode, 'model-route-contract-mismatch');
+      const rawPath = isolatedRawOutputPath(repoRoot, 309, 310, 'abc123', 'code-quality');
+      assert.equal(existsSync(rawPath), true);
+      assert.match(terminalArtifact.error, /Raw output:/);
+      assert.match(terminalArtifact.error, /\.raw-output\.json/);
+      const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+      assert.equal(raw.headSha, 'abc123');
+      assert.equal(raw.reasonCode, 'model-route-contract-mismatch');
+      assert.ok(typeof raw.stdout === 'string' && raw.stdout.length > 0);
       // Uppercase digests are rejected exactly as laneArtifactViolation rejects them.
       const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
       const uppercaseDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest.toUpperCase() }] });

@@ -8,7 +8,7 @@ import { resolveExecutable } from '@tjalve/qube-core';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
-import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_support.js';
+import { laneEvidencePath, mkdirTrustedStoreSync, normalizeExternalLane, writeReviewFileGuarded, type LaneEvidence } from './local_review_runner_support.js';
 import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 
@@ -535,6 +535,47 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
   });
 }
 
+export function isolatedRawOutputPath(
+  repoRoot: string,
+  issueNumber: number,
+  prNumber: number,
+  headSha: string,
+  lane: LocalReviewLaneId,
+): string {
+  return join(dirname(laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane)), `${lane}.raw-output.json`);
+}
+
+function captureRawOutput(
+  input: ModelReviewRunInput,
+  result: ModelRouteProcessResult | null,
+  reasonCode: string,
+  error: string,
+): ModelReviewRunResult {
+  if (!result) return { evidence: null, reasonCode, error };
+  try {
+    const path = isolatedRawOutputPath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
+    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    writeReviewFileGuarded(path, `${JSON.stringify({
+      version: 1,
+      issueNumber: input.issueNumber,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      lane: input.lane,
+      host: input.plan.host,
+      reasonCode,
+      stdout: redact(result.stdout).slice(0, MAX_OUTPUT_BYTES),
+      stderr: redact(result.stderr).slice(0, MAX_OUTPUT_BYTES),
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      recordedAt: new Date().toISOString(),
+    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    const relativePath = relative(input.repoRoot, path).replace(/\\/g, '/');
+    return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
+  } catch {
+    return { evidence: null, reasonCode, error };
+  }
+}
+
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
   const diagnostic = sanitizedDiagnostic(result.stderr);
@@ -572,14 +613,14 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     const result = await (input.runProcess ?? runModelRouteProcess)(invocation);
     if (result.exitCode !== 0 || result.timedOut) {
       const failure = failureReason(result);
-      return { evidence: null, ...failure };
+      return captureRawOutput(input, result, failure.reasonCode, failure.error);
     }
-    if (!result.stdinDelivered) return { evidence: null, reasonCode: 'model-route-prompt-delivery', error: 'Model review route did not confirm complete prompt delivery.' };
+    if (!result.stdinDelivered) return captureRawOutput(input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
     const parsedHostOutput = adapter.parseEnvelope(result.stdout);
-    if (!parsedHostOutput) return { evidence: null, reasonCode: 'model-route-output-envelope', error: 'Model review route returned no supported final-response envelope.' };
+    if (!parsedHostOutput) return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {
-      return { evidence: null, reasonCode: 'model-route-malformed-json', error: 'Model review route final response was not exactly one JSON object.' };
+      return captureRawOutput(input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
     }
     const provenance: LocalReviewRunnerProvenance = {
       runnerKind: 'local-host',
@@ -601,15 +642,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if ('priorTexts' in parsedHostOutput) {
       const priorTexts = parsedHostOutput.priorTexts;
       if (!Array.isArray(priorTexts) || !priorTexts.every((text): text is string => typeof text === 'string')) {
-        return { evidence: null, reasonCode: 'model-route-output-envelope', error: 'Grok review route returned an invalid structured snapshot envelope.' };
+        return captureRawOutput(input, result, 'model-route-output-envelope', 'Grok review route returned an invalid structured snapshot envelope.');
       }
       if (priorTexts.length >= input.plan.maxTurns) {
-        return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Grok review route returned more structured snapshots than the configured turn bound.' };
+        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Grok review route returned more structured snapshots than the configured turn bound.');
       }
       for (const priorText of priorTexts) {
         let priorResult: unknown;
         try { priorResult = JSON.parse(priorText); } catch {
-          return { evidence: null, reasonCode: 'model-route-malformed-json', error: 'Grok review route returned a malformed structured progress snapshot.' };
+          return captureRawOutput(input, result, 'model-route-malformed-json', 'Grok review route returned a malformed structured progress snapshot.');
         }
         const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'interim');
         if (!priorEvidence
@@ -618,7 +659,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
           || priorEvidence.severity !== 'none'
           || priorEvidence.blockers.length > 0
           || priorEvidence.findings.length > 0) {
-          return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Grok review route returned a contradictory or non-pending progress snapshot before its final result.' };
+          return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Grok review route returned a contradictory or non-pending progress snapshot before its final result.');
         }
       }
     }
@@ -626,7 +667,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
-    if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
+    if (!evidence) return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
     return {
       evidence: {
         ...evidence,

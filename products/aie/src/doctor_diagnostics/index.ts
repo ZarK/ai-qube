@@ -13,6 +13,7 @@ import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.j
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
 import { probeCodexReviewCapabilitySync, probeOpenCodeReviewCapabilitySync } from '../app/local_review_runner.js';
+import { reviewModelHostStatuses } from '../app/model_catalog.js';
 import { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, DoctorToolLookupState, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, DoctorToolLookupState, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
@@ -374,6 +375,14 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       mode: reviewModeOf(config),
       modeSource: config.reviewMode ? 'configured' : 'inferred',
       models: Object.values(config.reviewModels.review).map(binding => binding.model).filter(model => model.trim() !== ''),
+      hostModels: reviewModelHostStatuses(config.reviewModels).map(item => ({
+        host: item.host,
+        configured: item.configured,
+        live: item.listing.models,
+        listing: item.listing.status,
+        served: item.served,
+        absent: item.absent,
+      })),
       publisherLogin: config.providers.review.publisher?.githubApp?.login
         ?? config.providers.review.publisher?.token?.login
         ?? null,

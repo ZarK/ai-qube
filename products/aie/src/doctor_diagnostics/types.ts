@@ -195,6 +195,14 @@ export interface GateReadinessDiagnostics {
     mode: 'external' | 'host' | 'isolated';
     modeSource: 'configured' | 'inferred';
     models: string[];
+    hostModels: Array<{
+      host: string;
+      configured: string[];
+      live: string[];
+      listing: 'ready' | 'unavailable' | 'blocked';
+      served: string[];
+      absent: string[];
+    }>;
     publisherLogin: string | null;
     instructionToolVersion: string | null;
     runningToolVersion: string;
