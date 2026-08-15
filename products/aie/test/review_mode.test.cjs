@@ -87,11 +87,20 @@ describe('review mode doctor and init', () => {
   it('stamps the running tool version on a fresh init and names the active mode', async () => {
     const repo = cloneGitRepo('committed', 'aie-review-mode-init-');
     mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
-    const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      yes: true,
+      guide: true,
+      installedHosts: ['grok'],
+    });
     assert.equal(result.ok, true, result.errors.join('\n'));
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.equal(readManagedToolVersion(agents), readAiePackageVersion());
-    assert.match(agents, /Review mode: external\./);
+    assert.match(agents, /Review mode: isolated\./);
     assert.equal(existsSync(join(__dirname, '../docs/review-modes.md')), true);
     const hosts = await getAgentHostProfiles(['opencode']);
     const isolated = isolatedConfig('isolated');

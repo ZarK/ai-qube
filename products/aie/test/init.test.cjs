@@ -152,7 +152,23 @@ describe('init service', () => {
     const userContent = '# Project Rules\n\nKeep this local rule.   \n\n';
     writeFileSync(join(repo, 'AGENTS.md'), userContent);
 
-    const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      yes: true,
+      guide: true,
+      installedHosts: ['grok'],
+      policy: {
+        reviewModels: {
+          review: { grok: { model: 'grok-4.5', effort: null } },
+          economy: {},
+          synthesis: {},
+        },
+      },
+    });
 
     assert.equal(result.ok, true);
     assert.equal(result.completedChanges.length, 3);
@@ -173,7 +189,7 @@ describe('init service', () => {
     assert.match(command, /Continue repository development/);
     assert.match(command, /run `qube aie pr gate <pr>` to request reviewers/);
     assert.match(command, /configured gates cannot run/);
-    assert.match(agents, /Configured review agents: coderabbitai/);
+    assert.match(agents, /Review mode: isolated\./);
     assert.match(agents, /pr-review-wait/);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.version, 1);
@@ -183,10 +199,12 @@ describe('init service', () => {
     assert.equal(config.policy.branch.requireBaseBranchFreshness, true);
     assert.equal(config.policy.lifecycle.assignOnStart, true);
     assert.equal(config.policy.lifecycle.commentOnStart, true);
-    assert.deepEqual(config.policy.reviews.agents, ['coderabbitai']);
-    assert.equal(config.policy.reviews.adapter, 'github');
+    assert.deepEqual(config.policy.reviews.agents, []);
+    assert.equal(config.policy.reviews.adapter, 'local');
+    assert.equal(config.policy.reviews.mode, 'isolated');
+    assert.equal(config.policy.reviews.profile, 'local-focused');
     assert.deepEqual(config.policy.reviews.localAgents, []);
-    assert.equal(config.policy.reviews.waitMinutes, 10);
+    assert.equal(config.policy.reviews.waitMinutes, 0);
     assert.equal(config.policy.instructions.opencodeCommandAlias, false);
     assert.equal(config.policy.instructions.namingRules, false);
     assert.equal(config.policy.supplyChain.packageAgeDays, 7);
