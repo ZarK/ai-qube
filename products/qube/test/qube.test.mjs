@@ -551,14 +551,14 @@ describe("qube composer CLI", () => {
       version: "1.0.0",
       devDependencies: {
         [qubePackageName]: qubePackageVersion,
-        "@tjalve/qube-adapter-github": "0.1.3",
-        "@tjalve/qube-adapter-codex": "0.1.3"
+        "@tjalve/qube-adapter-github": adapterPackageVersions["@tjalve/qube-adapter-github"],
+        "@tjalve/qube-adapter-codex": adapterPackageVersions["@tjalve/qube-adapter-codex"]
       }
     }, null, 2)}\n`);
     if (options.installPackages !== false) {
       writeInstalledPackage(root, qubePackageName, qubePackageVersion);
-      writeInstalledPackage(root, "@tjalve/qube-adapter-github", "0.1.3");
-      writeInstalledPackage(root, "@tjalve/qube-adapter-codex", "0.1.3");
+      writeInstalledPackage(root, "@tjalve/qube-adapter-github", adapterPackageVersions["@tjalve/qube-adapter-github"]);
+      writeInstalledPackage(root, "@tjalve/qube-adapter-codex", adapterPackageVersions["@tjalve/qube-adapter-codex"]);
     }
     writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1, providers: { work: { kind: "github" } } }, null, 2)}\n`);
     if (options.staleManaged) {
