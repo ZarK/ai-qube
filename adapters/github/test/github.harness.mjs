@@ -324,7 +324,7 @@ function reviewExec(pullRequest) {
         const commentId = ++nextCommentId;
         const html_url = `https://github.com/example/qube/pull/${pullRequest.number}#issuecomment-${commentId}`;
         comments.push({ user: { login: "fixture-bot" }, body: payload.body, html_url });
-        return { args, exitCode: 0, stdout: JSON.stringify({ id: commentId, html_url }), stderr: "" };
+        return { args, exitCode: 0, stdout: JSON.stringify({ id: commentId, html_url, user: { login: "fixture-bot" } }), stderr: "" };
       }
       return { args, exitCode: 0, stdout: JSON.stringify(comments), stderr: "" };
     }

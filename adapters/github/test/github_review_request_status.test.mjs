@@ -70,7 +70,7 @@ function createReviewRequestFixture(options = {}) {
         const url = `https://github.com/example/repo/pull/12#issuecomment-${commentId}`;
         const authorLogin = token && reviewToken && token === reviewToken ? publisherLogin : userLogin;
         comments.push({ author: { login: authorLogin }, user: { login: authorLogin }, body: payload.body, url, html_url: url });
-        return { args, exitCode: 0, stdout: JSON.stringify({ id: commentId, html_url: url }), stderr: "" };
+        return { args, exitCode: 0, stdout: JSON.stringify({ id: commentId, html_url: url, user: { login: authorLogin } }), stderr: "" };
       }
       return {
         args,
@@ -281,6 +281,23 @@ describe("github reviewer request status comment", () => {
     assert.ok(payload);
     assert.equal(payload.requests[0].reviewerId, "copilot");
     assert.equal(payload.requests[0].head, "abc123");
+  });
+
+  it("completes after one create when a reread does not yet see the status comment", async () => {
+    const fixture = createReviewRequestFixture();
+    const exec = async (args, cwd, options) => {
+      if (args[0] === "api" && args[1] === "repos/example/repo/issues/12/comments" && !(args.includes("POST"))) {
+        return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      return fixture.exec(args, cwd, options);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, policy(["@copilot"]));
+    const results = await provider.apply(plan);
+    assert.equal(results.every(result => result.status === "completed"), true);
+    assert.equal(statusComments(fixture.comments).length, 1);
+    assert.equal(fixture.calls.filter(args => args[0] === "api" && String(args[1]).includes("issues/12/comments") && args.includes("POST")).length, 1);
   });
 
   it("still posts an external mention comment and records the request on the status comment", async () => {

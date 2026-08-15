@@ -1213,6 +1213,19 @@ function reviewPayloadPath(payload: unknown): string {
   return path;
 }
 
+function commentAuthorFromApiResponse(stdout: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (!isRecord(parsed)) return null;
+    const user = parsed.user;
+    if (isRecord(user) && typeof user.login === 'string' && user.login.trim() !== '') return user.login;
+    if (isRecord(parsed.author) && typeof parsed.author.login === 'string' && parsed.author.login.trim() !== '') return parsed.author.login;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function cleanupReviewPayload(path: string): void {
   try {
     rmSync(dirname(path), { recursive: true, force: true });
@@ -3282,7 +3295,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     existing: RawComment | undefined;
     extras: readonly RawComment[];
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
-  }): Promise<void> {
+  }): Promise<{ author: string | null }> {
     const body = renderStatusComment({
       prNumber: input.prNumber,
       headSha: input.headSha,
@@ -3292,13 +3305,16 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     });
     const commentId = input.existing ? issueCommentIdFromUrl(input.existing.url) : null;
     const payloadPath = reviewPayloadPath({ body });
+    let author: string | null = input.existing?.author?.login ?? null;
     try {
       if (commentId) {
         const result = await runGh(['api', `repos/${input.repositoryName}/issues/comments/${commentId}`, '--method', 'PATCH', '--input', payloadPath], input.ghOptions);
         if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment update failed');
+        author = commentAuthorFromApiResponse(result.stdout) ?? author;
       } else {
         const result = await runGh(['api', `repos/${input.repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], input.ghOptions);
         if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment create failed');
+        author = commentAuthorFromApiResponse(result.stdout) ?? author;
       }
     } finally {
       cleanupReviewPayload(payloadPath);
@@ -3311,6 +3327,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         throw new Error(result.stderr || result.stdout || 'gh api status comment delete failed');
       }
     }
+    return { author };
   }
 
   private async dismissSupersededRequestChanges(input: {
@@ -3681,9 +3698,20 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     throw new Error(`apply GitHub review action failed: request kind ${requestKind ?? 'unknown'} is not supported. Likely cause: action.details.requestKind is invalid. Next action: regenerate the action plan with requestKind "github-reviewer" or "comment".`);
   }
 
+  private publisherLogins(publisher: ResolvedGitHubReviewPublisher, fallbackLogin: string | null): string[] {
+    const configured = this.options.publisher?.mode === 'github-app'
+      ? this.options.publisher.githubApp?.login
+      : this.options.publisher?.token?.login;
+    return [...new Set([
+      this.cachedPublisherLogin,
+      trustedPublisherLogin(publisher, fallbackLogin),
+      configured,
+    ].filter((login): login is string => typeof login === 'string' && login.trim() !== ''))];
+  }
+
   private async resolvePublisherForMutation(prNumber: number): Promise<{
     repositoryName: string;
-    trustedMarkerAuthor: string;
+    trustedMarkerAuthor: TrustedAuthorInput;
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
   }> {
     const repositoryName = (await this.getRepositoryIdentity()).nameWithOwner;
@@ -3697,8 +3725,8 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
     const identityFailure = unresolvedAppPublisherReason(publisher);
     if (identityFailure) throw new Error(identityFailure);
-    const trustedMarkerAuthor = trustedPublisherLogin(publisher, await this.currentLogin()) ?? '';
-    if (trustedMarkerAuthor === '') {
+    const trustedMarkerAuthor = this.publisherLogins(publisher, await this.currentLogin());
+    if (trustedMarkerAuthor.length === 0) {
       throw new Error('Publisher identity login is unresolved; reviewer request bookkeeping is withheld. Resolve the review publisher login, then rerun `aie pr gate`.');
     }
     return {
@@ -3710,34 +3738,50 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
   private async recordReviewerRequestOnStatusComment(input: { prNumber: number; reviewerId: string; headSha: string }): Promise<void> {
     if (input.reviewerId === '' || input.headSha === '' || input.headSha === 'UNKNOWN') return;
-    const { repositoryName, trustedMarkerAuthor, ghOptions } = await this.resolvePublisherForMutation(input.prNumber);
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const comments = await this.getIssueComments(repositoryName, input.prNumber);
-      const trusted = trustedStatusComments(comments, trustedMarkerAuthor);
-      const prior = mergeStatusCommentPayloads(trusted);
-      const already = prior.requests.some(request => request.reviewerId === input.reviewerId && request.head === input.headSha);
-      if (already && trusted.length <= 1) return;
-      const requests = already
-        ? prior.requests
-        : [...prior.requests, { reviewerId: input.reviewerId, head: input.headSha, at: new Date().toISOString() }].slice(-40);
-      const latestRound = prior.rounds.at(-1);
-      await this.persistStatusComment({
-        repositoryName,
-        prNumber: input.prNumber,
-        headSha: input.headSha,
-        verdict: latestRound?.verdict ?? 'pending',
-        rounds: prior.rounds,
-        requests,
-        existing: trusted[0],
-        extras: trusted.slice(1),
-        ghOptions,
-      });
+    const resolved = await this.resolvePublisherForMutation(input.prNumber);
+    let trustedMarkerAuthor = resolved.trustedMarkerAuthor;
+    const comments = await this.getIssueComments(resolved.repositoryName, input.prNumber);
+    const trusted = trustedStatusComments(comments, trustedMarkerAuthor);
+    const prior = mergeStatusCommentPayloads(trusted);
+    const already = prior.requests.some(request => request.reviewerId === input.reviewerId && request.head === input.headSha);
+    if (already && trusted.length <= 1) return;
+    const requests = already
+      ? prior.requests
+      : [...prior.requests, { reviewerId: input.reviewerId, head: input.headSha, at: new Date().toISOString() }].slice(-40);
+    const latestRound = prior.rounds.at(-1);
+    const persisted = await this.persistStatusComment({
+      repositoryName: resolved.repositoryName,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      verdict: latestRound?.verdict ?? 'pending',
+      rounds: prior.rounds,
+      requests,
+      existing: trusted[0],
+      extras: trusted.slice(1),
+      ghOptions: resolved.ghOptions,
+    });
+    if (persisted.author) this.cachedPublisherLogin = persisted.author;
+    if (already || trusted[0]) return;
+    // A reread can lag the create. The POST already wrote the request; only
+    // consolidate extras if they are already visible to this process.
+    const after = await this.getIssueComments(resolved.repositoryName, input.prNumber);
+    if (persisted.author) {
+      trustedMarkerAuthor = [...new Set([...trustedAuthorsList(trustedMarkerAuthor), persisted.author])];
     }
-    const comments = await this.getIssueComments(repositoryName, input.prNumber);
-    const recorded = mergeStatusCommentPayloads(trustedStatusComments(comments, trustedMarkerAuthor));
-    if (!recorded.requests.some(request => request.reviewerId === input.reviewerId && request.head === input.headSha)) {
-      throw new Error('reviewer request record could not be written to the status comment after concurrent updates. Rerun `aie pr gate` for the current PR head.');
-    }
+    const afterTrusted = trustedStatusComments(after, trustedMarkerAuthor);
+    if (afterTrusted.length <= 1) return;
+    const merged = mergeStatusCommentPayloads(afterTrusted);
+    await this.persistStatusComment({
+      repositoryName: resolved.repositoryName,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      verdict: merged.rounds.at(-1)?.verdict ?? 'pending',
+      rounds: merged.rounds,
+      requests: merged.requests,
+      existing: afterTrusted[0],
+      extras: afterTrusted.slice(1),
+      ghOptions: resolved.ghOptions,
+    });
   }
 
   private async getRepositoryIdentity(): Promise<{ nameWithOwner: string; url: string }> {
