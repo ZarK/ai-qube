@@ -15,6 +15,7 @@ import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
+import { reviewModeOf } from '../review_mode.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 import { inspectAffected } from '../repo/index.js';
 import type { RepoAffectedResult } from '@tjalve/qube-core';
@@ -198,6 +199,7 @@ function plannedLaneTierResolution(
 }
 
 export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId): ModelReviewRoutePlan | null {
+  if (reviewModeOf(config) !== 'isolated') return null;
   const policy = lanePolicy(config, lane);
   if (laneRunner(config, lane) !== 'local-host') return null;
   const route = policy?.route ?? config.reviewRoute;
@@ -217,6 +219,7 @@ export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId):
 }
 
 export function resolveFailoverReviewPlan(config: Config): ModelReviewRoutePlan | null {
+  if (reviewModeOf(config) !== 'isolated') return null;
   const failover = config.reviewFailover;
   if (!failover) return null;
   const binding = resolveReviewModelTier(config.reviewModels, failover.route.tier, failover.route.host as ReviewModelHostId);
@@ -240,7 +243,7 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
     if (!targets.has(key)) targets.set(key, { host: plan.host, model: plan.model });
   };
   for (const lane of config.reviewLanes) addRoute(resolveModelReviewPlan(config, lane.id as LocalReviewLaneId));
-  if (config.reviewRoute) {
+  if (reviewModeOf(config) === 'isolated' && config.reviewRoute) {
     const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host as ReviewModelHostId);
     addRoute({ host: config.reviewRoute.host, tier: config.reviewRoute.tier, model: binding.model, effort: binding.effort as ModelReviewRoutePlan['effort'], isolation: 'read-only', timeoutSeconds: config.reviewRoute.timeoutSeconds, maxTurns: config.reviewRoute.maxTurns, substitution: binding.substitution });
   }

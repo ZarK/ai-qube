@@ -241,6 +241,10 @@ class DoctorDiagnosticsBuilder {
       instructionPolicy: input.instructionPolicy,
       supplyChainSafetyConfigured: input.effectiveConfig.instructions.supplyChainSafety,
     }));
+    const reviewAgent = input.gateReadiness?.reviewAgent;
+    if (reviewAgent?.instructionStale) {
+      recommendations.push(`Managed instructions are older than the running tool (${reviewAgent.instructionToolVersion ?? 'missing'} vs ${reviewAgent.runningToolVersion}). Run \`${reviewAgent.instructionRefreshCommand}\` to refresh them.`);
+    }
   }
 
   private addGateReadinessRecommendations(gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>, recommendations: string[]): void {

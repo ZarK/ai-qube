@@ -192,6 +192,14 @@ export interface GateReadinessDiagnostics {
       }>;
     };
     adapter: string;
+    mode: 'external' | 'host' | 'isolated';
+    modeSource: 'configured' | 'inferred';
+    models: string[];
+    publisherLogin: string | null;
+    instructionToolVersion: string | null;
+    runningToolVersion: string;
+    instructionStale: boolean;
+    instructionRefreshCommand: string;
     profile: string;
     severityThreshold: string;
     reviewers: string[];

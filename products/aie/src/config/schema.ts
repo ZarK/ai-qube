@@ -15,7 +15,8 @@ import {
 } from '../core/model_routing.js';
 import { cloneConfigFile, cloneFocusedSelector, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type FocusedGateSelector, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
-import type { ReviewAdapterKind } from '../core/policy.js';
+import type { ReviewAdapterKind, ReviewMode } from '../core/policy.js';
+import { isReviewMode } from '../review_mode.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -167,6 +168,18 @@ function readReviewAdapter(value: unknown, defaultValue: ReviewAdapterKind, path
     path,
     message: `${path} must be github, remote, local, mixed, or shadow`,
     suggestion: 'Use "github" or "remote" for remote PR reviewers, "local" for repository-scoped local evidence, "mixed" for both, or "shadow" for non-blocking local evidence.',
+  });
+  return defaultValue;
+}
+
+function readReviewMode(value: unknown, defaultValue: ReviewMode | null, path: string, errors: ValidationError[]): ReviewMode | null {
+  if (value === undefined || value === null) return defaultValue;
+  if (isReviewMode(value)) return value;
+  errors.push({
+    kind: 'invalid',
+    path,
+    message: `${path} must be external, host, or isolated`,
+    suggestion: 'Use "external" for a review service, "host" for coding-agent lane reviews, or "isolated" for Executor-run model sessions.',
   });
   return defaultValue;
 }
@@ -965,9 +978,10 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'deltaFullEvery', 'models', 'route', 'failover'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'mode', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'deltaFullEvery', 'models', 'route', 'failover'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
+    mode: readReviewMode(value.mode, defaultValue.mode, 'policy.reviews.mode', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
     severityThreshold: readReviewSeverity(value.severityThreshold, defaultValue.severityThreshold, 'policy.reviews.severityThreshold', errors),
     promptFragments: readPromptFragments(value.promptFragments, defaultValue.promptFragments, 'policy.reviews.promptFragments', errors),

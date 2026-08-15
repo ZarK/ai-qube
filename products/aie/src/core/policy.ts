@@ -43,6 +43,7 @@ export interface ShippingPolicy {
 }
 
 export type ReviewAdapterKind = 'github' | 'remote' | 'local' | 'mixed' | 'shadow';
+export type ReviewMode = 'external' | 'host' | 'isolated';
 export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
 export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
@@ -121,6 +122,7 @@ export interface ReviewLanePolicy {
 
 export interface ReviewPolicy {
   adapter: ReviewAdapterKind;
+  mode: ReviewMode | null;
   profile: ReviewProfileKind;
   severityThreshold: ReviewSeverityThreshold;
   promptFragments: ReviewPromptFragments;
@@ -243,6 +245,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
     lifecycle: { ...input.lifecycle, autonomousMode: input.shipping.autonomousMode },
     reviews: {
       adapter: input.reviews.adapter,
+      mode: input.reviews.mode ?? null,
       profile: input.reviews.profile ?? 'remote-compatible',
       severityThreshold: input.reviews.severityThreshold ?? 'high',
       promptFragments: {
