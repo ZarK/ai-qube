@@ -37,6 +37,8 @@ describe('release readiness repository fixtures', () => {
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
     assert.match(readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'), /Continue repository development/);
     assert.equal(existsSync(join(repo, '.npmrc')), false);
+    assert.equal(existsSync(join(repo, '.gitignore')), true);
+    assert.match(readFileSync(join(repo, '.gitignore'), 'utf8'), /\.qube\/aie\/reviews\//);
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'runs')), false);
   });
 
