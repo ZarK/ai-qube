@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import { reviewModeOf } from '../review_mode.js';
-import { computePrGateNextAction, twoRoundMergeConditionMet } from './pr_gate_next_action.js';
+import { computePrGateNextAction } from './pr_gate_next_action.js';
 import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { getIssue, loadPullRequestBody, type GhExec } from '../providers/github_adapter_exports.js';
@@ -1143,12 +1143,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // top-level nextAction always agree so automation cannot read two different plans.
   const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
   const shipReadyVerdict = shipReadyReasons.length === 0;
-  const twoRoundMergeMet = twoRoundMergeConditionMet({
-    completedRoundCount: localReview.evidence.flatMap(evidence => evidence.lanes.filter(lane => lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work')).length > 0 ? 1 : 0,
-    unresolvedBlockers: mergeBlockers.length,
-    requiredChecksGreen: !hasIncompleteChecks(finalSnapshot.item),
-    unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
-  });
   const hostRequestRecorded = reviewParticipantObservations.some(observation => observation.participant.kind === 'host-request' && observation.requestedForHead);
   const inconclusiveLanes = [...new Set(localReview.evidence.flatMap(evidence => evidence.lanes.filter(lane => lane.status === 'inconclusive').map(lane => lane.id)))];
   const fallbackNextAction = shipReadyVerdict
@@ -1160,7 +1154,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     : legacyNextAction;
   const resolvedNextAction = computePrGateNextAction({
     shipReady: shipReadyVerdict,
-    twoRoundMergeMet: twoRoundMergeMet && shipReadyVerdict,
+    twoRoundMergeMet: false,
     hostRequestRecorded,
     inconclusiveLanes,
     prNumber: options.prNumber,

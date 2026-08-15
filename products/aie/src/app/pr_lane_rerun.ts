@@ -79,7 +79,7 @@ export async function runPrLaneRerun(input: {
   const lanesRun = [...new Set(runner.lanes.filter(item => item.evidenceSource === 'fresh-run' || item.status === 'planned').map(item => item.lane))];
   const reusedLanes = [...new Set(runner.lanes.filter(item => item.evidenceSource === 'local' || item.evidenceSource === 'trusted-provider').map(item => item.lane))];
   const executions = runner.lanes.filter(item => item.lane === lane && (item.evidenceSource === 'fresh-run' || item.status === 'planned')).length;
-  const ok = runner.unavailable.length === 0 && executions === 1;
+  const ok = runner.unavailable.length === 0 && lanesRun.length === 1 && lanesRun[0] === lane && executions >= 1;
   return {
     ok,
     command: 'pr lane rerun',
@@ -90,9 +90,11 @@ export async function runPrLaneRerun(input: {
     executions,
     lanesRun,
     reusedLanes,
-    errors: ok ? [] : (runner.unavailable.length > 0 ? runner.unavailable : [`Lane ${lane} did not execute exactly once.`]),
+    errors: ok ? [] : (runner.unavailable.length > 0 ? runner.unavailable : [`Lane ${lane} did not run alone.`]),
     nextAction: ok
-      ? `Reran ${lane} once. Rerun \`aie pr gate ${input.prNumber}\` to publish and inspect the current head.`
+      ? (dryRun
+        ? `Planned ${lane} once. Omit --dry-run to run the lane, then rerun \`aie pr gate ${input.prNumber}\`.`
+        : `Reran ${lane} once. Rerun \`aie pr gate ${input.prNumber}\` to publish and inspect the current head.`)
       : `Fix the lane runner error, then run \`aie pr lane rerun ${input.prNumber} ${lane}\` again.`,
   };
 }
