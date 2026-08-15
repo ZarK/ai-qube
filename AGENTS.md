@@ -2,7 +2,7 @@
 
 <!-- BEGIN EXECUTOR MANAGED SECTION -->
 <!-- executor-managed-version: 1 -->
-<!-- executor-managed-checksum: c0756e333f70c1cdd0f513e1dea83468d285823174808d5137fdd94b84160151 -->
+<!-- executor-managed-checksum: 448a8c7902c178bd3966ff7ec721cf331ac234153683ee84828d21a0c7a095c0 -->
 ## Executor Issue Workflow
 
 This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through `aie` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
@@ -39,9 +39,12 @@ Work cycle:
 PR review and merge cadence:
 
 - Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.
+- Blocking findings are limited to: correctness bugs, security or trust risks, broken required CI or checks, and failed acceptance criteria of the active issue. Everything else is advisory.
 - Treat non-blocking polish (advisory findings, nits, style preferences) as: fix it in the same pull request when cheap, otherwise drop it, or fold it into an already-queued Ready issue if it genuinely matches that scope. Never open a new GitHub issue to track review or audit leftovers.
 - Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this in-PR fix-or-drop disposition; they do not suggest or automate `gh issue create`, and neither should you.
-- Target a few strong review rounds on the active issue, then complete it. Prefer shipping the Ready queue over repeated review rounds on one pull request; if a lane keeps surfacing new findings past a couple of rounds, stop and report the blocker instead of looping.
+- Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the head. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.
+- While a review gate or review lane runs, do not edit files, commit, or move the branch head; isolated lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.
+- Commit only intentional, issue-scoped changes. Never commit unrelated untracked files that accumulate in the working tree.
 
 Analysis and discovered work:
 
@@ -128,14 +131,3 @@ Naming rules:
 - Avoid indirect, passive, or redundant names.
 - Preserve established repository naming conventions and public API compatibility; do not create unrelated rename churn.
 <!-- END EXECUTOR MANAGED SECTION -->
-
-
-## PR review and merge culture
-
-These rules refine review/merge behavior without changing the Executor workflow above. Keep running `node products/aie/bin/run pr gate` and still fix real blockers and regressions.
-
-- **Blocking** findings are limited to correctness bugs, security/trust risks, broken required CI/checks, and failed active-issue acceptance criteria.
-- **Advisory** nits (style, polish, architecture preference) are non-blocking and must not prevent merge.
-- Run **one** fresh multi-lane `pr gate` pass per PR (or after a substantive head update). Do not open endless nit loops.
-- Cap at **at most two** review rounds, unless a blocker fix materially changes the head. After round 2, if CI is green and there are no unresolved blockers, merge (squash per repository shipping policy).
-- Still address real blockers, regressions, and failed acceptance before merge.

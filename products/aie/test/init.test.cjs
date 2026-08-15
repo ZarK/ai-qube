@@ -9,6 +9,36 @@ const { pathToFileURL } = require('node:url');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults } = require('../dist/config/index.js');
+const { renderAgentInstructions } = require('../dist/init_content.js');
+const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
+const { renderManagedSection } = require('../dist/managed_file.js');
+
+const EXPECTED_PR_CADENCE_LINES = [
+  'Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.',
+  'Blocking findings are limited to: correctness bugs, security or trust risks, broken required CI or checks, and failed acceptance criteria of the active issue. Everything else is advisory.',
+  'Treat non-blocking polish (advisory findings, nits, style preferences) as: fix it in the same pull request when cheap, otherwise drop it, or fold it into an already-queued Ready issue if it genuinely matches that scope. Never open a new GitHub issue to track review or audit leftovers.',
+  'Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this in-PR fix-or-drop disposition; they do not suggest or automate `gh issue create`, and neither should you.',
+  'Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the head. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.',
+  'While a review gate or review lane runs, do not edit files, commit, or move the branch head; isolated lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.',
+  'Commit only intentional, issue-scoped changes. Never commit unrelated untracked files that accumulate in the working tree.',
+];
+
+function extractPrCadenceLines(text) {
+  const heading = 'PR review and merge cadence:\n\n';
+  const start = text.indexOf(heading);
+  assert.ok(start >= 0, 'missing PR review and merge cadence heading');
+  const lines = [];
+  for (const line of text.slice(start + heading.length).split('\n')) {
+    if (!line.startsWith('- ')) break;
+    lines.push(line.slice(2));
+  }
+  return lines;
+}
+
+function assertPrCadence(text) {
+  assert.deepEqual(extractPrCadenceLines(text), EXPECTED_PR_CADENCE_LINES);
+  assert.doesNotMatch(text, /Target a few strong review rounds/);
+}
 
 function makeGitRepo() {
   const repo = cloneGitRepo('committed', 'aie-init-');
@@ -1485,5 +1515,53 @@ describe('managed section checksum normalization', () => {
     assert.match(agentsAction.reason, /Managed section diff \(current vs rendered\):/);
     assert.match(agentsAction.reason, /^- .*Tampered Workflow Title/m);
     assert.match(agentsAction.reason, /^\+ .*Executor Issue Workflow/m);
+  });
+
+  it('renders the seven review-cadence lines in the managed instruction text', async () => {
+    const hosts = await getAgentHostProfiles(['opencode', 'codex', 'claude-code', 'grok-build']);
+    const instructions = renderAgentInstructions(getDefaults(), hosts);
+    assertPrCadence(instructions);
+    assert.equal(extractPrCadenceLines(instructions).length, 7);
+  });
+
+  it('writes the seven review-cadence lines into every enabled host target on a fresh init', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code']);
+    assertPrCadence(readFileSync(join(repo, 'AGENTS.md'), 'utf8'));
+    assertPrCadence(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'));
+    assert.doesNotMatch(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /PR review and merge culture/);
+    assert.doesNotMatch(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /PR review and merge culture/);
+
+    const grokRepo = makeGitRepo();
+    const grok = await runInit({ target: '.', tool: 'grok-build', dryRun: false, force: false, cwd: grokRepo });
+    assert.equal(grok.ok, true, grok.errors.join('\n'));
+    assertPrCadence(readFileSync(join(grokRepo, 'AGENTS.md'), 'utf8'));
+    assert.equal(existsSync(join(grokRepo, 'CLAUDE.md')), false);
+  });
+
+  it('replaces the old four-line cadence list when refreshing a valid managed section', async () => {
+    const repo = makeGitRepo();
+    const oldCadence = [
+      '## Executor Issue Workflow',
+      '',
+      'PR review and merge cadence:',
+      '',
+      '- Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.',
+      '- Treat non-blocking polish (advisory findings, nits, style preferences) as: fix it in the same pull request when cheap, otherwise drop it, or fold it into an already-queued Ready issue if it genuinely matches that scope. Never open a new GitHub issue to track review or audit leftovers.',
+      '- Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this in-PR fix-or-drop disposition; they do not suggest or automate `gh issue create`, and neither should you.',
+      '- Target a few strong review rounds on the active issue, then complete it. Prefer shipping the Ready queue over repeated review rounds on one pull request; if a lane keeps surfacing new findings past a couple of rounds, stop and report the blocker instead of looping.',
+      '',
+    ].join('\n');
+    writeFileSync(join(repo, 'AGENTS.md'), renderManagedSection(oldCadence));
+
+    const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assertPrCadence(agents);
+    const agentsAction = result.actions.find(action => action.path === 'AGENTS.md');
+    assert.ok(agentsAction);
+    assert.equal(agentsAction.operation, 'replace-managed');
   });
 });

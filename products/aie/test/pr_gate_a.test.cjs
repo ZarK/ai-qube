@@ -2017,3 +2017,82 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   });
 
 });
+
+function twoPublishedReviewRounds() {
+  const lanes = STANDARD_LOCAL_REVIEW_LANES;
+  const round = (head, prefix) => lanes.map(lane => laneReviewComment({
+    head,
+    lane,
+    runId: `${prefix}-${lane}`,
+    expectedLanes: lanes,
+    issueNumber: 93,
+    prNumber: 12,
+  }));
+  return [...round('oldsha', 'r1'), ...round('abc123', 'r2')];
+}
+
+describe('PR gate service: two-round merge cadence', { concurrency: 4 }, () => {
+  it('says merge after two review rounds when required checks are green and no blockers remain', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+      comments: twoPublishedReviewRounds(),
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.shipReady.ready, true);
+    assert.match(result.nextAction, /merge/i);
+    assert.doesNotMatch(result.nextAction, /re-review round/);
+  });
+
+  it('does not say merge after two review rounds when a required check failed', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      comments: twoPublishedReviewRounds(),
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, exec });
+
+    assert.equal(result.shipReady.ready, false);
+    assert.doesNotMatch(result.nextAction, /Ship-ready/);
+    assert.doesNotMatch(result.nextAction, /then merge/);
+  });
+
+  it('does not say merge after two review rounds when an unresolved review thread remains', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+      comments: twoPublishedReviewRounds(),
+    });
+    const threads = [{
+      id: 'PRRT_thread_1',
+      isResolved: false,
+      isOutdated: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Unresolved thread.', url: 'https://github.com/example/repo/pull/12#discussion_r2', path: 'src/review.ts', line: 2, originalLine: 2 }] },
+    }];
+    const { exec } = makePrExec({ prViews: [pr], threads });
+
+    const result = await runPrGate(config, { prNumber: 12, exec });
+
+    assert.equal(result.shipReady.ready, false);
+    assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
+    assert.doesNotMatch(result.nextAction, /Ship-ready/);
+    assert.doesNotMatch(result.nextAction, /then merge/);
+    assert.match(result.nextAction, /pr thread resolve/);
+  });
+});
