@@ -24,4 +24,6 @@ Out of lane (ignore):
 Exhaustiveness rules:
 - Report every UI/UX/accessibility defect found in one pass across every changed surface, not just the first screen.
 - Do not approve from source reading alone; require observed evidence before clearing a visual claim.
+- When this prompt includes complete recorded manual UI audit evidence, that recorded evidence plus code-level review is sufficient to conclude. Approve or report concrete findings. Do not return inconclusive only because this session cannot open a browser.
+- When this prompt says user-facing files changed and recorded audit evidence is missing or stale, report a finding that names the missing or stale evidence. That finding is not an inconclusive result.
 - State exactly which surfaces and viewport sizes were actually observed versus not applicable.
