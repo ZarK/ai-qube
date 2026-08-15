@@ -66,6 +66,7 @@ export interface ReviewHostAdapter {
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;
   parseEnvelope(stdout: string): ReviewHostParsedEnvelope | null;
   probeAfterVersion(context: ReviewHostProbeContext): ReviewHostProbeResult;
+  listCatalog?(context: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null;
 }
 
 const CAPABILITY_FIELD: Record<ReviewHostCapabilityNeed, keyof ReviewHostCapabilities> = {

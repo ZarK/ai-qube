@@ -268,6 +268,10 @@ class DoctorDiagnosticsBuilder {
     for (const nextAction of gateReadiness.reviewPreflight.nextActions) recommendations.push(`Review preflight: ${nextAction}`);
     if (gateReadiness.reviewAgent.localRunner.readiness === 'unavailable') recommendations.push('Local review-agent adapter is configured without a local runner. Record repository-scoped local evidence manually before relying on local review gates.');
     if (gateReadiness.supplyChain.readiness === 'needs-action') recommendations.push('Supply-chain policy is configured but not strict enough for normal readiness. Review lifecycle-script, lockfile, and package-age settings in the selected Executor config.');
+    for (const host of gateReadiness.reviewAgent.hostModels ?? []) {
+      if (host.absent.length === 0) continue;
+      recommendations.push(`Configured ${host.host} review model(s) are absent from the live catalog: ${host.absent.join(', ')}. Update policy.reviews.models or refresh the host CLI.`);
+    }
   }
 
   private async readQueue(recommendations: string[]): Promise<{

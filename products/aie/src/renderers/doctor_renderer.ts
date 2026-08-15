@@ -24,6 +24,11 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
     ? `${reviewMode.instructionToolVersion ?? 'missing'} (stale; ${reviewMode.instructionRefreshCommand})`
     : reviewMode.runningToolVersion;
   lines.push(`Review mode: ${reviewMode.mode} (${reviewMode.modeSource}); reviewers=${[...reviewMode.reviewers, ...reviewMode.localReviewers].filter(name => name.trim() !== '').join(', ') || 'none'}; models=${reviewMode.models.join(', ') || 'none'}; publisher=${reviewMode.publisherLogin ?? 'none'}; instructions=${instructionVersion}; tool=${reviewMode.runningToolVersion}`);
+  for (const host of reviewMode.hostModels ?? []) {
+    const configured = host.configured.length > 0 ? host.configured.join(', ') : 'none';
+    const live = host.listing === 'ready' ? (host.live.join(', ') || 'none') : host.listing;
+    lines.push(`Review models ${host.host}: configured=${configured}; catalog=${live}; served=${host.served.join(', ') || 'none'}; absent=${host.absent.join(', ') || 'none'}`);
+  }
   lines.push(`Review-agent gate: reviewers=${readiness.reviewAgent.reviewers.join(', ')}, fallback=${readiness.reviewAgent.fallbackPromptAvailable ? 'available' : 'missing'}, external-services=${readiness.reviewAgent.externalServices.length}`);
   lines.push(`PR review gate: ${readiness.prReview.readiness}; reviewers=${readiness.prReview.reviewers.length}; wait=${readiness.prReview.reviewWaitMinutes} minutes; gh=${readiness.prReview.ghAuthenticated ? 'authenticated' : 'not authenticated'}`);
   lines.push(`Review preflight: ${readiness.reviewPreflight.readiness}; disk=${readiness.reviewPreflight.checks.disk.readiness}; dist=${readiness.reviewPreflight.checks.dist.readiness}; loose-objects=${readiness.reviewPreflight.checks.gitObjects.readiness}; gh-review-auth=${readiness.reviewPreflight.checks.githubReviewAuth.readiness}; route-probes=${readiness.reviewPreflight.checks.routeProbes.readiness}`);

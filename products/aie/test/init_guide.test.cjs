@@ -109,6 +109,20 @@ describe('init guide questions', () => {
     assert.equal(result.setupSummary.reviewMode, 'host');
   });
 
+  it('includes live host models in the reviewers question', () => {
+    const questions = buildInitQuestions({
+      machine: {
+        installedHosts: ['grok'],
+        agentBrowserAvailable: false,
+        aiqAvailable: false,
+        hasUserFacingUi: false,
+        liveModels: { grok: ['grok-4.5'] },
+      },
+      answers: {},
+    });
+    assert.ok(questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok:grok-4.5'));
+  });
+
   it('does not recommend isolated when no review host is installed', () => {
     const questions = buildInitQuestions({
       machine: { installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false, hasUserFacingUi: false },

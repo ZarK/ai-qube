@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { listHostModels } from '../app/model_catalog.js';
 import { commandExistsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import type { ReviewMode } from '../core/policy.js';
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
@@ -12,6 +13,7 @@ export interface GuideMachine {
   agentBrowserAvailable: boolean;
   aiqAvailable: boolean;
   hasUserFacingUi: boolean;
+  liveModels?: Readonly<Partial<Record<ModelRoutingHostId, readonly string[]>>>;
 }
 
 export interface InvocationAnswers {
@@ -35,11 +37,17 @@ export function detectGuideMachine(input: {
   const installedHosts = input.installedHosts
     ? MODEL_ROUTING_HOSTS.filter(host => input.installedHosts?.includes(host))
     : detectInstalledRoutingHostsOnPath();
+  const liveModels: Partial<Record<ModelRoutingHostId, readonly string[]>> = {};
+  for (const host of installedHosts) {
+    const listing = listHostModels(host);
+    if (listing.status === 'ready') liveModels[host] = listing.models;
+  }
   return {
     installedHosts,
     agentBrowserAvailable: input.agentBrowserAvailable ?? commandExistsOnPath('agent-browser'),
     aiqAvailable: input.aiqAvailable ?? commandExistsOnPath('aiq'),
     hasUserFacingUi: detectUserFacingUi(input.repoRoot),
+    liveModels,
   };
 }
 
@@ -122,6 +130,11 @@ export function buildInitQuestions(input: {
       options: [
         { value: 'coderabbitai', label: 'CodeRabbit (external service)' },
         ...input.machine.installedHosts.map(host => ({ value: host, label: `${host} (installed on this machine)`, available: true })),
+        ...input.machine.installedHosts.flatMap(host => (input.machine.liveModels?.[host] ?? []).map(model => ({
+          value: `${host}:${model}`,
+          label: `${host} model ${model} (live catalog)`,
+          available: true,
+        }))),
       ],
       recommendation: recommendedReviewers.length === 0
         ? 'Leave external reviewers empty. Isolated review uses host models on this machine.'
