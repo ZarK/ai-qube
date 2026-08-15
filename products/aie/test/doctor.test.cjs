@@ -564,6 +564,7 @@ describe('doctor diagnostics', () => {
     assert.notEqual(diagnostics.reviewAgent.localRunner.readiness, 'ready');
     assert.ok(diagnostics.reviewAgent.localRunner.readiness === 'needs-action' || diagnostics.reviewAgent.localRunner.readiness === 'missing');
     assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /spawnPrompt/);
+    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /local-command review lane command/);
   });
 
   it('does not claim commandless local-host review support without configured Codex agent', () => {

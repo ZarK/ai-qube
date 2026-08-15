@@ -340,9 +340,11 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
           ? isolatedProbes.nextAction ?? 'Fix blocked or missing isolated review routes before relying on lane execution.'
           : codexReviewCapability.nextAction
         : localRunnerReadiness === 'missing'
-          ? opencodeLocalReviewConfigured && localHostNeedsAgent
-            ? opencodeReviewCapability.nextAction
-            : 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
+          ? isolated
+            ? isolatedProbes.nextAction ?? 'Configure isolated review routes or local reviewers before relying on lane execution.'
+            : opencodeLocalReviewConfigured && localHostNeedsAgent
+              ? opencodeReviewCapability.nextAction
+              : 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
           : 'Local review evidence is disabled by the selected review adapter.',
   };
   const policy = config.supplyChain;
