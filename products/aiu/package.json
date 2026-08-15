@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiu",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "AI Umpire package foundation and CLI for safe agent continuation.",
   "keywords": [
     "cli",
@@ -61,6 +61,6 @@
     "typescript": "6.0.2"
   },
   "dependencies": {
-    "@tjalve/qube-cli": "0.2.0"
+    "@tjalve/qube-cli": "0.2.1"
   }
 }

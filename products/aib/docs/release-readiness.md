@@ -18,8 +18,8 @@ Run from the repository root:
 
 ```bash
 pnpm --filter @tjalve/aib run verify
-node products/aie/bin/run doctor --json
-node products/aie/bin/run queue --json
+qube aie doctor --json
+qube aie queue --json
 ```
 
 `verify` is the package release gate. `aie doctor` and `aie queue` are repository readiness checks; any warnings should be read as release notes unless they block the active issue workflow.
@@ -32,7 +32,7 @@ Current intentional `aie doctor` warnings for this package workspace:
 
 ## Package Safety
 
-- Use the exact package version, for example `@tjalve/aib@0.1.2`.
+- Use the exact package version, for example `@tjalve/aib@0.2.3`.
 - Do not document or use floating `latest` in agent workflows.
 - Use `pnpm install --frozen-lockfile --ignore-scripts` for repository setup.
 - Do not add dependencies without supply-chain intake.

@@ -124,6 +124,23 @@ describe('release readiness repository fixtures', () => {
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /gh-priority-order\.sh/);
   });
 
+  it('writes installed qube aie commands even when a workspace runner exists', async () => {
+    const repo = makeGitRepo('aie-release-installed-runner-');
+    mkdirSync(join(repo, 'products', 'aie', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'bin', 'run'), '#!/usr/bin/env node\n');
+
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
+
+    assert.equal(result.ok, true);
+    assert.match(agents, /`qube aie start`/);
+    assert.match(claude, /`qube aie complete <issue>`/);
+    assert.doesNotMatch(agents, /products\/aie\/bin\/run/);
+    assert.doesNotMatch(claude, /node products\/aie\/bin\/run/);
+    assert.doesNotMatch(`${agents}\n${claude}`, /source checkout path/);
+  });
+
   it('keeps shipped docs and generated instructions product-generic', async () => {
     const repo = makeGitRepo('aie-release-wording-');
     await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });

@@ -98,6 +98,7 @@ describe('package publish surface safety', () => {
     assert.equal(existsSync(workflowPath), true);
 
     const workflow = readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
+    const stageScript = readFileSync(join(__dirname, '..', '..', '..', 'scripts', 'run-publish-plan.mjs'), 'utf8');
     const actionPins = [...workflow.matchAll(/uses: ([^@\s]+)@([0-9a-f]{40})/g)];
 
     assert.equal(pkg.publishConfig.access, 'public');
@@ -113,10 +114,15 @@ describe('package publish surface safety', () => {
     assert.match(workflow, /corepack prepare pnpm@11\.0\.4 --activate/);
     assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
     assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
-    assert.match(workflow, /steps\.plan\.outputs\.verify/);
+    assert.match(workflow, /id: plan/);
+    assert.match(workflow, /console\.log\('verify=' \+ p\.verify\)/);
+    assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
-    assert.match(workflow, /npm stage publish \. --access public --ignore-scripts/);
+    assert.match(stageScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts"\]/);
+    assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
+    assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
     assert.doesNotMatch(workflow, /npm publish(?:\s|$)/);
+    assert.doesNotMatch(stageScript, /npm publish(?:\s|$)/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.deepEqual(actionPins.map(match => match[1]).sort(), ['actions/checkout', 'actions/setup-node']);
   });

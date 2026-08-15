@@ -33,12 +33,26 @@ that environment when the repository plan supports it.
 
 ## Normal Package Release
 
-For package names that already exist on npm, publish through a package-specific
-tag:
+The maintainer triggers a release. Merge to main does not publish.
+
+To publish the current packages as one set, tag the `@tjalve/qube` version after
+that commit is on `main`:
 
 ```sh
 git switch main
 git pull --ff-only origin main
+git tag publish-set-v<qube-version>
+git push origin publish-set-v<qube-version>
+```
+
+The workflow prepares the set, checks manifests, packs the packages, installs
+them into a prefix outside the checkout, and fails if `qube`, `aie`, `aib`,
+`aiu`, or `aiq` does not start. Then it stages each package with trusted
+publishing.
+
+To publish one package, use a package-specific tag:
+
+```sh
 git tag publish-<package>-v<version>
 git push origin publish-<package>-v<version>
 ```

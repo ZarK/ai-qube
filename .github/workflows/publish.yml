@@ -50,32 +50,19 @@ jobs:
         shell: bash
         run: |
           node scripts/resolve-publish-tag.mjs "${GITHUB_REF_NAME}" > publish-plan.json
-          node -e "const p=require('./publish-plan.json'); for (const [key,value] of Object.entries(p)) console.log(key + '=' + value)" >> "$GITHUB_OUTPUT"
+          node -e "const p=require('./publish-plan.json'); console.log('mode=' + p.mode); console.log('verify=' + p.verify); console.log('prepare=' + p.prepare);" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Build publish dependencies
-        shell: bash
-        env:
-          PREPARE_CMD: ${{ steps.plan.outputs.prepare }}
-        run: bash -euo pipefail -c "$PREPARE_CMD"
+      - name: Prepare selected packages
+        run: node scripts/run-publish-plan.mjs prepare publish-plan.json
 
-      - name: Verify selected package
-        shell: bash
-        env:
-          VERIFY_CMD: ${{ steps.plan.outputs.verify }}
-        run: bash -euo pipefail -c "$VERIFY_CMD"
+      - name: Verify selected packages
+        run: node scripts/run-publish-plan.mjs verify publish-plan.json
 
-      - name: Resolve publish manifest dependencies
-        run: |
-          node scripts/resolve-publish-dependencies.mjs "${{ steps.plan.outputs.path }}/package.json"
-          node scripts/check-publish-manifest.mjs "${{ steps.plan.outputs.path }}/package.json"
+      - name: Verify installed entry points start
+        run: node scripts/verify-installed-commands.mjs --plan publish-plan.json --json
 
-      - name: Publish selected package
-        working-directory: ${{ steps.plan.outputs.path }}
-        run: npm stage publish . --access public --ignore-scripts
-
-      - name: Restore publish manifest dependencies
-        if: always()
-        run: node scripts/restore-publish-dependencies.mjs "${{ steps.plan.outputs.path }}/package.json"
+      - name: Publish selected packages
+        run: node scripts/run-publish-plan.mjs stage publish-plan.json

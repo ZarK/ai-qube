@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+function readVersion(relativePath) {
+  return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8")).version;
+}
 
 function resolveTag(tag) {
   return spawnSync(process.execPath, ["scripts/resolve-publish-tag.mjs", tag], {
-    cwd: new URL("..", import.meta.url),
+    cwd: repoRoot,
     encoding: "utf8"
   });
 }
 
 describe("publish tag resolution", () => {
   it("maps package-specific publish tags to a package path and verification command", () => {
-    const result = resolveTag("publish-qube-v0.2.0");
+    const version = readVersion("products/qube/package.json");
+    const result = resolveTag(`publish-qube-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -24,10 +34,12 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube",
       packageName: "@tjalve/qube",
-      version: "0.2.0",
+      version,
       filter: "@tjalve/qube",
       path: "products/qube"
     });
+    assert.equal(plan.mode, "package");
+    assert.equal(plan.packages.length, 1);
     assert.match(plan.prepare, /@tjalve\/qube-cli/);
     assert.match(plan.verify, /@tjalve\/qube/);
   });
@@ -43,7 +55,7 @@ describe("publish tag resolution", () => {
   });
 
   it("uses the AIQ publish-readiness gate without the full AIQ suite", () => {
-    const result = resolveTag("publish-aiq-v0.2.3");
+    const result = resolveTag(`publish-aiq-v${readVersion("products/aiq/packages/cli/package.json")}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -56,7 +68,8 @@ describe("publish tag resolution", () => {
   });
 
   it("maps the Claude Code adapter publish tag to the adapter package", () => {
-    const result = resolveTag("publish-qube-adapter-claude-code-v0.1.0");
+    const version = readVersion("adapters/claude-code/package.json");
+    const result = resolveTag(`publish-qube-adapter-claude-code-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -69,7 +82,7 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube-adapter-claude-code",
       packageName: "@tjalve/qube-adapter-claude-code",
-      version: "0.1.0",
+      version,
       filter: "@tjalve/qube-adapter-claude-code",
       path: "adapters/claude-code"
     });
@@ -78,7 +91,8 @@ describe("publish tag resolution", () => {
   });
 
   it("maps the qube-core first publish tag to the shared core package", () => {
-    const result = resolveTag("publish-qube-core-v0.2.0");
+    const version = readVersion("packages/qube-core/package.json");
+    const result = resolveTag(`publish-qube-core-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -91,11 +105,33 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube-core",
       packageName: "@tjalve/qube-core",
-      version: "0.2.0",
+      version,
       filter: "@tjalve/qube-core",
       path: "packages/qube-core"
     });
     assert.match(plan.prepare, /@tjalve\/qube-core/);
     assert.match(plan.verify, /@tjalve\/qube-core/);
+  });
+
+  it("maps a set tag to every current package and the composer version", () => {
+    const version = readVersion("products/qube/package.json");
+    const result = resolveTag(`publish-set-v${version}`);
+    assert.equal(result.status, 0, result.stderr);
+
+    const plan = JSON.parse(result.stdout);
+    assert.equal(plan.mode, "set");
+    assert.equal(plan.setVersion, version);
+    assert.equal(plan.packages.length, 15);
+    assert.equal(plan.packages[0].packageKey, "qube-core");
+    assert.equal(plan.packages.at(-1).packageKey, "qube");
+    assert.equal(plan.prepare, "pnpm run build");
+    assert.match(plan.verify, /version:audit/);
+    assert.equal(plan.packages.some(entry => entry.command === "aie"), true);
+  });
+
+  it("rejects a set tag that does not match the composer version", () => {
+    const result = resolveTag("publish-set-v0.0.0");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not match/);
   });
 });
