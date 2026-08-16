@@ -157,6 +157,14 @@ export const AUDIT_UI_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const AUDIT_UI_SET_RUN_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--command', type: 'string', description: 'Working app start command to store in policy.audit.appLaunch' },
+  { name: '--url', type: 'string', description: 'Working ready URL to store in policy.audit.target' },
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable set-run output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the planned config write without changing files', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const REVIEW_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable review gate guidance', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show the review gate plan without invoking reviewers or writing evidence', default: false },

@@ -249,7 +249,8 @@ describe('manual UI audit CLI', () => {
     assert.equal(parsed.preferredBrowser, 'agent-browser');
     assert.match(parsed.fallbackBrowserAutomation, /only when agent-browser/);
     assert.equal(parsed.uploadEnabled, false);
-    assert.match(parsed.nextAction, /agent-browser/);
+    assert.match(parsed.nextAction, /Reuse `qube aie run start --name ui-audit -- /);
+    assert.match(parsed.nextAction, /http:\/\/localhost:3000/);
     assert.equal(existsSync(marker), false);
     assert.equal(existsSync(join(home, 'github-verification')), false);
   });
@@ -336,5 +337,84 @@ describe('manual UI audit CLI', () => {
     assert.equal(ui.dryRun.supported, true);
     assert.equal(checkFlag.type, 'boolean');
     assert.deepEqual(ui.mutation.categories, ['local-files']);
+    const setRun = parsed.commands.find(command => command.name === 'audit ui set-run');
+    assert.ok(setRun);
+    assert.equal(setRun.mutation.mutates, true);
+    assert.equal(setRun.interactions.json, true);
+    assert.equal(setRun.dryRun.supported, true);
+  });
+
+  it('names set-run when the launch command and URL are empty', () => {
+    const repo = makeGitRepo();
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    writeConfig(repo, cleanConfig());
+    const result = binRun(['audit', 'ui', '93', '--json'], repo, { HOME: home, USERPROFILE: home });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(result.status, 0);
+    assert.equal(parsed.appLaunch, null);
+    assert.equal(parsed.auditTarget, null);
+    assert.ok(parsed.warnings.some(warning => /audit ui set-run/.test(warning)));
+    assert.match(parsed.nextAction, /audit ui set-run --command/);
+  });
+
+  it('records only the working launch command and URL', () => {
+    const repo = makeGitRepo();
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const config = cleanConfig();
+    config.policy.gates.qualityControl = true;
+    writeConfig(repo, config);
+    const planned = binRun([
+      'audit', 'ui', 'set-run',
+      '--command', 'pnpm dev:web',
+      '--url', 'http://127.0.0.1:5178',
+      '--dry-run',
+      '--json',
+    ], repo, { HOME: home, USERPROFILE: home });
+    const plannedParsed = JSON.parse(planned.stdout);
+    assert.equal(planned.status, 0, planned.stderr);
+    assert.equal(plannedParsed.ok, true);
+    assert.equal(plannedParsed.applied, false);
+    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8')).policy.audit.appLaunch, '');
+
+    const written = binRun([
+      'audit', 'ui', 'set-run',
+      '--command', 'pnpm dev:web',
+      '--url', 'http://127.0.0.1:5178',
+      '--json',
+    ], repo, { HOME: home, USERPROFILE: home });
+    const parsed = JSON.parse(written.stdout);
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.applied, true);
+    assert.equal(parsed.appLaunch, 'pnpm dev:web');
+    assert.equal(parsed.target, 'http://127.0.0.1:5178');
+    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    assert.equal(saved.policy.audit.appLaunch, 'pnpm dev:web');
+    assert.equal(saved.policy.audit.target, 'http://127.0.0.1:5178');
+    assert.equal(saved.policy.gates.qualityControl, true);
+
+    const reused = binRun(['audit', 'ui', '93', '--json'], repo, { HOME: home, USERPROFILE: home });
+    const reusedParsed = JSON.parse(reused.stdout);
+    assert.equal(reusedParsed.appLaunch, 'pnpm dev:web');
+    assert.equal(reusedParsed.auditTarget, 'http://127.0.0.1:5178');
+    assert.match(reusedParsed.nextAction, /pnpm dev:web/);
+  });
+
+  it('refuses to invent a start command or write an unsafe URL', () => {
+    const repo = makeGitRepo();
+    writeConfig(repo, cleanConfig());
+    const missing = binRun(['audit', 'ui', 'set-run', '--json'], repo);
+    assert.notEqual(missing.status, 0);
+    assert.match(JSON.parse(missing.stdout).error, /requires --command/);
+
+    const parent = binRun([
+      'audit', 'ui', 'set-run',
+      '--command', 'pnpm dev',
+      '--url', 'http://127.0.0.1:5178/ok/../secret',
+      '--json',
+    ], repo);
+    assert.notEqual(parent.status, 0);
+    assert.match(JSON.parse(parent.stdout).error, /parent-directory/);
+    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8')).policy.audit.appLaunch, '');
   });
 });

@@ -15,6 +15,7 @@ import { formatPrLaneRerun, runPrLaneRerunService } from './app/pr_lane_rerun.js
 import { formatReviewFeedback, runReviewFeedback } from './app/review_feedback.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
+import { formatSetAuditRun, setAuditRun } from './audit_set_run.js';
 import { runBranchCommand } from './branch.js';
 import { branchCommandError, formatBranchResult, parseBranchIssue, shouldShowBranchHelp, usage as branchUsage, usageJson as branchUsageJson } from './branch_command.js';
 import { commandDescription, commandExamples, isHelpToken } from './command_metadata.js';
@@ -494,6 +495,24 @@ async function handleAuditUi(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
+async function handleAuditUiSetRun(context: Parameters<RuntimeCommandHandler>[0]) {
+  const loaded = await loadConfigFile();
+  if (loaded.present && !loaded.ok) {
+    return configLoadFailure(context, 'audit ui set-run', loaded, 'Fix the selected Executor config, then rerun `aie audit ui set-run`.');
+  }
+  const result = setAuditRun({
+    config: loaded.config ?? null,
+    configPath: loaded.path,
+    command: stringFlag(context, 'command'),
+    url: stringFlag(context, 'url'),
+    dryRun: readBooleanFlag(context, 'dry-run'),
+  });
+  if (!result.ok) {
+    return commandFailure(context, result, formatSetAuditRun(result));
+  }
+  return commandResult(context, result, formatSetAuditRun(result));
+}
+
 async function handleReviewGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const issue = stringArg(context, 'issue');
   if (isHelpToken(issue)) return usageResult(context, 'review gate', 'aie review gate <issue> [--prompt] [--dry-run] [--json]', ['Usage: aie review gate <issue> [--prompt] [--dry-run] [--json]', '', 'Render the configured review-agent gate prompt and evidence requirements without invoking a reviewer.', 'Examples:', ...commandExamples('review gate').map(example => `  ${example}`)]);
@@ -859,8 +878,9 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
 }
 
 export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> = {
-  audit: topic(['Use `aie audit ui <issue> --dry-run`, `aie audit ui <issue> --prepare`, or `aie audit ui <issue> --check --json`.', 'Audit helpers render manual guidance and local evidence paths; they never upload screenshots or claim pass/fail from instructions alone.']),
+  audit: topic(['Use `aie audit ui <issue> --dry-run`, `aie audit ui <issue> --prepare`, `aie audit ui <issue> --check --json`, or `aie audit ui set-run --command <command> --url <url>`.', 'Audit helpers render manual guidance and local evidence paths; they never upload screenshots or claim pass/fail from instructions alone.']),
   'audit ui': context => handleConfigCommand(context, 'audit ui'),
+  'audit ui set-run': handleAuditUiSetRun,
   branch: topic(['Use `aie branch suggest <issue>`, `aie branch check <issue>`, or `aie branch create <issue> --dry-run`.', '`suggest` and `check` are read-only. `create` mutates git state only after worktree, dirty checkout, and base branch checks pass.']),
   'branch suggest': context => handleBranch(context, 'branch suggest'),
   'branch check': context => handleBranch(context, 'branch check'),

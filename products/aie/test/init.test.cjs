@@ -871,6 +871,7 @@ describe('init service', () => {
     assert.match(agents, /prefer repository package scripts/);
     assert.match(agents, /qube aie run start --name ui-audit -- <command>/);
     assert.match(agents, /qube aie run wait --name ui-audit --url <url> --timeout 30/);
+    assert.match(agents, /qube aie audit ui set-run --command "<command>" --url <url>/);
     assert.match(agents, /agent-browser first and Playwright\/browser automation as fallback/);
     assert.match(agents, /capture screenshots/);
     assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
@@ -913,6 +914,7 @@ describe('init service', () => {
     assert.match(command, /Use `qube aie pr view <pr> --json`, `qube aie pr gate <pr>`, and `qube aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
     assert.match(command, /Use the Executor local app runner/);
     assert.match(command, /`qube aie run start --name ui-audit -- <command>`, `qube aie run wait --name ui-audit --url <url> --timeout 30`, `qube aie run status --name ui-audit`, and `qube aie run stop --name ui-audit`/);
+    assert.match(command, /qube aie audit ui set-run --command "<command>" --url <url>/);
     assert.match(command, /prefer repository package scripts/);
     assert.match(command, /Use agent-browser first for visual UI inspection/);
     assert.match(command, /capture screenshots/);
