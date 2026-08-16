@@ -582,8 +582,27 @@ function captureRawOutput(
   }
 }
 
+function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
+  const parts = [result.stderr];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    try {
+      const event: unknown = JSON.parse(trimmed);
+      if (isRecord(event)) {
+        if (event.type === 'item.completed' && isRecord(event.item) && event.item.type === 'agent_message') continue;
+        if (typeof event.text === 'string' && (typeof event.sessionId === 'string' || event.sessionId === null)) continue;
+      }
+    } catch {
+      // Keep non-JSON host diagnostics, including command-rejection text.
+    }
+    parts.push(trimmed);
+  }
+  return parts.join('\n');
+}
+
 function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
-  return /blocked by policy|rejected:\s*blocked/i.test(`${result.stdout}\n${result.stderr}`);
+  return /blocked by policy|rejected:\s*blocked/i.test(inspectionPolicyHaystack(result));
 }
 
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {

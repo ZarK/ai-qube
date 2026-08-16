@@ -330,6 +330,28 @@ describe('model review runner', () => {
     assert.match(result.error, /fails over to the configured second host/);
   });
 
+  it('does not treat review prose that quotes a policy block as a host fault', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-grok-policy-quote-'));
+    const quoted = {
+      ...laneResult(),
+      summary: 'The host reported rejected: blocked by policy for git rev-parse on a prior Codex run; this Grok lane inspected the checkout.',
+    };
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(quoted), sessionId: 'grok-session' }),
+      }),
+    });
+    assert.equal(result.reasonCode, null);
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'passed');
+  });
+
   it('does not accept a schema-valid Codex verdict when the host blocked git inspection', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-valid-'));
     const result = await runModelReview({
