@@ -13,8 +13,9 @@ const buildGitLabAdapter = "pnpm --filter @tjalve/qube-adapter-gitlab run build"
 const buildLinearAdapter = "pnpm --filter @tjalve/qube-adapter-linear run build";
 const buildJiraAdapter = "pnpm --filter @tjalve/qube-adapter-jira run build";
 const buildJenkinsAdapter = "pnpm --filter @tjalve/qube-adapter-jenkins run build";
+const buildGrokBuildAdapter = "pnpm --filter @tjalve/qube-adapter-grok-build run build";
 const buildQubeCli = "pnpm --filter @tjalve/qube-cli run build";
-const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildGitLabAdapter} && ${buildLinearAdapter} && ${buildJiraAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildOpenCodeAdapter} && ${buildQubeCli}`;
+const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildGitLabAdapter} && ${buildLinearAdapter} && ${buildJiraAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildOpenCodeAdapter} && ${buildGrokBuildAdapter} && ${buildQubeCli}`;
 const buildAiqDependencies = `${buildAieDependencies} && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build`;
 
 function adapterEntry(filter, packageJson) {
@@ -73,6 +74,11 @@ export const PUBLISH_PACKAGES = Object.freeze(new Map([
   ["qube-adapter-jenkins", {
     ...adapterEntry("@tjalve/qube-adapter-jenkins", "adapters/jenkins/package.json"),
     path: "adapters/jenkins",
+    command: null,
+  }],
+  ["qube-adapter-grok-build", {
+    ...adapterEntry("@tjalve/qube-adapter-grok-build", "adapters/grok-build/package.json"),
+    path: "adapters/grok-build",
     command: null,
   }],
   ["qube-cli", {
@@ -136,6 +142,7 @@ export const PUBLISH_SET_ORDER = Object.freeze([
   "qube-adapter-linear",
   "qube-adapter-jira",
   "qube-adapter-jenkins",
+  "qube-adapter-grok-build",
   "aib",
   "aie",
   "aiu",

@@ -33,7 +33,7 @@ function fakeAdapter(overrides = {}) {
 }
 
 describe('review host adapter registry', () => {
-  it('lists and resolves the built-in codex and grok adapters', () => {
+  it('lists and resolves the Codex builtin and Grok Build package adapters', () => {
     assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
     assert.equal(isRegisteredReviewHost('codex'), true);
     assert.equal(isRegisteredReviewHost('grok-build'), true);
@@ -72,7 +72,7 @@ describe('review host adapter registry', () => {
     assert.equal(isRegisteredReviewHost('fake-review-host'), false);
   });
 
-  it('restores exactly the built-in adapters after reset', () => {
+  it('restores the registered Codex and Grok Build adapters after reset', () => {
     registerReviewHostAdapterForTests(fakeAdapter({ id: 'another-fake-host' }));
     try {
       assert.ok(listReviewHostIds().includes('another-fake-host'));

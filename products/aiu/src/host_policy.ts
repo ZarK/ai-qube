@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import type { AiuContinuationMode, AiuHost, AiuHostCapabilityName, AiuHostsConfig } from "./config.js";
+import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 
 export const AIU_HOST_SUPPORT_LEVELS = ["supported", "experimental", "recipe-only", "unsupported"] as const;
 export const AIU_HOST_CAPABILITY_SUPPORT = ["supported", "experimental", "disabled", "unsupported", "unknown"] as const;
@@ -63,6 +64,18 @@ const HOST_MODE_REQUIREMENTS: Readonly<Record<AiuContinuationMode, readonly AiuH
   wait: Object.freeze(["sessionState", "userActivity"] satisfies AiuHostCapabilityName[]),
   stop: Object.freeze([] satisfies AiuHostCapabilityName[]),
 });
+
+function grokBuildManagedFiles(): readonly AiuManagedHostFile[] {
+  const adapter = loadGrokBuildAdapter();
+  if (!adapter) return Object.freeze([]);
+  return Object.freeze([
+    Object.freeze({
+      relativePath: adapter.grokBuildStopHookFile.relativePath,
+      description: adapter.grokBuildStopHookFile.description,
+      content: adapter.grokBuildStopHookFile.content,
+    }),
+  ]);
+}
 
 const HOST_PROFILES: Readonly<Record<AiuHost, AiuHostCapabilityProfile>> = Object.freeze({
   opencode: Object.freeze({
@@ -273,26 +286,7 @@ const HOST_PROFILES: Readonly<Record<AiuHost, AiuHostCapabilityProfile>> = Objec
       blocksByDefault: true,
       description: "Grok Build Stop hook blocking is available when hosts.stopHookBlocking.grok-build is explicitly enabled.",
     }),
-    managedFiles: Object.freeze([
-      Object.freeze({
-        relativePath: path.join(".grok", "hooks", "ai-umpire.json"),
-        description: "Grok Build AI Umpire project Stop hook.",
-        content: stableJson({
-          hooks: {
-            Stop: [
-              {
-                hooks: [
-                  {
-                    command: "pnpm exec aiu hook-stop --tool grok-build",
-                    type: "command",
-                  },
-                ],
-              },
-            ],
-          },
-        }),
-      }),
-    ]),
+    managedFiles: grokBuildManagedFiles(),
     trustSteps: Object.freeze(["Review the Grok Build Stop hook, then run /hooks-trust so the project hook can execute."]),
   }),
 });

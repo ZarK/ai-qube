@@ -1,11 +1,6 @@
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  GROK_BUILD_EXECUTABLE_NAMES,
-  GROK_BUILD_WINDOWS_EXECUTABLE_NAMES,
-  ISOLATED_REVIEW_HOST_PACKAGE_NAMES,
-} from '@tjalve/qube-core';
+import { ISOLATED_REVIEW_HOST_PACKAGE_NAMES } from '@tjalve/qube-core';
 
 export {
   AGENT_HOST_IDS,
@@ -101,21 +96,7 @@ export function sanitizeProbeText(value: string): string {
   return redact(value.replace(/\[[0-9;]*[A-Za-z]/g, '').replace(/[^ -~]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
 }
 
-export function parseGrokModelCatalog(output: string): string[] | null {
-  const lines = output.split(/\r?\n/);
-  const headerIndex = lines.findIndex(line => /available models\s*:/i.test(line));
-  if (headerIndex === -1) return null;
-  const models: string[] = [];
-  for (const line of lines.slice(headerIndex + 1)) {
-    const match = /^\s*[-*]?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
-    if (!match) {
-      if (line.trim() === '') continue;
-      break;
-    }
-    models.push(match[1]);
-  }
-  return models.length > 0 ? models : null;
-}
+
 
 export function parseCodexModelCatalog(output: string): string[] | null {
   let parsed: unknown;
@@ -172,90 +153,6 @@ function parseCodexOutput(stdout: string): ReviewHostParsedEnvelope | null {
   return messages.length === 1 ? { text: messages[0], sessionId, ...(usage ? { usage } : {}) } : null;
 }
 
-function jsonObjectSequence(text: string): string[] | null {
-  let index = 0;
-  const objects: string[] = [];
-  while (index < text.length) {
-    while (index < text.length && /\s/.test(text[index])) index += 1;
-    if (index >= text.length) break;
-    if (text[index] !== '{') return null;
-    const start = index;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (; index < text.length; index += 1) {
-      const character = text[index];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (character === '\\') escaped = true;
-        else if (character === '"') inString = false;
-        continue;
-      }
-      if (character === '"') inString = true;
-      else if (character === '{') depth += 1;
-      else if (character === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          index += 1;
-          break;
-        }
-      }
-    }
-    if (depth !== 0 || inString) return null;
-    const candidate = text.slice(start, index);
-    try {
-      const parsed: unknown = JSON.parse(candidate);
-      if (!isRecord(parsed)) return null;
-    } catch {
-      return null;
-    }
-    objects.push(candidate);
-  }
-  return objects.length > 0 ? objects : null;
-}
-
-function parseGrokEnvelopeRecord(stdout: string): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(stdout);
-    if (isRecord(value)) return value;
-  } catch {
-    // Grok may emit JSONL even when --output-format json is implied.
-  }
-  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      const value: unknown = JSON.parse(lines[index]);
-      if (isRecord(value)) return value;
-    } catch {
-      // Keep scanning toward the final event.
-    }
-  }
-  return null;
-}
-
-function grokTextPayload(record: Record<string, unknown>): string | null {
-  if (typeof record.text === 'string' && record.text.trim() !== '') return record.text;
-  if (isRecord(record.text)) return JSON.stringify(record.text);
-  if (typeof record.recommendation === 'string' || typeof record.status === 'string') return JSON.stringify(record);
-  return null;
-}
-
-function parseGrokOutput(stdout: string): ReviewHostParsedEnvelope | null {
-  const record = parseGrokEnvelopeRecord(stdout.trim());
-  if (!record) return null;
-  const payload = grokTextPayload(record);
-  if (!payload) return null;
-  const objects = jsonObjectSequence(payload);
-  if (!objects) return null;
-  const sessionId = typeof record.sessionId === 'string'
-    ? record.sessionId
-    : typeof record.session_id === 'string'
-      ? record.session_id
-      : null;
-  const usage = readHostUsage(record.usage) ?? readHostUsage(record.tokenUsage) ?? (isRecord(record.tokens) ? readHostUsage(record.tokens) : undefined);
-  return { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId, ...(usage ? { usage } : {}) };
-}
-
 const FULL_CAPABILITIES: ReviewHostCapabilities = { structuredOutput: true, readOnlySandbox: true };
 const FULL_REQUIRED_CAPABILITIES: readonly ReviewHostCapabilityNeed[] = ['structured-output', 'read-only-sandbox'];
 
@@ -310,81 +207,7 @@ const codexAdapter: ReviewHostAdapter = Object.freeze({
   },
 });
 
-const grokAdapter: ReviewHostAdapter = Object.freeze({
-  id: 'grok-build',
-  capabilities: FULL_CAPABILITIES,
-  requiredCapabilities: FULL_REQUIRED_CAPABILITIES,
-  requiresPromptFile: true,
-  requiresSchemaFile: false,
-  executableNames: Object.freeze([...GROK_BUILD_EXECUTABLE_NAMES]),
-  windowsExecutableNames: Object.freeze([...GROK_BUILD_WINDOWS_EXECUTABLE_NAMES]),
-  windowsNodeModulesScriptPath(): string | null {
-    return null;
-  },
-  windowsFallbackExecutablePath(): string | null {
-    return join(homedir(), '.grok', 'bin', 'grok.exe');
-  },
-  buildInvocation(context: ReviewHostInvocationContext): ReviewHostBuiltInvocation {
-    if (!context.promptPath) throw new Error('Grok review routing requires a private prompt file.');
-    const args: string[] = [
-      '--cwd', context.repoRoot,
-      '--permission-mode', 'dontAsk',
-      '--sandbox', 'strict',
-      '--allow', 'Read',
-      '--allow', 'Grep',
-      '--deny', 'Bash(*)',
-      '--deny', 'Edit',
-      '--deny', 'WebFetch',
-      '--deny', 'MCPTool(*)',
-      '--deny', 'Read(.qube/aie/reviews/**)',
-      '--no-plan',
-      '--no-subagents',
-      '--disable-web-search',
-      '--no-memory',
-      '--max-turns', String(context.maxTurns),
-      '--json-schema', context.schemaJson,
-    ];
-    if (context.effort) args.push('--reasoning-effort', context.effort);
-    if (context.model) args.push('--model', context.model);
-    args.push('--verbatim', '--prompt-file', context.promptPath);
-    return { args, stdin: null };
-  },
-  parseEnvelope: parseGrokOutput,
-  probeAfterVersion({ model, executable, prefixArgs, runCommand, version }: ReviewHostProbeContext): ReviewHostProbeResult {
-    if (!model) return { status: 'ready', modelListed: null, diagnostic: null };
-    let catalogOutput: string;
-    try {
-      catalogOutput = runCommand(executable, [...prefixArgs, 'models']);
-    } catch {
-      return {
-        status: 'blocked',
-        modelListed: null,
-        diagnostic: `The grok CLI resolved (${version}) but its model catalog could not be read. Run \`grok models\` manually and fix authentication or CLI state before running routed review lanes.`,
-      };
-    }
-    const catalog = parseGrokModelCatalog(catalogOutput);
-    if (!catalog) {
-      return {
-        status: 'blocked',
-        modelListed: null,
-        diagnostic: `The grok CLI resolved (${version}) but its model catalog output was unrecognized. Run \`grok models\` manually and update the trusted review route configuration.`,
-      };
-    }
-    if (!catalog.includes(model)) {
-      return {
-        status: 'blocked',
-        modelListed: false,
-        diagnostic: `Configured review model "${model}" is not in the grok catalog (${sanitizeProbeText(catalog.join(', '))}). Update the trusted review model configuration to a listed model.`,
-      };
-    }
-    return { status: 'ready', modelListed: true, diagnostic: null };
-  },
-  listCatalog({ executable, prefixArgs, runCommand }: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null {
-    return parseGrokModelCatalog(runCommand(executable, [...prefixArgs, 'models']));
-  },
-});
-
-const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([codexAdapter, grokAdapter]);
+const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([codexAdapter]);
 
 function isReviewAdapterUnavailable(error: unknown, packageName: string): boolean {
   return isMissingAdapterPackage(error, packageName);

@@ -9,6 +9,7 @@ import {
   AIU_HOSTS,
   loadAiuConfig,
 } from "./config.js";
+import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 import { inspectGrokFolderTrust } from "./grok_trust.js";
 import { evaluateAiuHostRuntimePolicy, getAiuHostCapabilityProfiles } from "./host_policy.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
@@ -477,7 +478,8 @@ function packageBackedEntrypointMarker(host: AiuHost, relativePath: string): str
   if (host === "claude-code" && relativePath.endsWith(path.join(".claude", "settings.json"))) {
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
-  if (host === "grok-build" && relativePath.endsWith(path.join(".grok", "hooks", "ai-umpire.json"))) {
+  const grokHookPath = loadGrokBuildAdapter()?.grokBuildStopHookFile.relativePath;
+  if (host === "grok-build" && grokHookPath && relativePath.replaceAll("\\", "/").endsWith(grokHookPath)) {
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
   return undefined;
@@ -487,7 +489,10 @@ function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly Ai
   if (!configLoad.config.hosts.enabled.includes("grok-build")) {
     return [];
   }
-  const relativePath = path.join(".grok", "hooks", "ai-umpire.json");
+  const relativePath = loadGrokBuildAdapter()?.grokBuildStopHookFile.relativePath;
+  if (!relativePath) {
+    return [];
+  }
   const absolutePath = path.join(configLoad.repoRoot, relativePath);
   if (!existsSync(absolutePath)) {
     return [];

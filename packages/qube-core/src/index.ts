@@ -653,6 +653,28 @@ export const codexAdapterContract = defineQubeAdapter({
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
+export const grokBuildAdapterContract = defineQubeAdapter({
+  id: "grok-build",
+  packageName: "@tjalve/qube-adapter-grok-build",
+  surface: "grok-build",
+  owns: [
+    "host-detection",
+    "instruction-targets",
+    "isolated-review-invocation",
+    "grok-model-catalog",
+    "windows-grok-resolution",
+    "umpire-stop-hook-parse",
+    "unsupported-capability-reporting",
+  ],
+  boundary: "Grok Build host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
+  capabilities: Object.freeze([
+    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-grok-build", "Detect Grok Build repository affordances from AGENTS.md and .grok assets."),
+    adapterCapability("isolated-review", "supported", "@tjalve/qube-adapter-grok-build", "Build the isolated Grok review invocation and parse the Grok envelope."),
+    adapterCapability("list-models", "supported", "@tjalve/qube-adapter-grok-build", "Read the grok models catalog through the adapter probe."),
+  ]),
+  contractOnly: false,
+} satisfies QubeAdapterContract);
+
 export const claudeCodeAdapterContract = defineQubeAdapter({
   id: "claude-code",
   packageName: "@tjalve/qube-adapter-claude-code",

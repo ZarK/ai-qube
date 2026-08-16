@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import type { AiuConfig, AiuHost } from "./config.js";
+import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 import { loadAiuConfig } from "./config.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
 import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./prompt.js";
@@ -63,7 +64,7 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  if (options.tool === "grok-build" && parsed.payload.reason !== undefined && parsed.payload.reason !== "end_turn") {
+  if (options.tool === "grok-build" && loadGrokBuildAdapter()?.isGrokSessionEndReason(parsed.payload.reason)) {
     return allow(options, inputBytes, "session-end-stop", [
       diagnostic("info", "session-end-stop", "Grok Build reported a session-end Stop; continuation is not applied."),
     ]);
@@ -260,7 +261,16 @@ function parseHookPayload(
     if (!isRecord(parsed)) {
       return { ok: false, code: "malformed-hook-input", error: "Stop hook input must be a JSON object." };
     }
-    return tool === "grok-build" ? parseGrokStopPayload(parsed) : parseClaudeStopPayload(parsed);
+    if (tool === "grok-build") {
+      const adapter = loadGrokBuildAdapter();
+      if (!adapter) {
+        return { ok: false, code: "malformed-hook-input", error: "Grok Build stop-hook parse requires @tjalve/qube-adapter-grok-build." };
+      }
+      const grok = adapter.parseGrokStopPayload(parsed);
+      if (!grok.ok) return { ok: false, code: "malformed-hook-input", error: grok.error };
+      return { ok: true, payload: grok.payload };
+    }
+    return parseClaudeStopPayload(parsed);
   } catch (error) {
     return {
       ok: false,
@@ -291,28 +301,6 @@ function parseClaudeStopPayload(parsed: Record<string, unknown>): { readonly ok:
   };
 }
 
-function parseGrokStopPayload(parsed: Record<string, unknown>): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "malformed-hook-input"; readonly error: string } {
-  if (typeof parsed.hookEventName !== "string" && typeof parsed.hook_event_name === "string") {
-    return { ok: false, code: "malformed-hook-input", error: "Claude snake_case Stop input is not a valid Grok parse." };
-  }
-  const validationError = validateGrokHookPayloadShape(parsed);
-  if (validationError) {
-    return { ok: false, code: "malformed-hook-input", error: validationError };
-  }
-  return {
-    ok: true,
-    payload: Object.freeze({
-      cwd: readString(parsed.cwd),
-      hook_event_name: readString(parsed.hookEventName),
-      session_id: readString(parsed.sessionId),
-      stop_hook_active: readBoolean(parsed.stopHookActive),
-      last_assistant_message: readNullableString(parsed.lastAssistantMessage),
-      permission_mode: readString(parsed.permissionMode),
-      reason: readString(parsed.reason),
-    }),
-  };
-}
-
 function validateClaudeHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
   const requiredStrings = ["cwd", "hook_event_name", "session_id", "turn_id", "permission_mode", "model"] as const;
   for (const key of requiredStrings) {
@@ -331,31 +319,6 @@ function validateClaudeHookPayloadShape(parsed: Record<string, unknown>): string
   }
   if (!isOptionalNullableString(parsed.last_assistant_message)) {
     return "last_assistant_message must be a string or null.";
-  }
-  return undefined;
-}
-
-function validateGrokHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
-  const requiredStrings = ["cwd", "hookEventName", "sessionId"] as const;
-  for (const key of requiredStrings) {
-    if (typeof parsed[key] !== "string" || parsed[key].length === 0) {
-      return `${key} must be a non-empty string.`;
-    }
-  }
-  if (parsed.hookEventName !== "stop") {
-    return "Unsupported hook event; expected stop.";
-  }
-  if (typeof parsed.stopHookActive !== "boolean") {
-    return "stopHookActive must be a boolean.";
-  }
-  if (parsed.permissionMode !== undefined && (typeof parsed.permissionMode !== "string" || parsed.permissionMode.length === 0)) {
-    return "permissionMode must be a non-empty string.";
-  }
-  if (parsed.reason !== undefined && (typeof parsed.reason !== "string" || parsed.reason.length === 0)) {
-    return "reason must be a non-empty string.";
-  }
-  if (!isOptionalNullableString(parsed.lastAssistantMessage)) {
-    return "lastAssistantMessage must be a string or null.";
   }
   return undefined;
 }
