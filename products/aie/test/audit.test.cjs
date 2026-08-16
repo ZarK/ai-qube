@@ -357,7 +357,7 @@ describe('manual UI audit CLI', () => {
     assert.match(parsed.nextAction, /audit ui set-run --command/);
   });
 
-  it('records only the working launch command and URL', () => {
+  it('records only the working launch command and URL without a full init rerun', () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const config = cleanConfig();
