@@ -1,3 +1,5 @@
+import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
+
 export interface ReviewAgentAdapterDescriptor {
   readonly handle: string;
   readonly id: string;
@@ -32,7 +34,7 @@ const BUILTIN_LOCAL_COMMAND_AGENT: ReviewAgentAdapterDescriptor = Object.freeze(
   installed: true,
 });
 
-const BUILTIN_CODEX_AGENT: ReviewAgentAdapterDescriptor = Object.freeze({
+const CODEX_ADAPTER_AGENT: ReviewAgentAdapterDescriptor = Object.freeze({
   handle: 'codex',
   id: 'codex',
   aliases: Object.freeze(['codex']),
@@ -40,9 +42,9 @@ const BUILTIN_CODEX_AGENT: ReviewAgentAdapterDescriptor = Object.freeze({
   trigger: 'local-host',
   externalService: false,
   summary: 'Codex host subagent review runner for independent fresh-context lane reviews.',
-  forgeId: 'builtin',
+  forgeId: 'codex',
   forgeAffinity: Object.freeze(['local']),
-  packageName: '@tjalve/aie',
+  packageName: '@tjalve/qube-adapter-codex',
   installed: true,
 });
 
@@ -99,10 +101,15 @@ function normalizeHandle(handle: string): string {
   return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
 }
 
+function installedCodexReviewAgent(): ReviewAgentAdapterDescriptor | null {
+  return isRegisteredReviewHost('codex') ? CODEX_ADAPTER_AGENT : null;
+}
+
 export async function listReviewAgentAdapters(forgeId: string, configuredHandles?: readonly string[]): Promise<readonly ReviewAgentAdapterDescriptor[]> {
-  const builtins = forgeId === 'builtin' || forgeId === 'local'
-    ? [BUILTIN_LOCAL_COMMAND_AGENT, BUILTIN_CODEX_AGENT]
-    : [];
+  const localAgents = [BUILTIN_LOCAL_COMMAND_AGENT];
+  const codexAgent = installedCodexReviewAgent();
+  if (codexAgent) localAgents.push(codexAgent);
+  const builtins = forgeId === 'builtin' || forgeId === 'local' ? localAgents : [];
   const entry = REGISTRY.find(candidate => candidate.forgeId === forgeId);
   if (!entry) return Object.freeze([...builtins]);
   const forgeAgents = await entry.listAgents(configuredHandles);

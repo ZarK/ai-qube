@@ -15,8 +15,15 @@ const ARGV_PATTERNS = [
   /dontAsk/,
   /Available models/,
   /parseGrokModelCatalog/,
+  /parseCodexModelCatalog/,
   /--no-subagents/,
   /--disable-web-search/,
+  /--ignore-user-config/,
+  /--strict-config/,
+  /--output-schema/,
+  /--skip-git-repo-check/,
+  /mcp_servers=\{\}/,
+  /web_search="disabled"/,
 ];
 const HOOK_WRITER = /\.grok[\\/]+hooks/;
 
@@ -37,8 +44,8 @@ function listSourceFiles(root) {
   return files;
 }
 
-describe("Grok Build adapter boundary", () => {
-  it("keeps Grok CLI argv, grok models parse, and .grok/hooks writers out of products", () => {
+describe("isolated review adapter boundary", () => {
+  it("keeps Grok and Codex isolated-review argv, catalog parsers, and .grok/hooks writers out of products", () => {
     const hits = [];
     for (const root of PRODUCT_SRC) {
       for (const file of listSourceFiles(root)) {

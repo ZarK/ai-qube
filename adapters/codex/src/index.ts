@@ -2,6 +2,12 @@ import { posix as pathPosix } from "node:path";
 
 import { codexAdapterContract } from "@tjalve/qube-core";
 
+export {
+  isolatedReviewHostAdapter,
+  parseCodexModelCatalog,
+  reviewHostAdapter,
+} from "./isolated_review.js";
+
 export type CodexOperation =
   | "detect-host"
   | "read-instructions"

@@ -1,5 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
-import { isRegisteredReviewHost, listReviewHostIds } from '../app/review_host_adapters.js';
+import { isolatedReviewHostPackageName, isRegisteredReviewHost, unregisteredIsolatedReviewHostMessage } from '../app/review_host_adapters.js';
 import { defaultCarryForwardContext, defaultLaneModelTier } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, retiredGrokHostIdMessage, type ConnectionContract } from '@tjalve/qube-core';
 import { REVIEW_MODEL_HOST_IDS, type MigrationPolicy, type ReviewContextSources, type ReviewFailoverPolicy, type ReviewLanePolicy, type ReviewLaneRequiredMode, type ReviewLaneRereviewMode, type ReviewModelTierId, type ReviewModelsPolicy, type ReviewProfileKind, type ReviewPromptFragments, type ReviewRoutePolicy, type ReviewSeverityThreshold, type ShippingPolicy } from '../core/policy.js';
@@ -403,7 +403,13 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
     errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host ${retiredGrokHostIdMessage()}` });
   }
   const host = value.host === 'grok' ? null : isRegisteredReviewHost(value.host) ? value.host : null;
-  if (value.host !== 'grok' && !host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must name a registered review host adapter, got ${JSON.stringify(value.host)} (registered: ${listReviewHostIds().join(', ')})` });
+  if (value.host !== 'grok' && !host) {
+    errors.push({
+      kind: 'invalid',
+      path: `${path}.host`,
+      message: `${path}.host ${unregisteredIsolatedReviewHostMessage(String(value.host ?? ''))}`,
+    });
+  }
   const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
   if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
   const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
@@ -1026,6 +1032,14 @@ function readReviewModelTierMap(value: unknown, path: string, errors: Validation
   for (const host of REVIEW_MODEL_HOST_IDS) {
     const binding = value[host];
     if (binding === undefined) continue;
+    if (isolatedReviewHostPackageName(host) && !isRegisteredReviewHost(host)) {
+      errors.push({
+        kind: 'invalid',
+        path: `${path}.${host}`,
+        message: `${path}.${host} ${unregisteredIsolatedReviewHostMessage(host)}`,
+      });
+      continue;
+    }
     if (!isPlainObject(binding)) {
       errors.push({ kind: 'invalid', path: `${path}.${host}`, message: `${path}.${host} must be an object with model and optional effort` });
       continue;

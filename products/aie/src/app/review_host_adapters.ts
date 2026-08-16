@@ -1,5 +1,4 @@
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
 import { ISOLATED_REVIEW_HOST_PACKAGE_NAMES } from '@tjalve/qube-core';
 
 export {
@@ -10,7 +9,7 @@ export {
 import type { ReviewModelEffort } from '../core/policy.js';
 import { isMissingAdapterPackage } from '../missing_adapter_package.js';
 import { redact } from '../redact.js';
-import { readHostUsage, type LaneUsage } from '../review_usage.js';
+import type { LaneUsage } from '../review_usage.js';
 
 const requireAdapter = createRequire(import.meta.url);
 
@@ -96,118 +95,23 @@ export function sanitizeProbeText(value: string): string {
   return redact(value.replace(/\[[0-9;]*[A-Za-z]/g, '').replace(/[^ -~]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
 }
 
+const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([]);
 
+let omittedReviewHostPackages = new Set<string>();
 
-export function parseCodexModelCatalog(output: string): string[] | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed.models)) return null;
-  const models: string[] = [];
-  for (const item of parsed.models) {
-    if (!isRecord(item) || typeof item.slug !== 'string') continue;
-    const slug = item.slug.trim();
-    if (slug !== '') models.push(slug);
-  }
-  return models.length > 0 ? models : null;
+export function isolatedReviewHostPackageName(host: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(ISOLATED_REVIEW_HOST_PACKAGE_NAMES, host)) return null;
+  return ISOLATED_REVIEW_HOST_PACKAGE_NAMES[host as keyof typeof ISOLATED_REVIEW_HOST_PACKAGE_NAMES];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function usageFromCodexEvent(record: Record<string, unknown>): LaneUsage | undefined {
-  const direct = readHostUsage(record.usage);
-  if (direct) return direct;
-  if (record.type === 'token_count') {
-    return readHostUsage(isRecord(record.info) ? record.info : record);
+export function unregisteredIsolatedReviewHostMessage(host: string): string {
+  const packageName = isolatedReviewHostPackageName(host);
+  if (packageName) {
+    return `must name an installed review host adapter; ${host} is unavailable because ${packageName} is not installed`;
   }
-  if (record.type === 'event_msg' && isRecord(record.payload) && record.payload.type === 'token_count') {
-    const info = isRecord(record.payload.info) ? record.payload.info : record.payload;
-    return readHostUsage(info.total_token_usage ?? info.last_token_usage ?? info);
-  }
-  if (isRecord(record.item) && record.item.type === 'usage') return readHostUsage(record.item);
-  return undefined;
+  const registered = listReviewHostIds();
+  return `must name a registered review host adapter, got ${JSON.stringify(host)} (registered: ${registered.join(', ') || 'none'})`;
 }
-
-function parseCodexOutput(stdout: string): ReviewHostParsedEnvelope | null {
-  const messages: string[] = [];
-  let sessionId: string | null = null;
-  let usage: LaneUsage | undefined;
-  for (const line of stdout.split(/\r?\n/).filter(line => line.trim() !== '')) {
-    let event: unknown;
-    try { event = JSON.parse(line); } catch { continue; }
-    if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
-    const record = event as Record<string, unknown>;
-    if (record.type === 'thread.started' && typeof record.thread_id === 'string') sessionId = record.thread_id;
-    if (record.type === 'item.completed' && record.item && typeof record.item === 'object' && !Array.isArray(record.item)) {
-      const item = record.item as Record<string, unknown>;
-      if (item.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
-    }
-    const eventUsage = usageFromCodexEvent(record);
-    if (eventUsage) usage = eventUsage;
-  }
-  return messages.length === 1 ? { text: messages[0], sessionId, ...(usage ? { usage } : {}) } : null;
-}
-
-const FULL_CAPABILITIES: ReviewHostCapabilities = { structuredOutput: true, readOnlySandbox: true };
-const FULL_REQUIRED_CAPABILITIES: readonly ReviewHostCapabilityNeed[] = ['structured-output', 'read-only-sandbox'];
-
-const codexAdapter: ReviewHostAdapter = Object.freeze({
-  id: 'codex',
-  capabilities: FULL_CAPABILITIES,
-  requiredCapabilities: FULL_REQUIRED_CAPABILITIES,
-  requiresPromptFile: false,
-  requiresSchemaFile: true,
-  executableNames: Object.freeze(['codex']),
-  windowsExecutableNames: Object.freeze(['codex.exe']),
-  windowsNodeModulesScriptPath(shimDir: string): string | null {
-    return join(shimDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-  },
-  windowsFallbackExecutablePath(): string | null {
-    return null;
-  },
-  buildInvocation(context: ReviewHostInvocationContext): ReviewHostBuiltInvocation {
-    if (!context.schemaPath) throw new Error('Codex review routing requires a private output schema file.');
-    const args: string[] = ['exec'];
-    if (context.model) args.push('--model', context.model);
-    if (context.effort) args.push('--config', `model_reasoning_effort="${context.effort}"`);
-    args.push(
-      '--ignore-user-config', '--strict-config', '--config', 'mcp_servers={}', '--config', 'web_search="disabled"',
-      '--disable', 'apps', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use',
-      '--disable', 'in_app_browser', '--disable', 'standalone_web_search', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'plugins',
-      '--sandbox', 'read-only', '--cd', context.repoRoot, '--skip-git-repo-check', '--ephemeral', '--output-schema', context.schemaPath, '--json', '-',
-    );
-    return { args, stdin: context.prompt };
-  },
-  parseEnvelope: parseCodexOutput,
-  probeAfterVersion({ model, executable, prefixArgs, runCommand }: ReviewHostProbeContext): ReviewHostProbeResult {
-    if (!model) return { status: 'ready', modelListed: null, diagnostic: null };
-    let catalog: string[] | null;
-    try {
-      catalog = parseCodexModelCatalog(runCommand(executable, [...prefixArgs, 'debug', 'models']));
-    } catch {
-      return { status: 'ready', modelListed: null, diagnostic: null };
-    }
-    if (!catalog) return { status: 'ready', modelListed: null, diagnostic: null };
-    if (!catalog.includes(model)) {
-      return {
-        status: 'blocked',
-        modelListed: false,
-        diagnostic: `Configured review model "${model}" is not in the Codex catalog (${sanitizeProbeText(catalog.join(', '))}). Update the trusted review model configuration to a listed model.`,
-      };
-    }
-    return { status: 'ready', modelListed: true, diagnostic: null };
-  },
-  listCatalog({ executable, prefixArgs, runCommand }: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null {
-    return parseCodexModelCatalog(runCommand(executable, [...prefixArgs, 'debug', 'models']));
-  },
-});
-
-const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([codexAdapter]);
 
 function isReviewAdapterUnavailable(error: unknown, packageName: string): boolean {
   return isMissingAdapterPackage(error, packageName);
@@ -242,6 +146,7 @@ function builtinAdapterMap(): Map<string, ReviewHostAdapter> {
 function loadRegisteredReviewHostAdapters(): Map<string, ReviewHostAdapter> {
   const adapters = builtinAdapterMap();
   for (const packageName of Object.values(ISOLATED_REVIEW_HOST_PACKAGE_NAMES)) {
+    if (omittedReviewHostPackages.has(packageName)) continue;
     const loaded = loadReviewHostAdapterPackage(packageName);
     if (loaded) adapters.set(loaded.id, loaded);
   }
@@ -268,6 +173,12 @@ export function registerReviewHostAdapterForTests(adapter: ReviewHostAdapter): v
   reviewHostAdapters.set(adapter.id, adapter);
 }
 
+export function omitReviewHostPackagesForTests(packageNames: readonly string[]): void {
+  omittedReviewHostPackages = new Set(packageNames);
+  reviewHostAdapters = loadRegisteredReviewHostAdapters();
+}
+
 export function resetReviewHostAdaptersForTests(): void {
+  omittedReviewHostPackages = new Set();
   reviewHostAdapters = loadRegisteredReviewHostAdapters();
 }

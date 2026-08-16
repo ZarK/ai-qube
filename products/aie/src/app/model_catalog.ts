@@ -1,6 +1,6 @@
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import type { ReviewModelsPolicy } from '../core/policy.js';
-import { getReviewHostAdapter, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
+import { getReviewHostAdapter, isRegisteredReviewHost, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
 import { resolveModelHostExecutableSync } from './model_review_runner.js';
 import { execFileSync } from 'node:child_process';
 
@@ -92,9 +92,13 @@ export function listHostModels(
   return { host, status: 'unavailable', models: [], diagnostic: `The ${host} CLI does not expose a model catalog command.` };
 }
 
+function registeredIsolatedRoutingHosts(): readonly ModelRoutingHostId[] {
+  return MODEL_ROUTING_HOSTS.filter(host => isRegisteredReviewHost(host));
+}
+
 export function reviewModelHostStatuses(
   models: ReviewModelsPolicy,
-  hosts: readonly ModelRoutingHostId[] = MODEL_ROUTING_HOSTS,
+  hosts: readonly ModelRoutingHostId[] = registeredIsolatedRoutingHosts(),
   list: (host: ModelRoutingHostId) => HostModelListing = listHostModels,
 ): ConfiguredHostModelStatus[] {
   return hosts.map(host => {
