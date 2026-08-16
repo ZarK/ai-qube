@@ -17,7 +17,7 @@ const { defaultFreshSetupLanes, FRESH_SETUP_SECURITY_MATCH } = require('../dist/
 const { activeLocalReviewFocusesForConfig } = require('../dist/review_focus.js');
 
 const GROK_MODELS = {
-  review: { grok: { model: 'grok-4.5', effort: null } },
+  review: { 'grok-build': { model: 'grok-4.5', effort: null } },
   economy: {},
   synthesis: {},
 };
@@ -39,7 +39,7 @@ async function initTypicalTs(repo, overrides = {}) {
     cwd: repo,
     yes: true,
     guide: true,
-    installedHosts: ['grok'],
+    installedHosts: ['grok-build'],
     agentBrowserAvailable: false,
     aiqAvailable: false,
     ...rest,
@@ -118,8 +118,8 @@ describe('fresh setup defaults', () => {
     assert.equal(config.reviewProfile, 'local-focused');
     assert.deepEqual(config.reviewAgents, []);
     assert.deepEqual(config.localReviewAgents, []);
-    assert.equal(config.reviewRoute.host, 'grok');
-    assert.equal(config.reviewModels.review.grok.model, 'grok-4.5');
+    assert.equal(config.reviewRoute.host, 'grok-build');
+    assert.equal(config.reviewModels.review['grok-build'].model, 'grok-4.5');
     assert.equal(config.manualUiAudit, false);
     assert.equal(config.qualityControl, false);
     assert.equal(config.gates[0].command, 'npm run test');
@@ -145,8 +145,8 @@ describe('fresh setup defaults', () => {
 
     const noLanes = getDefaults();
     noLanes.reviewLanes = [];
-    noLanes.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 16 };
-    noLanes.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    noLanes.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 16 };
+    noLanes.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const noLaneReady = freshSetupFirstPullRequestReadiness(noLanes, ['src/index.ts']);
     assert.equal(noLaneReady.ready, false);
     assert.ok(noLaneReady.reasons.some(reason => reason.includes('issue-compliance is not configured as an always-on lane')));
@@ -161,7 +161,7 @@ describe('fresh setup defaults', () => {
     assert.equal(first.ready, true, first.reasons.join('\n'));
     const identity = first.configIdentity;
 
-    config.reviewModels.review.grok = { model: 'grok-other', effort: null };
+    config.reviewModels.review['grok-build'] = { model: 'grok-other', effort: null };
     const second = freshSetupFirstPullRequestReadiness(config, ['src/index.ts']);
     assert.notEqual(second.configIdentity, identity);
     assert.equal(freshSetupConfigIdentity(config).includes('grok-other'), true);

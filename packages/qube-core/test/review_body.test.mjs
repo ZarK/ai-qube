@@ -237,7 +237,7 @@ describe("renderRoundReviewBody", () => {
       lanes: [
         lane({
           laneId: "issue-compliance",
-          host: "grok",
+          host: "grok-build",
           model: "grok-4.6",
           effort: "high",
           evidencePath: "F:\\\\code\\\\ai-qube\\\\.qube\\\\aie\\\\reviews\\\\1\\\\2\\\\abc\\\\issue-compliance.json",

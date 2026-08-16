@@ -286,8 +286,8 @@ describe('doctor diagnostics', () => {
     writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
     const config = getDefaults();
     config.reviewAdapter = 'local';
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
     const probed = [];
@@ -299,13 +299,13 @@ describe('doctor diagnostics', () => {
       ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
       probeRoute: (host, model) => {
         probed.push(`${host}:${model}`);
-        return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok' ? true : null, diagnostic: null };
+        return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok-build' ? true : null, diagnostic: null };
       },
     });
 
     assert.equal(ready.readiness, 'ready');
     assert.equal(ready.checks.routeProbes.readiness, 'ready');
-    assert.deepEqual(probed.sort(), ['codex:gpt-fallback-test', 'grok:grok-4.5']);
+    assert.deepEqual(probed.sort(), ['codex:gpt-fallback-test', 'grok-build:grok-4.5']);
     assert.equal(ready.checks.routeProbes.routes.length, 2);
     assert.ok(ready.checks.routeProbes.routes.every(route => route.status === 'ready'));
 
@@ -314,14 +314,14 @@ describe('doctor diagnostics', () => {
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
       ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
-      probeRoute: (host, model) => (host === 'grok'
+      probeRoute: (host, model) => (host === 'grok-build'
         ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog. Update the trusted review model configuration to a listed model.` }
         : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null }),
     });
 
     assert.equal(blocked.checks.routeProbes.readiness, 'needs-action');
     assert.equal(blocked.readiness, 'needs-action');
-    const blockedRoute = blocked.checks.routeProbes.routes.find(route => route.host === 'grok');
+    const blockedRoute = blocked.checks.routeProbes.routes.find(route => route.host === 'grok-build');
     assert.match(blockedRoute.nextAction, /not in the grok catalog/);
     assert.ok(blocked.nextActions.some(action => /blocked review route/.test(action)));
     assert.ok(blocked.nextActions.some(action => /not in the grok catalog/.test(action)));
@@ -460,10 +460,10 @@ describe('doctor diagnostics', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
     config.reviewMode = 'isolated';
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
-    config.localReviewAgents = ['grok', 'codex'];
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.localReviewAgents = ['grok-build', 'codex'];
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: null };
     config.reviewLanes = [{
       id: 'issue-compliance',
@@ -543,7 +543,7 @@ describe('doctor diagnostics', () => {
     const config = isolatedLocalHostConfig();
     const diagnostics = buildGateReadinessDiagnostics(config, {
       ghAuthenticated: true,
-      probeRoute: (host, model) => (host === 'grok'
+      probeRoute: (host, model) => (host === 'grok-build'
         ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: 'Grok route is blocked.' }
         : readyProbe(host, model)),
     });

@@ -1,8 +1,22 @@
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import {
+  GROK_BUILD_EXECUTABLE_NAMES,
+  GROK_BUILD_WINDOWS_EXECUTABLE_NAMES,
+  ISOLATED_REVIEW_HOST_PACKAGE_NAMES,
+} from '@tjalve/qube-core';
+
+export {
+  AGENT_HOST_IDS,
+  RETIRED_GROK_HOST_ID,
+  retiredGrokHostIdMessage,
+} from '@tjalve/qube-core';
 import type { ReviewModelEffort } from '../core/policy.js';
 import { redact } from '../redact.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
+
+const requireAdapter = createRequire(import.meta.url);
 
 export { readHostUsage, type LaneUsage } from '../review_usage.js';
 
@@ -58,9 +72,10 @@ export interface ReviewHostAdapter {
   readonly id: string;
   readonly capabilities: ReviewHostCapabilities;
   readonly requiredCapabilities: readonly ReviewHostCapabilityNeed[];
+  readonly executableNames: readonly string[];
+  readonly windowsExecutableNames: readonly string[];
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
-  readonly windowsExecutableNames: readonly string[];
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;
@@ -249,6 +264,7 @@ const codexAdapter: ReviewHostAdapter = Object.freeze({
   requiredCapabilities: FULL_REQUIRED_CAPABILITIES,
   requiresPromptFile: false,
   requiresSchemaFile: true,
+  executableNames: Object.freeze(['codex']),
   windowsExecutableNames: Object.freeze(['codex.exe']),
   windowsNodeModulesScriptPath(shimDir: string): string | null {
     return join(shimDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
@@ -294,12 +310,13 @@ const codexAdapter: ReviewHostAdapter = Object.freeze({
 });
 
 const grokAdapter: ReviewHostAdapter = Object.freeze({
-  id: 'grok',
+  id: 'grok-build',
   capabilities: FULL_CAPABILITIES,
   requiredCapabilities: FULL_REQUIRED_CAPABILITIES,
   requiresPromptFile: true,
   requiresSchemaFile: false,
-  windowsExecutableNames: Object.freeze(['grok.exe']),
+  executableNames: Object.freeze([...GROK_BUILD_EXECUTABLE_NAMES]),
+  windowsExecutableNames: Object.freeze([...GROK_BUILD_WINDOWS_EXECUTABLE_NAMES]),
   windowsNodeModulesScriptPath(): string | null {
     return null;
   },
@@ -368,11 +385,49 @@ const grokAdapter: ReviewHostAdapter = Object.freeze({
 
 const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([codexAdapter, grokAdapter]);
 
+function isReviewAdapterUnavailable(error: unknown, packageName: string): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
+  if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true;
+  return (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') && error.message.includes(packageName);
+}
+
+function isReviewHostAdapter(value: unknown): value is ReviewHostAdapter {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const adapter = value as Partial<ReviewHostAdapter>;
+  return typeof adapter.id === 'string'
+    && Array.isArray(adapter.executableNames)
+    && adapter.executableNames.length > 0
+    && typeof adapter.buildInvocation === 'function'
+    && typeof adapter.parseEnvelope === 'function'
+    && typeof adapter.probeAfterVersion === 'function';
+}
+
+export function loadReviewHostAdapterPackage(packageName: string): ReviewHostAdapter | null {
+  try {
+    const imported = requireAdapter(packageName) as Record<string, unknown>;
+    const adapter = imported.isolatedReviewHostAdapter ?? imported.reviewHostAdapter;
+    return isReviewHostAdapter(adapter) ? adapter : null;
+  } catch (error) {
+    if (isReviewAdapterUnavailable(error, packageName)) return null;
+    throw error;
+  }
+}
+
 function builtinAdapterMap(): Map<string, ReviewHostAdapter> {
   return new Map(BUILTIN_REVIEW_HOST_ADAPTERS.map(adapter => [adapter.id, adapter]));
 }
 
-let reviewHostAdapters = builtinAdapterMap();
+function loadRegisteredReviewHostAdapters(): Map<string, ReviewHostAdapter> {
+  const adapters = builtinAdapterMap();
+  for (const packageName of Object.values(ISOLATED_REVIEW_HOST_PACKAGE_NAMES)) {
+    const loaded = loadReviewHostAdapterPackage(packageName);
+    if (loaded) adapters.set(loaded.id, loaded);
+  }
+  return adapters;
+}
+
+let reviewHostAdapters = loadRegisteredReviewHostAdapters();
 
 export function getReviewHostAdapter(id: string): ReviewHostAdapter {
   const adapter = reviewHostAdapters.get(id);
@@ -393,5 +448,5 @@ export function registerReviewHostAdapterForTests(adapter: ReviewHostAdapter): v
 }
 
 export function resetReviewHostAdaptersForTests(): void {
-  reviewHostAdapters = builtinAdapterMap();
+  reviewHostAdapters = loadRegisteredReviewHostAdapters();
 }

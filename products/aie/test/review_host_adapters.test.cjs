@@ -18,6 +18,7 @@ function fakeAdapter(overrides = {}) {
     requiredCapabilities: ['structured-output', 'read-only-sandbox'],
     requiresPromptFile: true,
     requiresSchemaFile: false,
+    executableNames: ['fake-review-host'],
     windowsExecutableNames: ['fake-review-host.exe'],
     windowsNodeModulesScriptPath: () => null,
     windowsFallbackExecutablePath: () => null,
@@ -33,12 +34,12 @@ function fakeAdapter(overrides = {}) {
 
 describe('review host adapter registry', () => {
   it('lists and resolves the built-in codex and grok adapters', () => {
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok']);
+    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
     assert.equal(isRegisteredReviewHost('codex'), true);
-    assert.equal(isRegisteredReviewHost('grok'), true);
+    assert.equal(isRegisteredReviewHost('grok-build'), true);
     assert.equal(isRegisteredReviewHost('unknown-host'), false);
     assert.equal(getReviewHostAdapter('codex').id, 'codex');
-    assert.equal(getReviewHostAdapter('grok').id, 'grok');
+    assert.equal(getReviewHostAdapter('grok-build').id, 'grok-build');
   });
 
   it('rejects an unregistered host id with a named reason', () => {
@@ -78,11 +79,11 @@ describe('review host adapter registry', () => {
     } finally {
       resetReviewHostAdaptersForTests();
     }
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok']);
+    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
   });
 
   it('parses a Grok json-schema envelope when text is already an object', () => {
-    const adapter = getReviewHostAdapter('grok');
+    const adapter = getReviewHostAdapter('grok-build');
     const lane = { recommendation: 'approve', status: 'passed', severity: 'none' };
     const parsed = adapter.parseEnvelope(JSON.stringify({ text: lane, sessionId: 'grok-session' }));
     assert.equal(parsed.sessionId, 'grok-session');
@@ -90,7 +91,7 @@ describe('review host adapter registry', () => {
   });
 
   it('parses a Grok JSONL final event and a session_id alias', () => {
-    const adapter = getReviewHostAdapter('grok');
+    const adapter = getReviewHostAdapter('grok-build');
     const lane = { recommendation: 'approve', status: 'passed' };
     const stdout = [
       JSON.stringify({ type: 'progress', text: 'working' }),
@@ -102,7 +103,7 @@ describe('review host adapter registry', () => {
   });
 
   it('lists grok and Codex models through each adapter catalog', () => {
-    const grok = getReviewHostAdapter('grok');
+    const grok = getReviewHostAdapter('grok-build');
     assert.equal(typeof grok.listCatalog, 'function');
     assert.deepEqual(grok.listCatalog({
       executable: 'grok',
@@ -125,7 +126,7 @@ describe('review host adapter registry', () => {
 
   it('reports no missing capabilities for the built-in codex and grok adapters', () => {
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('codex')), []);
-    assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok')), []);
+    assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok-build')), []);
   });
 
   it('names every required capability the adapter does not declare', () => {

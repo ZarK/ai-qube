@@ -65,7 +65,7 @@ function writeUsage(input: readonly string[]): number | undefined {
       ].join('\n'),
     },
     init: {
-      usage: 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+      usage: 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       examples: ['aie init . --json', 'aie init . --yes --json', 'aie init . --defaults --yes', 'aie init . --from known-good --yes', 'aie init . --review-mode isolated --yes', 'aie init . --tool all --naming-rules', 'aie init . --tool opencode --opencode-command-alias', 'aie init . --no-milestone-ordering --package-age-days 7'],
       human: 'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--defaults] [--yes] [--dry-run] [--force] [--json]\nInitialize Executor config and managed instruction files in a repository. This command mutates local files.\n',
     },

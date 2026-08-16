@@ -57,8 +57,8 @@ describe('pr lane rerun', () => {
     config.reviewMode = 'isolated';
     config.reviewAdapter = 'local';
     config.reviewProfile = 'local-focused';
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 60, maxTurns: 4 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 60, maxTurns: 4 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewLanes = defaultFreshSetupLanes();
     const result = await runLocalReviewRunner(config, {
       repoRoot: repo,

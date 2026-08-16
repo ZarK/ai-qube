@@ -18,6 +18,9 @@ export {
   getInstructionTargetPaths,
   hostIdsForInstructionPath,
   listAgentHostAdapters,
+  loadHostProfileFromPackage,
   parseAgentHostSelection,
+  registerAgentHostProfileForTests,
+  resetAgentHostProfilesForTests,
   uniqueAgentHostIds,
 } from './agent_host_adapters.js';

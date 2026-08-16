@@ -67,7 +67,7 @@ describe('init guide questions', () => {
       force: false,
       cwd: repo,
       guide: true,
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       agentBrowserAvailable: false,
       aiqAvailable: false,
     });
@@ -92,7 +92,7 @@ describe('init guide questions', () => {
       force: false,
       cwd: repo,
       guide: true,
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       agentBrowserAvailable: false,
       aiqAvailable: false,
       policy: { reviewMode: 'host', manualUiAudit: false },
@@ -112,26 +112,26 @@ describe('init guide questions', () => {
   it('includes live host models in the review-models question, not reviewers', () => {
     const questions = buildInitQuestions({
       machine: {
-        installedHosts: ['grok'],
+        installedHosts: ['grok-build'],
         agentBrowserAvailable: false,
         aiqAvailable: false,
         hasUserFacingUi: false,
-        liveModels: { grok: ['grok-4.5'] },
+        liveModels: { 'grok-build': ['grok-4.5'] },
       },
       answers: {},
     });
     const models = questions.find(item => item.id === 'review-models');
-    assert.ok(models.options.some(option => option.value === 'grok:grok-4.5'));
-    assert.ok(!questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok:grok-4.5'));
+    assert.ok(models.options.some(option => option.value === 'grok-build:grok-4.5'));
+    assert.ok(!questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok-build:grok-4.5'));
   });
 
   it('writes live host models to reviewModels and never to reviewAgents', () => {
     const policy = applyQuestionAnswersToPolicy({}, [
-      { id: 'reviewers', answered: true, value: ['coderabbitai', 'grok:grok-4.5'] },
-      { id: 'review-models', answered: true, value: ['grok:grok-4.5'] },
+      { id: 'reviewers', answered: true, value: ['coderabbitai', 'grok-build:grok-4.5'] },
+      { id: 'review-models', answered: true, value: ['grok-build:grok-4.5'] },
     ]);
     assert.deepEqual(policy.reviewAgents, ['coderabbitai']);
-    assert.deepEqual(policy.reviewModels.review.grok, { model: 'grok-4.5', effort: null });
+    assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-4.5', effort: null });
     const empty = applyQuestionAnswersToPolicy({}, [
       { id: 'review-models', answered: true, value: [] },
     ]);
@@ -192,7 +192,7 @@ describe('init --from', () => {
       guide: true,
       yes: true,
       from: 'known-good',
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       agentBrowserAvailable: false,
       aiqAvailable: false,
     });
@@ -226,7 +226,7 @@ describe('init --from', () => {
       yes: true,
       from: 'owner/good-repo',
       fetchRepoConfig: async () => JSON.stringify(source),
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       agentBrowserAvailable: false,
       aiqAvailable: false,
     });
@@ -247,7 +247,7 @@ describe('init --from', () => {
       yes: true,
       from: 'owner/good-repo',
       fetchRepoConfig: async () => JSON.stringify(changed),
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       agentBrowserAvailable: false,
       aiqAvailable: false,
     });

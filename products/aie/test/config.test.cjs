@@ -124,13 +124,13 @@ describe('config validation', () => {
     const input = defaultFile();
     input.policy.reviews.models = {
       review: {
-        grok: { model: 'grok-4.5', effort: null },
+        'grok-build': { model: 'grok-4.5', effort: null },
         codex: { model: 'gpt-5.6-luna', effort: 'high' },
       },
       economy: {},
       synthesis: {},
     };
-    input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     input.policy.reviews.lanes = [{
       id: 'code-quality',
       required: 'always',
@@ -146,11 +146,50 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, true);
-    assert.equal(result.config.reviewRoute.host, 'grok');
-    assert.equal(result.config.reviewModels.review.grok.model, 'grok-4.5');
+    assert.equal(result.config.reviewRoute.host, 'grok-build');
+    assert.equal(result.config.reviewModels.review['grok-build'].model, 'grok-4.5');
     assert.equal(result.config.reviewLanes[0].route.host, 'codex');
     assert.equal(result.config.reviewModels.review.codex.model, 'gpt-5.6-luna');
     assert.equal(result.config.reviewModels.review.codex.effort, 'high');
+  });
+
+  it('rejects grok as a review-route or review-model host id', () => {
+    const routeInput = defaultFile();
+    routeInput.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    const routeResult = validateConfig(routeInput);
+    assert.equal(routeResult.ok, false);
+    assert.ok(routeResult.errors.some((error) => error.path === 'policy.reviews.route.host' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
+
+    const modelsInput = defaultFile();
+    modelsInput.policy.reviews.models = {
+      review: { grok: { model: 'grok-4.5', effort: null } },
+      economy: {},
+      synthesis: {},
+    };
+    const modelsResult = validateConfig(modelsInput);
+    assert.equal(modelsResult.ok, false);
+    assert.ok(modelsResult.errors.some((error) => error.path === 'policy.reviews.models.review.grok' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
+
+    const catalogInput = defaultFile();
+    catalogInput.policy.modelRouting = {
+      primary: 'primary',
+      catalog: [{
+        id: 'primary',
+        host: 'grok',
+        transport: 'cli',
+        costRank: 1,
+        notes: 'retired host id must not validate',
+      }],
+      routes: {
+        'mechanical-implementation': { preferred: 'primary', fallback: ['primary'] },
+        'exploration-investigation': { preferred: 'primary', fallback: ['primary'] },
+        'independent-review': { reviewTier: 'review' },
+        'synthesis-judgment': { preferred: 'primary', fallback: ['primary'] },
+      },
+    };
+    const catalogResult = validateConfig(catalogInput);
+    assert.equal(catalogResult.ok, false);
+    assert.ok(catalogResult.errors.some((error) => error.path === 'policy.modelRouting.catalog[0].host' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
   });
 
   it('validates per-lane carry-forward context modes with conservative defaults', () => {
@@ -278,7 +317,7 @@ describe('config validation', () => {
 
   it('rejects turn budgets below the routed inspection floor', () => {
     const input = defaultFile();
-    input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };
+    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };
 
     const result = validateConfig(input);
 

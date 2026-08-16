@@ -972,7 +972,7 @@ export function configuredReviewModelHost(config: {
   const localHost = config.localReviewAgents?.find(host => isReviewModelHost(host));
   if (localHost) return localHost;
   const review = config.reviewModels.review;
-  if (review.grok) return 'grok';
+  if (review['grok-build']) return 'grok-build';
   if (review.codex) return 'codex';
   if (review['claude-code']) return 'claude-code';
   if (review.opencode) return 'opencode';
@@ -980,7 +980,7 @@ export function configuredReviewModelHost(config: {
 }
 
 function isReviewModelHost(value: unknown): value is ReviewModelHostId {
-  return value === 'codex' || value === 'claude-code' || value === 'opencode' || value === 'grok';
+  return value === 'codex' || value === 'claude-code' || value === 'opencode' || value === 'grok-build';
 }
 
 export function resolveReviewModelTier(models: ReviewModelsPolicy, tier: ReviewModelTierId, host: ReviewModelHostId): ReviewModelTierResolution {

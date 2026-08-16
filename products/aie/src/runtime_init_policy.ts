@@ -108,7 +108,7 @@ function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolic
     return;
   }
   if (!primaryHost || !primaryModel || !isModelRoutingHost(primaryHost)) {
-    throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, or grok.');
+    throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, or grok-build.');
   }
   const installed = detectInstalledRoutingHostsOnPath();
   assertInstalledRoutingHost(primaryHost, installed);
@@ -136,7 +136,7 @@ function parseOptionalHostModel(
   if (value === undefined) return undefined;
   const parsed = parseHostModel(value);
   if (!parsed) {
-    throw new Error(`--${flag} must be host:model using an installed host: codex, claude-code, opencode, or grok.`);
+    throw new Error(`--${flag} must be host:model using an installed host: codex, claude-code, opencode, or grok-build.`);
   }
   assertInstalledRoutingHost(parsed.host, installed);
   return parsed;

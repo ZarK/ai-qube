@@ -26,7 +26,7 @@ describe('model route probe', () => {
 
   it('reports ready when the grok CLI resolves and the configured model is listed', () => {
     const commands = [];
-    const check = probeModelRoute('grok', 'grok-4.5', (executable, args) => {
+    const check = probeModelRoute('grok-build', 'grok-4.5', (executable, args) => {
       commands.push([executable, ...args]);
       if (args[0] === '--version') return 'grok 0.2.102 (abc) [stable]\n';
       if (args[0] === 'models') return GROK_MODELS_OUTPUT;
@@ -41,7 +41,7 @@ describe('model route probe', () => {
   });
 
   it('blocks when the configured model is missing from the grok catalog', () => {
-    const check = probeModelRoute('grok', 'grok-9-imaginary', (executable, args) => {
+    const check = probeModelRoute('grok-build', 'grok-9-imaginary', (executable, args) => {
       if (args[0] === '--version') return 'grok 0.2.102\n';
       return GROK_MODELS_OUTPUT;
     }, () => 'grok-cli');
@@ -83,14 +83,14 @@ describe('model route probe', () => {
   });
 
   it('blocks when the grok catalog cannot be read or parsed', () => {
-    const unreadable = probeModelRoute('grok', 'grok-4.5', (executable, args) => {
+    const unreadable = probeModelRoute('grok-build', 'grok-4.5', (executable, args) => {
       if (args[0] === '--version') return 'grok 0.2.102\n';
       throw new Error('not logged in');
     }, () => 'grok-cli');
     assert.equal(unreadable.status, 'blocked');
     assert.match(unreadable.diagnostic, /model catalog could not be read/);
 
-    const unparsed = probeModelRoute('grok', 'grok-4.5', (executable, args) => {
+    const unparsed = probeModelRoute('grok-build', 'grok-4.5', (executable, args) => {
       if (args[0] === '--version') return 'grok 0.2.102\n';
       return 'totally unexpected output';
     }, () => 'grok-cli');
@@ -99,7 +99,7 @@ describe('model route probe', () => {
   });
 
   it('blocks with an actionable diagnostic when the host CLI is unresolvable', () => {
-    const check = probeModelRoute('grok', 'grok-4.5', () => {
+    const check = probeModelRoute('grok-build', 'grok-4.5', () => {
       throw new Error('must not run a command for an unresolvable host');
     }, () => {
       throw new Error('grok review route is unavailable. Expose the authenticated grok CLI on PATH; QUBE does not install or authenticate model hosts.');
@@ -111,7 +111,7 @@ describe('model route probe', () => {
   });
 
   it('blocks when the resolved CLI does not report a version', () => {
-    const check = probeModelRoute('grok', 'grok-4.5', () => {
+    const check = probeModelRoute('grok-build', 'grok-4.5', () => {
       throw new Error('spawn EINVAL');
     }, () => 'grok-cli');
     assert.equal(check.status, 'blocked');
@@ -123,12 +123,12 @@ describe('model route probe', () => {
     assert.equal(sanitizeProbeText('\u001b[31mgrok 1.0\u001b[0m'), 'grok 1.0');
     assert.equal(sanitizeProbeText('line with\u0007\u0000 controls'), 'line with controls');
     assert.ok(sanitizeProbeText('x'.repeat(500)).length <= 200);
-    const version = probeModelRoute('grok', null, () => '\u001b[32mgrok 9.9\u001b[0m\n', () => 'grok-cli').version;
+    const version = probeModelRoute('grok-build', null, () => '\u001b[32mgrok 9.9\u001b[0m\n', () => 'grok-cli').version;
     assert.equal(version, 'grok 9.9');
   });
 
   it('blocks when the resolved CLI reports an empty version', () => {
-    const check = probeModelRoute('grok', 'grok-4.5', () => '\n\n', () => 'grok-cli');
+    const check = probeModelRoute('grok-build', 'grok-4.5', () => '\n\n', () => 'grok-cli');
     assert.equal(check.status, 'blocked');
     assert.match(check.diagnostic, /empty version/);
   });
@@ -140,6 +140,7 @@ describe('model route probe', () => {
       requiredCapabilities: ['structured-output', 'read-only-sandbox'],
       requiresPromptFile: false,
       requiresSchemaFile: false,
+      executableNames: ['capability-gap-host'],
       windowsExecutableNames: [],
       windowsNodeModulesScriptPath: () => null,
       windowsFallbackExecutablePath: () => null,

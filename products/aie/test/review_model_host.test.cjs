@@ -7,22 +7,22 @@ const { configuredReviewModelHost, resolveReviewModelTier } = require('../dist/a
 describe('configured review model host', () => {
   it('honors a non-codex configured review route host', () => {
     const host = configuredReviewModelHost({
-      reviewRoute: { host: 'grok' },
+      reviewRoute: { host: 'grok-build' },
       reviewLanes: [],
       localReviewAgents: ['codex'],
       reviewModels: {
         review: {
-          grok: { model: 'grok-4.5', effort: null },
+          'grok-build': { model: 'grok-4.5', effort: null },
           codex: { model: 'gpt-5.5-codex', effort: 'high' },
         },
         economy: {},
         synthesis: {},
       },
     });
-    assert.equal(host, 'grok');
+    assert.equal(host, 'grok-build');
     const review = resolveReviewModelTier({
       review: {
-        grok: { model: 'grok-4.5', effort: null },
+        'grok-build': { model: 'grok-4.5', effort: null },
         codex: { model: 'gpt-5.5-codex', effort: 'high' },
       },
       economy: {},
@@ -34,7 +34,7 @@ describe('configured review model host', () => {
 
   it('does not invent a model when the configured host has no binding', () => {
     const host = configuredReviewModelHost({
-      reviewRoute: { host: 'grok' },
+      reviewRoute: { host: 'grok-build' },
       reviewLanes: [],
       localReviewAgents: ['codex'],
       reviewModels: {
@@ -43,13 +43,13 @@ describe('configured review model host', () => {
         synthesis: {},
       },
     });
-    assert.equal(host, 'grok');
+    assert.equal(host, 'grok-build');
     const review = resolveReviewModelTier({
       review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } },
       economy: {},
       synthesis: {},
     }, 'review', host);
     assert.equal(review.model, null);
-    assert.match(review.substitution, /not configured for grok/);
+    assert.match(review.substitution, /not configured for grok-build/);
   });
 });

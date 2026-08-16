@@ -774,8 +774,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     config.reviewAdapter = 'mixed';
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewLanes.find(lane => lane.id === 'code-quality').route = { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 };
     config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'high' };
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
@@ -788,7 +788,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.host, 'codex');
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.model, 'gpt-5.6-luna');
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.effort, 'high');
-    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.host, 'grok');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.host, 'grok-build');
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.model, 'grok-4.5');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route.isolation === 'read-only'));
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.promptStackHash.length === 64));
@@ -796,17 +796,17 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
   it('does not apply a global model route to non-host lane runners', () => {
     const config = localHostConfig(null);
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const lane = config.reviewLanes.find(item => item.id === 'issue-compliance');
     lane.runner = 'local-command';
     lane.command = 'review-fixture';
 
     assert.equal(resolveModelReviewPlan(config, 'issue-compliance'), null);
-    assert.equal(resolveModelReviewPlan(config, 'code-quality').host, 'grok');
+    assert.equal(resolveModelReviewPlan(config, 'code-quality').host, 'grok-build');
 
     config.reviewLanes = [];
-    assert.equal(resolveModelReviewPlan(config, 'issue-compliance').host, 'grok');
+    assert.equal(resolveModelReviewPlan(config, 'issue-compliance').host, 'grok-build');
   });
 
   it('reports a failed routed publish batch when the provider rejects lane feedback', async () => {
@@ -816,8 +816,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const exec = async args => {
       // Reject lane-feedback mutations by shape (streaming publishes lanes
@@ -869,8 +869,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const order = [];
     const exec = async args => {
@@ -910,10 +910,10 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok'));
-    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok-build'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok-build'));
     const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
-    assert.deepEqual(writtenLane.reviewer, { id: 'grok', name: 'Grok Build', adapterKind: 'local' });
+    assert.deepEqual(writtenLane.reviewer, { id: 'grok-build', name: 'Grok Build', adapterKind: 'local' });
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
     // Streaming publication: a validated lane's mutation may interleave with
@@ -939,8 +939,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = ['@coderabbitai'];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let localHead = 'abc123';
     const modelRouteProcess = async invocation => {
@@ -995,8 +995,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
@@ -1051,8 +1051,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const codeQualityPublished = () => fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('"lane":"code-quality"'));
     let blockingMarkerSeenBeforeSlowSibling = false;
@@ -1112,8 +1112,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
@@ -1167,8 +1167,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let laneMutations = 0;
     const exec = async args => {
@@ -1225,8 +1225,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let modelCalls = 0;
 
@@ -1262,8 +1262,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1305,8 +1305,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr({ closingIssuesReferences: [] })] });
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
@@ -1358,8 +1358,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1384,8 +1384,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1408,8 +1408,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1431,8 +1431,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1470,8 +1470,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
       const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
@@ -1531,8 +1531,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
@@ -1615,8 +1615,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
     config.reviewConcurrency = 3;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let timedOutLane = null;
     let failedLane = null;
@@ -1679,8 +1679,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-9-missing', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-9-missing', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let modelExecutions = 0;
     const modelRouteProcess = async () => {
@@ -1690,7 +1690,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     let probeCalls = 0;
     const routeProbe = (host, model) => {
       probeCalls += 1;
-      return { host, model, status: 'blocked', executable: `${host}-probe`, version: 'probe-test', modelListed: false, diagnostic: `Configured review model "${model}" is not in the ${host} catalog (grok-4.5). Update the trusted review model configuration to a listed model.` };
+      return { host, model, status: 'blocked', executable: `${host}-probe`, version: 'probe-test', modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog (grok-4.5). Update the trusted review model configuration to a listed model.` };
     };
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, routeProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
@@ -1716,8 +1716,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
     let faultedLane = null;
@@ -1803,14 +1803,14 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
     const hostsUsed = [];
     const modelRouteProcess = async invocation => {
       assert.equal(invocation.schemaPath, null, 'a review verdict must never re-route the lane to the fallback host');
-      hostsUsed.push('grok');
+      hostsUsed.push('grok-build');
       const prompt = readFileSync(invocation.promptPath, 'utf8');
       const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
       const areas = ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ');
@@ -1842,7 +1842,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
     assert.ok(routedLanes.length >= 1);
     assert.ok(routedLanes.every(lane => lane.status === 'completed'));
-    assert.ok(hostsUsed.length >= 1 && hostsUsed.every(host => host === 'grok'));
+    assert.ok(hostsUsed.length >= 1 && hostsUsed.every(host => host === 'grok-build'));
     assert.ok(!existsSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json')) || Object.keys(JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8')).lanes).length === 0, 'review verdicts must record zero host faults');
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
@@ -1857,8 +1857,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const modelRouteProcess = async () => {
       throw new Error('');
     };
@@ -1883,8 +1883,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
     let faultedLane = null;
@@ -1931,9 +1931,9 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const secondRun = await runPrGate(config, gateOptions);
     const recovered = secondRun.localReviewRunner.lanes.find(lane => lane.lane === faultedLane);
     assert.equal(recovered.status, 'completed');
-    assert.equal(recovered.route.host, 'grok', 'a blocked fallback probe must retry the configured primary route');
+    assert.equal(recovered.route.host, 'grok-build', 'a blocked fallback probe must retry the configured primary route');
     const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
-    assert.equal(evidence.runnerProvenance.host, 'grok');
+    assert.equal(evidence.runnerProvenance.host, 'grok-build');
     assert.equal(evidence.runnerProvenance.routeSource, 'configured');
     const ledger = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8'));
     assert.ok(!(faultedLane in ledger.lanes), 'the recovered primary verdict clears the fault tally');
@@ -1946,11 +1946,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
-    const primaryRouteKey = reviewRouteKey({ host: 'grok', tier: 'review', model: 'grok-4.5', effort: null, isolation: 'read-only', timeoutSeconds: 600, maxTurns: 8, substitution: null });
+    const primaryRouteKey = reviewRouteKey({ host: 'grok-build', tier: 'review', model: 'grok-4.5', effort: null, isolation: 'read-only', timeoutSeconds: 600, maxTurns: 8, substitution: null });
     mkdirSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93'), { recursive: true });
     writeFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), `${JSON.stringify({ version: 1, lanes: { 'issue-compliance': { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, 'code-quality': { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, performance: { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' } } })}\n`);
     let modelExecutions = 0;
@@ -1976,8 +1976,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
-    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
     mkdirSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93'), { recursive: true });
@@ -2013,7 +2013,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
     const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
     assert.ok(routedLanes.length >= 3);
-    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'grok'));
+    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'grok-build'));
   });
 
 });

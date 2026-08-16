@@ -77,8 +77,8 @@ function commitRoutedReviewHead(repo) {
     policy: {
       reviews: {
         adapter: 'local',
-        models: { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} },
-        route: { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 },
+        models: { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} },
+        route: { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 },
       },
     },
   });
@@ -425,7 +425,7 @@ function localHostConfig(command = 'review-fixture') {
 }
 
 function readyRouteProbe(host, model) {
-  return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok' ? true : null, diagnostic: null, resolved: null };
+  return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok-build' ? true : null, diagnostic: null, resolved: null };
 }
 
 function requiredTaskContext() {

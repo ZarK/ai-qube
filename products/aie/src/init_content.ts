@@ -623,7 +623,7 @@ Include runnerProvenance with runnerKind local-host, the host that spawned you, 
 Return exactly one lane result for the requested PR head. Do not approve stale evidence, missing current-head checks, malformed evidence, unresolved high or critical findings, or prompt-only output.`;
 
 export function renderGrokReviewFocusAgent(config?: Config): string {
-  const reviewBinding = config?.reviewModels.review.grok;
+  const reviewBinding = config?.reviewModels.review['grok-build'];
   const modelLines = reviewBinding
     ? `model: ${reviewBinding.model}\n${reviewBinding.effort ? `effort: ${reviewBinding.effort}\n` : ''}`
     : '';
@@ -637,7 +637,7 @@ ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
 }
 
 export function renderGrokEconomyAgent(agent: EconomyReviewCatalogAgent, config?: Config): string {
-  const binding = economyModelResolution(config, 'grok', agent.descriptorId);
+  const binding = economyModelResolution(config, 'grok-build', agent.descriptorId);
   const modelLines = binding
     ? `model: ${binding.model}\n${binding.effort ? `effort: ${binding.effort}\n` : ''}`
     : '';

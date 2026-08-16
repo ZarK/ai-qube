@@ -161,10 +161,10 @@ describe('init service', () => {
       cwd: repo,
       yes: true,
       guide: true,
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
       policy: {
         reviewModels: {
-          review: { grok: { model: 'grok-4.5', effort: null } },
+          review: { 'grok-build': { model: 'grok-4.5', effort: null } },
           economy: {},
           synthesis: {},
         },
@@ -489,8 +489,8 @@ describe('init service', () => {
     config.policy.reviews.profile = 'local-focused';
     config.policy.reviews.agents = [];
     config.policy.reviews.localAgents = ['codex'];
-    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
-    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    config.policy.reviews.models = { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -522,13 +522,13 @@ describe('init service', () => {
     config.policy.reviews.localAgents = ['codex'];
     config.policy.reviews.models = {
       review: {
-        grok: { model: 'grok-4.5', effort: null },
+        'grok-build': { model: 'grok-4.5', effort: null },
         codex: { model: 'gpt-5.5-codex', effort: 'high' },
       },
       economy: {},
       synthesis: {},
     };
-    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -551,7 +551,7 @@ describe('init service', () => {
       economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } },
       synthesis: {},
     };
-    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
     assert.equal((await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo })).ok, true);
 
@@ -730,8 +730,8 @@ describe('init service', () => {
     config.policy.reviews.profile = 'local-focused';
     config.policy.reviews.agents = [];
     config.policy.reviews.localAgents = ['codex'];
-    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
-    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    config.policy.reviews.models = { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -743,7 +743,7 @@ describe('init service', () => {
 
     // A configured economy binding renders even in a routed configuration:
     // economy helpers only spawn natively, so the global routed flag never blanks their bindings.
-    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } }, synthesis: {} };
+    config.policy.reviews.models = { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } }, synthesis: {} };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
     const mixed = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
     assert.equal(mixed.ok, true);
@@ -770,8 +770,8 @@ describe('init service', () => {
     assert.doesNotMatch(claude, /Economy review catalog agents available/);
 
     const routedRepo = makeGitRepo();
-    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
-    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    config.policy.reviews.models = { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(routedRepo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const routedResult = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: routedRepo });
@@ -1317,7 +1317,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);

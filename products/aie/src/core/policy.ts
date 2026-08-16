@@ -49,7 +49,8 @@ export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
 export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
 export type ReviewModelTierId = 'review' | 'economy' | 'synthesis';
-export type ReviewModelHostId = 'codex' | 'claude-code' | 'opencode' | 'grok';
+export const REVIEW_MODEL_HOST_IDS = ['codex', 'claude-code', 'opencode', 'grok-build'] as const;
+export type ReviewModelHostId = (typeof REVIEW_MODEL_HOST_IDS)[number];
 export type ReviewModelEffort = 'low' | 'medium' | 'high';
 // Runtime-validated against the review host adapter registry
 // (products/aie/src/app/review_host_adapters.ts); not a closed union so

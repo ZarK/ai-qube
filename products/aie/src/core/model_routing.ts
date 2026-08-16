@@ -16,7 +16,7 @@ export const DELEGATED_MODEL_ROUTE_CLASSES = Object.freeze([
 ] as const);
 export type DelegatedModelRouteClass = (typeof DELEGATED_MODEL_ROUTE_CLASSES)[number];
 
-export const MODEL_ROUTING_HOSTS = Object.freeze(['codex', 'claude-code', 'opencode', 'grok'] as const);
+export const MODEL_ROUTING_HOSTS = Object.freeze(['codex', 'claude-code', 'opencode', 'grok-build'] as const);
 export type ModelRoutingHostId = (typeof MODEL_ROUTING_HOSTS)[number];
 export type ModelRoutingTransport = 'cli' | 'host';
 
@@ -343,7 +343,7 @@ export const MODEL_ROUTING_HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, re
   codex: Object.freeze(['codex']),
   'claude-code': Object.freeze(['claude']),
   opencode: Object.freeze(['opencode']),
-  grok: Object.freeze(['grok']),
+  'grok-build': Object.freeze(['grok']),
 });
 
 export function detectInstalledRoutingHosts(

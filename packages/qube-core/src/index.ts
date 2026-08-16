@@ -107,9 +107,27 @@ export type {
   HostReviewRunnerAdapter,
   HostReviewRunnerCapabilities,
   HostReviewRunnerId,
+  IsolatedReviewHostAdapter,
+  IsolatedReviewHostBuiltInvocation,
+  IsolatedReviewHostCapabilities,
+  IsolatedReviewHostCapabilityNeed,
+  IsolatedReviewHostExecutable,
+  IsolatedReviewHostInvocationContext,
+  IsolatedReviewHostParsedEnvelope,
+  IsolatedReviewHostProbeCommandRunner,
+  IsolatedReviewHostProbeContext,
+  IsolatedReviewHostProbeResult,
   InstructionTarget,
   SubagentCapability,
   TodoCapability,
+} from "./agent_host.js";
+export {
+  AGENT_HOST_IDS,
+  GROK_BUILD_EXECUTABLE_NAMES,
+  GROK_BUILD_WINDOWS_EXECUTABLE_NAMES,
+  ISOLATED_REVIEW_HOST_PACKAGE_NAMES,
+  RETIRED_GROK_HOST_ID,
+  retiredGrokHostIdMessage,
 } from "./agent_host.js";
 export type {
   EvidenceSource,

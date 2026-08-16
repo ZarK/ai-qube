@@ -3334,7 +3334,7 @@ describe("qube init composer orchestrator", () => {
   });
 
   it("plans TTY prompts for every modelRouting route class", () => {
-    assert.deepEqual(modelRoutingPromptPlan(["claude-code", "grok"]), [
+    assert.deepEqual(modelRoutingPromptPlan(["claude-code", "grok-build"]), [
       "primary-host",
       "primary-model",
       "mechanical-implementation",
