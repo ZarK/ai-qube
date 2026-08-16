@@ -400,6 +400,27 @@ describe('manual UI audit CLI', () => {
     assert.match(reusedParsed.nextAction, /pnpm dev:web/);
   });
 
+  it('does not copy local overlay fields into the committed config', () => {
+    const repo = makeGitRepo();
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const config = cleanConfig();
+    writeConfig(repo, config);
+    writeFileSync(join(repo, 'aie.config.local.json'), `${JSON.stringify({
+      policy: { reviews: { requestText: 'from-overlay' } },
+    }, null, 2)}\n`);
+    const written = binRun([
+      'audit', 'ui', 'set-run',
+      '--command', 'pnpm dev:web',
+      '--url', 'http://127.0.0.1:5178',
+      '--json',
+    ], repo, { HOME: home, USERPROFILE: home });
+    assert.equal(written.status, 0, written.stderr);
+    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    assert.equal(saved.policy.audit.appLaunch, 'pnpm dev:web');
+    assert.equal(saved.policy.audit.target, 'http://127.0.0.1:5178');
+    assert.notEqual(saved.policy.reviews.requestText, 'from-overlay');
+  });
+
   it('refuses to invent a start command or write an unsafe URL', () => {
     const repo = makeGitRepo();
     writeConfig(repo, cleanConfig());

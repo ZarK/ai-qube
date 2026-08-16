@@ -1,5 +1,6 @@
-import { writeFileSync } from 'node:fs';
-import { formatConfigFile, type Config } from './config/index.js';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { pathHasParentSegment } from './audit.js';
+import type { Config } from './config/index.js';
 
 export const AUDIT_UI_SET_RUN_COMMAND = 'audit ui set-run';
 
@@ -34,7 +35,7 @@ export function parseAuditRunFields(command: string | undefined, url: string | u
   if (trimmedCommand.includes('\0')) {
     return { ok: false, reason: '--command must not contain a null byte.' };
   }
-  if (trimmedUrl.split(/[/\\]/).some(segment => segment === '..')) {
+  if (pathHasParentSegment(trimmedUrl)) {
     return { ok: false, reason: '--url must not contain parent-directory segments.' };
   }
   let parsed: URL;
@@ -47,22 +48,6 @@ export function parseAuditRunFields(command: string | undefined, url: string | u
     return { ok: false, reason: '--url must be an http or https URL.' };
   }
   return { ok: true, fields: { command: trimmedCommand, url: trimmedUrl } };
-}
-
-export function applyAuditRunToConfig(config: Config, fields: AuditRunFields): Config {
-  return {
-    ...config,
-    uiAuditAppLaunch: fields.command,
-    uiAuditTarget: fields.url,
-    policy: {
-      ...config.policy,
-      audit: {
-        ...config.policy.audit,
-        appLaunch: fields.command,
-        target: fields.url,
-      },
-    },
-  };
 }
 
 export function setAuditRun(input: {
@@ -99,9 +84,21 @@ export function setAuditRun(input: {
       nextAction: 'Pass both --command and --url from a start command and ready URL that already worked.',
     };
   }
-  const next = applyAuditRunToConfig(input.config, parsed.fields);
   if (input.dryRun !== true) {
-    writeFileSync(input.configPath, formatConfigFile(next), 'utf8');
+    const written = writeCommittedAuditRunFields(input.configPath, parsed.fields);
+    if (!written.ok) {
+      return {
+        ok: false,
+        command: AUDIT_UI_SET_RUN_COMMAND,
+        dryRun: false,
+        applied: false,
+        configPath: input.configPath,
+        appLaunch: input.config.uiAuditAppLaunch || null,
+        target: input.config.uiAuditTarget || null,
+        error: written.reason,
+        nextAction: 'Fix the committed Executor config file, then rerun `aie audit ui set-run`.',
+      };
+    }
   }
   return {
     ok: true,
@@ -115,6 +112,34 @@ export function setAuditRun(input: {
       ? 'Rerun without --dry-run to write policy.audit.appLaunch and policy.audit.target.'
       : 'Later audits can reuse the saved command and URL. Pass an explicit run-start command to override.',
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function writeCommittedAuditRunFields(configPath: string, fields: AuditRunFields): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  if (!existsSync(configPath)) {
+    return { ok: false, reason: `Committed Executor config is missing at ${configPath}.` };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configPath, 'utf8'));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `Failed to read the committed Executor config: ${message}` };
+  }
+  if (!isRecord(raw)) {
+    return { ok: false, reason: 'Committed Executor config must be a JSON object.' };
+  }
+  const policy = isRecord(raw.policy) ? { ...raw.policy } : {};
+  const audit = isRecord(policy.audit) ? { ...policy.audit } : {};
+  audit.appLaunch = fields.command;
+  audit.target = fields.url;
+  policy.audit = audit;
+  raw.policy = policy;
+  writeFileSync(configPath, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+  return { ok: true };
 }
 
 export function formatSetAuditRun(result: SetAuditRunResult): string {

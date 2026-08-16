@@ -138,7 +138,7 @@ function safeSegment(value: string): string {
   return segment === '' ? 'repository' : segment;
 }
 
-function pathHasParentSegment(value: string): boolean {
+export function pathHasParentSegment(value: string): boolean {
   return value.split(/[\\/]+/).some(segment => segment === '..');
 }
 
