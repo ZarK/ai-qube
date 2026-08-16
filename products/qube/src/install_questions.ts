@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { executorCiProviders, executorHostSurfaces, executorWorkProviders, type QubeDiscoveryOption } from "./components.js";
+
 export type InstallQuestionOption = {
   readonly value: string;
   readonly label: string;
@@ -19,6 +21,9 @@ export type InstallQuestion = {
 };
 
 export const ISOLATED_REVIEW_HOSTS = Object.freeze(["codex", "grok-build"] as const);
+export const INSTALL_REVIEW_MODES = Object.freeze(["isolated", "host", "external"] as const);
+export const DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT = "~/.qube/verification";
+export type InstallReviewMode = (typeof INSTALL_REVIEW_MODES)[number];
 
 export function recommendedInstallPackageManager(cwd: string): "pnpm" | "npm" {
   if (existsSync(join(cwd, "pnpm-lock.yaml"))) return "pnpm";
@@ -35,6 +40,46 @@ export function isolatedReviewAvailable(selectedHosts: readonly string[]): boole
   return selectedHosts.some(host => (ISOLATED_REVIEW_HOSTS as readonly string[]).includes(host));
 }
 
+export function isInstallReviewMode(value: string): value is InstallReviewMode {
+  return (INSTALL_REVIEW_MODES as readonly string[]).includes(value);
+}
+
+export function recommendedInstallReviewMode(selectedHosts: readonly string[]): InstallReviewMode {
+  return isolatedReviewAvailable(selectedHosts) ? "isolated" : "external";
+}
+
+export function installQuestionGuideComplete(
+  flags: Readonly<Record<string, unknown>>,
+  cwd: string,
+): boolean {
+  return buildInstallQuestions({ flags, cwd }).unansweredQuestionIds.length === 0;
+}
+
+export function invalidInstallGuideFlag(flags: Readonly<Record<string, unknown>>): string | undefined {
+  const reviewMode = flags["review-mode"];
+  if (typeof reviewMode === "string") {
+    if (!isInstallReviewMode(reviewMode)) {
+      return `Invalid install option --review-mode=${reviewMode}. Use one of: ${INSTALL_REVIEW_MODES.join(", ")}.`;
+    }
+    const hosts = readList(flags.host);
+    const selectedHosts = hosts.length > 0 ? hosts : (flags.yes === true ? ["generic"] : []);
+    if (reviewMode === "isolated" && selectedHosts.length > 0 && !isolatedReviewAvailable(selectedHosts)) {
+      return "Isolated review is not available because no selected host adapter can run isolated review. Use --review-mode host or --review-mode external, or select Codex or Grok Build.";
+    }
+  }
+  const evidenceRoot = flags["ui-audit-evidence-root"];
+  if (typeof evidenceRoot === "string") {
+    const trimmed = evidenceRoot.trim();
+    if (trimmed === "" || trimmed === "custom") {
+      return "Invalid install option --ui-audit-evidence-root. Pass an explicit directory such as ~/.qube/verification.";
+    }
+    if (trimmed.includes("\0") || trimmed.split(/[\\/]+/).some(segment => segment === "..")) {
+      return "Invalid install option --ui-audit-evidence-root. Parent-directory segments are not allowed.";
+    }
+  }
+  return undefined;
+}
+
 export function buildInstallQuestions(input: {
   flags: Readonly<Record<string, unknown>>;
   cwd: string;
@@ -44,7 +89,7 @@ export function buildInstallQuestions(input: {
   const ci = readList(input.flags["ci-provider"]);
   const selectedHosts = host.length > 0 ? host : [];
   const isolatedOk = isolatedReviewAvailable(selectedHosts);
-  const recommendedReviewMode = isolatedOk ? "isolated" : "external";
+  const recommendedReviewMode = recommendedInstallReviewMode(selectedHosts);
   const packageManager = recommendedInstallPackageManager(input.cwd);
   const workAnswered = work.length > 0;
   const ciImplied = !workAnswered || work[0] === "github" || work[0] === "gitlab";
@@ -95,13 +140,7 @@ export function buildInstallQuestions(input: {
     question({
       id: "host",
       prompt: "Which host or hosts should this repository use?",
-      options: [
-        { value: "generic", label: "Generic terminal" },
-        { value: "codex", label: "Codex" },
-        { value: "opencode", label: "OpenCode" },
-        { value: "claude-code", label: "Claude Code" },
-        { value: "grok-build", label: "Grok Build" },
-      ],
+      options: discoveryQuestionOptions(executorHostSurfaces),
       recommendation: "Choose host adapters that the install plan can install.",
       recommendedValue: host[0] ?? "generic",
       answered: host.length > 0,
@@ -113,12 +152,7 @@ export function buildInstallQuestions(input: {
     question({
       id: "work-provider",
       prompt: "Which work provider should this repository use?",
-      options: [
-        { value: "github", label: "GitHub" },
-        { value: "gitlab", label: "GitLab" },
-        { value: "linear", label: "Linear" },
-        { value: "jira", label: "Jira" },
-      ],
+      options: discoveryQuestionOptions(executorWorkProviders),
       recommendation: "Use GitHub when the remotes point at GitHub.",
       recommendedValue: "github",
       answered: workAnswered,
@@ -130,12 +164,7 @@ export function buildInstallQuestions(input: {
     question({
       id: "ci-provider",
       prompt: "Which CI provider should this repository use?",
-      options: [
-        { value: "github", label: "GitHub" },
-        { value: "gitlab", label: "GitLab" },
-        { value: "jenkins", label: "Jenkins" },
-        { value: "local", label: "Local only" },
-      ],
+      options: discoveryQuestionOptions(executorCiProviders),
       recommendation: "Use the same forge as the work provider when that CI adapter exists.",
       recommendedValue: work[0] === "gitlab" ? "gitlab" : "github",
       answered: ci.length > 0 || ciImplied,
@@ -171,7 +200,7 @@ export function buildInstallQuestions(input: {
         { value: "custom", label: "Custom directory that you supply" },
       ],
       recommendation: "Use the QUBE user default ~/.qube/verification/.",
-      recommendedValue: "~/.qube/verification",
+      recommendedValue: DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
       answered: typeof input.flags["ui-audit-evidence-root"] === "string",
       value: typeof input.flags["ui-audit-evidence-root"] === "string" ? String(input.flags["ui-audit-evidence-root"]) : null,
       reason: typeof input.flags["ui-audit-evidence-root"] === "string"
@@ -198,6 +227,27 @@ export function buildInstallQuestions(input: {
     questions,
     unansweredQuestionIds: questions.filter(item => !item.answered).map(item => item.id),
   };
+}
+
+const INSTALL_OPTION_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  generic: "Generic terminal",
+  codex: "Codex",
+  opencode: "OpenCode",
+  "claude-code": "Claude Code",
+  "grok-build": "Grok Build",
+  github: "GitHub",
+  gitlab: "GitLab",
+  linear: "Linear",
+  jira: "Jira",
+  jenkins: "Jenkins",
+  local: "Local only",
+});
+
+function discoveryQuestionOptions(options: readonly QubeDiscoveryOption[]): readonly InstallQuestionOption[] {
+  return options.map(option => ({
+    value: option.id,
+    label: INSTALL_OPTION_LABELS[option.id] ?? option.id,
+  }));
 }
 
 function question(input: InstallQuestion): InstallQuestion {
