@@ -1,0 +1,13 @@
+---
+description: Block Cursor/agent attribution in commits and PRs for this repo
+alwaysApply: true
+---
+
+# No agent attribution
+
+This repository forbids agent, model, and vendor credit in git and GitHub metadata.
+
+- Never leave `Co-authored-by: Cursor`, `cursoragent@cursor.com`, `Made-with: Cursor`, or similar trailers in commits or PRs.
+- After every commit, verify with `git log -1 --format=%B` before push.
+- If Cursor injects attribution, strip or amend before push. Do not merge contaminated history.
+- Do not use Cursor Cloud Agents for commits/PRs here; their co-author trailer is server-side and not user-disableable.

@@ -116,7 +116,7 @@ async function buildSmokeLockfile(
   qubeCliTarballSpecifier: string,
   qubeCliTarball: string,
 ): Promise<string> {
-  const rootLock = await readFile(path.join(repoRoot, "pnpm-lock.yaml"), "utf8");
+  const rootLock = (await readFile(path.join(repoRoot, "pnpm-lock.yaml"), "utf8")).replace(/\r\n/g, "\n");
   const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
   const qubeCliPackageJson = JSON.parse(await readFile(path.join(qubeCliRoot, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
