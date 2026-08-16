@@ -84,7 +84,7 @@ describe('host review subagent guidance', () => {
     for (const adapter of listAgentHostAdapters()) {
       assert.equal(reviewerDisplayName(adapter.id), adapter.displayName);
     }
-    assert.equal(reviewerDisplayName('grok'), 'Grok Build');
+    assert.equal(reviewerDisplayName('grok-build'), 'Grok Build');
     assert.equal(reviewerDisplayName(''), 'unknown-host');
     assert.equal(reviewerDisplayName(null), 'unknown-host');
   });

@@ -247,7 +247,7 @@ function reviewModelsFromAnswers(values: string[]): NonNullable<InitPolicyOption
     if (separator <= 0) continue;
     const host = value.slice(0, separator);
     const model = value.slice(separator + 1).trim();
-    if (host === 'codex' || host === 'claude-code' || host === 'opencode' || host === 'grok') {
+    if (host === 'codex' || host === 'claude-code' || host === 'opencode' || host === 'grok-build') {
       if (model) review[host] = { model, effort: null };
     }
   }

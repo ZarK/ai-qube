@@ -126,9 +126,11 @@ export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExe
 // routed execution would actually spawn.
 export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelHostExecutable {
   const adapter = getReviewHostAdapter(host);
+  const commandName = adapter.executableNames[0] ?? host;
   if (process.platform === 'win32') {
-    const shim = findOnPathSync(`${host}.cmd`);
-    if (shim) {
+    for (const executableName of adapter.executableNames) {
+      const shim = findOnPathSync(`${executableName}.cmd`);
+      if (!shim) continue;
       const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
       const script = adapter.windowsNodeModulesScriptPath(dirname(shim));
@@ -138,14 +140,14 @@ export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelH
       }
     }
   }
-  const names = process.platform === 'win32' ? adapter.windowsExecutableNames : [host];
+  const names = process.platform === 'win32' ? adapter.windowsExecutableNames : adapter.executableNames;
   for (const name of names) {
     const resolved = findOnPathSync(name);
     if (resolved) return resolved;
   }
   const fallback = process.platform === 'win32' ? adapter.windowsFallbackExecutablePath() : null;
   if (fallback && existsSync(fallback)) return fallback;
-  throw new Error(`${host} review route is unavailable. Expose the authenticated ${host} CLI on PATH; QUBE does not install or authenticate model hosts.`);
+  throw new Error(`${host} review route is unavailable. Expose the authenticated ${commandName} CLI on PATH; QUBE does not install or authenticate model hosts.`);
 }
 
 export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<ModelHostExecutable> {

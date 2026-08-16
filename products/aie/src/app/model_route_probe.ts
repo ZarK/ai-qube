@@ -87,11 +87,12 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version: null,
       modelListed: null,
       resolved: null,
-      diagnostic: `The ${host} CLI is not resolvable (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
+      diagnostic: `The ${adapter.executableNames[0] ?? host} CLI is not resolvable (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${adapter.executableNames[0] ?? host} CLI on PATH before running routed review lanes.`,
     };
   }
   const executable = typeof resolved === 'string' ? resolved : resolved.executable;
   const prefixArgs = typeof resolved === 'string' ? [] : [...resolved.prefixArgs];
+  const commandName = adapter.executableNames[0] ?? host;
   let version: string;
   try {
     version = sanitizeProbeText(runCommand(executable, [...prefixArgs, '--version']).split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? '');
@@ -105,7 +106,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version: null,
       modelListed: null,
       resolved: null,
-      diagnostic: `The ${host} CLI resolved but did not report a version (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${host} CLI installation before running routed review lanes.`,
+      diagnostic: `The ${commandName} CLI resolved but did not report a version (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${commandName} CLI installation before running routed review lanes.`,
     };
   }
   if (version === '') {
@@ -117,7 +118,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version: null,
       modelListed: null,
       resolved: null,
-      diagnostic: `The ${host} CLI resolved but reported an empty version. Fix the ${host} CLI installation before running routed review lanes.`,
+      diagnostic: `The ${commandName} CLI resolved but reported an empty version. Fix the ${commandName} CLI installation before running routed review lanes.`,
     };
   }
   const probeResult = adapter.probeAfterVersion({ model, executable, prefixArgs, runCommand, version });

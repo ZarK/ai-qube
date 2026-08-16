@@ -16,8 +16,8 @@ function isolatedConfig(mode = null) {
   const config = getDefaults();
   config.reviewAdapter = 'local';
   config.reviewMode = mode;
-  config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-  config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+  config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+  config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
   config.reviewLanes = [{
     id: 'code-quality',
     required: 'always',
@@ -39,7 +39,7 @@ function isolatedConfig(mode = null) {
 
 describe('review mode resolution', () => {
   it('infers isolated when a route is set, host for local without a route, and external otherwise', () => {
-    assert.equal(inferReviewMode({ adapter: 'github', route: { host: 'grok', tier: 'review', timeoutSeconds: 1, maxTurns: 1 } }), 'isolated');
+    assert.equal(inferReviewMode({ adapter: 'github', route: { host: 'grok-build', tier: 'review', timeoutSeconds: 1, maxTurns: 1 } }), 'isolated');
     assert.equal(inferReviewMode({ adapter: 'local', route: null }), 'host');
     assert.equal(inferReviewMode({ adapter: 'github', route: null }), 'external');
   });
@@ -53,7 +53,7 @@ describe('review mode resolution', () => {
   it('plans isolated model routes only in isolated mode', () => {
     const isolated = isolatedConfig('isolated');
     const host = isolatedConfig('host');
-    assert.equal(resolveModelReviewPlan(isolated, 'code-quality').host, 'grok');
+    assert.equal(resolveModelReviewPlan(isolated, 'code-quality').host, 'grok-build');
     assert.equal(resolveModelReviewPlan(host, 'code-quality'), null);
   });
 });
@@ -95,7 +95,7 @@ describe('review mode doctor and init', () => {
       cwd: repo,
       yes: true,
       guide: true,
-      installedHosts: ['grok'],
+      installedHosts: ['grok-build'],
     });
     assert.equal(result.ok, true, result.errors.join('\n'));
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');

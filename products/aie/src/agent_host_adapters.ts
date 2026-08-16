@@ -257,70 +257,78 @@ const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
   Object.freeze({ id: 'opencode', displayName: 'OpenCode', packageName: '@tjalve/qube-adapter-opencode', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
   Object.freeze({ id: 'codex', displayName: 'Codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
   Object.freeze({ id: 'claude-code', displayName: 'Claude Code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
-  Object.freeze({ id: 'grok-build', displayName: 'Grok Build', packageName: null, installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'grok-build', displayName: 'Grok Build', packageName: '@tjalve/qube-adapter-grok-build', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
 ]);
 
 export function reviewerDisplayName(hostId: string | null | undefined): string {
   const raw = typeof hostId === 'string' ? hostId.trim() : '';
   if (raw === '') return 'unknown-host';
-  const registryId = raw === 'grok' ? 'grok-build' : raw;
-  const adapter = ADAPTERS.find(item => item.id === registryId);
-  return adapter?.displayName ?? raw;
+  const adapter = ADAPTERS.find(item => item.id === raw);
+  if (adapter) return adapter.displayName;
+  if (raw === 'grok') return 'Grok Build';
+  return raw;
 }
 
-let cachedCodexProfile: AgentHostProfile | null | undefined;
-let cachedClaudeCodeProfile: AgentHostProfile | null | undefined;
+const HOST_PROFILE_EXPORTS: Readonly<Record<AgentHostId, string>> = Object.freeze({
+  opencode: 'opencodeHostProfile',
+  codex: 'codexHostProfile',
+  'claude-code': 'claudeCodeHostProfile',
+  'grok-build': 'grokBuildHostProfile',
+});
 
-async function loadCodexProfile(): Promise<AgentHostProfile | null> {
-  if (cachedCodexProfile !== undefined) return cachedCodexProfile;
-  try {
-    const imported = await import('@tjalve/qube-adapter-codex');
-    const profile = (imported as Record<string, unknown>).codexHostProfile;
-    if (!profile || typeof profile !== 'object') {
-      cachedCodexProfile = null;
-      return null;
-    }
-    cachedCodexProfile = profile as AgentHostProfile;
-    return cachedCodexProfile;
-  } catch (error) {
-    if (isModuleMissing(error, '@tjalve/qube-adapter-codex')) {
-      cachedCodexProfile = null;
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function loadClaudeCodeProfile(): Promise<AgentHostProfile | null> {
-  if (cachedClaudeCodeProfile !== undefined) return cachedClaudeCodeProfile;
-  try {
-    const imported = await import('@tjalve/qube-adapter-claude-code');
-    const profile = (imported as Record<string, unknown>).claudeCodeHostProfile;
-    if (!profile || typeof profile !== 'object') {
-      cachedClaudeCodeProfile = null;
-      return null;
-    }
-    cachedClaudeCodeProfile = profile as AgentHostProfile;
-    return cachedClaudeCodeProfile;
-  } catch (error) {
-    if (isModuleMissing(error, '@tjalve/qube-adapter-claude-code')) {
-      cachedClaudeCodeProfile = null;
-      return null;
-    }
-    throw error;
-  }
-}
+const profileCache = new Map<AgentHostId, AgentHostProfile | null>();
+const extraProfilesForTests = new Map<AgentHostId, AgentHostProfile>();
 
 function isModuleMissing(error: unknown, packageName: string): boolean {
   if (!(error instanceof Error)) return false;
   const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
+  return (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') && error.message.includes(packageName);
+}
+
+export async function loadHostProfileFromPackage(packageName: string, exportName: string): Promise<AgentHostProfile | null> {
+  try {
+    const imported = await import(packageName);
+    const profile = (imported as Record<string, unknown>)[exportName];
+    if (!profile || typeof profile !== 'object') return null;
+    return profile as AgentHostProfile;
+  } catch (error) {
+    if (isModuleMissing(error, packageName)) return null;
+    throw error;
+  }
+}
+
+async function loadPackageProfile(id: AgentHostId): Promise<AgentHostProfile | null> {
+  if (profileCache.has(id)) return profileCache.get(id) ?? null;
+  const adapter = ADAPTERS.find(item => item.id === id);
+  if (!adapter?.packageName) {
+    const builtin = BUILTIN_PROFILES[id] ?? null;
+    profileCache.set(id, builtin);
+    return builtin;
+  }
+  const loaded = await loadHostProfileFromPackage(adapter.packageName, HOST_PROFILE_EXPORTS[id]);
+  if (loaded) {
+    profileCache.set(id, loaded);
+    return loaded;
+  }
+  const builtin = BUILTIN_PROFILES[id] ?? null;
+  profileCache.set(id, builtin);
+  return builtin;
 }
 
 async function loadProfile(id: AgentHostId): Promise<AgentHostProfile | null> {
-  if (id === 'codex') return loadCodexProfile();
-  if (id === 'claude-code') return loadClaudeCodeProfile();
-  return BUILTIN_PROFILES[id] ?? null;
+  const extra = extraProfilesForTests.get(id);
+  if (extra) return extra;
+  return loadPackageProfile(id);
+}
+
+export function registerAgentHostProfileForTests(profile: AgentHostProfile): void {
+  extraProfilesForTests.set(profile.id, profile);
+  profileCache.delete(profile.id);
+}
+
+export function resetAgentHostProfilesForTests(): void {
+  extraProfilesForTests.clear();
+  profileCache.clear();
 }
 
 async function getAvailableAgentHostProfiles(): Promise<AgentHostProfile[]> {

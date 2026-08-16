@@ -1,8 +1,8 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import { isRegisteredReviewHost, listReviewHostIds } from '../app/review_host_adapters.js';
 import { defaultCarryForwardContext, defaultLaneModelTier } from '../review_focus.js';
-import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
-import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelTierId, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, retiredGrokHostIdMessage, type ConnectionContract } from '@tjalve/qube-core';
+import { REVIEW_MODEL_HOST_IDS, type MigrationPolicy, type ReviewContextSources, type ReviewFailoverPolicy, type ReviewLanePolicy, type ReviewLaneRequiredMode, type ReviewLaneRereviewMode, type ReviewModelTierId, type ReviewModelsPolicy, type ReviewProfileKind, type ReviewPromptFragments, type ReviewRoutePolicy, type ReviewSeverityThreshold, type ShippingPolicy } from '../core/policy.js';
 import {
   defaultModelRoutingPolicy,
   isModelRoutingHost,
@@ -399,8 +399,11 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
     return null;
   }
   rejectUnknownKeys(value, ['host', 'tier', 'timeoutSeconds', 'maxTurns'], path, errors);
-  const host = isRegisteredReviewHost(value.host) ? value.host : null;
-  if (!host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must name a registered review host adapter, got ${JSON.stringify(value.host)} (registered: ${listReviewHostIds().join(', ')})` });
+  if (value.host === 'grok') {
+    errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host ${retiredGrokHostIdMessage()}` });
+  }
+  const host = value.host === 'grok' ? null : isRegisteredReviewHost(value.host) ? value.host : null;
+  if (value.host !== 'grok' && !host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must name a registered review host adapter, got ${JSON.stringify(value.host)} (registered: ${listReviewHostIds().join(', ')})` });
   const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
   if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
   const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
@@ -1015,9 +1018,12 @@ function readReviewModelTierMap(value: unknown, path: string, errors: Validation
     errors.push({ kind: 'invalid', path, message: `${path} must be an object mapping hosts to model bindings` });
     return {};
   }
-  rejectUnknownKeys(value, ['codex', 'claude-code', 'opencode', 'grok'], path, errors);
+  if (Object.prototype.hasOwnProperty.call(value, 'grok')) {
+    errors.push({ kind: 'invalid', path: `${path}.grok`, message: `${path}.grok ${retiredGrokHostIdMessage()}` });
+  }
+  rejectUnknownKeys(value, [...REVIEW_MODEL_HOST_IDS, 'grok'], path, errors);
   const tierMap: ReviewModelsPolicy['review'] = {};
-  for (const host of ['codex', 'claude-code', 'opencode', 'grok'] as const) {
+  for (const host of REVIEW_MODEL_HOST_IDS) {
     const binding = value[host];
     if (binding === undefined) continue;
     if (!isPlainObject(binding)) {
@@ -1268,8 +1274,12 @@ function readModelCatalog(value: unknown, errors: ValidationError[]): ModelCatal
       return;
     }
     const host = String(entry.host ?? '');
+    if (host === 'grok') {
+      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host ${retiredGrokHostIdMessage()}` });
+      return;
+    }
     if (!isModelRoutingHost(host)) {
-      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok'].join(', ')}` });
+      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok-build'].join(', ')}` });
       return;
     }
     if (entry.transport !== 'cli' && entry.transport !== 'host') {

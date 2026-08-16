@@ -16,12 +16,12 @@ const {
   resolveWindowsNodeShim,
 } = require('../dist/app/model_review_runner.js');
 
-function reviewInput(repoRoot, host = 'grok') {
+function reviewInput(repoRoot, host = 'grok-build') {
   return {
     plan: {
       host,
       tier: 'review',
-      model: host === 'grok' ? 'grok-4.5' : 'gpt-5.6-luna',
+      model: host === 'grok-build' ? 'grok-4.5' : 'gpt-5.6-luna',
       effort: host === 'codex' ? 'high' : null,
       isolation: 'read-only',
       timeoutSeconds: 60,
@@ -293,7 +293,7 @@ describe('model review runner', () => {
     assert.equal(withUsage.evidence.modelTier, 'review');
 
     const withoutUsage = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({
         exitCode: 0,
@@ -310,7 +310,7 @@ describe('model review runner', () => {
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-'));
-    const input = reviewInput(repoRoot, 'grok');
+    const input = reviewInput(repoRoot, 'grok-build');
     let capturedPromptPath = null;
     let capturedArgs = null;
 
@@ -330,7 +330,7 @@ describe('model review runner', () => {
     });
 
     assert.equal(result.error, null);
-    assert.equal(result.evidence.runnerProvenance.host, 'grok');
+    assert.equal(result.evidence.runnerProvenance.host, 'grok-build');
     assert.equal(result.evidence.runnerProvenance.model, 'grok-4.5');
     assert.equal(result.evidence.runnerProvenance.isolation, 'read-only');
     assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-session');
@@ -383,7 +383,7 @@ describe('model review runner', () => {
     body.preconditions = ['Precondition auth_token=lowercase-secret-value'];
 
     const result = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'redacted' }) }),
     });
@@ -409,7 +409,7 @@ describe('model review runner', () => {
     body.coverage = [{ area: 'code-quality', status: 'finding' }];
 
     const result = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'confidence' }) }),
     });
@@ -427,7 +427,7 @@ describe('model review runner', () => {
     body.findings = [{ severity: 'advisory', message: 'Out-of-range confidence.', location: { path: 'src/parser.ts', line: 4 }, confidence: 1.5 }];
 
     const result = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'bad-confidence' }) }),
     });
@@ -460,7 +460,7 @@ describe('model review runner', () => {
     assert.equal(multipleCodexMessages.reasonCode, 'model-route-output-envelope');
 
     const multipleFinalObjects = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({
         exitCode: 0,
@@ -474,7 +474,7 @@ describe('model review runner', () => {
     assert.equal(multipleFinalObjects.reasonCode, 'model-route-contract-mismatch');
 
     const progressThenFinal = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({
         exitCode: 0,
@@ -510,7 +510,7 @@ describe('model review runner', () => {
 
     const contradictoryPending = { ...laneResult(), status: 'pending', recommendation: 'pending', blockers: ['Contradictory blocker.'] };
     const contradictorySequence = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({
         exitCode: 0,
@@ -526,7 +526,7 @@ describe('model review runner', () => {
     const missingDigest = laneResult();
     delete missingDigest.artifacts[0].sha256;
     const missingDigestResult = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(missingDigest), sessionId: 'missing-digest' }) }),
     });
@@ -536,7 +536,7 @@ describe('model review runner', () => {
     const incompleteResult = laneResult();
     incompleteResult.artifacts = [];
     const incomplete = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(incompleteResult), sessionId: 'bad' }) }),
     });
@@ -546,7 +546,7 @@ describe('model review runner', () => {
     const mismatchedResult = laneResult();
     mismatchedResult.lane = 'security';
     const mismatched = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(mismatchedResult), sessionId: 'wrong-lane' }) }),
     });
@@ -556,7 +556,7 @@ describe('model review runner', () => {
     const falseSuccess = laneResult();
     falseSuccess.findings = [{ severity: 'blocking', message: 'Fix the false-success path.' }];
     const blockingPassed = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(falseSuccess), sessionId: 'false-success' }) }),
     });
@@ -566,7 +566,7 @@ describe('model review runner', () => {
     const blockersApproved = laneResult();
     blockersApproved.blockers = ['This result cannot be approved.'];
     const approvedWithBlockers = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(blockersApproved), sessionId: 'blockers-approved' }) }),
     });
@@ -584,7 +584,7 @@ describe('model review runner', () => {
     assert.equal(timedOut.reasonCode, 'model-route-timeout');
 
     const auth = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 1, stderr: 'login required token abcdefghijklmnopqrstuvwxyz1234567890', stdout: '', timedOut: false, stdinDelivered: true }),
     });
@@ -595,13 +595,13 @@ describe('model review runner', () => {
   it('classifies missing hosts, rejected models, and generic non-zero exits', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-errors-'));
     const missingHost = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => { throw new Error('grok executable was not found'); },
     });
     assert.equal(missingHost.reasonCode, 'model-route-unavailable');
 
     const rejectedModel = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 2, stderr: 'configured model is unavailable', stdout: '', timedOut: false, stdinDelivered: true }),
     });
@@ -616,7 +616,7 @@ describe('model review runner', () => {
     assert.match(nonZero.error, /code 17/);
 
     const untrustedReviewText = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 1, stderr: 'runner stopped', stdout: 'The configured model validation appears unavailable in reviewed code.', timedOut: false, stdinDelivered: true }),
     });
@@ -626,14 +626,14 @@ describe('model review runner', () => {
   it('rejects checkout drift, incomplete prompt delivery, and permissively malformed evidence', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-strict-'));
     const checkoutMismatch = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveHead: async () => 'different-head',
       resolveExecutable: async () => 'grok.exe',
     });
     assert.equal(checkoutMismatch.reasonCode, 'model-route-checkout-mismatch');
 
     const promptFailure = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: 'EPIPE', stdout: '', timedOut: false, stdinDelivered: false }),
     });
@@ -643,7 +643,7 @@ describe('model review runner', () => {
     invalid.severity = 'surprising';
     invalid.artifacts = [{}];
     const malformedEvidence = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(invalid), sessionId: 'invalid' }) }),
     });
@@ -653,7 +653,7 @@ describe('model review runner', () => {
     forgedDigest.artifacts = [{ kind: 'source', path: 'tracked.txt', sha256: '0'.repeat(64) }];
     writeFileSync(join(repoRoot, 'tracked.txt'), 'trusted bytes');
     const forgedEvidence = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(forgedDigest), sessionId: 'forged' }) }),
     });
@@ -663,7 +663,7 @@ describe('model review runner', () => {
     mkdirSync(join(repoRoot, 'artifact-directory'));
     directoryArtifact.artifacts = [{ kind: 'source', path: 'artifact-directory', sha256: null }];
     const directoryEvidence = await runModelReview({
-      ...reviewInput(repoRoot, 'grok'),
+      ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(directoryArtifact), sessionId: 'directory' }) }),
     });
@@ -687,7 +687,7 @@ describe('model review runner', () => {
 describe('coverage attestation contract', () => {
   function grokRun(body, coverageAreas) {
     return runModelReview({
-      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-coverage-')), 'grok'),
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-coverage-')), 'grok-build'),
       ...(coverageAreas ? { coverageAreas } : {}),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'coverage' }) }),
@@ -749,7 +749,7 @@ describe('interim snapshot coverage relaxation', () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
     delete pending.coverage;
     const result = await runModelReview({
-      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok'),
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) }),
     });
@@ -763,7 +763,7 @@ describe('interim snapshot coverage relaxation', () => {
     const final = laneResult();
     delete final.coverage;
     const result = await runModelReview({
-      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok'),
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(final)}`, sessionId: 'grok-session' }) }),
     });
@@ -776,7 +776,7 @@ describe('interim snapshot freeform coverage tolerance', () => {
   it('ignores freeform coverage areas in interim snapshots', async () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.', coverage: [{ area: 'made-up-area', status: 'clear' }] };
     const result = await runModelReview({
-      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim2-')), 'grok'),
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim2-')), 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) }),
     });

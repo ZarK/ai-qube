@@ -50,7 +50,7 @@ describe('host-reported usage', () => {
   });
 
   it('parses Grok envelope usage and omits malformed token counts', () => {
-    const adapter = getReviewHostAdapter('grok');
+    const adapter = getReviewHostAdapter('grok-build');
     const withUsage = adapter.parseEnvelope(JSON.stringify({
       text: '{"status":"passed"}',
       sessionId: 'grok-session',

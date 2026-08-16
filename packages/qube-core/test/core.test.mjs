@@ -36,6 +36,15 @@ describe("qube core contracts", () => {
     assert.equal(typeof core.executableExistsOnPath, "function");
   });
 
+  it("owns the public host id set and isolated-review contract", () => {
+    assert.deepEqual([...core.AGENT_HOST_IDS], ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.ok(!core.AGENT_HOST_IDS.includes("grok"));
+    assert.equal(core.RETIRED_GROK_HOST_ID, "grok");
+    assert.match(core.retiredGrokHostIdMessage(), /Use `grok-build`/);
+    assert.deepEqual([...core.GROK_BUILD_EXECUTABLE_NAMES], ["grok"]);
+    assert.equal(core.ISOLATED_REVIEW_HOST_PACKAGE_NAMES["grok-build"], "@tjalve/qube-adapter-grok-build");
+  });
+
   it("keeps product contracts standalone and provider-neutral", () => {
     assert.deepEqual(qubeProductContracts.map((product) => product.id), [
       "bootstrap",

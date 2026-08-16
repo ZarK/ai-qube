@@ -591,7 +591,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: ['Review mode isolated requires an installed review host: codex, claude-code, opencode, or grok.'],
+        errors: ['Review mode isolated requires an installed review host: codex, claude-code, opencode, or grok-build.'],
         nextCommand: 'Install a review host or pass --review-mode external or --review-mode host.',
         questions: askedQuestions,
         unansweredQuestionIds: unanswered,

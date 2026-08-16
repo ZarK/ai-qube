@@ -212,7 +212,7 @@
           "runner": "local-host",
           "rereview": "delta",
           "route": {
-            "host": "grok",
+            "host": "grok-build",
             "tier": "review",
             "timeoutSeconds": 900,
             "maxTurns": 16
@@ -221,7 +221,7 @@
       ],
       "agents": [],
       "localAgents": [
-        "grok",
+        "grok-build",
         "codex"
       ],
       "waitMinutes": 0,
@@ -233,7 +233,7 @@
             "model": "gpt-5.6-luna",
             "effort": "medium"
           },
-          "grok": {
+          "grok-build": {
             "model": "grok-4.5",
             "effort": null
           }
@@ -242,7 +242,7 @@
         "synthesis": {}
       },
       "route": {
-        "host": "grok",
+        "host": "grok-build",
         "tier": "review",
         "timeoutSeconds": 900,
         "maxTurns": 16

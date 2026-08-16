@@ -48,7 +48,7 @@ describe('modelRouting schema', () => {
       primary: 'primary',
       catalog: [
         { id: 'primary', host: 'claude-code', transport: 'host', costRank: 3, notes: 'primary' },
-        { id: 'cheap', host: 'grok', transport: 'cli', costRank: 1, notes: 'cheap' },
+        { id: 'cheap', host: 'grok-build', transport: 'cli', costRank: 1, notes: 'cheap' },
       ],
       routes: {
         'mechanical-implementation': { preferred: 'cheap', fallback: ['cheap'] },
@@ -84,11 +84,11 @@ describe('modelRouting resolver', () => {
     const policy = buildModelRoutingFromSelections({
       primaryHost: 'claude-code',
       primaryModel: 'default',
-      mechanical: { host: 'grok', model: 'grok-4.5' },
+      mechanical: { host: 'grok-build', model: 'grok-4.5' },
     });
     const resolved = resolveModelRouting(policy, getDefaults().reviewModels, ['claude-code']);
     assert.equal(resolved.routes['mechanical-implementation'].selected.id, 'claude-code:default');
-    assert.ok(resolved.substitutions.some(item => item.from === 'grok:grok-4.5'));
+    assert.ok(resolved.substitutions.some(item => item.from === 'grok-build:grok-4.5'));
     assert.equal(resolved.routes['independent-review'].reviewTier, 'review');
   });
 
@@ -96,10 +96,10 @@ describe('modelRouting resolver', () => {
     const policy = buildModelRoutingFromSelections({
       primaryHost: 'claude-code',
       primaryModel: 'default',
-      mechanical: { host: 'grok', model: 'grok-4.5' },
+      mechanical: { host: 'grok-build', model: 'grok-4.5' },
     });
-    const resolved = resolveModelRouting(policy, getDefaults().reviewModels, ['claude-code', 'grok']);
-    assert.equal(resolved.routes['mechanical-implementation'].selected.id, 'grok:grok-4.5');
+    const resolved = resolveModelRouting(policy, getDefaults().reviewModels, ['claude-code', 'grok-build']);
+    assert.equal(resolved.routes['mechanical-implementation'].selected.id, 'grok-build:grok-4.5');
     assert.equal(resolved.routes['mechanical-implementation'].substitutions.length, 0);
   });
 });
@@ -110,7 +110,7 @@ describe('modelRouting host assets', () => {
     config.modelRouting = buildModelRoutingFromSelections({
       primaryHost: 'claude-code',
       primaryModel: 'default',
-      mechanical: { host: 'grok', model: 'grok-4.5' },
+      mechanical: { host: 'grok-build', model: 'grok-4.5' },
     });
     const hosts = await getAgentHostProfiles(['claude-code', 'grok-build']);
     const instructions = renderAgentInstructions(config, hosts);
@@ -135,7 +135,7 @@ describe('modelRouting host assets', () => {
         modelRouting: buildModelRoutingFromSelections({
           primaryHost: 'claude-code',
           primaryModel: 'default',
-          mechanical: { host: 'grok', model: 'grok-4.5' },
+          mechanical: { host: 'grok-build', model: 'grok-4.5' },
         }),
       },
     });

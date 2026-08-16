@@ -13,7 +13,7 @@ function record(overrides = {}) {
     runId: 'run-1',
     issueNumber: 93,
     prNumber: 12,
-    host: 'grok',
+    host: 'grok-build',
     recommendation: 'approve',
     status: 'passed',
     summary: 'Lane approved at the current head.',
