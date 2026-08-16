@@ -1292,6 +1292,7 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--defaults'));
     assert.ok(metadata.flags.includes('--from'));
     assert.ok(metadata.flags.includes('--review-mode'));
+    assert.ok(metadata.flags.includes('--ui-audit-evidence-root'));
     assert.ok(metadata.flags.includes('--publisher'));
     assert.ok(metadata.flags.includes('--tool'));
     assert.ok(metadata.flags.includes('--naming-rules'));

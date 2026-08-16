@@ -34,6 +34,16 @@ import {
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
+import {
+  buildInstallQuestions,
+  DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
+  installQuestionGuideComplete,
+  invalidInstallGuideFlag,
+  isolatedReviewAvailable,
+  recommendedInstallPackageManager,
+  recommendedInstallReviewMode,
+  type InstallReviewMode,
+} from "./install_questions.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -111,6 +121,9 @@ interface InstallSelections {
   readonly lifecycleScripts: InstallLifecycleScripts;
   readonly docs: boolean;
   readonly migration: InstallMigration;
+  readonly reviewMode: InstallReviewMode;
+  readonly uiAuditEvidenceRoot: string;
+  readonly creditWarning: boolean;
 }
 
 type InstallCommandStage = "package-install" | "workspace-init" | "provider-setup" | "verify";
@@ -522,6 +535,42 @@ const migrationChoices = defineInstallerChoiceGroup({
     }
   ]
 });
+const evidenceRootChoices = defineInstallerChoiceGroup({
+  name: "UI audit evidence root",
+  message: "Where should this machine keep local UI audit evidence?",
+  defaultValue: "qube",
+  choices: [
+    {
+      value: "qube",
+      label: "QUBE user default",
+      description: "Store UI audit evidence under ~/.qube/verification/.",
+      recommended: true
+    },
+    {
+      value: "legacy",
+      label: "Existing legacy path",
+      description: "Keep using ~/github-verification/ when that tree already exists."
+    }
+  ]
+});
+const attributionChoices = defineInstallerChoiceGroup({
+  name: "attribution hygiene",
+  message: "Should installed agent instructions keep public git and GitHub writes on the human project identity?",
+  defaultValue: "true",
+  choices: [
+    {
+      value: "true",
+      label: "Yes. Install attribution hygiene rules.",
+      description: "Public git and GitHub writes stay on the human project identity.",
+      recommended: true
+    },
+    {
+      value: "false",
+      label: "No. Omit those rules from installed instructions.",
+      description: "Do not add attribution hygiene rules."
+    }
+  ]
+});
 
 const applyFlag = defineFlag({
   name: "apply",
@@ -593,6 +642,23 @@ const installCommand = defineCommand({
       description: "Migration posture for users moving from standalone package globals.",
       type: "option",
       options: ["none", "standalone-globals"]
+    }),
+    defineFlag({
+      name: "review-mode",
+      description: "Review mode written into the workspace-init command. Isolated is available only when a selected host adapter can run isolated review.",
+      type: "option",
+      options: ["isolated", "host", "external"]
+    }),
+    defineFlag({
+      name: "ui-audit-evidence-root",
+      description: "User-local directory that UI audit evidence should use. Default: ~/.qube/verification.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "credit-warning",
+      description: "Install attribution hygiene rules so public git and GitHub writes stay on the human project identity.",
+      type: "boolean",
+      negatable: true
     })
   ],
   examples: [
@@ -1020,6 +1086,23 @@ const initCommand = defineCommand({
       name: "route-independent-review",
       description: "reviewModels tier for independent-review: review, economy, or synthesis.",
       type: "string"
+    }),
+    defineFlag({
+      name: "review-mode",
+      description: "Review mode forwarded to Executor init.",
+      type: "option",
+      options: ["isolated", "host", "external"]
+    }),
+    defineFlag({
+      name: "ui-audit-evidence-root",
+      description: "UI audit evidence root forwarded to Executor init.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "credit-warning",
+      description: "Attribution hygiene policy forwarded to Executor init.",
+      type: "boolean",
+      negatable: true
     })
   ],
   examples: [
@@ -1645,7 +1728,7 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly primaryModel?: string; readonly mechanical?: string; readonly exploration?: string; readonly synthesis?: string; readonly independentReview?: string }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly primaryModel?: string; readonly mechanical?: string; readonly exploration?: string; readonly synthesis?: string; readonly independentReview?: string; readonly reviewMode?: string; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
   if (options.workProvider && options.workProvider !== "local") args.push("--work-provider", options.workProvider);
@@ -1657,6 +1740,10 @@ function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options
   if (options.exploration) args.push("--route-exploration-investigation", options.exploration);
   if (options.synthesis) args.push("--route-synthesis-judgment", options.synthesis);
   if (options.independentReview) args.push("--route-independent-review", options.independentReview);
+  if (options.reviewMode) args.push("--review-mode", options.reviewMode);
+  if (options.uiAuditEvidenceRoot) args.push("--ui-audit-evidence-root", options.uiAuditEvidenceRoot);
+  if (options.creditWarning === true) args.push("--credit-warning");
+  if (options.creditWarning === false) args.push("--no-credit-warning");
   if (options.dryRun) args.push("--dry-run");
   if (options.force) args.push("--force");
   if (options.yes) args.push("--yes");
@@ -1688,6 +1775,16 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       : { exitCode: 2, stdout: "", stderr: `${routingFlagError}\n` };
   }
   const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags, initCommand);
+  const guideError = invalidInstallGuideFlag({
+    ...flags,
+    host: hosts.join(","),
+    yes: yes || defaults
+  });
+  if (guideError) {
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: guideError })}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${guideError}\n` };
+  }
   const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags, initCommand);
   const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags, initCommand);
   const withComponents = await promptInstallerChoices({
@@ -1720,6 +1817,9 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     exploration: routingSelections.exploration,
     synthesis: routingSelections.synthesis,
     independentReview: routingSelections.independentReview,
+    reviewMode: readOption<string>(flags, "review-mode"),
+    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
+    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined,
   };
   const aiuOptions = { dryRun, force };
   const aieRuns = aieToolTargets.length === 0
@@ -5040,7 +5140,19 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
       category: "usage"
     });
   }
-  const selections = await resolveInstallSelections(flags);
+  if (json && flags.yes !== true && !hasCompleteInstallSelections(flags, environment.cwd)) {
+    const guide = buildInstallQuestions({ flags, cwd: environment.cwd });
+    return {
+      json: {
+        awaitingAnswers: true,
+        questions: guide.questions,
+        unansweredQuestionIds: guide.unansweredQuestionIds,
+      }
+    };
+  }
+  const selections = flags.json === true
+    ? createInstallSelectionsFromFlags(flags, environment.cwd)
+    : await resolveInstallSelections(flags, environment.cwd);
   const plan = createInstallPlan(selections, flags["dry-run"] === true, environment.cwd);
   if (shouldStayPlanOnly(flags)) {
     if (json) {
@@ -5164,20 +5276,16 @@ function planQubeInstall(args: readonly string[]): CliExecution {
   if (validationError) {
     return validationError;
   }
-  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags)) {
+  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags, process.cwd())) {
+    const guide = buildInstallQuestions({ flags: parsed.flags, cwd: process.cwd() });
     return {
-      exitCode: 2,
+      exitCode: 0,
       stdout: `${JSON.stringify({
-        ok: false,
+        ok: true,
         command: "install",
-        error: {
-          kind: "prompt-blocked",
-          operation: "prompt install scope",
-          likelyCause: "Prompts are disabled in JSON output mode.",
-          suggestedNextAction: "Provide explicit install flags or pass --yes for safe defaults.",
-          category: "usage",
-          exitCode: 2
-        }
+        awaitingAnswers: true,
+        questions: guide.questions,
+        unansweredQuestionIds: guide.unansweredQuestionIds,
       })}\n`,
       stderr: ""
     };
@@ -5227,6 +5335,14 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
       flags.defaults = true;
       continue;
     }
+    if (token === "--credit-warning") {
+      flags["credit-warning"] = true;
+      continue;
+    }
+    if (token === "--no-credit-warning") {
+      flags["credit-warning"] = false;
+      continue;
+    }
     const option = parseInitOptionToken(args, index);
     if (option?.kind === "missing-value") {
       return { exitCode: 2, stdout: "", stderr: `Missing value for init option --${option.key}.\n` };
@@ -5255,7 +5371,10 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
     dryRun: flags["dry-run"] === true,
     force: flags.force === true,
     yes: flags.yes === true,
-    defaults: flags.defaults === true
+    defaults: flags.defaults === true,
+    reviewMode: readOption<string>(flags, "review-mode"),
+    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
+    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined
   });
   return planQubeDispatch("aie", dispatchArgs, environment);
 }
@@ -5271,7 +5390,7 @@ function parseInitOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["host", "work-provider", "ci-provider", "with"]) {
+  for (const key of ["host", "work-provider", "ci-provider", "with", "review-mode", "ui-audit-evidence-root"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -5338,12 +5457,53 @@ function createDirectCommand(
   };
 }
 
-async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>): Promise<InstallSelections> {
+async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>, cwd: string): Promise<InstallSelections> {
   const scope = await resolveInstallChoice(scopeChoices, readOption<InstallScope>(flags, "scope"), flags);
-  const packageManager = await resolveInstallChoice(packageManagerChoices, readOption<InstallPackageManager>(flags, "package-manager"), flags);
+  const packageManager = await resolveInstallChoice(
+    { ...packageManagerChoices, defaultValue: recommendedInstallPackageManager(cwd) },
+    readOption<InstallPackageManager>(flags, "package-manager"),
+    flags
+  );
   const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags);
   const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags);
   const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags);
+  const isolatedOk = isolatedReviewAvailable(hosts);
+  const reviewMode = await resolveInstallChoice(
+    defineInstallerChoiceGroup({
+      name: "review mode",
+      message: "Which review mode should this repository use?",
+      defaultValue: recommendedInstallReviewMode(hosts),
+      choices: [
+        ...(isolatedOk
+          ? [{
+            value: "isolated" as const,
+            label: "isolated",
+            description: "Executor runs model CLIs for the lane batch.",
+            recommended: true
+          }]
+          : []),
+        {
+          value: "host",
+          label: "host",
+          description: "The coding agent runs one review subagent per lane."
+        },
+        {
+          value: "external",
+          label: "external",
+          description: "A review service reviews the pull request.",
+          recommended: !isolatedOk
+        }
+      ]
+    }),
+    readOption<InstallReviewMode>(flags, "review-mode"),
+    flags
+  );
+  const uiAuditEvidenceRoot = await resolveUiAuditEvidenceRoot(flags);
+  const creditWarningValue = await resolveInstallChoice(
+    attributionChoices,
+    typeof flags["credit-warning"] === "boolean" ? String(flags["credit-warning"]) : undefined,
+    flags
+  );
   const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
   const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
   const migration = await resolveInstallChoice(migrationChoices, readOption<InstallMigration>(flags, "migration"), flags);
@@ -5370,8 +5530,24 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
     withComponents,
     lifecycleScripts,
     docs: docsValue === "yes",
-    migration
+    migration,
+    reviewMode,
+    uiAuditEvidenceRoot,
+    creditWarning: creditWarningValue === "true"
   };
+}
+
+function mapEvidenceRootChoice(value: string): string {
+  if (value === "qube") return DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT;
+  if (value === "legacy") return "~/github-verification";
+  return value;
+}
+
+async function resolveUiAuditEvidenceRoot(flags: Readonly<Record<string, unknown>>): Promise<string> {
+  const flagged = readOption<string>(flags, "ui-audit-evidence-root");
+  if (flagged) return flagged;
+  const token = await resolveInstallChoice(evidenceRootChoices, undefined, flags);
+  return mapEvidenceRootChoice(token);
 }
 
 async function resolveInstallChoice<Value extends string>(
@@ -5410,14 +5586,14 @@ async function resolveInstallChoices<Value extends string>(
   });
 }
 
-function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>): InstallSelections {
+function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>, cwd = process.cwd()): InstallSelections {
   // Keep these synchronous fallbacks aligned with the choice group defaults above.
   const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
   const workProviders = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? ["github"];
   const ciProviders = readOptionList<InstallCiProvider>(flags, "ci-provider") ?? ["github"];
   return {
     scope: readOption<InstallScope>(flags, "scope") ?? "local",
-    packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? "pnpm",
+    packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? recommendedInstallPackageManager(cwd),
     host: hosts[0] ?? "generic",
     hosts,
     workProvider: workProviders[0] ?? "github",
@@ -5427,7 +5603,10 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
     withComponents: readOptionList<string>(flags, "with") ?? [],
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
-    migration: readOption<InstallMigration>(flags, "migration") ?? "none"
+    migration: readOption<InstallMigration>(flags, "migration") ?? "none",
+    reviewMode: readOption<InstallReviewMode>(flags, "review-mode") ?? recommendedInstallReviewMode(hosts),
+    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root") ?? DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
+    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : true
   };
 }
 
@@ -5525,7 +5704,10 @@ function buildQubeInitCommand(selections: InstallSelections): string {
     "qube init .",
     `--host ${selections.hosts.join(",")}`,
     `--work-provider ${selections.workProviders.join(",")}`,
-    `--ci-provider ${selections.ciProviders.join(",")}`
+    `--ci-provider ${selections.ciProviders.join(",")}`,
+    `--review-mode ${selections.reviewMode}`,
+    `--ui-audit-evidence-root ${selections.uiAuditEvidenceRoot}`,
+    selections.creditWarning ? "--credit-warning" : "--no-credit-warning"
   ];
   if (selections.withComponents.length > 0) {
     parts.push(`--with ${selections.withComponents.join(",")}`);
@@ -5772,6 +5954,14 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
       stderr: `Invalid install option --${group.key}=${invalid.join(",")}. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
     };
   }
+  const guideError = invalidInstallGuideFlag(flags);
+  if (guideError) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `${guideError}\n`
+    };
+  }
   return undefined;
 }
 
@@ -5790,9 +5980,8 @@ function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefin
   return undefined;
 }
 
-function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>): boolean {
-  return ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "migration"].every(key => typeof flags[key] === "string")
-    && typeof flags.docs === "boolean";
+function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>, cwd: string): boolean {
+  return installQuestionGuideComplete(flags, cwd);
 }
 
 function splitCsvOption(value: string): readonly string[] {
@@ -5845,6 +6034,14 @@ function parseInstallArgs(args: readonly string[]):
       flags.docs = false;
       continue;
     }
+    if (token === "--credit-warning") {
+      flags["credit-warning"] = true;
+      continue;
+    }
+    if (token === "--no-credit-warning") {
+      flags["credit-warning"] = false;
+      continue;
+    }
     const parsed = parseOptionToken(args, index);
     if (parsed?.kind === "missing-value") {
       return {
@@ -5882,7 +6079,7 @@ function parseOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "migration"]) {
+  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "migration", "review-mode", "ui-audit-evidence-root"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -5916,6 +6113,10 @@ function installOptionValues(key: string): readonly string[] {
       return lifecycleChoices.choices.map(choice => choice.value);
     case "migration":
       return migrationChoices.choices.map(choice => choice.value);
+    case "review-mode":
+      return ["isolated", "host", "external"];
+    case "ui-audit-evidence-root":
+      return [DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT, "~/github-verification"];
     default:
       return [];
   }

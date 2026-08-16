@@ -73,6 +73,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--no-manual-ui-audit', type: 'boolean', description: 'Disable manual UI audit policy' },
   { name: '--ui-audit-app-launch', type: 'string', description: 'Command agents should run to start the app for manual UI audit evidence' },
   { name: '--ui-audit-target', type: 'string', description: 'URL, route, or screen agents should inspect during manual UI audits' },
+  { name: '--ui-audit-evidence-root', type: 'string', description: 'User-local directory for UI audit evidence' },
   { name: '--opencode-command-alias', type: 'boolean', description: 'Install optional makeitso OpenCode command alias' },
   { name: '--no-opencode-command-alias', type: 'boolean', description: 'Do not install optional makeitso OpenCode command alias' },
   { name: '--quality-gate', type: 'string', description: 'Agent-run quality gate command', multiple: true },

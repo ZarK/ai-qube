@@ -46,6 +46,13 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
     ['base-remote', value => { policy.baseRemote = value; }],
     ['ui-audit-app-launch', value => { policy.uiAuditAppLaunch = value; }],
     ['ui-audit-target', value => { policy.uiAuditTarget = value; }],
+    ['ui-audit-evidence-root', value => {
+      const trimmed = value.trim();
+      if (trimmed === '' || trimmed === 'custom' || trimmed.includes('\0') || trimmed.split(/[\\/]+/).some(segment => segment === '..')) {
+        throw new Error('--ui-audit-evidence-root must be an explicit directory without parent-directory segments.');
+      }
+      policy.uiAuditEvidenceRoot = trimmed;
+    }],
     ['review-request-text', value => { policy.reviewRequestText = value; }],
   ];
   for (const [flag, assign] of strings) {

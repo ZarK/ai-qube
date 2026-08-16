@@ -450,6 +450,7 @@ describe("qube composer CLI", () => {
       version: qubePackageVersion
     });
     assert.deepEqual(parsed.installPlan.selections, {
+      creditWarning: true,
       docs: true,
       host: "generic",
       hosts: ["generic"],
@@ -458,7 +459,9 @@ describe("qube composer CLI", () => {
       lifecycleScripts: "disabled",
       migration: "none",
       packageManager: "pnpm",
+      reviewMode: "external",
       scope: "local",
+      uiAuditEvidenceRoot: "~/.qube/verification",
       workProvider: "github",
       workProviders: ["github"],
       withComponents: []
@@ -469,7 +472,7 @@ describe("qube composer CLI", () => {
     assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommand,
-      "qube init . --host generic --work-provider github --ci-provider github",
+      "qube init . --host generic --work-provider github --ci-provider github --review-mode external --ui-audit-evidence-root ~/.qube/verification --credit-warning",
       "qube aie labels setup",
       "qube doctor"
     ]);
@@ -848,7 +851,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "disabled",
       "--docs",
       "--migration",
-      "standalone-globals"
+      "standalone-globals",
+      "--review-mode",
+      "isolated",
+      "--ui-audit-evidence-root",
+      "~/.qube/verification",
+      "--credit-warning"
     ]);
 
     assert.equal(result.status, 0);
@@ -1420,7 +1428,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "disabled",
       "--docs",
       "--migration",
-      "none"
+      "none",
+      "--review-mode",
+      "external",
+      "--ui-audit-evidence-root",
+      "~/.qube/verification",
+      "--credit-warning"
     ]);
 
     assert.equal(result.status, 0);
@@ -1463,7 +1476,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommandWith("@tjalve/qube-adapter-github", "@tjalve/qube-adapter-grok-build"),
-      "qube init . --host grok-build --work-provider github --ci-provider github",
+      "qube init . --host grok-build --work-provider github --ci-provider github --review-mode isolated --ui-audit-evidence-root ~/.qube/verification --credit-warning",
       "qube aie labels setup",
       "qube doctor"
     ]);
@@ -1612,21 +1625,160 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(missingInspection.instructionTarget.present, false);
   });
 
-  it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {
+  it("prints the install question list in JSON without --yes", () => {
     const result = runCli(["install", "--json"]);
-    assert.equal(result.status, 2);
-    assert.deepEqual(JSON.parse(result.stdout), {
-      ok: false,
-      command: "install",
-      error: {
-        kind: "prompt-blocked",
-        operation: "prompt install scope",
-        likelyCause: "Prompts are disabled in JSON output mode.",
-        suggestedNextAction: "Provide an explicit flag value or rerun in an interactive terminal.",
-        category: "usage",
-        exitCode: 2
-      }
-    });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, "install");
+    assert.equal(parsed.awaitingAnswers, true);
+    const ids = parsed.questions.map(item => item.id);
+    assert.ok(ids.includes("host"));
+    assert.ok(ids.includes("work-provider"));
+    assert.ok(ids.includes("review-mode"));
+    assert.ok(ids.includes("ui-audit-evidence"));
+    assert.ok(ids.includes("attribution-hygiene"));
+    const unanswered = new Set(parsed.unansweredQuestionIds);
+    assert.ok(unanswered.has("host"));
+    assert.ok(unanswered.has("work-provider"));
+    assert.ok(unanswered.has("review-mode"));
+    for (const id of ["scope", "package-manager", "lifecycle-scripts"]) {
+      const item = parsed.questions.find(question => question.id === id);
+      assert.equal(item.answered, true, id);
+      assert.ok(item.reason);
+      assert.ok(!unanswered.has(id));
+    }
+    const isolated = parsed.questions.find(item => item.id === "review-mode").options.find(option => option.value === "isolated");
+    assert.equal(isolated.available, false);
+    const workOptions = parsed.questions.find(item => item.id === "work-provider").options.map(option => option.value);
+    assert.ok(workOptions.includes("local"));
+    assert.deepEqual(workOptions, ["github", "gitlab", "linear", "jira", "local"]);
+  });
+
+  it("keeps answered host and work-provider flags answered on the next invocation", () => {
+    const result = runCli(["install", "--json", "--host", "grok-build", "--work-provider", "github"]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const host = parsed.questions.find(item => item.id === "host");
+    const work = parsed.questions.find(item => item.id === "work-provider");
+    const review = parsed.questions.find(item => item.id === "review-mode");
+    assert.equal(host.answered, true);
+    assert.deepEqual(host.value, ["grok-build"]);
+    assert.equal(work.answered, true);
+    assert.ok(!parsed.unansweredQuestionIds.includes("host"));
+    assert.ok(!parsed.unansweredQuestionIds.includes("work-provider"));
+    assert.equal(review.options.find(option => option.value === "isolated").available, true);
+  });
+
+  it("does not let default-answered questions block --yes", () => {
+    const result = runCli(["install", "--yes", "--dry-run", "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.ok(parsed.installPlan);
+    assert.equal(parsed.error, undefined);
+  });
+
+  it("accepts unanswered question answers as flags on the next install invocation", () => {
+    const result = runCli([
+      "install",
+      "--json",
+      "--host",
+      "grok-build",
+      "--work-provider",
+      "github",
+      "--review-mode",
+      "isolated",
+      "--ui-audit-evidence-root",
+      "~/.qube/verification",
+      "--credit-warning"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.awaitingAnswers, undefined);
+    assert.ok(parsed.installPlan);
+    assert.equal(parsed.installPlan.selections.reviewMode, "isolated");
+    assert.equal(parsed.installPlan.selections.uiAuditEvidenceRoot, "~/.qube/verification");
+    assert.equal(parsed.installPlan.selections.creditWarning, true);
+    const workspace = parsed.installPlan.commands.find(step => step.stage === "workspace-init")
+      ?? parsed.installPlan.steps.find(step => step.stage === "workspace-init");
+    assert.match(workspace.command, /--review-mode isolated/);
+    assert.match(workspace.command, /--ui-audit-evidence-root ~\/\.qube\/verification/);
+    assert.match(workspace.command, /--credit-warning/);
+    assert.doesNotMatch(workspace.command, /--docs|--migration/);
+  });
+
+  it("keeps already-answered values answered when only some unanswered flags return", () => {
+    const result = runCli([
+      "install",
+      "--json",
+      "--host",
+      "grok-build",
+      "--work-provider",
+      "github",
+      "--review-mode",
+      "isolated"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.awaitingAnswers, true);
+    const unanswered = new Set(parsed.unansweredQuestionIds);
+    assert.ok(!unanswered.has("host"));
+    assert.ok(!unanswered.has("work-provider"));
+    assert.ok(!unanswered.has("review-mode"));
+    assert.ok(unanswered.has("ui-audit-evidence"));
+    assert.ok(unanswered.has("attribution-hygiene"));
+    const review = parsed.questions.find(item => item.id === "review-mode");
+    assert.equal(review.answered, true);
+    assert.equal(review.value, "isolated");
+  });
+
+  it("rejects isolated review when no selected host adapter can run it", () => {
+    const result = runCli([
+      "install",
+      "--json",
+      "--host",
+      "generic",
+      "--review-mode",
+      "isolated"
+    ]);
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /Isolated review is not available/);
+  });
+
+  it("rejects parent-directory evidence roots and the custom token", () => {
+    const parent = runCli([
+      "install",
+      "--json",
+      "--ui-audit-evidence-root",
+      "~/custom/../outside"
+    ]);
+    assert.equal(parent.status, 2, parent.stderr);
+    assert.match(JSON.parse(parent.stdout).error.likelyCause, /Parent-directory segments are not allowed/);
+
+    const custom = runCli([
+      "install",
+      "--json",
+      "--ui-audit-evidence-root",
+      "custom"
+    ]);
+    assert.equal(custom.status, 2, custom.stderr);
+    assert.match(JSON.parse(custom.stdout).error.likelyCause, /explicit directory/);
+  });
+
+  it("uses the repository package manager recommendation for --yes", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-npm-lock-"));
+    writeFileSync(path.join(root, "package-lock.json"), "{}\n");
+    const result = runCli(["install", "--yes", "--dry-run", "--json"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.selections.packageManager, "npm");
+    assert.equal(parsed.installPlan.selections.reviewMode, "external");
+    assert.equal(parsed.installPlan.selections.uiAuditEvidenceRoot, "~/.qube/verification");
+    assert.equal(parsed.installPlan.selections.creditWarning, true);
   });
 
   it("rejects invalid installer flag selections", () => {
@@ -1717,12 +1869,19 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "disabled",
       "--docs",
       "--migration",
-      "none"
+      "none",
+      "--review-mode",
+      "external",
+      "--ui-audit-evidence-root",
+      "~/.qube/verification",
+      "--no-credit-warning"
     ], { cwd: root });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.installPlan.mode, "copy-commands");
     assert.equal(parsed.apply, undefined);
+    assert.equal(parsed.installPlan.selections.reviewMode, "external");
+    assert.equal(parsed.installPlan.selections.creditWarning, false);
     assert.equal(existsSync(path.join(root, "package.json")), false);
   });
 

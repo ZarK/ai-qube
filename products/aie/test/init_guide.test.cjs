@@ -509,6 +509,30 @@ describe('init guide CLI and doctor-clean setup', () => {
     const metadata = getCommandMetadata('init');
     assert.ok(metadata.flags.includes('--from'));
     assert.ok(metadata.flags.includes('--review-mode'));
+    assert.ok(metadata.flags.includes('--ui-audit-evidence-root'));
     assert.ok(metadata.flags.includes('--publisher'));
+  });
+
+  it('CLI --ui-audit-evidence-root writes the evidence root', () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'index.html'), '<html></html>\n');
+    const preview = binRun(['init', '.', '--manual-ui-audit', '--ui-audit-evidence-root', '~/custom-audit', '--json'], repo);
+    const previewParsed = JSON.parse(preview.stdout);
+    const evidence = previewParsed.questions.find(item => item.id === 'ui-audit-evidence');
+    assert.ok(evidence);
+    assert.equal(evidence.answered, true);
+    assert.equal(evidence.value, '~/custom-audit');
+
+    const written = binRun(['init', '.', '--yes', '--ui-audit-evidence-root', '~/custom-audit', '--json'], repo);
+    assert.equal(written.status, 0, written.stderr);
+    const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(config.policy.audit.evidenceRoot, '~/custom-audit');
+  });
+
+  it('CLI rejects parent-directory --ui-audit-evidence-root values', () => {
+    const repo = makeGitRepo();
+    const result = binRun(['init', '.', '--yes', '--ui-audit-evidence-root', '~/custom/../outside', '--json'], repo);
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}${result.stderr}`, /parent-directory/);
   });
 });
