@@ -59,6 +59,9 @@ describe('fresh setup defaults', () => {
     assert.deepEqual(lanes.map(lane => `${lane.id}:${lane.required}`), [
       'issue-compliance:always',
       'code-quality:always',
+      'performance:when-matched',
+      'api-contract-compatibility:when-matched',
+      'ui-ux-accessibility:when-matched',
       'security:when-matched',
     ]);
     assert.deepEqual(lanes.find(lane => lane.id === 'security').match, [...FRESH_SETUP_SECURITY_MATCH]);
@@ -72,9 +75,15 @@ describe('fresh setup defaults', () => {
       'Advisory findings never block',
       'issue-compliance',
       'code-quality',
+      'performance',
+      'api-contract-compatibility',
+      'ui-ux-accessibility',
       'security',
       'when-matched',
       'package.json',
+      'qualityControl',
+      'qube aiq --up-to 2',
+      'grok-4.6',
       'waitMinutes` is `0`',
       'localAgents` is empty',
       'two rounds',
@@ -236,6 +245,97 @@ describe('fresh setup defaults', () => {
   });
 
   it('keeps the default lane factory aligned with the written isolated lanes', () => {
-    assert.deepEqual(defaultFreshSetupLanes().map(lane => lane.id), ['issue-compliance', 'code-quality', 'security']);
+    assert.deepEqual(defaultFreshSetupLanes().map(lane => lane.id), [
+      'issue-compliance',
+      'code-quality',
+      'performance',
+      'api-contract-compatibility',
+      'ui-ux-accessibility',
+      'security',
+    ]);
+    const routed = defaultFreshSetupLanes('grok-build');
+    assert.equal(routed.find(lane => lane.id === 'security').route.host, 'grok-build');
+    const activated = activeLocalReviewFocusesForConfig({
+      reviewProfile: 'local-focused',
+      reviewLanes: routed,
+    }, [
+      'src/queue/worker.ts',
+      'src/api/routes.ts',
+      'apps/web/App.tsx',
+      'package.json',
+    ]);
+    assert.deepEqual([...activated], [
+      'issue-compliance',
+      'code-quality',
+      'performance',
+      'api-contract-compatibility',
+      'ui-ux-accessibility',
+      'security',
+    ]);
+  });
+
+  it('writes catalog-backed Codex and Grok efforts and turns Quality Control on when AIQ is available', async () => {
+    const repo = makeTsRepo();
+    const { applyFreshSetupPolicy, defaultAiqLintFormatGate } = require('../dist/init/fresh_setup.js');
+    const policy = applyFreshSetupPolicy({
+      policy: {},
+      machine: {
+        installedHosts: ['grok-build', 'codex'],
+        agentBrowserAvailable: false,
+        aiqAvailable: true,
+        hasUserFacingUi: false,
+        liveModels: {
+          'grok-build': ['grok-4.6', 'grok-4.5'],
+          codex: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+        },
+      },
+      repoRoot: repo,
+      fromAdopted: false,
+    });
+    assert.equal(policy.reviewMode, 'isolated');
+    assert.equal(policy.qualityControl, true);
+    assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-4.6', effort: 'medium' });
+    assert.deepEqual(policy.reviewModels.economy['grok-build'], { model: 'grok-4.6', effort: 'low' });
+    assert.deepEqual(policy.reviewModels.review.codex, { model: 'gpt-5.6-terra', effort: 'medium' });
+    assert.deepEqual(policy.reviewModels.economy.codex, { model: 'gpt-5.6-luna', effort: 'high' });
+    assert.ok(policy.gates.some(gate => gate.kind === 'aiq' && gate.command === defaultAiqLintFormatGate().command));
+    assert.ok(!policy.gates.some(gate => /changed-files|git diff --name-only/.test(gate.command)));
+  });
+
+  it('does not default Grok review to grok-4.5 and leaves Quality Control off without AIQ', () => {
+    const { applyFreshSetupPolicy } = require('../dist/init/fresh_setup.js');
+    const policy = applyFreshSetupPolicy({
+      policy: {},
+      machine: {
+        installedHosts: ['grok-build'],
+        agentBrowserAvailable: false,
+        aiqAvailable: false,
+        hasUserFacingUi: false,
+        liveModels: { 'grok-build': ['grok-4.5'] },
+      },
+      repoRoot: null,
+      fromAdopted: false,
+    });
+    assert.equal(policy.qualityControl, false);
+    assert.equal(policy.reviewModels, undefined);
+  });
+
+  it('does not rewrite an adopted existing config', () => {
+    const { applyFreshSetupPolicy } = require('../dist/init/fresh_setup.js');
+    const policy = applyFreshSetupPolicy({
+      policy: { reviewMode: 'external', qualityControl: false, reviewLanes: [] },
+      machine: {
+        installedHosts: ['grok-build'],
+        agentBrowserAvailable: false,
+        aiqAvailable: true,
+        hasUserFacingUi: false,
+        liveModels: { 'grok-build': ['grok-4.6'] },
+      },
+      repoRoot: null,
+      fromAdopted: true,
+    });
+    assert.equal(policy.reviewMode, 'external');
+    assert.deepEqual(policy.reviewLanes, []);
+    assert.equal(policy.qualityControl, false);
   });
 });

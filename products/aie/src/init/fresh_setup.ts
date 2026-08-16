@@ -11,12 +11,15 @@ import type { ReviewFailoverPolicy, ReviewMode, ReviewModelsPolicy, ReviewRouteP
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { reviewModeOf } from '../review_mode.js';
-import { isolatedReviewHostsOnMachine, recommendedManualUiAudit, recommendedReviewMode, type GuideMachine } from './questions.js';
+import { isolatedReviewHostsOnMachine, recommendedManualUiAudit, recommendedQualityControl, recommendedReviewMode, type GuideMachine } from './questions.js';
 import type { InitPolicyOptions } from './types.js';
 
 export {
   defaultFreshSetupLanes,
+  FRESH_SETUP_API_CONTRACT_MATCH,
+  FRESH_SETUP_PERFORMANCE_MATCH,
   FRESH_SETUP_SECURITY_MATCH,
+  FRESH_SETUP_UI_MATCH,
 } from '../config/fresh_setup_lanes.js';
 
 export type DetectedPackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun';
@@ -65,14 +68,50 @@ function firstInstalledHost(machine: GuideMachine): ModelRoutingHostId | null {
   return isolatedReviewHostsOnMachine(machine)[0] ?? null;
 }
 
+const CODEX_REVIEW_MODEL = 'gpt-5.6-terra';
+const CODEX_ECONOMY_MODEL = 'gpt-5.6-luna';
+const GROK_BUILD_MODEL = 'grok-4.6';
+
+function catalogOf(machine: GuideMachine, host: string): readonly string[] {
+  return machine.liveModels?.[host as keyof NonNullable<GuideMachine['liveModels']>] ?? [];
+}
+
 function modelsFromMachine(machine: GuideMachine): ReviewModelsPolicy | undefined {
   const review: ReviewModelsPolicy['review'] = {};
+  const economy: ReviewModelsPolicy['economy'] = {};
   for (const host of isolatedReviewHostsOnMachine(machine)) {
-    const model = machine.liveModels?.[host]?.[0];
-    if (model) review[host] = { model, effort: null };
+    const catalog = catalogOf(machine, host);
+    if (host === 'codex') {
+      if (catalog.includes(CODEX_REVIEW_MODEL)) review.codex = { model: CODEX_REVIEW_MODEL, effort: 'medium' };
+      else if (catalog[0]) review.codex = { model: catalog[0], effort: null };
+      if (catalog.includes(CODEX_ECONOMY_MODEL)) economy.codex = { model: CODEX_ECONOMY_MODEL, effort: 'high' };
+      continue;
+    }
+    if (host === 'grok-build') {
+      if (catalog.includes(GROK_BUILD_MODEL)) {
+        review['grok-build'] = { model: GROK_BUILD_MODEL, effort: 'medium' };
+        economy['grok-build'] = { model: GROK_BUILD_MODEL, effort: 'low' };
+      }
+      continue;
+    }
+    if (catalog[0]) review[host] = { model: catalog[0], effort: null };
   }
-  if (Object.keys(review).length === 0) return undefined;
-  return { review, economy: {}, synthesis: {} };
+  if (Object.keys(review).length === 0 && Object.keys(economy).length === 0) return undefined;
+  return { review, economy, synthesis: {} };
+}
+
+export function defaultAiqLintFormatGate(): GateConfig {
+  return {
+    name: 'aiq',
+    kind: 'aiq',
+    command: 'qube aiq --up-to 2 --format json',
+    stage: 'pre-pr',
+    required: true,
+    timeoutSeconds: 1200,
+    workingDirectory: '.',
+    env: {},
+    externalService: false,
+  };
 }
 
 function failoverFromMachine(machine: GuideMachine, primaryHost: string | undefined): ReviewFailoverPolicy | null {
@@ -115,7 +154,7 @@ export function applyFreshSetupPolicy(input: {
     if (mode === 'isolated' || mode === 'host') {
       if (next.reviewAdapter === undefined) next.reviewAdapter = 'local';
       if (next.reviewProfile === undefined) next.reviewProfile = 'local-focused';
-      if (next.reviewLanes === undefined) next.reviewLanes = defaultFreshSetupLanes();
+      if (next.reviewLanes === undefined) next.reviewLanes = defaultFreshSetupLanes(isolatedRoute(input.machine)?.host ?? null);
       if (next.reviewWaitMinutes === undefined) next.reviewWaitMinutes = 0;
       if (next.reviewAgents === undefined) next.reviewAgents = [];
       if (next.localReviewAgents === undefined) {
@@ -143,10 +182,16 @@ export function applyFreshSetupPolicy(input: {
       if (next.localReviewAgents === undefined) next.localReviewAgents = [];
     }
     if (next.manualUiAudit === undefined) next.manualUiAudit = recommendedManualUiAudit(input.machine);
+    if (next.qualityControl === undefined) next.qualityControl = recommendedQualityControl(input.machine);
   }
   if (next.gates === undefined && next.qualityGates === undefined && input.repoRoot) {
-    const gate = detectRepositoryQualityGate(input.repoRoot);
-    if (gate) next.gates = [gate];
+    const gates: GateConfig[] = [];
+    const repoGate = detectRepositoryQualityGate(input.repoRoot);
+    if (repoGate) gates.push(repoGate);
+    if ((next.qualityControl ?? recommendedQualityControl(input.machine)) && input.machine.aiqAvailable) {
+      gates.push(defaultAiqLintFormatGate());
+    }
+    if (gates.length > 0) next.gates = gates;
   }
   return next;
 }

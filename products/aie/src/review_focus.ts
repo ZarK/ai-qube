@@ -3,7 +3,7 @@ import type { ReviewLanePolicy, ReviewModelTierId } from './core/policy.js';
 import { type CarryForwardScope, type LocalReviewLaneId, type LocalReviewProfile, requiredLocalReviewLanes } from './local_review_evidence.js';
 import { pathsTouchPatterns as sharedPathsTouchPatterns, simpleGlobMatch } from './risk_cards/glob.js';
 
-const DEFAULT_MAX_ACTIVE_FOCUSES = 5;
+const DEFAULT_MAX_ACTIVE_FOCUSES = 6;
 
 /** Fixed one-line digest per lane: what the lane hunts for. Shared by the start/view brief and the pr gate self-check. */
 export const LANE_HEURISTIC_DIGESTS: Record<LocalReviewLaneId, string> = {

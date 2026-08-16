@@ -66,6 +66,7 @@ describe('implementer self-check', () => {
         lanePolicy('tests-quality', 'when-matched', ['**/*']),
         lanePolicy('error-observability', 'when-matched', ['**/*']),
         lanePolicy('concurrency-resource', 'when-matched', ['**/*']),
+        lanePolicy('data-database', 'when-matched', ['**/*']),
       ]),
       changedPaths: ['docs/notes.md'],
     });
@@ -78,7 +79,8 @@ describe('implementer self-check', () => {
         { lane: 'performance', digest: 'Unbounded work, needless recomputation, and scaling hazards.', activated: true, reason: 'changed paths matched its patterns' },
         { lane: 'tests-quality', digest: 'Tests validate the production contract, not the implementation mirror.', activated: true, reason: 'changed paths matched its patterns' },
         { lane: 'error-observability', digest: 'Loud failures with actionable messages and no swallowed errors.', activated: true, reason: 'changed paths matched its patterns' },
-        { lane: 'concurrency-resource', digest: 'Races, deadlocks, leaked resources, and cross-process interference.', activated: false, reason: 'did not activate: matched changed paths but was displaced by the active-focus cap' },
+        { lane: 'concurrency-resource', digest: 'Races, deadlocks, leaked resources, and cross-process interference.', activated: true, reason: 'changed paths matched its patterns' },
+        { lane: 'data-database', digest: 'Schema, migration, and data-integrity correctness.', activated: false, reason: 'did not activate: matched changed paths but was displaced by the active-focus cap' },
       ],
       riskCards: [],
       repoLearnings: missingLearnings(),
@@ -92,7 +94,8 @@ describe('implementer self-check', () => {
       '  - performance (activated; changed paths matched its patterns): Unbounded work, needless recomputation, and scaling hazards.',
       '  - tests-quality (activated; changed paths matched its patterns): Tests validate the production contract, not the implementation mirror.',
       '  - error-observability (activated; changed paths matched its patterns): Loud failures with actionable messages and no swallowed errors.',
-      '  - concurrency-resource (inactive; did not activate: matched changed paths but was displaced by the active-focus cap): Races, deadlocks, leaked resources, and cross-process interference.',
+      '  - concurrency-resource (activated; changed paths matched its patterns): Races, deadlocks, leaked resources, and cross-process interference.',
+      '  - data-database (inactive; did not activate: matched changed paths but was displaced by the active-focus cap): Schema, migration, and data-integrity correctness.',
       '  Changed-path risk cards: none activated.',
       '  Repo-configured learnings (repo-doc; not built-in policy): none matching.',
     ]);
