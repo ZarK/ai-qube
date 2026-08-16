@@ -1,5 +1,6 @@
 import {
   AUDIT_UI_FLAG_DETAILS,
+  AUDIT_UI_SET_RUN_FLAG_DETAILS,
   CHECKLIST_UPDATE_FLAG_DETAILS,
   CHECKLIST_VERIFY_FLAG_DETAILS,
   GATE_STAGE_OPTIONS,
@@ -283,6 +284,18 @@ const COMMAND_DEFINITIONS = [
     externalServices: ['agent-browser', 'playwright-fallback'],
     stableErrorKinds: ['parse-error', 'config-error', 'local-evidence-error', ...CONFIG_ERROR_KINDS],
     examples: ['aie audit ui 93 --dry-run', 'aie audit ui 93 --prepare', 'aie audit ui 93 --check --json'],
+  },
+  {
+    name: 'audit ui set-run',
+    description: 'Record the working UI audit start command and ready URL after the app exists, without rerunning init.',
+    args: [],
+    flags: AUDIT_UI_SET_RUN_FLAG_DETAILS.map(flag => flag.name),
+    flagDetails: AUDIT_UI_SET_RUN_FLAG_DETAILS,
+    mutationTargets: ['local-files'],
+    supportsJson: true,
+    supportsDryRun: true,
+    stableErrorKinds: ['parse-error', 'config-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie audit ui set-run --command "pnpm dev:web" --url http://127.0.0.1:5178', 'aie audit ui set-run --dry-run --json --command "pnpm dev:web" --url http://127.0.0.1:5178'],
   },
   ...RUN_COMMAND_DEFINITIONS,
   {

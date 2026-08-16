@@ -138,7 +138,7 @@ function safeSegment(value: string): string {
   return segment === '' ? 'repository' : segment;
 }
 
-function pathHasParentSegment(value: string): boolean {
+export function pathHasParentSegment(value: string): boolean {
   return value.split(/[\\/]+/).some(segment => segment === '..');
 }
 
@@ -355,19 +355,22 @@ function buildWarnings(config: Config): string[] {
     'Executor never claims a UI audit passed from generated instructions, screenshots, browser observations, or local notes alone.',
   ];
   if (!config.uiAuditAppLaunch || !config.uiAuditTarget) {
-    warnings.push('No app launch command or audit target URL is configured yet; use the repository-specific run command and record the real URL in browser-observation.md.');
+    warnings.push('No app launch command or audit target URL is configured yet. Discover a repository start command, start it with `qube aie run start --name ui-audit -- <command>`, wait with `qube aie run wait --name ui-audit --url <url> --timeout 30`, then record them with `qube aie audit ui set-run --command "<command>" --url <url>`.');
   }
   if (!config.manualUiAudit) warnings.unshift('Manual UI audit is disabled by repository config.');
   return warnings;
 }
 
-function nextAction(result: Pick<UiAuditResult, 'required' | 'prepare' | 'check' | 'dryRun' | 'evidence'>): string {
+function nextAction(result: Pick<UiAuditResult, 'required' | 'prepare' | 'check' | 'dryRun' | 'evidence' | 'appLaunch' | 'auditTarget'>): string {
   if (!result.required) return 'No manual UI audit is required by config; record why the UI audit does not apply before shipping UI work.';
   if (result.prepare && !result.dryRun) return 'Run the real application, audit it with agent-browser first, capture screenshots for important states, and write browser-observation.md plus notes.md visual analysis.';
   if (result.check) return result.evidence.state === 'visual-analysis-recorded'
     ? 'Inspect the local evidence yourself; Executor reports browser/screenshot evidence plus visual-analysis presence only and cannot certify that the audit passed.'
     : 'Create browser-observation.md, capture local screenshots, add notes.md visual analysis, then rerun `aie audit ui <issue> --check`.';
-  return 'Run `aie audit ui <issue> --prepare`, audit the real running app with agent-browser first, capture screenshots, and record browser-observation.md plus notes.md visual analysis.';
+  if (result.appLaunch && result.auditTarget) {
+    return `Reuse \`qube aie run start --name ui-audit -- ${result.appLaunch}\` and \`qube aie run wait --name ui-audit --url ${result.auditTarget} --timeout 30\`. Pass an explicit start command to override. Then run \`aie audit ui <issue> --prepare\` and inspect the real running app.`;
+  }
+  return 'Run `aie audit ui <issue> --prepare`, start the app with `qube aie run start --name ui-audit -- <command>`, wait with `qube aie run wait --name ui-audit --url <url> --timeout 30`, record them with `qube aie audit ui set-run --command "<command>" --url <url>`, then inspect the real running app.';
 }
 
 export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResult {

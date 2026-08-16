@@ -383,6 +383,7 @@ function renderHostCapabilityLines(config: Config, hosts: AgentHostProfile[]): s
 type UiAuditInstructionComponents = {
   runner: string;
   runnerWithStart: string;
+  recordRun: string;
   packageScriptPreference: string;
   packageScriptExamples: string;
   packageScriptCommandExamples: string;
@@ -404,6 +405,7 @@ function getUiAuditInstructionComponents(): UiAuditInstructionComponents {
   return {
     runner: 'the Executor local app runner',
     runnerWithStart: 'the Executor local app runner and `qube aie run start --name ui-audit -- <command>`',
+    recordRun: 'after that command and URL work, record them with `qube aie audit ui set-run --command "<command>" --url <url>`',
     packageScriptPreference: 'prefer repository package scripts as the runner command',
     packageScriptExamples: 'prefer repository package scripts such as `npm run dev`, `npm start`, or `pnpm dev` as the runner command',
     packageScriptCommandExamples: 'prefer repository package scripts such as `npm run dev`, `npm start`, or `pnpm dev` as the command',
@@ -453,7 +455,7 @@ function renderStageLines(config: Config, hosts: readonly AgentHostProfile[], wo
   return [
     'branch-check: verify the current branch matches the active issue before shipping; create the issue branch when needed.',
     `implementation: read the implementation brief rendered by ${renderAieCliCommand(config, 'start', workspaceRunner)} and ${renderAieCliCommand(config, 'view <issue> --json', workspaceRunner)}, expand it into a short plan that lists the matrix rows to cover, the negative tests to write, and each ambiguity resolution with its rationale, and post that plan as a comment on the issue before editing source — the plan commits you to the full obligation surface before anchoring on an architecture, which is where multi-head review loops start. Then implement the complete issue scope and update GitHub issue checkboxes or comments when they are the durable acceptance or planning record.`,
-    `audit: run the configured manual UI audit with \`qube aie audit ui <issue> --prepare\` for user-facing UI changes, start local UI servers with ${audit.runnerWithStart} when a long-running app is needed, ${audit.packageScriptPreference}, ${audit.boundedWait}, ${audit.inspectionOrderWithPlaywright}, ${audit.evidence}, ${audit.stop}, keep evidence local, ${audit.noShortcuts}, or record the exact blocker from ${audit.status}.`,
+    `audit: run the configured manual UI audit with \`qube aie audit ui <issue> --prepare\` for user-facing UI changes, start local UI servers with ${audit.runnerWithStart} when a long-running app is needed, ${audit.packageScriptPreference}, ${audit.boundedWait}, ${audit.recordRun}, ${audit.inspectionOrderWithPlaywright}, ${audit.evidence}, ${audit.stop}, keep evidence local, ${audit.noShortcuts}, or record the exact blocker from ${audit.status}.`,
     reviewStage,
     'test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`; at the final head run the complete configured gate set before merge. Unmapped or unsafe changed paths fail closed to the full set.',
     'PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the PR body before opening the pull request and update entries when review fixes move code or tests, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
@@ -530,7 +532,7 @@ Repository policy:
 - Local base branch freshness checks before new issue work are ${yesNo(config.requireBaseBranchFreshness)}.
 - Autonomous shipping mode is ${yesNo(config.autonomousMode)}.
 - ${renderMilestoneText(config)}
-- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use ${audit.runner} for UI audit servers and integration-test app servers, ${audit.packageScriptExamples}, use \`qube aie audit ui <issue>\` for local evidence guidance, use \`qube aie run start --name ui-audit -- <command>\` plus one bounded \`qube aie run wait --name ui-audit --url <url> --timeout 30\`, ${audit.inspectionOrderRealApp}, ${audit.browserObservedEvidence}. If the runner is unavailable or startup fails, ${audit.failureHandling}. ${audit.noShortcutsWithScreenshots}.
+- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use ${audit.runner} for UI audit servers and integration-test app servers, ${audit.packageScriptExamples}, use \`qube aie audit ui <issue>\` for local evidence guidance, use \`qube aie run start --name ui-audit -- <command>\` plus one bounded \`qube aie run wait --name ui-audit --url <url> --timeout 30\`, ${audit.recordRun}, ${audit.inspectionOrderRealApp}, ${audit.browserObservedEvidence}. If the runner is unavailable or startup fails, ${audit.failureHandling}. ${audit.noShortcutsWithScreenshots}.
 - Quality Control gate intent is ${yesNo(config.qualityControl)}.
 - ${renderReviewAgentText(config, workspaceRunner)}
 - ${renderQualityGateText(config)}
@@ -542,7 +544,7 @@ Work cycle:
 2. Keep at most one open issue in progress. ${renderPreStartText(config)}
 3. Start work with \`qube aie start next\` or \`qube aie start <issue>\`, then inspect context with \`qube aie view <issue>\`.
 4. Verify or create the issue branch with \`qube aie branch check <issue>\` or \`qube aie branch create <issue>\`.
-5. Implement the complete issue scope, run \`qube aie audit ui <issue>\` when user-facing UI changed, start needed UI servers with ${audit.runner} via \`qube aie run start --name ui-audit -- <command>\`, ${audit.packageScriptPreference}, ${audit.boundedWait}, ${audit.inspectionOrder}, capture screenshots, record browser-observation.md and notes.md visual analysis, ${audit.stop}, run \`qube aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
+5. Implement the complete issue scope, run \`qube aie audit ui <issue>\` when user-facing UI changed, start needed UI servers with ${audit.runner} via \`qube aie run start --name ui-audit -- <command>\`, ${audit.packageScriptPreference}, ${audit.boundedWait}, ${audit.recordRun}, ${audit.inspectionOrder}, capture screenshots, record browser-observation.md and notes.md visual analysis, ${audit.stop}, run \`qube aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
 6. ${renderShippingStep(config, workspaceRunner)}
 7. ${renderMergeStep(config)}
 8. After merge, run \`qube aie complete <issue>\`, return to the configured base branch, pull the latest remote base branch, verify pre-start policy is still clear, and continue to the next ready issue.
@@ -601,7 +603,7 @@ Rules:
 - ${renderMakeItSoAuthorizationText(config)}
 - Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks for them; start implementation only after normal Executor queue and pre-start policy pass.
 - Use \`aie\` commands for queue and lifecycle state instead of manually changing labels whenever possible.
-- Use ${audit.runner}, \`qube aie run start --name ui-audit -- <command>\`, \`qube aie run wait --name ui-audit --url <url> --timeout 30\`, ${audit.status}, and \`qube aie run stop --name ui-audit\` for long-running UI audit or integration-test app servers; ${audit.packageScriptCommandExamples}; do not improvise raw PowerShell job/process recipes when this runner is available.
+- Use ${audit.runner}, \`qube aie run start --name ui-audit -- <command>\`, \`qube aie run wait --name ui-audit --url <url> --timeout 30\`, ${audit.status}, and \`qube aie run stop --name ui-audit\` for long-running UI audit or integration-test app servers; ${audit.recordRun}; ${audit.packageScriptCommandExamples}; do not improvise raw PowerShell job/process recipes when this runner is available.
 - Use agent-browser first for visual UI inspection when available, with Playwright/browser automation as fallback; capture screenshots for important states and ${audit.noShortcutsVisual}.
 - If ${audit.runner} is unavailable or startup fails, ${audit.failureHandling}, and stop instead of waiting indefinitely.
 - Use \`qube aie pr view <pr> --json\`, \`qube aie pr gate <pr>\`, and \`qube aie pr body <issue>\` for pull request state instead of raw \`gh pr view\` review/comment payloads whenever possible.

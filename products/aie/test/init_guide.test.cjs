@@ -76,6 +76,7 @@ describe('init guide questions', () => {
     assert.equal(result.awaitingAnswers, true);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
     assert.deepEqual(result.questions.map(item => item.id), ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit', 'attribution-hygiene']);
+    assert.ok(!result.questions.some(item => /run command|ready url|app launch|audit target/i.test(`${item.id} ${item.prompt}`)));
     assert.ok(result.questions.every(item => item.prompt && item.recommendation && Array.isArray(item.options)));
     assert.deepEqual(result.unansweredQuestionIds, ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit', 'attribution-hygiene']);
     assert.equal(result.setupSummary.manualUiAudit, false);
