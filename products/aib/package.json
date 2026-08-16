@@ -46,11 +46,6 @@
     "@tjalve/qube-cli": "0.2.1",
     "@tjalve/qube-core": "0.2.2"
   },
-  "optionalDependencies": {
-    "@tjalve/qube-adapter-gitlab": "workspace:*",
-    "@tjalve/qube-adapter-jira": "workspace:*",
-    "@tjalve/qube-adapter-linear": "workspace:*"
-  },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-gitlab run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-linear run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-jira run build && pnpm --dir ../.. --filter @tjalve/aie run build",
@@ -64,6 +59,9 @@
     "verify": "pnpm run lint && pnpm run test && pnpm run pack:check"
   },
   "devDependencies": {
+    "@tjalve/qube-adapter-gitlab": "workspace:*",
+    "@tjalve/qube-adapter-jira": "workspace:*",
+    "@tjalve/qube-adapter-linear": "workspace:*",
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
   }

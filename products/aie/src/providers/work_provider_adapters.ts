@@ -168,6 +168,10 @@ export async function createWorkProvider(id: WorkProviderId, options: WorkProvid
   return adapterFor(id).create(options);
 }
 
+export function createMissingWorkProvider(id: WorkProviderId, packageName: string, setup: readonly string[]): WorkProvider {
+  return new MissingWorkProvider(id, packageName, setup);
+}
+
 class MissingWorkProvider implements WorkProvider {
   readonly id: WorkProviderId;
 

@@ -153,6 +153,37 @@ describe('work provider adapter boundary', () => {
     assert.match(capability.nextAction, /OpenCode does not currently expose/);
   });
 
+  it('names the adapter package and qube install when a work adapter is not installed', async () => {
+    const { createMissingWorkProvider } = require('../dist/providers/work_provider_adapters.js');
+    const provider = createMissingWorkProvider('linear', '@tjalve/qube-adapter-linear', [
+      'Install the optional Linear work-provider adapter package before selecting providers.work.kind=linear.',
+    ]);
+    await assert.rejects(
+      () => provider.listOpenWorkItems(),
+      error => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /@tjalve\/qube-adapter-linear/);
+        assert.match(message, /qube install --work-provider linear/);
+        assert.doesNotMatch(message, /github/i);
+        return true;
+      },
+    );
+  });
+
+  it('names the adapter package and qube install when a CI adapter is not installed', () => {
+    const { createMissingCiProvider } = require('../dist/providers/ci_provider_adapters.js');
+    const provider = createMissingCiProvider('jenkins', '@tjalve/qube-adapter-jenkins', [
+      'Install the optional Jenkins adapter package before selecting providers.ci.kind=jenkins.',
+    ]);
+    assert.throws(() => provider.mapCheck({}), error => {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.match(message, /@tjalve\/qube-adapter-jenkins/);
+      assert.match(message, /qube install --ci-provider jenkins/);
+      assert.doesNotMatch(message, /github/i);
+      return true;
+    });
+  });
+
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
 

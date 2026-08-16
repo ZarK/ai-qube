@@ -183,13 +183,6 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-core
     devDependencies:
-      '@types/node':
-        specifier: 24.12.2
-        version: 24.12.2
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-    optionalDependencies:
       '@tjalve/qube-adapter-gitlab':
         specifier: workspace:*
         version: link:../../adapters/gitlab
@@ -199,6 +192,12 @@ importers:
       '@tjalve/qube-adapter-linear':
         specifier: workspace:*
         version: link:../../adapters/linear
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   products/aie:
     dependencies:
@@ -209,13 +208,6 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-core
     devDependencies:
-      '@types/node':
-        specifier: 24.12.2
-        version: 24.12.2
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-    optionalDependencies:
       '@tjalve/qube-adapter-claude-code':
         specifier: workspace:*
         version: link:../../adapters/claude-code
@@ -240,6 +232,12 @@ importers:
       '@tjalve/qube-adapter-opencode':
         specifier: workspace:*
         version: link:../../adapters/opencode
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   products/aiq:
     devDependencies:
@@ -399,9 +397,6 @@ importers:
       '@tjalve/aiu':
         specifier: 0.0.6
         version: link:../aiu
-      '@tjalve/qube-adapter-claude-code':
-        specifier: workspace:*
-        version: link:../../adapters/claude-code
       '@tjalve/qube-cli':
         specifier: 0.2.1
         version: link:../../packages/qube-cli
@@ -409,6 +404,9 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-core
     devDependencies:
+      '@tjalve/qube-adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../adapters/claude-code
       '@types/node':
         specifier: 24.12.2
         version: 24.12.2
