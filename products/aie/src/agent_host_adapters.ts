@@ -169,7 +169,7 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
 };
 
 const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
-const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
+const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
 
 const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
   opencode: BUILTIN_OPENCODE_PROFILE,
@@ -200,6 +200,7 @@ const HOST_PROFILE_EXPORTS: Readonly<Record<AgentHostId, string>> = Object.freez
 
 const profileCache = new Map<AgentHostId, AgentHostProfile | null>();
 const extraProfilesForTests = new Map<AgentHostId, AgentHostProfile>();
+let omittedHostProfilePackages = new Set<string>();
 
 function isModuleMissing(error: unknown, packageName: string): boolean {
   return isMissingAdapterPackage(error, packageName);
@@ -220,6 +221,11 @@ export async function loadHostProfileFromPackage(packageName: string, exportName
 async function loadPackageProfile(id: AgentHostId): Promise<AgentHostProfile | null> {
   if (profileCache.has(id)) return profileCache.get(id) ?? null;
   const adapter = ADAPTERS.find(item => item.id === id);
+  if (adapter?.packageName && omittedHostProfilePackages.has(adapter.packageName)) {
+    const builtin = BUILTIN_PROFILES[id] ?? null;
+    profileCache.set(id, builtin);
+    return builtin;
+  }
   if (!adapter?.packageName) {
     const builtin = BUILTIN_PROFILES[id] ?? null;
     profileCache.set(id, builtin);
@@ -246,8 +252,14 @@ export function registerAgentHostProfileForTests(profile: AgentHostProfile): voi
   profileCache.delete(profile.id);
 }
 
+export function omitHostProfilePackagesForTests(packageNames: readonly string[]): void {
+  omittedHostProfilePackages = new Set(packageNames);
+  profileCache.clear();
+}
+
 export function resetAgentHostProfilesForTests(): void {
   extraProfilesForTests.clear();
+  omittedHostProfilePackages = new Set();
   profileCache.clear();
 }
 

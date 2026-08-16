@@ -1,5 +1,10 @@
+import { createRequire } from 'node:module';
 import { Config } from './config/index.js';
+import { isRegisteredReviewHost } from './app/review_host_adapters.js';
+import { isMissingAdapterPackage } from './missing_adapter_package.js';
 import { AgentHostId, AgentHostProfile, type CommandTarget, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
+
+const requireAdapter = createRequire(import.meta.url);
 import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from './supply_chain_guard.js';
 import { getAgentDescriptor } from './agent_descriptors.js';
 import type { ReviewModelHostId } from './core/policy.js';
@@ -751,21 +756,38 @@ export function renderModelRoutingRunnerFiles(config: Config): Array<{
   description: string;
   host: ModelRoutingHostId;
 }> {
-  const hosts = delegatedHosts(config.modelRouting);
-  return hosts.map(host => ({
-    id: `${host}-route-runner`,
-    relativePath: routeRunnerPath(host),
-    body: renderRouteRunner(host, config.modelRouting),
-    description: `Wrapper runner for delegated modelRouting classes on ${host}.`,
-    host,
-  }));
+  const hosts = delegatedHosts(config.modelRouting).filter(host => {
+    const relativePath = routeRunnerPath(host);
+    return relativePath !== null && (host !== 'grok-build' || isRegisteredReviewHost('grok-build'));
+  });
+  return hosts.flatMap(host => {
+    const relativePath = routeRunnerPath(host);
+    if (!relativePath) return [];
+    return [{
+      id: `${host}-route-runner`,
+      relativePath,
+      body: renderRouteRunner(host, config.modelRouting),
+      description: `Wrapper runner for delegated modelRouting classes on ${host}.`,
+      host,
+    }];
+  });
 }
 
-function routeRunnerPath(host: ModelRoutingHostId): string {
+function grokBuildRouteRunnerPath(): string | null {
+  try {
+    const imported = requireAdapter('@tjalve/qube-adapter-grok-build') as { grokBuildRouteRunnerPath?: unknown };
+    return typeof imported.grokBuildRouteRunnerPath === 'string' ? imported.grokBuildRouteRunnerPath : null;
+  } catch (error) {
+    if (isMissingAdapterPackage(error, '@tjalve/qube-adapter-grok-build')) return null;
+    throw error;
+  }
+}
+
+function routeRunnerPath(host: ModelRoutingHostId): string | null {
   if (host === 'codex') return '.codex/agents/qube-route-runner.toml';
   if (host === 'claude-code') return '.claude/agents/qube-route-runner.md';
   if (host === 'opencode') return '.opencode/agent/qube-route-runner.md';
-  return '.grok/agents/qube-route-runner.md';
+  return grokBuildRouteRunnerPath();
 }
 
 function renderRouteRunner(host: ModelRoutingHostId, routing: ModelRoutingPolicy): string {

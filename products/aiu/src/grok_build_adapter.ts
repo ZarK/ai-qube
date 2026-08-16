@@ -33,7 +33,18 @@ function isModuleMissing(error: unknown, packageName: string): boolean {
   return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND" || /cannot find package|cannot find module/i.test(message);
 }
 
+let omitGrokBuildAdapter = false;
+
+export function omitGrokBuildAdapterForTests(): void {
+  omitGrokBuildAdapter = true;
+}
+
+export function resetGrokBuildAdapterForTests(): void {
+  omitGrokBuildAdapter = false;
+}
+
 export function loadGrokBuildAdapter(): GrokBuildAdapterModule | null {
+  if (omitGrokBuildAdapter) return null;
   try {
     return requireAdapter("@tjalve/qube-adapter-grok-build") as GrokBuildAdapterModule;
   } catch (error) {

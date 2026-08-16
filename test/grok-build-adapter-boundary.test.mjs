@@ -25,7 +25,7 @@ const ARGV_PATTERNS = [
   /mcp_servers=\{\}/,
   /web_search="disabled"/,
 ];
-const HOOK_WRITER = /\.grok[\\/]+hooks/;
+const HOOK_WRITER = /\.grok[\\/]+(?:hooks|commands|agents|skills)/;
 
 function listSourceFiles(root) {
   const files = [];
@@ -45,7 +45,7 @@ function listSourceFiles(root) {
 }
 
 describe("isolated review adapter boundary", () => {
-  it("keeps Grok and Codex isolated-review argv, catalog parsers, and .grok/hooks writers out of products", () => {
+  it("fails if Executor or Umpire still hardcode Grok or Codex isolated-review argv, catalog parsers, or .grok host-file writers", () => {
     const hits = [];
     for (const root of PRODUCT_SRC) {
       for (const file of listSourceFiles(root)) {

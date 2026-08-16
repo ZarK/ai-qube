@@ -117,6 +117,7 @@ export const aiuCli = createCli({
         };
       }
       const result = await runAiuHookStop({ tool, stdin: await readHookStopStdin() });
+      const exitCode = result.reason === "missing-adapter" ? 2 : 0;
       if (context.flags.json === true) {
         return {
           json: {
@@ -130,11 +131,13 @@ export const aiuCli = createCli({
             },
           },
           stderr: result.stderr,
+          exitCode,
         };
       }
       return {
         stdout: formatHookStopJson(result),
         stderr: result.stderr,
+        exitCode,
       };
     }),
     createCommand(migrateCommand, (context) => {

@@ -14,6 +14,7 @@ const GROK_BUILD_EXECUTABLE_NAMES = ["grok"] as const;
 const GROK_BUILD_WINDOWS_EXECUTABLE_NAMES = ["grok.exe"] as const;
 
 export const GROK_BUILD_HOST_ID = "grok-build" as const;
+export const grokBuildRouteRunnerPath = pathPosix.join(".grok", "agents", "qube-route-runner.md");
 
 export interface InstructionTarget {
   readonly id: string;

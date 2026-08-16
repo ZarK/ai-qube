@@ -28,8 +28,8 @@ describe("init planner", () => {
     assert.equal(parsed.ok, true);
     assert.equal(parsed.command, "init");
     assert.equal(parsed.init.dryRun, true);
-    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code"]);
-    assert.equal(parsed.init.files.length, 6);
+    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.equal(parsed.init.files.length, 7);
     assert.equal(parsed.init.config.operation, "create");
     assert.equal(parsed.init.recommendedNextCommand, "aiu config --json");
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
@@ -134,15 +134,17 @@ describe("init planner", () => {
     };
 
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code"]);
-    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental"]);
-    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code"]);
+    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
+    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.ok(config.hosts.capabilities.opencode);
     assert.ok(config.hosts.capabilities.codex);
     assert.ok(config.hosts.capabilities["claude-code"]);
+    assert.ok(config.hosts.capabilities["grok-build"]);
     assert.deepEqual(config.hosts.modes.opencode, ["continue", "repair", "wait", "stop"]);
     assert.deepEqual(config.hosts.modes.codex, ["stop"]);
     assert.deepEqual(config.hosts.modes["claude-code"], ["stop"]);
+    assert.deepEqual(config.hosts.modes["grok-build"], ["stop"]);
     assert.deepEqual(config.trustedStateCommands.work.argv, ["aie", "status", "--json"]);
   });
 
@@ -248,7 +250,7 @@ describe("init planner", () => {
 
     assert.equal(result.exitCode, 0);
     assert.equal(parsed.init.config.operation, "skip");
-    assert.deepEqual(parsed.init.config.hosts, ["opencode", "codex", "claude-code"]);
+    assert.deepEqual(parsed.init.config.hosts, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.init.config.trustedStateCommands, ["work"]);
   });
 
