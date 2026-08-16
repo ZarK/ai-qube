@@ -60,7 +60,8 @@ git push origin publish-<package>-v<version>
 Valid package keys are `qube-cli`, `qube-core`, `qube-adapter-github`,
 `qube-adapter-codex`, `qube-adapter-opencode`, `qube-adapter-claude-code`,
 `qube-adapter-gitlab`, `qube-adapter-linear`, `qube-adapter-jira`,
-`qube-adapter-jenkins`, `aib`, `aie`, `aiu`, `aiq`, and `qube`.
+`qube-adapter-jenkins`, `qube-adapter-grok-build`, `aib`, `aie`, `aiu`,
+`aiq`, and `qube`.
 
 Adapter packages are separate npm packages sourced from `adapters/*` in this
 monorepo. `@tjalve/aie` lists them as optional dependencies; install only the
@@ -118,6 +119,7 @@ Seed publish order for the 0.2.0 wave:
 7. `@tjalve/qube-adapter-linear`
 8. `@tjalve/qube-adapter-jira`
 9. `@tjalve/qube-adapter-jenkins`
+10. `@tjalve/qube-adapter-grok-build`
 
 Use the same seed pattern for any other brand-new package name, after its
 published dependencies already exist. Then configure the trusted publisher above

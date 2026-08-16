@@ -10,7 +10,7 @@ default.
 ## Install
 
 ```sh
-npm install --save-exact --ignore-scripts @tjalve/qube-adapter-grok-build@0.1.4 @tjalve/qube-core@0.2.2
+npm install --save-exact --ignore-scripts @tjalve/qube-adapter-grok-build@0.1.5 @tjalve/qube-core@0.2.3
 ```
 
 Or use the guided composer:

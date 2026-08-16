@@ -39,14 +39,14 @@ export const aibVersion = dependencyVersion("@tjalve/aib");
 
 export const adapterPackageVersions = Object.freeze({
   "@tjalve/qube-adapter-claude-code": "0.1.4",
-  "@tjalve/qube-adapter-codex": "0.1.4",
+  "@tjalve/qube-adapter-codex": "0.1.5",
   "@tjalve/qube-adapter-github": "0.1.4",
   "@tjalve/qube-adapter-gitlab": "0.1.4",
   "@tjalve/qube-adapter-jenkins": "0.1.4",
   "@tjalve/qube-adapter-jira": "0.1.4",
   "@tjalve/qube-adapter-linear": "0.1.4",
   "@tjalve/qube-adapter-opencode": "0.1.4",
-  "@tjalve/qube-adapter-grok-build": "0.1.4"
+  "@tjalve/qube-adapter-grok-build": "0.1.5"
 });
 
 export function qubePnpmAddCommandWith(...adapterNames) {
