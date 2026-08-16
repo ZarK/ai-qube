@@ -194,6 +194,7 @@ export interface AuditConfig {
   manualUiAudit: boolean;
   appLaunch: string;
   target: string;
+  evidenceRoot: string;
 }
 
 export interface InstructionConfig {
@@ -278,6 +279,7 @@ export interface Config extends ConfigFileShape {
   manualUiAudit: boolean;
   uiAuditAppLaunch: string;
   uiAuditTarget: string;
+  uiAuditEvidenceRoot: string;
   gates: GateConfig[];
   qualityGates: string[];
   qualityControl: boolean;

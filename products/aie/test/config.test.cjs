@@ -56,6 +56,7 @@ describe('config validation', () => {
     assert.equal(defaults.opencodeCommandAlias, false);
     assert.equal(defaults.uiAuditAppLaunch, '');
     assert.equal(defaults.uiAuditTarget, '');
+    assert.equal(defaults.uiAuditEvidenceRoot, '');
     assert.deepEqual(defaults.reviewAgents, ['coderabbitai']);
     assert.equal(defaults.reviewAdapter, 'github');
     assert.deepEqual(defaults.localReviewAgents, []);

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { listHostModels } from '../app/model_catalog.js';
 import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
 import { commandExistsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
@@ -8,6 +9,11 @@ import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_rout
 import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
 import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
 import type { InitTool } from '../init_content.js';
+import {
+  DEFAULT_UI_AUDIT_EVIDENCE_ROOT,
+  LEGACY_UI_AUDIT_EVIDENCE_ROOT,
+  legacyUiAuditTreeExists,
+} from '../audit.js';
 
 export interface GuideMachine {
   installedHosts: readonly ModelRoutingHostId[];
@@ -25,6 +31,7 @@ export interface InvocationAnswers {
   qualityGates?: string[];
   qualityControl?: boolean;
   manualUiAudit?: boolean;
+  uiAuditEvidenceRoot?: string;
 }
 
 const UI_PACKAGE_HINTS = ['react', 'vue', 'svelte', 'next', 'nuxt', 'preact', 'solid-js', '@angular/core'];
@@ -100,6 +107,7 @@ export function answersFromPolicy(policy: InitPolicyOptions | undefined): Invoca
   if (policy?.qualityGates !== undefined) answers.qualityGates = [...policy.qualityGates];
   if (policy?.qualityControl !== undefined) answers.qualityControl = policy.qualityControl;
   if (policy?.manualUiAudit !== undefined) answers.manualUiAudit = policy.manualUiAudit;
+  if (policy?.uiAuditEvidenceRoot !== undefined) answers.uiAuditEvidenceRoot = policy.uiAuditEvidenceRoot;
   return answers;
 }
 
@@ -107,6 +115,8 @@ export function buildInitQuestions(input: {
   machine: GuideMachine;
   answers: InvocationAnswers;
   useDefaults?: boolean;
+  repoRoot?: string | null;
+  homeDirectory?: string;
 }): InitQuestion[] {
   const recommendedMode = recommendedReviewMode(input.machine);
   const isolatedHosts = isolatedReviewHostsOnMachine(input.machine);
@@ -114,8 +124,12 @@ export function buildInitQuestions(input: {
   const qualityControlValue = recommendedQualityControl(input.machine);
   const recommendedPublisher: 'user' | 'github-app' | 'token' = 'user';
   const recommendedReviewers: string[] = [];
+  const includeEvidenceRoot = input.answers.manualUiAudit === true
+    || (input.answers.manualUiAudit !== false && recommendedAudit);
+  const legacyExists = includeEvidenceRoot
+    && legacyUiAuditTreeExists(input.repoRoot ?? undefined, input.homeDirectory ?? homedir());
 
-  return [
+  const questions: InitQuestion[] = [
     question({
       id: 'review-mode',
       prompt: 'Which review mode should this repository use?',
@@ -220,6 +234,33 @@ export function buildInitQuestions(input: {
         : 'Init recommends UI audit only when the repository looks like UI and agent-browser is available.',
     }),
   ];
+  if (includeEvidenceRoot) {
+    questions.push(question({
+      id: 'ui-audit-evidence',
+      prompt: 'Where should this machine keep local UI audit evidence?',
+      options: [
+        { value: DEFAULT_UI_AUDIT_EVIDENCE_ROOT, label: 'QUBE user default (~/.qube/verification/)' },
+        { value: LEGACY_UI_AUDIT_EVIDENCE_ROOT, label: 'Existing legacy path (~/github-verification/)', available: legacyExists },
+        { value: 'custom', label: 'Custom directory that you supply' },
+      ],
+      recommendation: recommendedEvidenceRoot(legacyExists),
+      recommendedValue: DEFAULT_UI_AUDIT_EVIDENCE_ROOT,
+      answered: input.answers.uiAuditEvidenceRoot !== undefined,
+      value: input.answers.uiAuditEvidenceRoot ?? null,
+      reason: input.answers.uiAuditEvidenceRoot !== undefined
+        ? 'The invocation or existing config already selected the UI audit evidence root.'
+        : legacyExists
+          ? 'A leftover ~/github-verification tree exists for this repository. Init reports it and does not copy or delete those files.'
+          : 'Init recommends the QUBE user default ~/.qube/verification/.',
+    }));
+  }
+  return questions;
+}
+
+function recommendedEvidenceRoot(legacyExists: boolean): string {
+  return legacyExists
+    ? 'Use the QUBE user default ~/.qube/verification/. A leftover ~/github-verification tree is still on disk and remains readable.'
+    : 'Use the QUBE user default ~/.qube/verification/.';
 }
 
 function uiAuditRecommendation(guide: GuideMachine): string {
@@ -312,8 +353,23 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
       const enabled = asEnabledFlag(item.value);
       if (enabled !== null) next.manualUiAudit = enabled;
     }
+    if (item.id === 'ui-audit-evidence' && next.uiAuditEvidenceRoot === undefined) {
+      const mapped = mapEvidenceRootAnswer(item.value);
+      if (mapped !== null) next.uiAuditEvidenceRoot = mapped;
+    }
   }
   return next;
+}
+
+function mapEvidenceRootAnswer(value: InitQuestion['value']): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed === 'custom') return null;
+  if (trimmed === 'qube' || trimmed === DEFAULT_UI_AUDIT_EVIDENCE_ROOT) return DEFAULT_UI_AUDIT_EVIDENCE_ROOT;
+  if (trimmed === 'legacy' || trimmed === LEGACY_UI_AUDIT_EVIDENCE_ROOT) return LEGACY_UI_AUDIT_EVIDENCE_ROOT;
+  if (trimmed.split(/[\\/]+/).some(segment => segment === '..')) return null;
+  if (trimmed.startsWith('~') || isAbsolute(trimmed)) return trimmed;
+  return null;
 }
 
 export function buildSetupSummary(input: {

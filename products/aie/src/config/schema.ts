@@ -1144,11 +1144,12 @@ function readAudit(value: unknown, defaultValue: AuditConfig, errors: Validation
     errors.push({ kind: 'invalid', path: 'policy.audit', message: 'policy.audit must be an object' });
     return { ...defaultValue };
   }
-  rejectUnknownKeys(value, ['manualUiAudit', 'appLaunch', 'target'], 'policy.audit', errors);
+  rejectUnknownKeys(value, ['manualUiAudit', 'appLaunch', 'target', 'evidenceRoot'], 'policy.audit', errors);
   return {
     manualUiAudit: readBoolean(value, 'manualUiAudit', defaultValue.manualUiAudit, 'policy.audit', errors),
     appLaunch: readString(value, 'appLaunch', defaultValue.appLaunch, 'policy.audit', errors, { allowEmpty: true }),
     target: readString(value, 'target', defaultValue.target, 'policy.audit', errors, { allowEmpty: true }),
+    evidenceRoot: readString(value, 'evidenceRoot', defaultValue.evidenceRoot, 'policy.audit', errors, { allowEmpty: true }),
   };
 }
 

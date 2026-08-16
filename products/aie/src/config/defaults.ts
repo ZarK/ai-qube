@@ -110,6 +110,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       manualUiAudit: true,
       appLaunch: '',
       target: '',
+      evidenceRoot: '',
     },
     instructions: {
       opencodeCommandAlias: false,
@@ -380,6 +381,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       manualUiAudit: policy.audit.manualUiAudit,
       appLaunch: policy.audit.appLaunch,
       target: policy.audit.target,
+      evidenceRoot: policy.audit.evidenceRoot,
     },
     instructions: { ...policy.instructions },
     migration: { ...policy.migration },
@@ -452,6 +454,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,
     uiAuditTarget: policy.audit.target,
+    uiAuditEvidenceRoot: policy.audit.evidenceRoot,
     gates: policy.gates.definitions.map(cloneGate),
     qualityGates: [...policy.gates.qualityGates],
     qualityControl: policy.gates.qualityControl,

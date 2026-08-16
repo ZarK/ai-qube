@@ -484,8 +484,14 @@ async function handleAuditUi(context: Parameters<RuntimeCommandHandler>[0]) {
   }
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'audit ui', loaded, 'Fix the selected Executor config, then run the UI audit helper again.');
-  const result = runUiAudit(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run'), prepare: readBooleanFlag(context, 'prepare'), check: readBooleanFlag(context, 'check') });
-  return commandResult(context, result, formatUiAudit(result));
+  try {
+    const result = runUiAudit(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run'), prepare: readBooleanFlag(context, 'prepare'), check: readBooleanFlag(context, 'check') });
+    return commandResult(context, result, formatUiAudit(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to run \`aie audit ui\`. Likely cause: ${cause}. Next action: fix policy.audit.evidenceRoot, then rerun \`aie audit ui ${issueNumber} --dry-run\`.`;
+    return commandFailure(context, { ok: false, command: 'audit ui', error: message }, message);
+  }
 }
 
 async function handleReviewGate(context: Parameters<RuntimeCommandHandler>[0]) {

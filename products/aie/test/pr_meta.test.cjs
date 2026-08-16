@@ -287,7 +287,7 @@ describe('PR body service', { concurrency: 4 }, () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-pr-body-home-'));
     mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
     mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
-    const auditDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    const auditDirectory = join(home, '.qube', 'verification', safeRepoSegment(repo), '93');
     const screenshotsDirectory = join(auditDirectory, 'screenshots');
     mkdirSync(screenshotsDirectory, { recursive: true });
     writeFileSync(join(repo, '.qube', 'aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
