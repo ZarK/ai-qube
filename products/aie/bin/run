@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
-import('../dist/bin/run.js').then(({ run }) => run(process.argv.slice(2))).catch(error => {
+import { ensureAieDist } from './ensure-dist.mjs';
+
+try {
+  ensureAieDist();
+  const { run } = await import('../dist/bin/run.js');
+  await run(process.argv.slice(2));
+} catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
-});
+}

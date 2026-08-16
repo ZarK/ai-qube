@@ -1237,7 +1237,9 @@ describe('init service', () => {
   it('skips missing optional host adapters during generic instruction discovery', () => {
     const isolated = mkdtempSync(join(tmpdir(), 'aie-host-adapters-'));
     const isolatedModule = join(isolated, 'agent_host_adapters.mjs');
-    copyFileSync(join(__dirname, '..', 'dist', 'agent_host_adapters.js'), isolatedModule);
+    const distDir = join(__dirname, '..', 'dist');
+    copyFileSync(join(distDir, 'agent_host_adapters.js'), isolatedModule);
+    copyFileSync(join(distDir, 'missing_adapter_package.js'), join(isolated, 'missing_adapter_package.js'));
 
     const script = `
       const mod = await import(${JSON.stringify(pathToFileURL(isolatedModule).href)});

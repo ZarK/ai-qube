@@ -1,4 +1,5 @@
 import { posix as pathPosix } from 'path';
+import { isMissingAdapterPackage } from './missing_adapter_package.js';
 
 export type AgentHostId = 'opencode' | 'codex' | 'claude-code' | 'grok-build';
 export type AgentHostSelection = AgentHostId | 'all';
@@ -280,9 +281,7 @@ const profileCache = new Map<AgentHostId, AgentHostProfile | null>();
 const extraProfilesForTests = new Map<AgentHostId, AgentHostProfile>();
 
 function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') && error.message.includes(packageName);
+  return isMissingAdapterPackage(error, packageName);
 }
 
 export async function loadHostProfileFromPackage(packageName: string, exportName: string): Promise<AgentHostProfile | null> {
