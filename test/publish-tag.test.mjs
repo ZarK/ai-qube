@@ -121,7 +121,7 @@ describe("publish tag resolution", () => {
     const plan = JSON.parse(result.stdout);
     assert.equal(plan.mode, "set");
     assert.equal(plan.setVersion, version);
-    assert.equal(plan.packages.length, 15);
+    assert.equal(plan.packages.length, 16);
     assert.equal(plan.packages[0].packageKey, "qube-core");
     assert.equal(plan.packages.at(-1).packageKey, "qube");
     assert.equal(plan.prepare, "pnpm run build");
