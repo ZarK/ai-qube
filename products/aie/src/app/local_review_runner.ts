@@ -243,6 +243,24 @@ export function resolveFailoverReviewPlan(config: Config): ModelReviewRoutePlan 
   };
 }
 
+export function hostFailoverSubstitution(primaryHost: string, reasonCode: string | undefined): string {
+  if (reasonCode === 'model-route-policy-blocked') {
+    return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
+  }
+  return 'This lane reached the configured host-fault threshold and executes through the fallback route.';
+}
+
+export function withHostFailoverSubstitution(
+  plan: ModelReviewRoutePlan,
+  primaryHost: string,
+  reasonCode: string | undefined,
+): ModelReviewRoutePlan {
+  return {
+    ...plan,
+    substitution: hostFailoverSubstitution(primaryHost, reasonCode),
+  };
+}
+
 export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedProbeHost; model: string | null }> {
   const targets = new Map<string, { host: RoutedProbeHost; model: string | null }>();
   const addRoute = (plan: ModelReviewRoutePlan | null): void => {
@@ -685,7 +703,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         const laneFaults = faultRecord && faultRecord.routeKey === reviewRouteKey(configuredRoute) ? faultRecord.count : 0;
         const fallbackPlan = laneFaults >= config.reviewFailover.faults ? resolveFailoverReviewPlan(config) : null;
         if (fallbackPlan) {
-          route = fallbackPlan;
+          route = withHostFailoverSubstitution(fallbackPlan, configuredRoute.host, faultRecord?.lastReasonCode);
           routeSource = 'fallback';
         }
       }
@@ -830,24 +848,24 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   }
 
   let runnableJobs = routedJobs;
+  const probe = input.routeProbe ?? probeModelRoute;
+  const probeChecks = new Map<string, RouteProbeCheck>();
+  const probeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck | undefined => {
+    const key = `${plan.host}::${plan.model ?? ''}`;
+    if (!probeChecks.has(key)) {
+      try {
+        probeChecks.set(key, probe(plan.host, plan.model));
+      } catch {
+        // A probe crash is indistinguishable from an unusable host; the
+        // fail-closed path below blocks the route.
+      }
+    }
+    return probeChecks.get(key);
+  };
   if (routedJobs.length > 0 && !input.dryRun) {
     // Every distinct route passes a cheap read-only host probe before any model
     // execution; a failed probe blocks its lanes with the probe diagnostic. A
     // missing probe result fails closed instead of admitting the job.
-    const probe = input.routeProbe ?? probeModelRoute;
-    const probeChecks = new Map<string, RouteProbeCheck>();
-    const probeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck | undefined => {
-      const key = `${plan.host}::${plan.model ?? ''}`;
-      if (!probeChecks.has(key)) {
-        try {
-          probeChecks.set(key, probe(plan.host, plan.model));
-        } catch {
-          // A probe crash is indistinguishable from an unusable host; the
-          // fail-closed path below blocks the route.
-        }
-      }
-      return probeChecks.get(key);
-    };
     runnableJobs = [];
     for (const job of routedJobs) {
       const check = probeFor(job.route);
@@ -879,7 +897,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           if (fallbackPlan) {
             const fallbackCheck = probeFor(fallbackPlan);
             if (fallbackCheck?.status === 'ready') {
-              job.route = fallbackPlan;
+              const primaryHost = job.primaryRoute?.host ?? job.route.host;
+              job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, 'model-route-probe-blocked');
               job.routeSource = 'fallback';
               job.host = fallbackPlan.host;
               job.probedExecutable = fallbackCheck.resolved ?? null;
@@ -901,6 +920,25 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     // a blocking lane becomes provider-visible while slower siblings run.
     await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
       const job = runnableJobs[jobIndex];
+      if (
+        (!routed || !routed.evidence)
+        && routed?.reasonCode === 'model-route-policy-blocked'
+        && job.routeSource === 'configured'
+        && config.reviewFailover
+      ) {
+        const fallbackPlan = resolveFailoverReviewPlan(config);
+        if (fallbackPlan && fallbackPlan.host !== job.route.host) {
+          const fallbackCheck = probeFor(fallbackPlan);
+          if (fallbackCheck?.status === 'ready') {
+            const primaryHost = job.primaryRoute?.host ?? job.route.host;
+            job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, 'model-route-policy-blocked');
+            job.routeSource = 'fallback';
+            job.host = fallbackPlan.host;
+            job.probedExecutable = fallbackCheck.resolved ?? null;
+            routed = await job.run();
+          }
+        }
+      }
       if (!routed || !routed.evidence) {
         failed = true;
         const reasonCode = routed?.reasonCode ?? 'invalid model route output';

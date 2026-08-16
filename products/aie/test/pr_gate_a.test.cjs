@@ -2016,6 +2016,121 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'grok-build'));
   });
 
+  it('fails over in the same run when isolated Codex is policy-blocked from git inspection and reports the substitution', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'medium' };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    config.reviewFailover = { faults: 2, route: { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const hostsUsed = [];
+    const modelRouteProcess = async invocation => {
+      if (invocation.schemaPath) {
+        hostsUsed.push('codex');
+        return { exitCode: 1, stderr: 'rejected: blocked by policy\ngit rev-parse HEAD\ngit diff', stdout: '', timedOut: false, stdinDelivered: true };
+      }
+      hostsUsed.push('grok-build');
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git rev-parse HEAD', 'git diff'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async host => (host === 'codex' ? 'codex.exe' : 'grok.exe'), resolveModelHead: async () => 'abc123' });
+
+    const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routedLanes.length >= 3);
+    assert.ok(routedLanes.every(lane => lane.status === 'completed'));
+    assert.ok(routedLanes.every(lane => lane.route.host === 'grok-build'));
+    assert.ok(routedLanes.every(lane => /rejected a required read-only inspection command/.test(lane.route.substitution)));
+    assert.ok(hostsUsed.includes('codex'));
+    assert.ok(hostsUsed.includes('grok-build'));
+    for (const lane of routedLanes) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.runnerProvenance.host, 'grok-build');
+      assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+      assert.match(JSON.stringify({ route: lane.route, runnerProvenance: evidence.runnerProvenance }), /rejected a required read-only inspection command/);
+    }
+  });
+
+  it('does not fail over a Codex contract mismatch that is not a policy block', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'medium' };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    config.reviewFailover = { faults: 1, route: { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    let grokRuns = 0;
+    const modelRouteProcess = async invocation => {
+      if (!invocation.schemaPath) {
+        grokRuns += 1;
+        return { exitCode: 0, stderr: '', stdout: '', timedOut: false, stdinDelivered: true };
+      }
+      const prompt = invocation.stdin ?? '';
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 1,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      const events = [
+        JSON.stringify({ type: 'thread.started', thread_id: `codex-thread-${lane}` }),
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(body) } }),
+      ];
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: events.join('\n') };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async host => (host === 'codex' ? 'codex.exe' : 'grok.exe'), resolveModelHead: async () => 'abc123' });
+
+    assert.equal(grokRuns, 0, 'a contract mismatch must not substitute the configured second host');
+    const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routedLanes.length >= 3);
+    assert.ok(routedLanes.every(lane => lane.status === 'failed' && lane.blocker === 'model-route-contract-mismatch'));
+    assert.ok(routedLanes.every(lane => lane.route.host === 'codex'));
+  });
+
 });
 
 function twoPublishedReviewRounds() {

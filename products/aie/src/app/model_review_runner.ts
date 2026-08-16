@@ -582,8 +582,37 @@ function captureRawOutput(
   }
 }
 
+function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
+  const parts = [result.stderr];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    try {
+      const event: unknown = JSON.parse(trimmed);
+      if (isRecord(event)) {
+        if (event.type === 'item.completed' && isRecord(event.item) && event.item.type === 'agent_message') continue;
+        if (typeof event.text === 'string' && (typeof event.sessionId === 'string' || event.sessionId === null)) continue;
+      }
+    } catch {
+      // Keep non-JSON host diagnostics, including command-rejection text.
+    }
+    parts.push(trimmed);
+  }
+  return parts.join('\n');
+}
+
+function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
+  return /blocked by policy|rejected:\s*blocked/i.test(inspectionPolicyHaystack(result));
+}
+
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
+  if (inspectionPolicyBlocked(result)) {
+    return {
+      reasonCode: 'model-route-policy-blocked',
+      error: 'The isolated host rejected a required read-only inspection command. The lane counts this as a host fault and fails over to the configured second host.',
+    };
+  }
   const diagnostic = sanitizedDiagnostic(result.stderr);
   if (/auth|login|credential|unauthor/i.test(result.stderr)) return { reasonCode: 'model-route-authentication', error: 'Model review route is not authenticated. Authenticate the configured host outside QUBE, then rerun.' };
   if (/model.*(?:not found|unknown|unavailable|invalid)/i.test(result.stderr)) return { reasonCode: 'model-route-model-unavailable', error: 'Configured review model is unavailable for this host. Refresh the host model list and update trusted review config.' };
@@ -617,6 +646,14 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     }
     const invocation = buildModelRouteInvocation(input, executable, prompt, promptPath, schemaPath);
     const result = await (input.runProcess ?? runModelRouteProcess)(invocation);
+    if (inspectionPolicyBlocked(result)) {
+      return captureRawOutput(
+        input,
+        result,
+        'model-route-policy-blocked',
+        'The isolated host rejected a required read-only inspection command. The lane counts this as a host fault and fails over to the configured second host.',
+      );
+    }
     if (result.exitCode !== 0 || result.timedOut) {
       const failure = failureReason(result);
       return captureRawOutput(input, result, failure.reasonCode, failure.error);
@@ -673,7 +710,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
-    if (!evidence) return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
+    if (!evidence) {
+      return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
+    }
     return {
       evidence: {
         ...evidence,
