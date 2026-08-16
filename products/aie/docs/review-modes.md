@@ -58,6 +58,8 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 - `policy.reviews.waitMinutes` is `0`. Isolated review does not wait for an external reviewer.
 - `policy.reviews.route` points at the first installed host, tier `review`, `timeoutSeconds` `900`, `maxTurns` `16`.
 - `policy.reviews.models.review` records a live catalog model for each installed host that can list models. Setup validates the model before write.
+- When the catalog lists `gpt-5.6-terra`, Codex review effort is `medium`. When it lists `gpt-5.6-luna`, Codex economy effort is `high`.
+- When the catalog lists `grok-4.6`, Grok Build review effort is `medium` and Grok Build economy effort is `low`. Setup does not default to `grok-4.5`.
 - `policy.reviews.failover` is written only when a second installed host also has a live model.
 - `providers.review.publisher` stays `user` unless you pass a publisher flag. A user publisher that matches the pull request author cannot publish a formal GitHub review event. Isolated ship-ready uses lane evidence.
 
@@ -65,11 +67,12 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 
 The written `policy.reviews.lanes` list is:
 
-- `issue-compliance`: `required` `always`, runner `local-host`, `rereview` `always-rerun`. This lane asks whether the change satisfies the issue.
-- `code-quality`: `required` `always`, runner `local-host`, `rereview` `delta`. This lane asks whether the code is sound.
-- `security`: `required` `when-matched`, runner `local-host`, `rereview` `delta`. This lane wakes only when dependency, workflow, or auth-adjacent files change.
-
-Security `match` patterns are: `package.json`, `**/package.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `bun.lock`, `.github/**`, `**/*auth*`, `**/*token*`, `**/*secret*`.
+- `issue-compliance`: `required` `always`, runner `local-host`, `rereview` `always-rerun`, carry-forward `all`. This lane asks whether the change satisfies the issue.
+- `code-quality`: `required` `always`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. This lane asks whether the code is sound.
+- `performance`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/*indexer*`, `**/*embed*`, `**/*retrieval*`, `**/*queue*`, `**/*cache*`, `**/*worker*`, `**/*stream*`, `**/*scheduler*`, `**/*virtual*`.
+- `api-contract-compatibility`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/gateway/**`, `**/api/**`, `**/*openapi*`, `**/mcp/**`, `**/*contract*`, `packages/**/schema*`.
+- `ui-ux-accessibility`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/*.css`, `**/*.tsx`, `apps/**`, `design/**`.
+- `security`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `config`, explicit route to the default review host. Match: `**/auth/**`, `**/security/**`, `**/crypto/**`, `**/gateway/**`, `.github/**`, `.qube/**`, `package.json`, lockfiles, `**/*trust*`, `**/*token*`, `**/*auth*`.
 
 ### Convergence
 
@@ -80,7 +83,8 @@ Security `match` patterns are: `package.json`, `**/package.json`, `package-lock.
 ### Quality gate and UI audit
 
 - Init records `policy.gates.definitions` from the repository `package.json` scripts `test`, then `verify`, then `check`, when one of those scripts exists. The command uses `pnpm`, `npm`, `yarn`, or `bun` from the lockfile, in the form `<manager> run <script>`.
-- `policy.gates.qualityControl` stays `false` unless you turn Quality Control on and `aiq` is available.
+- When `aiq` is available, `policy.gates.qualityControl` is `true` and init records one `kind: aiq` pre-PR gate: `qube aiq --up-to 2 --format json`. That command runs lint and format on the QUBE changed-file set. It does not call a repository-local helper script. Gate evidence is recorded under `.qube/aie/gates/`.
+- When `aiq` is not available, `policy.gates.qualityControl` stays `false`.
 - `policy.audit.manualUiAudit` is `true` only when the repository has user-facing UI and `agent-browser` is on PATH. The shipped static default is `false`.
 
 ### Fallback when no review host is installed

@@ -345,7 +345,14 @@ describe('init guide CLI and doctor-clean setup', () => {
     if (parsed.setupSummary.reviewMode === 'isolated') {
       assert.equal(config.config.reviewAdapter, 'local');
       assert.equal(config.config.reviewProfile, 'local-focused');
-      assert.deepEqual(config.config.reviewLanes.map(lane => lane.id), ['issue-compliance', 'code-quality', 'security']);
+      assert.deepEqual(config.config.reviewLanes.map(lane => lane.id), [
+        'issue-compliance',
+        'code-quality',
+        'performance',
+        'api-contract-compatibility',
+        'ui-ux-accessibility',
+        'security',
+      ]);
       assert.equal(config.config.reviewLanes.find(lane => lane.id === 'security').required, 'when-matched');
     } else {
       assert.equal(parsed.setupSummary.reviewMode, 'external');

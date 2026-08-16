@@ -83,8 +83,8 @@ export function recommendedManualUiAudit(machine: GuideMachine): boolean {
   return machine.hasUserFacingUi && machine.agentBrowserAvailable;
 }
 
-export function recommendedQualityControl(_machine: GuideMachine): boolean {
-  return false;
+export function recommendedQualityControl(machine: GuideMachine): boolean {
+  return machine.aiqAvailable;
 }
 
 export function answersFromPolicy(policy: InitPolicyOptions | undefined): InvocationAnswers {
@@ -187,8 +187,8 @@ export function buildInitQuestions(input: {
         { value: 'on', label: 'Record Quality Control intent. Requires aiq and at least one quality gate command.' },
       ],
       recommendation: qualityControlValue
-        ? 'Record Quality Control. A quality gate command is already selected.'
-        : 'Leave Quality Control off until a quality gate command is recorded and aiq is available.',
+        ? 'Record Quality Control. AIQ is available, so lint and format become a pre-PR gate.'
+        : 'Leave Quality Control off until aiq is available.',
       recommendedValue: qualityControlValue ? 'on' : 'off',
       answered: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined,
       value: input.answers.qualityControl !== undefined
@@ -198,7 +198,9 @@ export function buildInitQuestions(input: {
           : null,
       reason: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined
         ? 'The invocation already selected quality gates.'
-        : 'Init recommends Quality Control off for a fresh setup. Record a quality gate command when the repository has one.',
+        : qualityControlValue
+          ? 'Init recommends Quality Control on when aiq is available.'
+          : 'Init recommends Quality Control off until aiq is available.',
     }),
     question({
       id: 'ui-audit',
