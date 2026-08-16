@@ -255,6 +255,23 @@ describe('fresh setup defaults', () => {
     ]);
     const routed = defaultFreshSetupLanes('grok-build');
     assert.equal(routed.find(lane => lane.id === 'security').route.host, 'grok-build');
+    const activated = activeLocalReviewFocusesForConfig({
+      reviewProfile: 'local-focused',
+      reviewLanes: routed,
+    }, [
+      'src/queue/worker.ts',
+      'src/api/routes.ts',
+      'apps/web/App.tsx',
+      'package.json',
+    ]);
+    assert.deepEqual([...activated], [
+      'issue-compliance',
+      'code-quality',
+      'performance',
+      'api-contract-compatibility',
+      'ui-ux-accessibility',
+      'security',
+    ]);
   });
 
   it('writes catalog-backed Codex and Grok efforts and turns Quality Control on when AIQ is available', async () => {
