@@ -95,14 +95,14 @@ export function parseGrokStopPayload(parsed: Record<string, unknown>): GrokBuild
       session_id: readString(parsed.sessionId),
       stop_hook_active: readBoolean(parsed.stopHookActive),
       last_assistant_message: readNullableString(parsed.lastAssistantMessage),
-      permission_mode: readString(parsed.permissionMode),
-      reason: readString(parsed.reason),
+      permission_mode: typeof parsed.permissionMode === "string" ? parsed.permissionMode : undefined,
+      reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
     }),
   };
 }
 
 export function isGrokSessionEndReason(reason: string | undefined): boolean {
-  return reason !== undefined && reason !== "end_turn";
+  return typeof reason === "string" && reason.length > 0 && reason !== "end_turn";
 }
 
 export const grokBuildStopHookFile: GrokBuildStopHookFile = Object.freeze({

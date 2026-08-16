@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 export type GrokBuildHostCapabilityId =
   | "detect-host"
   | "read-instructions"
@@ -57,15 +59,35 @@ export interface GrokBuildWorkspaceInspection {
   readonly commandExamples: readonly string[];
 }
 
-type GrokBuildAdapter = typeof import("@tjalve/qube-adapter-grok-build");
+export interface GrokBuildHostFile {
+  readonly id: string;
+  readonly kind: "instruction" | "command" | "skill" | "subagent" | "hook";
+  readonly source: "aie" | "aiu";
+  readonly description: string;
+  readonly path: string;
+  readonly required: boolean;
+}
 
-const grokBuildAdapter: GrokBuildAdapter | null = await import("@tjalve/qube-adapter-grok-build").catch((error: unknown) => {
-  if (isModuleMissing(error, "@tjalve/qube-adapter-grok-build")) return null;
-  throw error;
-});
+interface GrokBuildAdapterModule {
+  assertGrokBuildHostCapabilityAvailable(id: string): GrokBuildHostCapability;
+  formatGrokBuildUnsupportedCapabilityMessage(capability: GrokBuildHostCapability): string;
+  getGrokBuildHostCapability(id: string): GrokBuildHostCapability;
+  inspectGrokBuildWorkspace(cwd?: string): GrokBuildWorkspaceInspection;
+  listGrokBuildInstallFiles(): readonly string[];
+  listGrokBuildInstallNotes(): readonly string[];
+  listGrokBuildHostCapabilities(): readonly GrokBuildHostCapability[];
+  grokBuildHostFiles: readonly GrokBuildHostFile[];
+}
 
-function loadGrokBuildAdapter(): GrokBuildAdapter | null {
-  return grokBuildAdapter;
+const requireAdapter = createRequire(import.meta.url);
+
+function loadGrokBuildAdapter(): GrokBuildAdapterModule | null {
+  try {
+    return requireAdapter("@tjalve/qube-adapter-grok-build") as GrokBuildAdapterModule;
+  } catch (error) {
+    if (isModuleMissing(error, "@tjalve/qube-adapter-grok-build")) return null;
+    throw error;
+  }
 }
 
 function isModuleMissing(error: unknown, packageName: string): boolean {
@@ -84,31 +106,31 @@ function missingGrokBuildAdapter(): Error {
   ].join(" "));
 }
 
-export function assertGrokBuildHostCapabilityAvailable(id: string): ReturnType<GrokBuildAdapter["assertGrokBuildHostCapabilityAvailable"]> {
+export function assertGrokBuildHostCapabilityAvailable(id: string): GrokBuildHostCapability {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) throw missingGrokBuildAdapter();
   return adapter.assertGrokBuildHostCapabilityAvailable(id);
 }
 
-export function formatGrokBuildUnsupportedCapabilityMessage(capability: Parameters<GrokBuildAdapter["formatGrokBuildUnsupportedCapabilityMessage"]>[0]): string {
+export function formatGrokBuildUnsupportedCapabilityMessage(capability: GrokBuildHostCapability): string {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) return missingGrokBuildAdapter().message;
   return adapter.formatGrokBuildUnsupportedCapabilityMessage(capability);
 }
 
-export function getGrokBuildHostCapability(id: string): ReturnType<GrokBuildAdapter["getGrokBuildHostCapability"]> {
+export function getGrokBuildHostCapability(id: string): GrokBuildHostCapability {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) throw missingGrokBuildAdapter();
   return adapter.getGrokBuildHostCapability(id);
 }
 
-export function inspectGrokBuildWorkspace(cwd?: string): ReturnType<GrokBuildAdapter["inspectGrokBuildWorkspace"]> {
+export function inspectGrokBuildWorkspace(cwd?: string): GrokBuildWorkspaceInspection {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) throw missingGrokBuildAdapter();
   return adapter.inspectGrokBuildWorkspace(cwd);
 }
 
-export function listGrokBuildInstallFiles(): ReturnType<GrokBuildAdapter["listGrokBuildInstallFiles"]> {
+export function listGrokBuildInstallFiles(): readonly string[] {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) {
     return Object.freeze([
@@ -118,7 +140,7 @@ export function listGrokBuildInstallFiles(): ReturnType<GrokBuildAdapter["listGr
   return adapter.listGrokBuildInstallFiles();
 }
 
-export function listGrokBuildInstallNotes(): ReturnType<GrokBuildAdapter["listGrokBuildInstallNotes"]> {
+export function listGrokBuildInstallNotes(): readonly string[] {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) {
     return Object.freeze([
@@ -129,13 +151,13 @@ export function listGrokBuildInstallNotes(): ReturnType<GrokBuildAdapter["listGr
   return adapter.listGrokBuildInstallNotes();
 }
 
-export function listGrokBuildHostCapabilities(): ReturnType<GrokBuildAdapter["listGrokBuildHostCapabilities"]> {
+export function listGrokBuildHostCapabilities(): readonly GrokBuildHostCapability[] {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) return Object.freeze([]);
   return adapter.listGrokBuildHostCapabilities();
 }
 
-export function listGrokBuildHostFiles(): GrokBuildAdapter["grokBuildHostFiles"] | readonly [] {
+export function listGrokBuildHostFiles(): readonly GrokBuildHostFile[] {
   const adapter = loadGrokBuildAdapter();
   if (!adapter) return Object.freeze([]);
   return adapter.grokBuildHostFiles;
