@@ -13,6 +13,7 @@ export {
   retiredGrokHostIdMessage,
 } from '@tjalve/qube-core';
 import type { ReviewModelEffort } from '../core/policy.js';
+import { isMissingAdapterPackage } from '../missing_adapter_package.js';
 import { redact } from '../redact.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
 
@@ -386,10 +387,7 @@ const grokAdapter: ReviewHostAdapter = Object.freeze({
 const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([codexAdapter, grokAdapter]);
 
 function isReviewAdapterUnavailable(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true;
-  return (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') && error.message.includes(packageName);
+  return isMissingAdapterPackage(error, packageName);
 }
 
 function isReviewHostAdapter(value: unknown): value is ReviewHostAdapter {
