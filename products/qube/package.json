@@ -56,7 +56,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/aib run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-claude-code run build && pnpm --dir ../.. --filter @tjalve/aie run build:deps && pnpm --dir ../.. --filter @tjalve/aie run build",
+    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/aib run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-claude-code run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-grok-build run build && pnpm --dir ../.. --filter @tjalve/aie run build:deps && pnpm --dir ../.. --filter @tjalve/aie run build",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "pnpm run build:deps && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build:deps && pnpm run build && node --test --test-concurrency=1 \"test/*.test.mjs\"",
@@ -68,6 +68,7 @@
   },
   "devDependencies": {
     "@tjalve/qube-adapter-claude-code": "workspace:*",
+    "@tjalve/qube-adapter-grok-build": "workspace:*",
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
   }

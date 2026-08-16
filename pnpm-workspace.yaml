@@ -24,6 +24,7 @@ minimumReleaseAgeExclude:
   - "@tjalve/qube-adapter-linear"
   - "@tjalve/qube-adapter-jira"
   - "@tjalve/qube-adapter-jenkins"
+  - "@tjalve/qube-adapter-grok-build"
   - "@tjalve/aib"
   - "@tjalve/aie"
   - "@tjalve/aiq"

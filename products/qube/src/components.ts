@@ -1,6 +1,7 @@
 import {
   claudeCodeAdapterContract,
   codexAdapterContract,
+  grokBuildAdapterContract,
   gitLabAdapterContract,
   githubAdapterContract,
   jenkinsAdapterContract,
@@ -14,7 +15,7 @@ import {
 } from "@tjalve/qube-core";
 
 import { dependencyVersion } from "./package.js";
-import { listGrokBuildHostCapabilities } from "./grok_build_host.js";
+
 
 export type QubeOptionSupport = "installed" | "optional" | "unsupported";
 export type QubeDiscoveryCapabilitySupport = QubeAdapterCapability["support"] | "host-provided";
@@ -135,14 +136,7 @@ export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freez
   }),
   adapterOption(codexAdapterContract, "installed", "Codex host capability reporting uses the Codex adapter contract and AGENTS.md host profile."),
   adapterOption(claudeCodeAdapterContract, "installed", "Claude Code host capability reporting uses the Claude Code adapter contract."),
-  hostOption({
-    id: "grok-build",
-    support: "installed",
-    surface: "grok-build",
-    packageName: "@tjalve/qube",
-    summary: "Grok Build terminal CLI/TUI capability reporting uses the QUBE Grok Build host contract without installing or invoking Grok Build.",
-    capabilities: listGrokBuildHostCapabilities(),
-  }),
+  adapterOption(grokBuildAdapterContract, "optional", "Grok Build host capability reporting uses the Grok Build adapter contract."),
   adapterOption(opencodeAdapterContract, "optional", "OpenCode host capability reporting uses the OpenCode adapter contract and remains explicit about unsupported PR and branch mutations."),
 ]);
 

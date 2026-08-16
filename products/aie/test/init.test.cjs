@@ -1266,9 +1266,9 @@ describe('init service', () => {
 
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.profiles, ['opencode', 'grok-build']);
+    assert.deepEqual(parsed.profiles, ['opencode']);
     assert.deepEqual(parsed.paths, ['AGENTS.md']);
-    assert.deepEqual(parsed.agentsHosts, ['opencode', 'grok-build']);
+    assert.deepEqual(parsed.agentsHosts, ['opencode']);
     assert.equal(parsed.claudeHosts, null);
     assert.match(parsed.explicitClaudeMessage, /Claude Code host profile adapter @tjalve\/qube-adapter-claude-code is not installed/);
   });

@@ -168,90 +168,11 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   supportsProjectCommands: true,
 };
 
-const GROK_MAKE_IT_SO_COMMAND: CommandTarget = {
-  id: 'grok-make-it-so',
-  path: pathPosix.join('.grok', 'commands', 'make-it-so.md'),
-  description: 'Grok Build project command that starts or resumes the autonomous Executor workflow.',
-  optional: false,
-  enabledBy: 'always',
-  renderer: 'make-it-so',
-};
-
-const GROK_MAKE_IT_SO_SKILL: CommandTarget = {
-  id: 'grok-make-it-so-skill',
-  path: pathPosix.join('.grok', 'skills', 'make-it-so', 'SKILL.md'),
-  description: 'Grok Build skill that starts or resumes the autonomous Executor workflow.',
-  optional: false,
-  enabledBy: 'always',
-  renderer: 'make-it-so',
-};
-
-const GROK_REVIEW_FOCUS_AGENT: CommandTarget = {
-  id: 'grok-review-focus-agent',
-  path: pathPosix.join('.grok', 'agents', 'qube-review-focus.md'),
-  description: 'Grok Build read-only subagent for one focused local PR review lane.',
-  optional: false,
-  enabledBy: 'hostLocalReview',
-  renderer: 'grok-review-focus-agent',
-};
-
-const GROK_REVIEW_EXPLORER_AGENT: CommandTarget = {
-  id: 'grok-review-explorer-agent',
-  path: pathPosix.join('.grok', 'agents', 'qube-review-explorer.md'),
-  description: 'Grok Build read-only economy subagent that reads and summarizes large texts for a review lane.',
-  optional: false,
-  enabledBy: 'hostLocalReview',
-  renderer: 'grok-review-explorer-agent',
-};
-
-const GROK_REVIEW_DIGEST_AGENT: CommandTarget = {
-  id: 'grok-review-digest-agent',
-  path: pathPosix.join('.grok', 'agents', 'qube-review-digest.md'),
-  description: 'Grok Build read-only economy subagent that condenses diffs and test output for a review lane.',
-  optional: false,
-  enabledBy: 'hostLocalReview',
-  renderer: 'grok-review-digest-agent',
-};
-
-const GROK_REVIEW_LIBRARIAN_AGENT: CommandTarget = {
-  id: 'grok-review-librarian-agent',
-  path: pathPosix.join('.grok', 'agents', 'qube-review-librarian.md'),
-  description: 'Grok Build read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.',
-  optional: false,
-  enabledBy: 'hostLocalReview',
-  renderer: 'grok-review-librarian-agent',
-};
-
-const BUILTIN_GROK_BUILD_PROFILE: AgentHostProfile = {
-  id: 'grok-build',
-  displayName: 'Grok Build',
-  instructionTargets: [AGENTS_INSTRUCTIONS],
-  commandTargets: [GROK_MAKE_IT_SO_COMMAND, GROK_MAKE_IT_SO_SKILL, GROK_REVIEW_FOCUS_AGENT, GROK_REVIEW_EXPLORER_AGENT, GROK_REVIEW_DIGEST_AGENT, GROK_REVIEW_LIBRARIAN_AGENT],
-  todo: {
-    tools: [],
-    fallback: 'Keep durable todos in the visible checklist plus GitHub issue checkboxes and comments.',
-    instruction: 'For Grok Build, keep durable todos in the visible checklist plus provider records. Do not invent a Grok todo tool.',
-  },
-  dialogue: {
-    expectation: 'Operate autonomously in the main Grok Build session. Provider-visible PR reviews and GitHub issue comments remain the durable communication channel for review results.',
-  },
-  subagents: {
-    supported: true,
-    instruction: 'Grok Build subagents may be used for bounded support work. Routed review already has a Grok host adapter. Local review-agent files are installed when local review includes this host.',
-  },
-  hooks: {
-    supported: true,
-    description: 'Grok Build Stop hooks are host-provided. Executor init writes Grok command, skill, and review-agent files, not hook files.',
-  },
-  supportsProjectCommands: true,
-};
-
 const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
 const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
 
 const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
   opencode: BUILTIN_OPENCODE_PROFILE,
-  'grok-build': BUILTIN_GROK_BUILD_PROFILE,
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([

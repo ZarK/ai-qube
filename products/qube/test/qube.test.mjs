@@ -486,7 +486,7 @@ describe("qube composer CLI", () => {
         ["generic", "installed", true, "local-option"],
         ["codex", "installed", false, "adapter-contract"],
         ["claude-code", "installed", false, "adapter-contract"],
-        ["grok-build", "installed", false, "host-contract"],
+        ["grok-build", "optional", false, "adapter-contract"],
         ["opencode", "optional", false, "adapter-contract"]
       ]
     );
@@ -1462,7 +1462,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
 
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      qubePnpmAddCommand,
+      qubePnpmAddCommandWith("@tjalve/qube-adapter-github", "@tjalve/qube-adapter-grok-build"),
       "qube init . --host grok-build --work-provider github --ci-provider github",
       "qube aie labels setup",
       "qube doctor"
@@ -1675,6 +1675,26 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     ));
     assert.match(command, /--ignore-scripts/);
     assert.match(command, /--save-exact/);
+  });
+
+  it("installs only the Grok Build adapter for --host grok-build", () => {
+    const result = runCli([
+      "install",
+      "--yes",
+      "--dry-run",
+      "--json",
+      "--host",
+      "grok-build",
+      "--work-provider",
+      "github"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const command = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "package-install").command;
+    assert.equal(command, qubePnpmAddCommandWith(
+      "@tjalve/qube-adapter-github",
+      "@tjalve/qube-adapter-grok-build"
+    ));
+    assert.doesNotMatch(command, /qube-adapter-claude-code|qube-adapter-codex|qube-adapter-opencode/);
   });
 
   it("keeps --apply --json without --yes in plan mode", () => {
@@ -2141,8 +2161,8 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
     assert.match(executor.capabilities.localReview.evidencePathPattern, /<lane>\.json/);
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
-    assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "installed"));
-    assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /without installing or invoking Grok Build/);
+    assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "optional"));
+    assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /Grok Build adapter contract/);
     assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "claude-code").capabilities.some(capability => capability.id === "use-task-state" && capability.support === "standalone"));
     assert.equal(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").source, "adapter-contract");
     assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").capabilities.some(capability => capability.id === "open-pull-request" && capability.support === "unsupported"));

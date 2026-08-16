@@ -9,7 +9,8 @@ export const adapterPackageVersions = Object.freeze({
   "@tjalve/qube-adapter-jenkins": "0.1.4",
   "@tjalve/qube-adapter-jira": "0.1.4",
   "@tjalve/qube-adapter-linear": "0.1.4",
-  "@tjalve/qube-adapter-opencode": "0.1.4"
+  "@tjalve/qube-adapter-opencode": "0.1.4",
+  "@tjalve/qube-adapter-grok-build": "0.1.4"
 });
 
 export type AdapterPackageName = keyof typeof adapterPackageVersions;

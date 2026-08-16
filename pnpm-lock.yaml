@@ -72,6 +72,19 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  adapters/grok-build:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   adapters/jenkins:
     dependencies:
       '@tjalve/qube-core':
@@ -220,6 +233,9 @@ importers:
       '@tjalve/qube-adapter-gitlab':
         specifier: workspace:*
         version: link:../../adapters/gitlab
+      '@tjalve/qube-adapter-grok-build':
+        specifier: workspace:*
+        version: link:../../adapters/grok-build
       '@tjalve/qube-adapter-jenkins':
         specifier: workspace:*
         version: link:../../adapters/jenkins
@@ -376,6 +392,9 @@ importers:
         specifier: 0.2.1
         version: link:../../packages/qube-cli
     devDependencies:
+      '@tjalve/qube-adapter-grok-build':
+        specifier: 0.1.4
+        version: link:../../adapters/grok-build
       '@types/node':
         specifier: 25.5.0
         version: 25.5.0
@@ -407,6 +426,9 @@ importers:
       '@tjalve/qube-adapter-claude-code':
         specifier: workspace:*
         version: link:../../adapters/claude-code
+      '@tjalve/qube-adapter-grok-build':
+        specifier: workspace:*
+        version: link:../../adapters/grok-build
       '@types/node':
         specifier: 24.12.2
         version: 24.12.2

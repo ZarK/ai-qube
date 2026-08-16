@@ -2,7 +2,8 @@
 
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { parseGrokModelCatalog, probeModelRoute, sanitizeProbeText } = require('../dist/app/model_route_probe.js');
+const { probeModelRoute, sanitizeProbeText } = require('../dist/app/model_route_probe.js');
+const { parseGrokModelCatalog } = require('@tjalve/qube-adapter-grok-build');
 const { registerReviewHostAdapterForTests, resetReviewHostAdaptersForTests } = require('../dist/app/review_host_adapters.js');
 
 const GROK_MODELS_OUTPUT = [

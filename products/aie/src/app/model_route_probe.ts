@@ -5,12 +5,11 @@ import {
   getReviewHostAdapter,
   missingReviewHostCapabilities,
   sanitizeProbeText,
-  parseGrokModelCatalog,
   type ModelHostExecutable,
   type ReviewHostProbeCommandRunner,
 } from './review_host_adapters.js';
 
-export { sanitizeProbeText, parseGrokModelCatalog } from './review_host_adapters.js';
+export { sanitizeProbeText } from './review_host_adapters.js';
 
 const PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BUFFER = 1024 * 1024;

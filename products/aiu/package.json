@@ -57,6 +57,7 @@
     "typecheck": "tsc --noEmit --pretty false"
   },
   "devDependencies": {
+    "@tjalve/qube-adapter-grok-build": "0.1.4",
     "@types/node": "25.5.0",
     "typescript": "6.0.2"
   },
