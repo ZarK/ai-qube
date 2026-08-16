@@ -34,6 +34,7 @@ import {
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
+import { buildInstallQuestions } from "./install_questions.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -5040,6 +5041,16 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
       category: "usage"
     });
   }
+  if (json && flags.yes !== true && !hasCompleteInstallSelections(flags)) {
+    const guide = buildInstallQuestions({ flags, cwd: environment.cwd });
+    return {
+      json: {
+        awaitingAnswers: true,
+        questions: guide.questions,
+        unansweredQuestionIds: guide.unansweredQuestionIds,
+      }
+    };
+  }
   const selections = await resolveInstallSelections(flags);
   const plan = createInstallPlan(selections, flags["dry-run"] === true, environment.cwd);
   if (shouldStayPlanOnly(flags)) {
@@ -5165,19 +5176,15 @@ function planQubeInstall(args: readonly string[]): CliExecution {
     return validationError;
   }
   if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags)) {
+    const guide = buildInstallQuestions({ flags: parsed.flags, cwd: process.cwd() });
     return {
-      exitCode: 2,
+      exitCode: 0,
       stdout: `${JSON.stringify({
-        ok: false,
+        ok: true,
         command: "install",
-        error: {
-          kind: "prompt-blocked",
-          operation: "prompt install scope",
-          likelyCause: "Prompts are disabled in JSON output mode.",
-          suggestedNextAction: "Provide explicit install flags or pass --yes for safe defaults.",
-          category: "usage",
-          exitCode: 2
-        }
+        awaitingAnswers: true,
+        questions: guide.questions,
+        unansweredQuestionIds: guide.unansweredQuestionIds,
       })}\n`,
       stderr: ""
     };

@@ -1612,21 +1612,55 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(missingInspection.instructionTarget.present, false);
   });
 
-  it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {
+  it("prints the install question list in JSON without --yes", () => {
     const result = runCli(["install", "--json"]);
-    assert.equal(result.status, 2);
-    assert.deepEqual(JSON.parse(result.stdout), {
-      ok: false,
-      command: "install",
-      error: {
-        kind: "prompt-blocked",
-        operation: "prompt install scope",
-        likelyCause: "Prompts are disabled in JSON output mode.",
-        suggestedNextAction: "Provide an explicit flag value or rerun in an interactive terminal.",
-        category: "usage",
-        exitCode: 2
-      }
-    });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, "install");
+    assert.equal(parsed.awaitingAnswers, true);
+    const ids = parsed.questions.map(item => item.id);
+    assert.ok(ids.includes("host"));
+    assert.ok(ids.includes("work-provider"));
+    assert.ok(ids.includes("review-mode"));
+    assert.ok(ids.includes("ui-audit-evidence"));
+    assert.ok(ids.includes("attribution-hygiene"));
+    const unanswered = new Set(parsed.unansweredQuestionIds);
+    assert.ok(unanswered.has("host"));
+    assert.ok(unanswered.has("work-provider"));
+    assert.ok(unanswered.has("review-mode"));
+    for (const id of ["scope", "package-manager", "lifecycle-scripts"]) {
+      const item = parsed.questions.find(question => question.id === id);
+      assert.equal(item.answered, true, id);
+      assert.ok(item.reason);
+      assert.ok(!unanswered.has(id));
+    }
+    const isolated = parsed.questions.find(item => item.id === "review-mode").options.find(option => option.value === "isolated");
+    assert.equal(isolated.available, false);
+  });
+
+  it("keeps answered host and work-provider flags answered on the next invocation", () => {
+    const result = runCli(["install", "--json", "--host", "grok-build", "--work-provider", "github"]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const host = parsed.questions.find(item => item.id === "host");
+    const work = parsed.questions.find(item => item.id === "work-provider");
+    const review = parsed.questions.find(item => item.id === "review-mode");
+    assert.equal(host.answered, true);
+    assert.deepEqual(host.value, ["grok-build"]);
+    assert.equal(work.answered, true);
+    assert.ok(!parsed.unansweredQuestionIds.includes("host"));
+    assert.ok(!parsed.unansweredQuestionIds.includes("work-provider"));
+    assert.equal(review.options.find(option => option.value === "isolated").available, true);
+  });
+
+  it("does not let default-answered questions block --yes", () => {
+    const result = runCli(["install", "--yes", "--dry-run", "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.ok(parsed.installPlan);
+    assert.equal(parsed.error, undefined);
   });
 
   it("rejects invalid installer flag selections", () => {
