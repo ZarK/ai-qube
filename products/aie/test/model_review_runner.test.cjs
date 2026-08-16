@@ -187,6 +187,10 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('gpt-5.6-luna'));
     assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
     assert.ok(invocation.args.includes('--ignore-user-config'));
+    assert.ok(invocation.args.includes('read-only'));
+    assert.ok(invocation.args.includes('--strict-config'));
+    assert.equal(invocation.args.includes('--approve-for-me'), false, '--approve-for-me cannot be combined with --sandbox');
+    assert.equal(invocation.args.includes('sandbox_permissions=["disk-full-read-access"]'), false, 'sandbox_permissions is unknown under --strict-config');
     assert.ok(invocation.args.includes('multi_agent'));
     assert.ok(invocation.args.includes('mcp_servers={}'));
     assert.ok(invocation.args.includes('web_search="disabled"'));
@@ -306,6 +310,69 @@ describe('model review runner', () => {
     assert.equal(withoutUsage.error, null);
     assert.equal(withoutUsage.evidence.usage, undefined);
     assert.ok(!Object.hasOwn(withoutUsage.evidence, 'usage'));
+  });
+
+  it('classifies a Codex policy-blocked git inspection as a host fault, not a contract mismatch', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 1,
+        stderr: 'rejected: blocked by policy\ngit rev-parse HEAD',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: '',
+      }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-policy-blocked');
+    assert.match(result.error, /fails over to the configured second host/);
+  });
+
+  it('does not accept a schema-valid Codex verdict when the host blocked git inspection', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-valid-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: 'rejected: blocked by policy\ngit diff HEAD',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } })}\n`,
+      }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-policy-blocked');
+  });
+
+  it('accepts a Codex lane that inspected git and returned a terminal verdict', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-git-ok-'));
+    const inspected = {
+      ...laneResult(),
+      commands: ['git rev-parse HEAD', 'git diff'],
+      artifacts: [
+        { kind: 'command', path: 'command:git rev-parse HEAD', sha256: null },
+        { kind: 'command', path: 'command:git diff', sha256: null },
+      ],
+    };
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-git' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(inspected) } })}\n`,
+      }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.deepEqual(result.evidence.commands, ['git rev-parse HEAD', 'git diff']);
   });
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {
