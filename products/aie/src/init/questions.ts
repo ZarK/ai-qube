@@ -32,6 +32,7 @@ export interface InvocationAnswers {
   qualityControl?: boolean;
   manualUiAudit?: boolean;
   uiAuditEvidenceRoot?: string;
+  noCreditWarning?: boolean;
 }
 
 const UI_PACKAGE_HINTS = ['react', 'vue', 'svelte', 'next', 'nuxt', 'preact', 'solid-js', '@angular/core'];
@@ -108,6 +109,7 @@ export function answersFromPolicy(policy: InitPolicyOptions | undefined): Invoca
   if (policy?.qualityControl !== undefined) answers.qualityControl = policy.qualityControl;
   if (policy?.manualUiAudit !== undefined) answers.manualUiAudit = policy.manualUiAudit;
   if (policy?.uiAuditEvidenceRoot !== undefined) answers.uiAuditEvidenceRoot = policy.uiAuditEvidenceRoot;
+  if (policy?.instructions?.noCreditWarning !== undefined) answers.noCreditWarning = policy.instructions.noCreditWarning;
   return answers;
 }
 
@@ -254,6 +256,21 @@ export function buildInitQuestions(input: {
           : 'Init recommends the QUBE user default ~/.qube/verification/.',
     }));
   }
+  questions.push(question({
+    id: 'attribution-hygiene',
+    prompt: 'Should installed agent instructions keep public git and GitHub writes on the human project identity?',
+    options: [
+      { value: 'true', label: 'Yes. Install attribution hygiene rules. Recommended when more than one model or harness will touch the repository.' },
+      { value: 'false', label: 'No. Omit those rules from installed instructions.' },
+    ],
+    recommendation: 'Install attribution hygiene rules. Public git and GitHub writes then stay on the human project identity.',
+    recommendedValue: 'true',
+    answered: input.answers.noCreditWarning !== undefined,
+    value: input.answers.noCreditWarning === undefined ? null : (input.answers.noCreditWarning ? 'true' : 'false'),
+    reason: input.answers.noCreditWarning !== undefined
+      ? 'The invocation already selected the attribution hygiene policy.'
+      : 'Init recommends installing the rules so public history does not stamp uneven host credit.',
+  }));
   return questions;
 }
 
@@ -356,6 +373,10 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
     if (item.id === 'ui-audit-evidence' && next.uiAuditEvidenceRoot === undefined) {
       const mapped = mapEvidenceRootAnswer(item.value);
       if (mapped !== null) next.uiAuditEvidenceRoot = mapped;
+    }
+    if (item.id === 'attribution-hygiene' && next.instructions?.noCreditWarning === undefined) {
+      const enabled = asEnabledFlag(item.value);
+      if (enabled !== null) next.instructions = { ...next.instructions, noCreditWarning: enabled };
     }
   }
   return next;

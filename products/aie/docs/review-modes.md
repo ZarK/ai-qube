@@ -62,6 +62,7 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 - When the catalog lists `grok-4.6`, Grok Build review effort is `medium` and Grok Build economy effort is `low`. Setup does not default to `grok-4.5`.
 - `policy.reviews.failover` is written only when a second installed host also has a live model.
 - `providers.review.publisher` stays `user` unless you pass a publisher flag. A user publisher that matches the pull request author cannot publish a formal GitHub review event. Isolated ship-ready uses lane evidence.
+- Init asks whether to install attribution hygiene rules. The recommended answer is yes. `--yes` writes `policy.instructions.noCreditWarning` true. `--no-credit-warning` omits the block.
 
 ### Default lanes
 

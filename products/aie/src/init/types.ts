@@ -29,7 +29,7 @@ export interface LegacyState {
   nextCommand: string;
 }
 
-export type InitQuestionId = 'review-mode' | 'reviewers' | 'review-models' | 'publisher' | 'quality-gate' | 'ui-audit' | 'ui-audit-evidence';
+export type InitQuestionId = 'review-mode' | 'reviewers' | 'review-models' | 'publisher' | 'quality-gate' | 'ui-audit' | 'ui-audit-evidence' | 'attribution-hygiene';
 
 export interface InitQuestionOption {
   value: string;
