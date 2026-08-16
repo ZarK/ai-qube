@@ -1,4 +1,4 @@
-import { createGitLabReviewForgeProvider, type GitLabReviewPermissionDiagnosis } from '@tjalve/qube-adapter-gitlab';
+import type { GitLabReviewPermissionDiagnosis } from '@tjalve/qube-adapter-gitlab';
 import type { Config } from './config/index.js';
 import type { GitHubReviewPublisherIdentity } from '@tjalve/qube-adapter-github';
 import {
@@ -81,19 +81,25 @@ export async function runGitLabReviewDoctor(options: {
     diagnosis = await options.probeGitLabReview();
   } else if (attempted) {
     try {
-      const provider = createGitLabReviewForgeProvider({
+      const imported = await import('@tjalve/qube-adapter-gitlab');
+      const provider = imported.createGitLabReviewForgeProvider({
         token: process.env.GITLAB_TOKEN,
         projectId: typeof projectId === 'string' ? projectId : process.env.GITLAB_PROJECT_ID,
         baseUrl: process.env.GITLAB_BASE_URL,
       });
       diagnosis = await provider.diagnoseReviewPermissions();
     } catch (error) {
+      const missingAdapter = error instanceof Error
+        && (String((error as { code?: unknown }).code) === 'ERR_MODULE_NOT_FOUND')
+        && error.message.includes('@tjalve/qube-adapter-gitlab');
       diagnosis = {
         login: null,
-        tokenPresent: true,
-        apiScope: 'unknown',
-        approvalPermission: 'unknown',
-        failure: error instanceof Error ? error.message : String(error),
+        tokenPresent: missingAdapter ? tokenPresent : true,
+        apiScope: missingAdapter && !tokenPresent ? 'missing' : 'unknown',
+        approvalPermission: missingAdapter && !tokenPresent ? 'missing' : 'unknown',
+        failure: missingAdapter
+          ? 'GitLab review doctor requires optional adapter @tjalve/qube-adapter-gitlab. Run qube install --work-provider gitlab --yes --dry-run to review the adapter-backed install plan.'
+          : error instanceof Error ? error.message : String(error),
       };
     }
   }

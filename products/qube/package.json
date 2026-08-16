@@ -51,7 +51,6 @@
     "@tjalve/aie": "0.2.3",
     "@tjalve/aiq": "0.2.4",
     "@tjalve/aiu": "0.0.6",
-    "@tjalve/qube-adapter-claude-code": "workspace:*",
     "@tjalve/qube-cli": "0.2.1",
     "@tjalve/qube-core": "0.2.2"
   },
@@ -68,6 +67,7 @@
     "docs:surfaces": "node scripts/render-command-surfaces.mjs"
   },
   "devDependencies": {
+    "@tjalve/qube-adapter-claude-code": "workspace:*",
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,7 +13,6 @@ import { adapterPackageVersions, componentFixtures, expectedComponentRows, qubeP
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const claudeCodeAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "claude-code");
 const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli");
 const qubeCoreRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-core");
 const tempRoots = [];
@@ -33,7 +32,6 @@ describe("packed QUBE install smoke", () => {
     await mkdir(target);
 
     const qubeTarball = await packPackage(packageRoot, packDir);
-    const claudeCodeAdapterTarball = await packPackage(claudeCodeAdapterRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
     const componentTarballs = new Map();
@@ -65,18 +63,11 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
-        `          "@tjalve/qube-adapter-claude-code": ${JSON.stringify(fileSpecifier(target, claudeCodeAdapterTarball))},`,
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(target, qubeCliTarball))},`,
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
           `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(target, componentTarballs.get(component.name)))},`
         ),
-        "        };",
-        "      }",
-        "      if (pkg.name === '@tjalve/qube-adapter-claude-code') {",
-        "        pkg.dependencies = {",
-        "          ...pkg.dependencies,",
-        `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         "        };",
         "      }",
         "      return pkg;",
@@ -88,6 +79,7 @@ describe("packed QUBE install smoke", () => {
     );
 
     await runPnpm(["install", "--ignore-scripts"], target);
+    assert.deepEqual(installedAdapterPackages(target), []);
 
     const components = await runPnpm(["exec", "qube", "components", "--json"], target);
     const parsedComponents = JSON.parse(components.stdout).components;
@@ -129,7 +121,6 @@ describe("packed QUBE install smoke", () => {
     const qubeTarball = await packPackage(packageRoot, packDir);
     const githubAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "github");
     const githubTarball = await packPackage(githubAdapterRoot, packDir);
-    const claudeCodeAdapterTarball = await packPackage(claudeCodeAdapterRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
     const tarballByName = new Map([
@@ -158,7 +149,6 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
-        `          "@tjalve/qube-adapter-claude-code": ${JSON.stringify(fileSpecifier(installer, claudeCodeAdapterTarball))},`,
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(installer, qubeCliTarball))},`,
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(installer, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
@@ -166,7 +156,7 @@ describe("packed QUBE install smoke", () => {
         ),
         "        };",
         "      }",
-        "      if (pkg.name === '@tjalve/qube-adapter-claude-code' || pkg.name === '@tjalve/qube-adapter-github') {",
+        "      if (pkg.name === '@tjalve/qube-adapter-github') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(installer, qubeCoreTarball))},`,
@@ -239,6 +229,8 @@ describe("packed QUBE install smoke", () => {
     const manifest = JSON.parse(await readFile(path.join(target, "package.json"), "utf8"));
     assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
     assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
+    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-claude-code"], undefined);
+    assert.equal(manifest.dependencies?.["@tjalve/qube-adapter-claude-code"], undefined);
     assert.equal(existsSync(path.join(target, ".qube", "aie", "config.json")), true);
     assert.equal(firstParsed.apply.components.ok, true);
     assert.equal(firstParsed.apply.components.command, "components");
@@ -438,6 +430,36 @@ async function createFakeComponentTarball(component, root, packDir) {
     )}\n`
   );
   return packPackage(componentRoot, packDir);
+}
+
+function installedAdapterPackages(root) {
+  const found = new Set();
+  const visit = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(full);
+        continue;
+      }
+      if (entry.name !== "package.json") continue;
+      try {
+        const manifest = JSON.parse(readFileSync(full, "utf8"));
+        if (typeof manifest.name === "string" && manifest.name.startsWith("@tjalve/qube-adapter-")) {
+          found.add(manifest.name);
+        }
+      } catch {
+        // Ignore unreadable nested package manifests.
+      }
+    }
+  };
+  visit(path.join(root, "node_modules"));
+  return [...found].sort();
 }
 
 async function packPackage(root, packDir) {

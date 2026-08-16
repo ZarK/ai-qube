@@ -284,7 +284,7 @@ class MissingCiProvider implements CiProvider {
     return new Error([
       `Cannot ${operation} with the ${this.id} CI provider because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      'This capability is unknown until the selected adapter package is installed.',
+      `Run qube install --ci-provider ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
     ].join(' '));
   }
 }

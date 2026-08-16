@@ -24,7 +24,7 @@ const qubeVersion = await readVersion("products/qube/package.json");
 process.stdout.write(`QUBE ${qubeVersion} publish plan\n`);
 process.stdout.write("=======================\n\n");
 process.stdout.write("Adapter model: adapters are separate npm packages sourced from this monorepo.\n");
-process.stdout.write("They are optionalDependencies on @tjalve/aie and installed on demand.\n");
+process.stdout.write("They are separate packages. qube install adds only the adapters the operator selects.\n");
 process.stdout.write("Default GitHub + Codex workflow needs: @tjalve/aie + @tjalve/qube-adapter-github + @tjalve/qube-adapter-codex (+ @tjalve/qube-core via aie).\n\n");
 
 process.stdout.write("0) Preflight (run from repo root)\n");

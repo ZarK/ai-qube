@@ -79,10 +79,22 @@ describe('package publish surface safety', () => {
 
   it('keeps dependencies minimal and exact', () => {
     assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli', '@tjalve/qube-core']);
-    assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ['@types/node', 'typescript']);
+    assert.equal(pkg.optionalDependencies, undefined);
+    const devNames = Object.keys(pkg.devDependencies).sort();
+    const adapterDevs = devNames.filter(name => name.startsWith('@tjalve/qube-adapter-'));
+    const toolDevs = devNames.filter(name => !name.startsWith('@tjalve/qube-adapter-'));
+    assert.deepEqual(toolDevs, ['@types/node', 'typescript']);
+    assert.ok(adapterDevs.length > 0);
     assert.equal(pkg.oclif, undefined);
 
-    for (const [name, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
+    for (const [name, version] of Object.entries(pkg.dependencies)) {
+      assert.match(version, /^\d+\.\d+\.\d+$/, `${name} must use an exact version`);
+    }
+    for (const [name, version] of Object.entries(pkg.devDependencies)) {
+      if (name.startsWith('@tjalve/qube-adapter-')) {
+        assert.equal(version, 'workspace:*', `${name} stays a workspace-only test dependency`);
+        continue;
+      }
       assert.match(version, /^\d+\.\d+\.\d+$/, `${name} must use an exact version`);
     }
   });
