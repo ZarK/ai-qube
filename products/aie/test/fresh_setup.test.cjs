@@ -90,6 +90,8 @@ describe('fresh setup defaults', () => {
       'manualUiAudit',
       'user publisher',
       'external',
+      'noCreditWarning',
+      'attribution hygiene',
     ];
     for (const phrase of requiredPhrases) {
       assert.ok(docs.includes(phrase), `named-modes docs must include ${phrase}`);

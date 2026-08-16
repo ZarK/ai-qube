@@ -507,6 +507,7 @@ function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof a
     qualityControl: config.qualityControl,
     manualUiAudit: config.manualUiAudit,
     uiAuditEvidenceRoot: config.uiAuditEvidenceRoot === '' ? undefined : config.uiAuditEvidenceRoot,
+    noCreditWarning: config.instructions.noCreditWarning,
   };
 }
 

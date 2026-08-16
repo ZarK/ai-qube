@@ -280,6 +280,12 @@ function collectSafetyLines(config: Config): string[] {
   }
   if (config.instructions.noCreditWarning) {
     lines.push('Do not add agent, model, service, or vendor credit to source code, tests, docs, commits, pull requests, generated files, or user-facing text unless the user explicitly asks for that exact credit.');
+    lines.push('Author and committer are the human project identity.');
+    lines.push('Do not add Co-authored-by, Signed-off-by, Generated-by, Generated with, Assisted-by, or tool Reviewed-by trailers.');
+    lines.push('Do not create, fetch, or push refs/notes/ai or any refs/notes/*.');
+    lines.push('Do not add badges, signatures, shout-outs, or vendor credit in commits, pull requests, issues, comments, reviews, releases, or shipped text.');
+    lines.push('Do not post issues, comments, pull requests, or reviews through a GitHub App or host MCP that stamps performed_via_github_app. Use the authenticated gh user, or Executor when it publishes as that user.');
+    lines.push('The user can waive a specific credit string. Silence is not a waiver.');
   }
   if (config.instructions.implementationGuardrails) {
     lines.push('Implement only the real behavior requested by the active issue. Do not add executable future commands, placeholder command classes, stubs, no-op implementations, mock product paths, or "not implemented yet" runtime behavior.');

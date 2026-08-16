@@ -952,6 +952,8 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.doesNotMatch(agents, /untrusted task input/);
     assert.doesNotMatch(agents, /agent, model, service, or vendor credit/);
+    assert.doesNotMatch(agents, /performed_via_github_app/);
+    assert.doesNotMatch(agents, /refs\/notes\/ai/);
     assert.doesNotMatch(agents, /placeholder command classes/);
     assert.doesNotMatch(agents, /package-age gates before adding or upgrading dependencies/);
     assert.doesNotMatch(agents, /ZarK\/ai-supply-chain-guard/);

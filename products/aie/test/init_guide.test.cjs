@@ -75,9 +75,9 @@ describe('init guide questions', () => {
     assert.equal(result.ok, true);
     assert.equal(result.awaitingAnswers, true);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
-    assert.deepEqual(result.questions.map(item => item.id), ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit']);
+    assert.deepEqual(result.questions.map(item => item.id), ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit', 'attribution-hygiene']);
     assert.ok(result.questions.every(item => item.prompt && item.recommendation && Array.isArray(item.options)));
-    assert.deepEqual(result.unansweredQuestionIds, ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit']);
+    assert.deepEqual(result.unansweredQuestionIds, ['review-mode', 'reviewers', 'review-models', 'publisher', 'quality-gate', 'ui-audit', 'attribution-hygiene']);
     assert.equal(result.setupSummary.manualUiAudit, false);
     assert.equal(result.setupSummary.qualityControl, false);
     assert.equal(result.setupSummary.reviewMode, 'isolated');
@@ -245,6 +245,62 @@ describe('init guide questions', () => {
       [{ id: 'ui-audit-evidence', answered: true, value: '~/.qube/verification' }],
     );
     assert.equal(policy.uiAuditEvidenceRoot, '~/already-set');
+  });
+
+  it('asks whether to install attribution hygiene rules and recommends include', () => {
+    const questions = buildInitQuestions({
+      machine: { installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false, hasUserFacingUi: false },
+      answers: {},
+    });
+    const item = questions.find(entry => entry.id === 'attribution-hygiene');
+    assert.ok(item);
+    assert.match(item.prompt, /human project identity/);
+    assert.equal(item.recommendedValue, 'true');
+    assert.equal(item.answered, false);
+  });
+
+  it('writes attribution hygiene on --yes and omits it for --no-credit-warning', async () => {
+    const included = makeGitRepo();
+    const includedResult = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: included,
+      yes: true,
+      installedHosts: ['grok-build'],
+      agentBrowserAvailable: false,
+      aiqAvailable: false,
+    });
+    assert.equal(includedResult.ok, true);
+    const includedConfig = JSON.parse(readFileSync(join(included, '.qube', 'aie', 'config.json'), 'utf8'));
+    const includedAgents = readFileSync(join(included, 'AGENTS.md'), 'utf8');
+    assert.equal(includedConfig.policy.instructions.noCreditWarning, true);
+    assert.match(includedAgents, /agent, model, service, or vendor credit/);
+    assert.match(includedAgents, /Co-authored-by/);
+    assert.match(includedAgents, /refs\/notes\/ai/);
+    assert.match(includedAgents, /performed_via_github_app/);
+    assert.match(includedAgents, /Silence is not a waiver/);
+
+    const omitted = makeGitRepo();
+    const omittedResult = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: omitted,
+      yes: true,
+      installedHosts: ['grok-build'],
+      agentBrowserAvailable: false,
+      aiqAvailable: false,
+      policy: { instructions: { noCreditWarning: false } },
+    });
+    assert.equal(omittedResult.ok, true);
+    const omittedConfig = JSON.parse(readFileSync(join(omitted, '.qube', 'aie', 'config.json'), 'utf8'));
+    const omittedAgents = readFileSync(join(omitted, 'AGENTS.md'), 'utf8');
+    assert.equal(omittedConfig.policy.instructions.noCreditWarning, false);
+    assert.doesNotMatch(omittedAgents, /agent, model, service, or vendor credit/);
+    assert.doesNotMatch(omittedAgents, /performed_via_github_app/);
   });
 });
 
