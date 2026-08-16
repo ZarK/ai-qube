@@ -135,6 +135,8 @@ describe('work provider adapter boundary', () => {
     assert.deepEqual(adapters.map(adapter => adapter.id), ['local-command', 'codex']);
     assert.deepEqual(adapters.map(adapter => adapter.forgeAffinity), [['local'], ['local']]);
     assert.equal(adapters.every(adapter => adapter.installed), true);
+    assert.equal(adapters.find(adapter => adapter.id === 'local-command').packageName, '@tjalve/aie');
+    assert.equal(adapters.find(adapter => adapter.id === 'codex').packageName, '@tjalve/qube-adapter-codex');
   });
 
   it('loads OpenCode host review-runner capability from the adapter package', async () => {

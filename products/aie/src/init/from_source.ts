@@ -5,7 +5,8 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { AIE_CONFIG_FILENAME, validateConfig } from '../config/index.js';
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import { isReviewMode } from '../review_mode.js';
-import type { GuideMachine } from './questions.js';
+import { isolatedReviewHostPackageName } from '../app/review_host_adapters.js';
+import { isolatedReviewHostsOnMachine, type GuideMachine } from './questions.js';
 import type { InitFromReport } from './types.js';
 
 export type FromSourceFailure = 'absolute-path' | 'parent-directory' | 'symlink-escape' | 'url' | 'missing' | 'unreadable' | 'invalid-config' | 'forged-marker' | 'repo-fetch-failed';
@@ -230,15 +231,21 @@ export function adjustAdoptedRecord(record: Record<string, unknown>, machine: Gu
     if (!tier) continue;
     for (const host of MODEL_ROUTING_HOSTS) {
       if (tier[host] === undefined) continue;
+      if (isolatedReviewHostPackageName(host)) {
+        if (isolatedReviewHostsOnMachine(machine).includes(host as ModelRoutingHostId)) continue;
+        delete tier[host];
+        adjustments.push(`Removed ${tierName} model binding for ${host} because that isolated review host adapter is not installed.`);
+        continue;
+      }
       if (machine.installedHosts.includes(host as ModelRoutingHostId)) continue;
       delete tier[host];
       adjustments.push(`Removed ${tierName} model binding for ${host} because that host is not installed on this machine.`);
     }
   }
 
-  if (reviews.mode === 'isolated' && machine.installedHosts.length === 0) {
+  if (reviews.mode === 'isolated' && isolatedReviewHostsOnMachine(machine).length === 0) {
     reviews.mode = 'external';
-    adjustments.push('Changed review mode from isolated to external because no review host is installed on this machine.');
+    adjustments.push('Changed review mode from isolated to external because no isolated review host adapter is installed.');
   } else if (reviews.mode !== undefined && reviews.mode !== null && !isReviewMode(reviews.mode)) {
     reviews.mode = 'external';
     adjustments.push('Changed an invalid review mode to external.');

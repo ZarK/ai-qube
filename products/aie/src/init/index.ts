@@ -17,6 +17,7 @@ import {
   buildSetupSummary,
   detectGuideMachine,
   fillUnansweredQuestions,
+  isolatedReviewHostsOnMachine,
   unansweredQuestionIds,
 } from './questions.js';
 import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
@@ -572,7 +573,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   }
   const unanswered = unansweredQuestionIds(askedQuestions);
   const awaitingAnswers = Boolean(options.guide) && !options.yes;
-  if (policy.reviewMode === 'isolated' && machine.installedHosts.length === 0 && answers.reviewMode === 'isolated') {
+  if (policy.reviewMode === 'isolated' && isolatedReviewHostsOnMachine(machine).length === 0 && answers.reviewMode === 'isolated') {
     const fallbackConfig = configFromPolicy(policy);
     return {
       result: {
@@ -591,7 +592,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: ['Review mode isolated requires an installed review host: codex, claude-code, opencode, or grok-build.'],
+        errors: ['Review mode isolated requires an installed review host adapter: codex or grok-build.'],
         nextCommand: 'Install a review host or pass --review-mode external or --review-mode host.',
         questions: askedQuestions,
         unansweredQuestionIds: unanswered,

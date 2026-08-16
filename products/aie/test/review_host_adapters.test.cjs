@@ -33,7 +33,7 @@ function fakeAdapter(overrides = {}) {
 }
 
 describe('review host adapter registry', () => {
-  it('lists and resolves the Codex builtin and Grok Build package adapters', () => {
+  it('lists and resolves the Codex and Grok Build package adapters', () => {
     assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
     assert.equal(isRegisteredReviewHost('codex'), true);
     assert.equal(isRegisteredReviewHost('grok-build'), true);
@@ -124,7 +124,7 @@ describe('review host adapter registry', () => {
     }), null);
   });
 
-  it('reports no missing capabilities for the built-in codex and grok adapters', () => {
+  it('reports no missing capabilities for the packaged Codex and Grok Build adapters', () => {
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('codex')), []);
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok-build')), []);
   });

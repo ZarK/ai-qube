@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listHostModels } from '../app/model_catalog.js';
+import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
 import { commandExistsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
-import type { ReviewMode } from '../core/policy.js';
+import type { ReviewMode, ReviewModelHostId } from '../core/policy.js';
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
 import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
@@ -69,8 +70,12 @@ export function detectUserFacingUi(repoRoot: string | null): boolean {
   }
 }
 
+export function isolatedReviewHostsOnMachine(machine: Pick<GuideMachine, 'installedHosts'>): readonly ModelRoutingHostId[] {
+  return machine.installedHosts.filter(host => isRegisteredReviewHost(host));
+}
+
 export function recommendedReviewMode(machine: GuideMachine): ReviewMode {
-  if (machine.installedHosts.length > 0) return 'isolated';
+  if (isolatedReviewHostsOnMachine(machine).length > 0) return 'isolated';
   return 'external';
 }
 
@@ -104,6 +109,7 @@ export function buildInitQuestions(input: {
   useDefaults?: boolean;
 }): InitQuestion[] {
   const recommendedMode = recommendedReviewMode(input.machine);
+  const isolatedHosts = isolatedReviewHostsOnMachine(input.machine);
   const recommendedAudit = recommendedManualUiAudit(input.machine);
   const qualityControlValue = recommendedQualityControl(input.machine);
   const recommendedPublisher: 'user' | 'github-app' | 'token' = 'user';
@@ -116,11 +122,11 @@ export function buildInitQuestions(input: {
       options: REVIEW_MODES.map(mode => ({
         value: mode,
         label: reviewModeLabel(mode),
-        available: mode !== 'isolated' || input.machine.installedHosts.length > 0,
+        available: mode !== 'isolated' || isolatedHosts.length > 0,
       })),
       recommendation: recommendedMode === 'isolated'
-        ? `Use isolated. Installed review hosts on this machine: ${input.machine.installedHosts.join(', ')}.`
-        : 'Use external. No review host CLI is installed on this machine.',
+        ? `Use isolated. Installed review host adapters on this machine: ${isolatedHosts.join(', ')}.`
+        : 'Use external. No isolated review host adapter is installed on this machine.',
       recommendedValue: recommendedMode,
       answered: input.answers.reviewMode !== undefined,
       value: input.answers.reviewMode ?? null,
@@ -133,7 +139,7 @@ export function buildInitQuestions(input: {
       prompt: 'Which reviewers should the gate request?',
       options: [
         { value: 'coderabbitai', label: 'CodeRabbit (external service)' },
-        ...input.machine.installedHosts.map(host => ({ value: host, label: `${host} (installed on this machine)`, available: true })),
+        ...isolatedHosts.map(host => ({ value: host, label: `${host} (installed review host adapter)`, available: true })),
       ],
       recommendation: recommendedMode === 'isolated'
         ? 'Leave external reviewers empty. Isolated review uses host models on this machine.'
@@ -220,7 +226,7 @@ function uiAuditRecommendation(guide: GuideMachine): string {
 }
 
 function liveModelOptions(machine: GuideMachine): InitQuestionOption[] {
-  const options = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => ({
+  const options = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => ({
     value: `${host}:${model}`,
     label: `${host} currently serves ${model}.`,
     available: true,
@@ -229,14 +235,14 @@ function liveModelOptions(machine: GuideMachine): InitQuestionOption[] {
 }
 
 function liveModelRecommendation(machine: GuideMachine): string {
-  const first = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+  const first = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
   return first
     ? `Use a model from the live catalog. Example: ${first}.`
     : 'No live catalog is available. Leave review models unconfigured until a host can list models.';
 }
 
 function liveModelRecommendationValue(machine: GuideMachine): string[] {
-  const first = machine.installedHosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+  const first = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
   return first ? [first] : [];
 }
 
@@ -247,9 +253,7 @@ function reviewModelsFromAnswers(values: string[]): NonNullable<InitPolicyOption
     if (separator <= 0) continue;
     const host = value.slice(0, separator);
     const model = value.slice(separator + 1).trim();
-    if (host === 'codex' || host === 'claude-code' || host === 'opencode' || host === 'grok-build') {
-      if (model) review[host] = { model, effort: null };
-    }
+    if (isRegisteredReviewHost(host) && model) review[host as ReviewModelHostId] = { model, effort: null };
   }
   return { review, economy: {}, synthesis: {} };
 }

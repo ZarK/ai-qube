@@ -11,7 +11,7 @@ import type { ReviewFailoverPolicy, ReviewMode, ReviewModelsPolicy, ReviewRouteP
 import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { reviewModeOf } from '../review_mode.js';
-import { recommendedManualUiAudit, recommendedReviewMode, type GuideMachine } from './questions.js';
+import { isolatedReviewHostsOnMachine, recommendedManualUiAudit, recommendedReviewMode, type GuideMachine } from './questions.js';
 import type { InitPolicyOptions } from './types.js';
 
 export {
@@ -62,12 +62,12 @@ export function detectRepositoryQualityGate(repoRoot: string): GateConfig | null
 }
 
 function firstInstalledHost(machine: GuideMachine): ModelRoutingHostId | null {
-  return machine.installedHosts[0] ?? null;
+  return isolatedReviewHostsOnMachine(machine)[0] ?? null;
 }
 
 function modelsFromMachine(machine: GuideMachine): ReviewModelsPolicy | undefined {
   const review: ReviewModelsPolicy['review'] = {};
-  for (const host of machine.installedHosts) {
+  for (const host of isolatedReviewHostsOnMachine(machine)) {
     const model = machine.liveModels?.[host]?.[0];
     if (model) review[host] = { model, effort: null };
   }
@@ -76,7 +76,7 @@ function modelsFromMachine(machine: GuideMachine): ReviewModelsPolicy | undefine
 }
 
 function failoverFromMachine(machine: GuideMachine, primaryHost: string | undefined): ReviewFailoverPolicy | null {
-  const secondary = machine.installedHosts.find(host => host !== primaryHost);
+  const secondary = isolatedReviewHostsOnMachine(machine).find(host => host !== primaryHost);
   if (!secondary) return null;
   const model = machine.liveModels?.[secondary]?.[0];
   if (!model) return null;
