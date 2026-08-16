@@ -111,11 +111,23 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
     if (context.effort) args.push("--config", `model_reasoning_effort="${context.effort}"`);
     args.push(
       "--ignore-user-config",
+      "--ignore-rules",
       "--strict-config",
       "--config",
       "mcp_servers={}",
       "--config",
       'web_search="disabled"',
+      "--config",
+      "shell_environment_policy.inherit=all",
+    );
+    // Isolated review ignores user config. On Windows that also drops the
+    // restricted-token sandbox backend, so read-only becomes a policy shape
+    // with nothing to enforce and PowerShell-wrapped git/rg die as
+    // "blocked by policy". Unelevated restores a real backend.
+    if (process.platform === "win32") {
+      args.push("--config", 'windows.sandbox="unelevated"');
+    }
+    args.push(
       "--disable",
       "apps",
       "--disable",

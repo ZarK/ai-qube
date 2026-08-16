@@ -42,11 +42,18 @@ describe("codex adapter", () => {
       schemaJson: "{}",
     }, "codex");
     assert.ok(built.args.includes("--ignore-user-config"));
+    assert.ok(built.args.includes("--ignore-rules"));
     assert.ok(built.args.includes("--output-schema"));
     assert.ok(built.args.includes("read-only"));
     assert.ok(built.args.includes("--strict-config"));
+    assert.ok(built.args.includes("shell_environment_policy.inherit=all"));
     assert.equal(built.args.includes("--approve-for-me"), false, "--approve-for-me cannot be combined with --sandbox");
-    assert.equal(built.args.includes('sandbox_permissions=["disk-full-read-access"]'), false, "sandbox_permissions is unknown under --strict-config");
+    assert.equal(built.args.includes('sandbox_permissions=["disk-full-read-access"]'), false);
+    assert.equal(
+      built.args.includes('windows.sandbox="unelevated"'),
+      process.platform === "win32",
+      "Windows isolated review must enable the unelevated sandbox backend after --ignore-user-config",
+    );
     assert.equal(built.stdin, "inspect");
     assert.deepEqual(parseCodexModelCatalog(JSON.stringify({ models: [{ slug: "gpt-5.6-luna" }, { slug: "  " }] })), ["gpt-5.6-luna"]);
   });

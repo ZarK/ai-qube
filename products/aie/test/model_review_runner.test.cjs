@@ -187,10 +187,17 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('gpt-5.6-luna'));
     assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
     assert.ok(invocation.args.includes('--ignore-user-config'));
+    assert.ok(invocation.args.includes('--ignore-rules'));
     assert.ok(invocation.args.includes('read-only'));
     assert.ok(invocation.args.includes('--strict-config'));
+    assert.ok(invocation.args.includes('shell_environment_policy.inherit=all'));
     assert.equal(invocation.args.includes('--approve-for-me'), false, '--approve-for-me cannot be combined with --sandbox');
-    assert.equal(invocation.args.includes('sandbox_permissions=["disk-full-read-access"]'), false, 'sandbox_permissions is unknown under --strict-config');
+    assert.equal(invocation.args.includes('sandbox_permissions=["disk-full-read-access"]'), false);
+    assert.equal(
+      invocation.args.includes('windows.sandbox="unelevated"'),
+      process.platform === 'win32',
+      'Windows isolated review must enable the unelevated sandbox backend after --ignore-user-config',
+    );
     assert.ok(invocation.args.includes('multi_agent'));
     assert.ok(invocation.args.includes('mcp_servers={}'));
     assert.ok(invocation.args.includes('web_search="disabled"'));
