@@ -2,8 +2,8 @@ import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { resolveModelRouting } from '../core/model_routing.js';
 import { detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
-import { parseInitTool, uniqueTools } from '../init_content.js';
-import { getAgentHostProfiles } from '../agent_hosts.js';
+import { getAgentHostProfiles, getAllAgentHostProfiles } from '../agent_hosts.js';
+import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
 import { renderInitFiles } from '../init_renderer.js';
 import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
 import { getRepoRoot } from '../repo/index.js';
@@ -66,6 +66,19 @@ interface ConfigMergeResult {
   reason: string;
   config: Config;
 }
+function selectionRequestsAll(value: string | undefined): boolean {
+  return typeof value === 'string' && value.split(',').some(part => part.trim() === 'all');
+}
+
+async function resolveInitTools(tool: string | undefined): Promise<InitTool[]> {
+  if (selectionRequestsAll(tool)) {
+    const installed = (await getAllAgentHostProfiles()).map(profile => profile.id);
+    const extras = parseInitTool((tool ?? '').split(',').filter(part => part.trim() !== 'all').join(',')) ?? [];
+    return uniqueTools([...installed, ...extras]);
+  }
+  return parseInitTool(tool ?? '') ?? [];
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -504,7 +517,7 @@ function publisherSummary(config: Config): string {
 async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
   const repoRoot = getRepoRoot(targetPath);
-  const selectedTools = uniqueTools(parseInitTool(options.tool) ?? []);
+  const selectedTools = uniqueTools(await resolveInitTools(options.tool));
   const warnings: string[] = [];
   const actions: InitAction[] = [];
   const writes: PlannedWrite[] = [];
@@ -669,7 +682,34 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
 
   const configPlan = await planConfig(repoRoot, options.force, warnings, policy, baseRecord, Boolean(options.from));
   const config = configPlan.config;
-  const selectedProfiles = await getAgentHostProfiles(selectedTools);
+  let selectedProfiles;
+  try {
+    selectedProfiles = await getAgentHostProfiles(selectedTools);
+  } catch (error) {
+    return {
+      result: {
+        ok: false,
+        command: 'init',
+        dryRun: options.dryRun,
+        forced: options.force,
+        target: options.target,
+        repoRoot,
+        selectedTools,
+        policy: policySummary(config),
+        configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
+        actions,
+        legacy: [],
+        plannedChanges: [],
+        completedChanges: [],
+        skippedActions: [],
+        warnings,
+        errors: [error instanceof Error ? error.message : String(error)],
+        nextCommand: 'Install the missing host adapter, or pass --tool all to use installed adapters only.',
+        ...emptyGuideFields(),
+      },
+      writes,
+    };
+  }
   actions.push(configPlan.action);
   if (configPlan.write) writes.push(configPlan.write);
 

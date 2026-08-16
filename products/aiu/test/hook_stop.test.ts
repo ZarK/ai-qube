@@ -39,6 +39,29 @@ describe("provider-neutral stop hooks", () => {
     }
   });
 
+  it("fails closed when the Grok Build adapter is not installed", async () => {
+    const adapter = await import(pathToFileURL(path.join(repoRoot, "dist/src/grok_build_adapter.js")).href) as {
+      omitGrokBuildAdapterForTests: () => void;
+      resetGrokBuildAdapterForTests: () => void;
+    };
+    adapter.omitGrokBuildAdapterForTests();
+    try {
+      const { runAiuHookStop } = await loadHookStop();
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: repoRoot,
+        observedAt,
+        stdin: JSON.stringify({ cwd: repoRoot, hookEventName: "stop", sessionId: "s1" }),
+      });
+      assert.equal(result.decision, "block");
+      assert.equal(result.reason, "missing-adapter");
+      assert.match(result.stderr, /@tjalve\/qube-adapter-grok-build/);
+      assert.match(result.stderr, /not installed|requires/);
+    } finally {
+      adapter.resetGrokBuildAdapterForTests();
+    }
+  });
+
   it("blocks Grok Build stops from a camelCase Stop payload", async () => {
     const { runAiuHookStop } = await loadHookStop();
     const target = await createRepo({

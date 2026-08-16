@@ -19,6 +19,7 @@ export {
   hostIdsForInstructionPath,
   listAgentHostAdapters,
   loadHostProfileFromPackage,
+  omitHostProfilePackagesForTests,
   parseAgentHostSelection,
   registerAgentHostProfileForTests,
   resetAgentHostProfilesForTests,

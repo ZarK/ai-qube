@@ -8,6 +8,7 @@ import {
   getDefaultAiuConfig,
   loadAiuConfig,
 } from "./config.js";
+import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 import {
   getAiuHostCapabilityProfiles,
   getDefaultHostCapabilityOverrides,
@@ -160,11 +161,14 @@ export function formatInitPlan(plan: AiuInitPlan): string {
 }
 
 function expandInitTools(tool: AiuInitTool): readonly AiuHost[] {
-  return tool === "all" ? ["opencode", "codex", "claude-code"] : [tool];
+  if (tool !== "all") return [tool];
+  const hosts: AiuHost[] = ["opencode", "codex", "claude-code"];
+  if (loadGrokBuildAdapter()) hosts.push("grok-build");
+  return hosts;
 }
 
 function toolForPlan(tools: readonly AiuHost[]): AiuInitTool {
-  return tools.length === 3 ? "all" : tools[0] ?? "all";
+  return tools.length === 1 ? tools[0] ?? "all" : "all";
 }
 
 function planFile(repoRoot: string, file: AiuManagedHostFile, force: boolean): AiuInitFileAction {

@@ -25,7 +25,7 @@ const ARGV_PATTERNS = [
   /mcp_servers=\{\}/,
   /web_search="disabled"/,
 ];
-const HOOK_WRITER = /\.grok[\\/]+hooks/;
+const HOOK_WRITER = /\.grok[\\/]+(?:hooks|commands|agents|skills)/;
 
 function listSourceFiles(root) {
   const files = [];

@@ -182,7 +182,7 @@ describe("migration planner", () => {
     assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), true);
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
-    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code"]);
+    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.ok("work" in config.trustedStateCommands);
     assert.match(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), /@tjalve\/aiu\/opencode/);
     assert.equal(existsSync(path.join(target, ".umpire")), false);

@@ -3260,9 +3260,9 @@ describe("qube init composer orchestrator", () => {
     assert.equal(combined.status, 0, combined.stderr);
     const combinedParsed = JSON.parse(combined.stdout);
     assert.equal(combinedParsed.aie.length, 1);
-    assert.equal(combinedParsed.aie[0].args[combinedParsed.aie[0].args.indexOf("--tool") + 1], "all,grok-build");
+    assert.equal(combinedParsed.aie[0].args[combinedParsed.aie[0].args.indexOf("--tool") + 1], "all");
     const combinedAiuTools = combinedParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(combinedAiuTools, ["all", "grok-build"]);
+    assert.deepEqual(combinedAiuTools, ["all"]);
   });
 
   it("applies Umpire host inits one after another so combined hosts stay in config", () => {

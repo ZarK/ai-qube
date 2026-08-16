@@ -57,6 +57,9 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   const stdin = options.stdin ?? "";
   const inputBytes = Buffer.byteLength(stdin, "utf8");
   const observedAt = options.observedAt ?? new Date().toISOString();
+  if (options.tool === "grok-build" && !loadGrokBuildAdapter()) {
+    return missingAdapter(options, inputBytes);
+  }
   const parsed = parseHookPayload(options.tool, stdin);
   if (!parsed.ok) {
     return allow(options, inputBytes, parsed.code, [
@@ -388,6 +391,23 @@ function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: HookPayl
 
 function isBlockingDecision(decision: AiuContinuationDecision, prompt: AiuContinuationPrompt): boolean {
   return (decision.kind === "continue" || decision.kind === "repair") && prompt.body.trim().length > 0;
+}
+
+function missingAdapter(options: AiuHookStopOptions, inputBytes: number): AiuHookStopResult {
+  const message = `${options.tool} stop-hook support requires @tjalve/qube-adapter-grok-build.`;
+  const item = diagnostic("error", "missing-adapter", message);
+  return Object.freeze({
+    tool: options.tool,
+    decision: "block" as const,
+    reason: "missing-adapter",
+    inputBytes,
+    stdoutJson: Object.freeze({
+      decision: "block" as const,
+      reason: message,
+    }),
+    stderr: formatDiagnostics([item]),
+    diagnostics: Object.freeze([item]),
+  });
 }
 
 function allow(

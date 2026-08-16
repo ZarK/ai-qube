@@ -5504,8 +5504,7 @@ function hasClassicAllTools(mapped: ReadonlySet<AieInitHostTool>): boolean {
 function resolveAieInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
   const mapped = mapSelectedInitTools(hosts);
   if (mapped.size === 0) return [];
-  if (hasClassicAllTools(mapped) && !mapped.has("grok-build")) return ["all"];
-  if (hasClassicAllTools(mapped) && mapped.has("grok-build")) return ["all,grok-build"];
+  if (hasClassicAllTools(mapped)) return ["all"];
   return Object.freeze([AIE_INIT_HOST_TOOLS.filter(tool => mapped.has(tool)).join(",") as AieInitTool]);
 }
 
@@ -5513,14 +5512,11 @@ function resolveAieInitToolTargets(hosts: readonly InstallHost[]): readonly AieI
 function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
   const mapped = mapSelectedInitTools(hosts);
   if (mapped.size === 0) return [];
+  if (hasClassicAllTools(mapped)) return Object.freeze(["all"]);
   const tools: AieInitTool[] = [];
-  if (hasClassicAllTools(mapped)) tools.push("all");
-  else {
-    for (const tool of AIE_INIT_ALL_TOOLS) {
-      if (mapped.has(tool)) tools.push(tool);
-    }
+  for (const tool of AIE_INIT_HOST_TOOLS) {
+    if (mapped.has(tool)) tools.push(tool);
   }
-  if (mapped.has("grok-build")) tools.push("grok-build");
   return Object.freeze(tools);
 }
 

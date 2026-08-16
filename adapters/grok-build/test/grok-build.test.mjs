@@ -10,6 +10,7 @@ describe("grok-build adapter", () => {
     const manifest = require("../package.json");
     assert.deepEqual(Object.keys(manifest.dependencies), ["@tjalve/qube-core"]);
     assert.equal(adapter.isolatedReviewHostAdapter.id, "grok-build");
+    assert.equal(adapter.grokBuildRouteRunnerPath.replaceAll("\\", "/"), ".grok/agents/qube-route-runner.md");
     assert.deepEqual([...adapter.isolatedReviewHostAdapter.executableNames], ["grok"]);
     assert.equal(adapter.grokBuildHostProfile.id, "grok-build");
   });

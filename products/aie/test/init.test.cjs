@@ -406,6 +406,8 @@ describe('init service', () => {
       pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
       pathPosix.join('.claude', 'commands', 'make-it-so.md'),
       pathPosix.join('.claude', 'skills', 'make-it-so', 'SKILL.md'),
+      pathPosix.join('.grok', 'commands', 'make-it-so.md'),
+      pathPosix.join('.grok', 'skills', 'make-it-so', 'SKILL.md'),
     ]);
     assert.doesNotMatch(planned.warnings.join('\n'), /Codex project command files are configured but none are enabled/);
     assert.doesNotMatch(planned.warnings.join('\n'), /Claude Code project command files are not installed/);
@@ -1177,7 +1179,7 @@ describe('init service', () => {
     const repo = makeGitRepo();
     const all = await buildInitPlan({ target: '.', tool: 'all', dryRun: true, force: false, cwd: repo });
     assert.equal(all.ok, true);
-    assert.deepEqual(all.selectedTools, ['opencode', 'codex', 'claude-code']);
+    assert.deepEqual(all.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
     assert.ok(all.actions.some(action => action.path === 'CLAUDE.md'));
 
     const invalid = await buildInitPlan({ target: '.', tool: 'bad-tool', dryRun: true, force: false, cwd: repo });
@@ -1386,7 +1388,7 @@ describe('init command metadata', () => {
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(result.status, 0);
-    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code']);
+    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
     assert.equal(parsed.policy.namingRules, true);
     assert.equal(parsed.policy.milestoneOrdering, true);
     assert.equal(parsed.policy.missingMilestonePolicy, 'ignore');
@@ -1554,7 +1556,7 @@ describe('managed section checksum normalization', () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true, result.errors.join('\n'));
-    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code']);
+    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
     assertPrCadence(readFileSync(join(repo, 'AGENTS.md'), 'utf8'));
     assertPrCadence(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'));
     assert.doesNotMatch(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /PR review and merge culture/);
