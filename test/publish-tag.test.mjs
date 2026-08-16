@@ -90,6 +90,17 @@ describe("publish tag resolution", () => {
     assert.match(plan.verify, /@tjalve\/qube-adapter-claude-code/);
   });
 
+  it("prepares host adapters before aib and aiu single-package publish", () => {
+    const aib = JSON.parse(resolveTag(`publish-aib-v${readVersion("products/aib/package.json")}`).stdout);
+    const aiu = JSON.parse(resolveTag(`publish-aiu-v${readVersion("products/aiu/package.json")}`).stdout);
+    for (const plan of [aib, aiu]) {
+      assert.match(plan.prepare, /@tjalve\/qube-adapter-github/);
+      assert.match(plan.prepare, /@tjalve\/qube-adapter-codex/);
+      assert.match(plan.prepare, /@tjalve\/qube-adapter-grok-build/);
+      assert.match(plan.prepare, /@tjalve\/qube-cli/);
+    }
+  });
+
   it("maps the qube-core first publish tag to the shared core package", () => {
     const version = readVersion("packages/qube-core/package.json");
     const result = resolveTag(`publish-qube-core-v${version}`);
