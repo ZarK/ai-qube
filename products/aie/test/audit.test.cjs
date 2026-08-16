@@ -50,7 +50,7 @@ describe('manual UI audit model', () => {
     assert.equal(result.appLaunch, 'npm run dev');
     assert.equal(result.auditTarget, 'http://localhost:3000/settings');
     assert.equal(result.evidence.directoryExists, false);
-    assert.equal(existsSync(join(home, 'github-verification', 'product-ui', '93')), false);
+    assert.equal(existsSync(join(home, '.qube', 'verification', 'product-ui', '93')), false);
   });
 
   it('requires browser or screenshot evidence in addition to visual analysis notes', () => {
@@ -59,7 +59,7 @@ describe('manual UI audit model', () => {
     const config = getDefaults();
 
     const prepared = runUiAudit(config, { issueNumber: 94, repoRoot: repo, homeDirectory: home, prepare: true });
-    const evidenceDirectory = join(home, 'github-verification', 'product-ui', '94');
+    const evidenceDirectory = join(home, '.qube', 'verification', 'product-ui', '94');
     const notesPath = join(evidenceDirectory, 'notes.md');
     writeFileSync(notesPath, 'Ran the app locally and verified the visible UI flow.\n');
 
@@ -84,7 +84,7 @@ describe('manual UI audit model', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const repo = join(home, 'workspace', 'product-ui');
     const config = getDefaults();
-    const evidenceDirectory = join(home, 'github-verification', 'product-ui', '96');
+    const evidenceDirectory = join(home, '.qube', 'verification', 'product-ui', '96');
     const screenshotsDirectory = join(evidenceDirectory, 'screenshots');
 
     mkdirSync(screenshotsDirectory, { recursive: true });
@@ -101,7 +101,7 @@ describe('manual UI audit model', () => {
 
     writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
     const screenshotsCaptured = runUiAudit(config, { issueNumber: 97, repoRoot: repo, homeDirectory: home, prepare: true });
-    const secondEvidenceDirectory = join(home, 'github-verification', 'product-ui', '97');
+    const secondEvidenceDirectory = join(home, '.qube', 'verification', 'product-ui', '97');
     const secondScreenshotsDirectory = join(secondEvidenceDirectory, 'screenshots');
     writeFileSync(join(secondScreenshotsDirectory, 'settings.png'), 'fake image bytes\n');
     const screenshotsOnly = runUiAudit(config, { issueNumber: 97, repoRoot: repo, homeDirectory: home, check: true });
@@ -133,6 +133,51 @@ describe('manual UI audit model', () => {
     assert.equal(result.evidence.reasonCode, 'manual-audit-disabled');
     assert.match(result.nextAction, /required by config/);
   });
+
+  it('prepares evidence under the QUBE user default, not github-verification or repo .qube', () => {
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const repo = join(home, 'workspace', 'product-ui');
+    const config = getDefaults();
+    const prepared = runUiAudit(config, { issueNumber: 101, repoRoot: repo, homeDirectory: home, prepare: true });
+    const evidenceDirectory = join(home, '.qube', 'verification', 'product-ui', '101');
+    assert.equal(existsSync(evidenceDirectory), true);
+    assert.equal(existsSync(join(home, 'github-verification')), false);
+    assert.equal(existsSync(join(repo, '.qube', 'verification')), false);
+    assert.match(prepared.evidence.directory.replace(/\\/g, '/'), /\.qube\/verification\/product-ui\/101$/);
+  });
+
+  it('uses policy.audit.evidenceRoot when set', () => {
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const repo = join(home, 'workspace', 'product-ui');
+    const config = getDefaults();
+    config.uiAuditEvidenceRoot = '~/custom-audit';
+    const prepared = runUiAudit(config, { issueNumber: 102, repoRoot: repo, homeDirectory: home, prepare: true });
+    const evidenceDirectory = join(home, 'custom-audit', 'product-ui', '102');
+    assert.equal(existsSync(evidenceDirectory), true);
+    assert.equal(existsSync(join(home, '.qube', 'verification', 'product-ui', '102')), false);
+    assert.match(prepared.evidence.directory.replace(/\\/g, '/'), /custom-audit\/product-ui\/102$/);
+  });
+
+  it('rejects a configured evidence root that walks to a parent directory', () => {
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const config = getDefaults();
+    config.uiAuditEvidenceRoot = '~/custom/../outside';
+    assert.throws(
+      () => runUiAudit(config, { issueNumber: 103, repoRoot: join(home, 'workspace', 'product-ui'), homeDirectory: home, prepare: true }),
+      /parent-directory/,
+    );
+    assert.equal(existsSync(join(home, 'outside')), false);
+    assert.equal(existsSync(join(home, 'custom')), false);
+  });
+
+  it('reports leftover github-verification trees without writing there', () => {
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const repo = join(home, 'workspace', 'product-ui');
+    mkdirSync(join(home, 'github-verification', 'product-ui'), { recursive: true });
+    const result = runUiAudit(getDefaults(), { issueNumber: 104, repoRoot: repo, homeDirectory: home, dryRun: true });
+    assert.ok(result.warnings.some(warning => /leftover UI audit directory/.test(warning)));
+    assert.equal(existsSync(join(home, 'github-verification', 'product-ui', '104')), false);
+  });
 });
 
 describe('manual UI audit config', () => {
@@ -156,6 +201,14 @@ describe('manual UI audit config', () => {
     assert.equal(result.ok, false);
     assert.ok(result.errors.some(error => error.path === 'policy.audit.appLaunch'));
     assert.ok(result.errors.some(error => error.path === 'policy.audit.target'));
+  });
+
+  it('rejects a non-string evidence root', () => {
+    const config = cleanConfig();
+    config.policy.audit.evidenceRoot = { path: '/tmp' };
+    const result = validateConfig(config);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.audit.evidenceRoot'));
   });
 });
 
@@ -207,7 +260,7 @@ describe('manual UI audit CLI', () => {
 
     const result = binRun(['audit', 'ui', '93', '--prepare', '--json'], repo, { HOME: home, USERPROFILE: home });
     const parsed = JSON.parse(result.stdout);
-    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    const evidenceDirectory = join(home, '.qube', 'verification', safeRepoSegment(repo), '93');
 
     assert.equal(result.status, 0);
     assert.equal(parsed.prepare, true);
@@ -219,7 +272,7 @@ describe('manual UI audit CLI', () => {
   it('checks local visual evidence without claiming audit pass', () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
-    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    const evidenceDirectory = join(home, '.qube', 'verification', safeRepoSegment(repo), '93');
     const screenshotsDirectory = join(evidenceDirectory, 'screenshots');
     mkdirSync(screenshotsDirectory, { recursive: true });
     writeFileSync(join(evidenceDirectory, 'browser-observation.md'), 'Opened the real running app with agent-browser.\n');
@@ -243,7 +296,7 @@ describe('manual UI audit CLI', () => {
   it('reports missing visual evidence when check only finds metadata directories', () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
-    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    const evidenceDirectory = join(home, '.qube', 'verification', safeRepoSegment(repo), '93');
     mkdirSync(join(evidenceDirectory, 'screenshots'), { recursive: true });
 
     const result = binRun(['audit', 'ui', '93', '--check', '--json'], repo, { HOME: home, USERPROFILE: home });

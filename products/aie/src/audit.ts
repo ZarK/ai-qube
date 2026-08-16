@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
-import { basename, join } from 'path';
+import { basename, isAbsolute, join, normalize } from 'path';
 import { homedir } from 'os';
 import { Config } from './config/index.js';
 import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
@@ -72,9 +72,19 @@ export interface UiAuditOptions {
 }
 
 export const AUDIT_HEAD_STAMP_NAME = 'head-stamp.json';
+export const DEFAULT_UI_AUDIT_EVIDENCE_ROOT = '~/.qube/verification';
+export const LEGACY_UI_AUDIT_EVIDENCE_ROOT = '~/github-verification';
 
-export function uiAuditEvidenceDirectory(issueNumber: number, repoRoot?: string, homeDirectory?: string): string {
-  return join(evidenceRoot(repoRoot, homeDirectory ?? homedir()), String(issueNumber));
+export function uiAuditEvidenceDirectory(
+  issueNumber: number,
+  repoRoot?: string,
+  homeDirectory?: string,
+  configuredRoot?: string,
+): string {
+  const home = homeDirectory ?? homedir();
+  const resolved = resolveUiAuditNamespaceRoot(configuredRoot, home);
+  if (!resolved.ok) throw new Error(resolved.reason);
+  return join(resolved.root, safeSegment(repoRoot ? basename(repoRoot) : 'repository'), String(issueNumber));
 }
 
 export function hashAuditEvidencePayload(notes: string, observation: string, screenshots: readonly { name: string; bytes: number; sha256: string }[]): string {
@@ -128,9 +138,47 @@ function safeSegment(value: string): string {
   return segment === '' ? 'repository' : segment;
 }
 
-function evidenceRoot(repoRoot: string | undefined, homeDirectory: string): string {
-  const repoName = safeSegment(repoRoot ? basename(repoRoot) : 'repository');
-  return join(homeDirectory, 'github-verification', repoName);
+function pathHasParentSegment(value: string): boolean {
+  return value.split(/[\\/]+/).some(segment => segment === '..');
+}
+
+export function expandUserPath(value: string, homeDirectory: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '~') return homeDirectory;
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) return join(homeDirectory, trimmed.slice(2));
+  return trimmed;
+}
+
+export function resolveUiAuditNamespaceRoot(
+  configuredRoot: string | undefined,
+  homeDirectory: string,
+): { ok: true; root: string } | { ok: false; reason: string } {
+  const raw = (configuredRoot ?? '').trim();
+  const source = raw === '' ? DEFAULT_UI_AUDIT_EVIDENCE_ROOT : raw;
+  if (pathHasParentSegment(source)) {
+    return { ok: false, reason: 'policy.audit.evidenceRoot must not contain parent-directory segments.' };
+  }
+  const expanded = expandUserPath(source, homeDirectory);
+  if (pathHasParentSegment(expanded)) {
+    return { ok: false, reason: 'policy.audit.evidenceRoot must not contain parent-directory segments.' };
+  }
+  const resolved = isAbsolute(expanded) ? normalize(expanded) : normalize(join(homeDirectory, expanded));
+  return { ok: true, root: resolved };
+}
+
+export function legacyUiAuditRepositoryDirectory(repoRoot: string | undefined, homeDirectory: string): string {
+  const resolved = resolveUiAuditNamespaceRoot(LEGACY_UI_AUDIT_EVIDENCE_ROOT, homeDirectory);
+  if (!resolved.ok) return join(homeDirectory, 'github-verification', safeSegment(repoRoot ? basename(repoRoot) : 'repository'));
+  return join(resolved.root, safeSegment(repoRoot ? basename(repoRoot) : 'repository'));
+}
+
+export function legacyUiAuditTreeExists(repoRoot: string | undefined, homeDirectory: string): boolean {
+  const directory = legacyUiAuditRepositoryDirectory(repoRoot, homeDirectory);
+  try {
+    return existsSync(directory) && statSync(directory).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function hasNonEmptyFile(path: string): boolean {
@@ -326,8 +374,8 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
   const dryRun = options.dryRun ?? false;
   const prepare = options.prepare ?? false;
   const check = options.check ?? false;
-  const root = evidenceRoot(options.repoRoot, options.homeDirectory ?? homedir());
-  const directory = join(root, String(options.issueNumber));
+  const home = options.homeDirectory ?? homedir();
+  const directory = uiAuditEvidenceDirectory(options.issueNumber, options.repoRoot, home, config.uiAuditEvidenceRoot);
   const screenshotsDirectory = join(directory, 'screenshots');
   const createdDirectories: string[] = [];
   if (prepare) {
@@ -338,6 +386,11 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
   const headSha = resolveAuditHeadSha(options.repoRoot, options.headSha);
   if (check && !dryRun && config.manualUiAudit && evidence.state === 'visual-analysis-recorded' && headSha) {
     writeCompleteAuditStamp(directory, headSha);
+  }
+  const warnings = buildWarnings(config);
+  const legacyDirectory = legacyUiAuditRepositoryDirectory(options.repoRoot, home);
+  if (legacyUiAuditTreeExists(options.repoRoot, home) && normalize(directory) !== normalize(join(legacyDirectory, String(options.issueNumber)))) {
+    warnings.push(`A leftover UI audit directory exists at ${redact(legacyDirectory)}. Init can keep that path or use the QUBE default. This command did not copy or delete it.`);
   }
   const result: UiAuditResult = {
     ok: true,
@@ -355,7 +408,7 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
     evidence,
     createdDirectories,
     checklist: CHECKLIST.map(item => ({ ...item })),
-    warnings: buildWarnings(config),
+    warnings,
     nextAction: '',
   };
   return { ...result, nextAction: nextAction(result) };

@@ -148,6 +148,7 @@ export interface AuditPolicy {
   manualUiAudit: boolean;
   appLaunch: string;
   target: string;
+  evidenceRoot?: string;
 }
 
 export interface InstructionPolicy {
@@ -294,7 +295,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
         : null,
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
-    audit: { ...input.audit },
+    audit: { evidenceRoot: '', ...input.audit },
     instructions: { ...input.instructions },
     migration: { ...input.migration },
     supplyChain: {

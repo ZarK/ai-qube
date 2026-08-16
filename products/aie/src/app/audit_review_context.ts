@@ -155,8 +155,14 @@ export function loadAuditReviewRecord(input: {
   issueNumber: number;
   repoRoot: string | null;
   homeDirectory?: string;
+  evidenceRoot?: string;
 }): AuditReviewRecord {
-  const directory = uiAuditEvidenceDirectory(input.issueNumber, input.repoRoot ?? undefined, input.homeDirectory ?? homedir());
+  const directory = uiAuditEvidenceDirectory(
+    input.issueNumber,
+    input.repoRoot ?? undefined,
+    input.homeDirectory ?? homedir(),
+    input.evidenceRoot ?? readUiAuditEvidenceRoot(input.repoRoot),
+  );
   const directoryExists = existsSync(directory) && statSync(directory).isDirectory();
   const notes = directoryExists ? readText(join(directory, 'notes.md')) : null;
   const observation = directoryExists ? readText(join(directory, 'browser-observation.md')) : null;
@@ -266,6 +272,18 @@ export function readManualUiAuditPolicy(repoRoot: string): boolean {
     return parsed.policy?.audit?.manualUiAudit !== false;
   } catch {
     return true;
+  }
+}
+
+export function readUiAuditEvidenceRoot(repoRoot: string | null): string {
+  if (!repoRoot) return '';
+  const path = join(repoRoot, '.qube', 'aie', 'config.json');
+  if (!existsSync(path)) return '';
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { policy?: { audit?: { evidenceRoot?: unknown } } };
+    return typeof parsed.policy?.audit?.evidenceRoot === 'string' ? parsed.policy.audit.evidenceRoot : '';
+  } catch {
+    return '';
   }
 }
 

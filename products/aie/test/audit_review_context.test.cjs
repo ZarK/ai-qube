@@ -29,7 +29,7 @@ function homeRepo() {
 }
 
 function writeCompleteEvidence(home, repo, issueNumber, extras = {}) {
-  const directory = join(home, 'github-verification', 'product-ui', String(issueNumber));
+  const directory = join(home, '.qube', 'verification', 'product-ui', String(issueNumber));
   mkdirSync(join(directory, 'screenshots'), { recursive: true });
   writeFileSync(join(directory, 'browser-observation.md'), extras.observation ?? 'Opened http://localhost:3000/settings. commit: abcdef1234567\n');
   writeFileSync(join(directory, 'notes.md'), extras.notes ?? 'Visible settings page matched the expected layout.\n');
@@ -75,7 +75,7 @@ describe('audit review context', () => {
 
   it('keeps incomplete screenshot-only evidence incomplete', () => {
     const { home, repo } = homeRepo();
-    const directory = join(home, 'github-verification', 'product-ui', '548');
+    const directory = join(home, '.qube', 'verification', 'product-ui', '548');
     mkdirSync(join(directory, 'screenshots'), { recursive: true });
     writeFileSync(join(directory, 'screenshots', 'only.png'), 'png\n');
     const record = loadAuditReviewRecord({ issueNumber: 548, repoRoot: repo, homeDirectory: home });
@@ -147,7 +147,7 @@ describe('audit review context', () => {
     assert.equal(record.stamp.headSha, 'abcdef1234567');
     assert.equal(record.stamp.digest, record.digest);
 
-    const stampPath = join(home, 'github-verification', 'product-ui', '548', 'head-stamp.json');
+    const stampPath = join(home, '.qube', 'verification', 'product-ui', '548', 'head-stamp.json');
     const workerSource = `
       const { parentPort, workerData } = require('node:worker_threads');
       const { writeAuditHeadStamp } = require(workerData.modulePath);
@@ -158,7 +158,7 @@ describe('audit review context', () => {
       eval: true,
       workerData: {
         modulePath: require.resolve('../dist/app/audit_review_context.js'),
-        directory: join(home, 'github-verification', 'product-ui', '548'),
+        directory: join(home, '.qube', 'verification', 'product-ui', '548'),
         stamp: { headSha: 'abcdef1234567', digest: record.digest },
       },
     });

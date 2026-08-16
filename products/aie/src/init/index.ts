@@ -7,6 +7,8 @@ import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
 import { renderInitFiles } from '../init_renderer.js';
 import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
 import { getRepoRoot } from '../repo/index.js';
+import { DEFAULT_UI_AUDIT_EVIDENCE_ROOT, legacyUiAuditRepositoryDirectory, legacyUiAuditTreeExists } from '../audit.js';
+import { homedir } from 'node:os';
 import { reviewModeOf } from '../review_mode.js';
 import { adoptFromSource } from './from_source.js';
 import { applyFreshSetupPolicy } from './fresh_setup.js';
@@ -199,11 +201,12 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
     });
   }
 
-  if (policy.manualUiAudit !== undefined || policy.uiAuditAppLaunch !== undefined || policy.uiAuditTarget !== undefined) {
+  if (policy.manualUiAudit !== undefined || policy.uiAuditAppLaunch !== undefined || policy.uiAuditTarget !== undefined || policy.uiAuditEvidenceRoot !== undefined) {
     policyRecord.audit = mergeNestedRecord(policyRecord.audit, {
       ...(policy.manualUiAudit !== undefined ? { manualUiAudit: policy.manualUiAudit } : {}),
       ...(policy.uiAuditAppLaunch !== undefined ? { appLaunch: policy.uiAuditAppLaunch } : {}),
       ...(policy.uiAuditTarget !== undefined ? { target: policy.uiAuditTarget } : {}),
+      ...(policy.uiAuditEvidenceRoot !== undefined ? { evidenceRoot: policy.uiAuditEvidenceRoot } : {}),
     });
   }
 
@@ -503,6 +506,7 @@ function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof a
     qualityGates: [...config.qualityGates],
     qualityControl: config.qualityControl,
     manualUiAudit: config.manualUiAudit,
+    uiAuditEvidenceRoot: config.uiAuditEvidenceRoot === '' ? undefined : config.uiAuditEvidenceRoot,
   };
 }
 
@@ -572,7 +576,19 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const flagAnswers = answersFromPolicy(policy);
   const fromAnswers = options.from ? answersFromRecord(baseRecord) : {};
   const answers = { ...fromAnswers, ...flagAnswers };
-  const askedQuestions = buildInitQuestions({ machine, answers, useDefaults: options.useDefaults });
+  const homeDirectory = options.homeDirectory ?? homedir();
+  if (legacyUiAuditTreeExists(repoRoot ?? undefined, homeDirectory) && !answers.uiAuditEvidenceRoot) {
+    warnings.push(
+      `Existing UI audit evidence was found at ${legacyUiAuditRepositoryDirectory(repoRoot ?? undefined, homeDirectory)}. Choose that path or ${DEFAULT_UI_AUDIT_EVIDENCE_ROOT}. Init will not copy or delete those files.`,
+    );
+  }
+  const askedQuestions = buildInitQuestions({
+    machine,
+    answers,
+    useDefaults: options.useDefaults,
+    repoRoot,
+    homeDirectory,
+  });
   const fillAnswers = Boolean(options.guide) || Boolean(options.yes) || Boolean(options.useDefaults);
   const questions = fillAnswers ? fillUnansweredQuestions(askedQuestions) : askedQuestions;
   policy = applyQuestionAnswersToPolicy(policy, questions);

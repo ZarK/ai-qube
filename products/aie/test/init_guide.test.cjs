@@ -170,6 +170,94 @@ describe('init guide questions', () => {
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /isolated requires an installed review host/);
   });
+
+  it('asks where to keep UI audit evidence when UI audit is recommended', () => {
+    const questions = buildInitQuestions({
+      machine: { installedHosts: ['grok-build'], agentBrowserAvailable: true, aiqAvailable: false, hasUserFacingUi: true },
+      answers: {},
+    });
+    const evidence = questions.find(item => item.id === 'ui-audit-evidence');
+    assert.ok(evidence);
+    assert.match(evidence.prompt, /Where should this machine keep local UI audit evidence/);
+    assert.equal(evidence.recommendedValue, '~/.qube/verification');
+    assert.ok(evidence.options.some(option => option.value === '~/.qube/verification'));
+    assert.equal(evidence.options.find(option => option.value === '~/github-verification').available, false);
+  });
+
+  it('omits the evidence-root question when UI audit is off and not recommended', () => {
+    const questions = buildInitQuestions({
+      machine: { installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false, hasUserFacingUi: false },
+      answers: { manualUiAudit: false },
+    });
+    assert.equal(questions.some(item => item.id === 'ui-audit-evidence'), false);
+  });
+
+  it('writes the QUBE user default evidence root on --yes when UI audit is on', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'index.html'), '<html></html>\n');
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      yes: true,
+      installedHosts: ['grok-build'],
+      agentBrowserAvailable: true,
+      aiqAvailable: false,
+    });
+    assert.equal(result.ok, true);
+    const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(written.policy.audit.evidenceRoot, '~/.qube/verification');
+  });
+
+  it('reports an existing legacy tree, keeps it on disk, and still writes the QUBE default on --yes', async () => {
+    const repo = makeGitRepo();
+    const home = join(repo, 'operator-home');
+    const { basename } = require('node:path');
+    const repoSegment = basename(repo).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'repository';
+    const legacyDir = join(home, 'github-verification', repoSegment);
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, 'notes.md'), 'old evidence\n');
+    writeFileSync(join(repo, 'index.html'), '<html></html>\n');
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      yes: true,
+      installedHosts: ['grok-build'],
+      agentBrowserAvailable: true,
+      aiqAvailable: false,
+      homeDirectory: home,
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.warnings.some(warning => /github-verification/.test(warning)));
+    assert.equal(existsSync(join(legacyDir, 'notes.md')), true);
+    const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(written.policy.audit.evidenceRoot, '~/.qube/verification');
+  });
+
+  it('keeps a pre-set custom evidence root instead of overwriting it', () => {
+    const policy = applyQuestionAnswersToPolicy(
+      { uiAuditEvidenceRoot: '~/already-set' },
+      [{ id: 'ui-audit-evidence', answered: true, value: '~/.qube/verification' }],
+    );
+    assert.equal(policy.uiAuditEvidenceRoot, '~/already-set');
+  });
+});
+
+describe('UI audit evidence path docs', () => {
+  it('records the user-local ~/.qube/verification path as uncommitted AIE audit evidence', () => {
+    const { readFileSync: readDoc } = require('node:fs');
+    const { resolve } = require('node:path');
+    const page = readDoc(resolve(process.cwd(), '../../docs/qube-paths-and-artifacts.md'), 'utf8');
+    assert.match(page, /~\/\.qube\/verification\/<repository>\/<issue>\//);
+    assert.match(page, /user-local UI audit evidence/);
+    assert.match(page, /Not committed/);
+    assert.match(page, /github-verification/);
+  });
 });
 
 describe('init --from', () => {

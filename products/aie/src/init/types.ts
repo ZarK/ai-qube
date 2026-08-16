@@ -29,7 +29,7 @@ export interface LegacyState {
   nextCommand: string;
 }
 
-export type InitQuestionId = 'review-mode' | 'reviewers' | 'review-models' | 'publisher' | 'quality-gate' | 'ui-audit';
+export type InitQuestionId = 'review-mode' | 'reviewers' | 'review-models' | 'publisher' | 'quality-gate' | 'ui-audit' | 'ui-audit-evidence';
 
 export interface InitQuestionOption {
   value: string;
@@ -135,6 +135,7 @@ export interface InitPolicyOptions {
   manualUiAudit?: boolean;
   uiAuditAppLaunch?: string;
   uiAuditTarget?: string;
+  uiAuditEvidenceRoot?: string;
   gates?: GateConfig[];
   qualityGates?: string[];
   qualityControl?: boolean;
@@ -158,5 +159,6 @@ export interface InitOptions {
   fetchRepoConfig?: (slug: string) => Promise<string>;
   installedHosts?: readonly string[];
   agentBrowserAvailable?: boolean;
+  homeDirectory?: string;
   aiqAvailable?: boolean;
 }
