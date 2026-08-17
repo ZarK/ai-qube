@@ -36,6 +36,7 @@ export const componentFixtures = componentCatalog.map(([id, command, packageName
 export const expectedComponentRows = componentFixtures.map(({ id, command, name, version }) => [id, command, name, version]);
 
 export const aibVersion = dependencyVersion("@tjalve/aib");
+export const aieVersion = dependencyVersion("@tjalve/aie");
 
 export const adapterPackageVersions = Object.freeze({
   "@tjalve/qube-adapter-claude-code": "0.1.4",
@@ -73,4 +74,12 @@ export const aibExpectedPathPattern = new RegExp(
 
 export const aibUnableVerifyPattern = new RegExp(
   `unable to verify @tjalve\\/aib@${escapeRegExp(aibVersion)}`
+);
+
+export const aieUnableVerifyPattern = new RegExp(
+  `unable to verify @tjalve\\/aie@${escapeRegExp(aieVersion)}`
+);
+
+export const aieExpectedPathPattern = new RegExp(
+  `expected @tjalve\\/aie@${escapeRegExp(aieVersion)}, found 0\\.0\\.1`
 );

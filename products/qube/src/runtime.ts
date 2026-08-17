@@ -1440,7 +1440,7 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
     return undefined;
   }
 
-  const resolution = withPackageMetadata(component, pathPath, "path", findNearestPackageJson(pathPath));
+  const resolution = withPackageMetadata(component, pathPath, "path", findCommandPackageJson(pathPath, component.packageName));
   if (!resolution.packageVersion) {
     return {
       ...resolution,
@@ -6191,6 +6191,48 @@ function findNearestPackageJson(commandPath: string): string | undefined {
     if (next === current) return undefined;
     current = next;
   }
+}
+
+function commandDirectory(commandPath: string): string {
+  try {
+    return path.dirname(realpathSync.native(commandPath));
+  } catch {
+    return path.dirname(path.resolve(commandPath));
+  }
+}
+
+function packageNameSegments(packageName: string): string[] | undefined {
+  const segments = packageName.split("/");
+  if (segments.length === 0 || segments.some(segment => segment === "" || segment === "." || segment === "..")) {
+    return undefined;
+  }
+  return segments;
+}
+
+function packageJsonBesideCommand(commandPath: string, packageName: string): string | undefined {
+  const segments = packageNameSegments(packageName);
+  if (!segments) {
+    return undefined;
+  }
+  const commandDir = commandDirectory(commandPath);
+  const candidate = path.join(commandDir, "node_modules", ...segments, "package.json");
+  const relative = path.relative(commandDir, candidate);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  return existsSync(candidate) ? candidate : undefined;
+}
+
+function findCommandPackageJson(commandPath: string, packageName: string): string | undefined {
+  const nearest = findNearestPackageJson(commandPath);
+  if (nearest && readPackageVersion(packageName, nearest)) {
+    return nearest;
+  }
+  const beside = packageJsonBesideCommand(commandPath, packageName);
+  if (beside && readPackageVersion(packageName, beside)) {
+    return beside;
+  }
+  return nearest;
 }
 
 function dispatchCommand(request: DispatchRequest): Promise<number> {

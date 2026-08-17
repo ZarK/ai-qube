@@ -61,6 +61,9 @@ import {
   aibExpectedPathPattern,
   aibUnableVerifyPattern,
   aibVersion,
+  aieExpectedPathPattern,
+  aieUnableVerifyPattern,
+  aieVersion,
   dependencyVersion,
   qubePackageName,
   qubePackageVersion,
@@ -74,11 +77,24 @@ const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const binPath = fileURLToPath(new URL("../dist/bin/qube.js", import.meta.url));
 
 function runCli(args, options = {}) {
+  const env = { ...process.env, ...options.env };
+  if (process.platform === "win32" && Object.hasOwn(options.env ?? {}, "PATH") && !Object.hasOwn(options.env ?? {}, "Path")) {
+    env.Path = options.env.PATH;
+  }
   return spawnSync(process.execPath, [binPath, ...args], {
     cwd: options.cwd ?? packageRoot,
     encoding: "utf8",
-    env: { ...process.env, ...options.env }
+    env
   });
+}
+
+function assertSameCommandPath(actual, expected) {
+  assert.ok(actual, "expected a resolved command path");
+  if (process.platform === "win32") {
+    assert.equal(path.normalize(actual).toLowerCase(), path.normalize(expected).toLowerCase());
+    return;
+  }
+  assert.equal(actual, expected);
 }
 
 function createQualityDoctorShim(root) {
@@ -2977,7 +2993,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
-    assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), commandPath);
+    assertSameCommandPath(resolveCommand("aib", { cwd, env, packageRoot }), commandPath);
 
     const planned = planQubeCli(["run", "aib", "--", "init", "--dry-run"], { cwd, env, packageRoot });
     assert.equal(planned.exitCode, 0);
@@ -3216,10 +3232,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const env = { PATH: `${pathDir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
     const resolution = resolveComponentCommand(component, { cwd: path.resolve("."), env, packageRoot });
 
-    assert.equal(resolution?.commandPath, installCommandPath);
+    assertSameCommandPath(resolution?.commandPath, installCommandPath);
     assert.equal(resolution?.source, "install");
     assert.equal(resolution?.packageVersion, aibVersion);
-    assert.equal(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
+    assertSameCommandPath(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 
   it("refuses a stale same-package binary from PATH", async () => {
@@ -3239,6 +3255,132 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.match(planned.stderr, /Refusing aib from PATH/);
     assert.match(planned.stderr, aibExpectedPathPattern);
     assert.equal(planned.dispatch, undefined);
+  });
+
+  it("accepts an npm-prefix PATH shim beside the matching package", async () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-"));
+    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
+    const command = process.platform === "win32" ? "aie.cmd" : "aie";
+    const commandPath = path.join(prefix, command);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
+    await writeFile(path.join(prefix, "package.json"), `${JSON.stringify({ name: "npm-prefix" })}\n`);
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
+    if (process.platform !== "win32") await chmod(commandPath, 0o755);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-install-"));
+    const env = { PATH: prefix, OS: process.env.OS };
+    const component = findQubeComponent("aie");
+    assert.ok(component);
+    const resolution = resolveComponentCommand(component, { cwd, env, packageRoot });
+
+    assertSameCommandPath(resolution?.commandPath, commandPath);
+    assert.equal(resolution?.source, "path");
+    assert.equal(resolution?.packageVersion, aieVersion);
+    assert.equal(resolution?.error, undefined);
+    assertSameCommandPath(resolveCommand("aie", { cwd, env, packageRoot }), commandPath);
+
+    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
+    assert.equal(planned.exitCode, 0);
+    assert.equal(planned.dispatch?.resolution.source, "path");
+    assert.equal(planned.dispatch?.resolution.packageVersion, aieVersion);
+  });
+
+  it("refuses an npm-prefix PATH shim with malformed package metadata", async () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-"));
+    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
+    const command = process.platform === "win32" ? "aie.cmd" : "aie";
+    const commandPath = path.join(prefix, command);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
+    await writeFile(path.join(packageDir, "package.json"), "{");
+    if (process.platform !== "win32") await chmod(commandPath, 0o755);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-install-"));
+    const env = { PATH: prefix, OS: process.env.OS };
+    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
+
+    assert.equal(planned.exitCode, 4);
+    assert.match(planned.stderr, /Refusing aie from PATH/);
+    assert.match(planned.stderr, aieUnableVerifyPattern);
+    assert.equal(planned.dispatch, undefined);
+    assert.equal(resolveCommand("aie", { cwd, env, packageRoot }), undefined);
+  });
+
+  it("refuses an npm-prefix PATH shim whose package name does not match", async () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-"));
+    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
+    const command = process.platform === "win32" ? "aie.cmd" : "aie";
+    const commandPath = path.join(prefix, command);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/other", version: aieVersion })}\n`);
+    if (process.platform !== "win32") await chmod(commandPath, 0o755);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-install-"));
+    const env = { PATH: prefix, OS: process.env.OS };
+    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
+
+    assert.equal(planned.exitCode, 4);
+    assert.match(planned.stderr, /Refusing aie from PATH/);
+    assert.match(planned.stderr, aieUnableVerifyPattern);
+    assert.equal(planned.dispatch, undefined);
+  });
+
+  it("refuses an npm-prefix PATH shim whose package version does not match", async () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-"));
+    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
+    const command = process.platform === "win32" ? "aie.cmd" : "aie";
+    const commandPath = path.join(prefix, command);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.0.1" })}\n`);
+    if (process.platform !== "win32") await chmod(commandPath, 0o755);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-install-"));
+    const env = { PATH: prefix, OS: process.env.OS };
+    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
+
+    assert.equal(planned.exitCode, 4);
+    assert.match(planned.stderr, /Refusing aie from PATH/);
+    assert.match(planned.stderr, aieExpectedPathPattern);
+    assert.equal(planned.dispatch, undefined);
+  });
+
+  it("prefers workspace component binaries over an npm-prefix PATH shim", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-cwd-"));
+    const workspaceBin = path.join(cwd, "node_modules", ".bin");
+    const workspacePackage = path.join(cwd, "node_modules", "@tjalve", "aie");
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-prefix-"));
+    const prefixPackage = path.join(prefix, "node_modules", "@tjalve", "aie");
+    const command = process.platform === "win32" ? "aie.cmd" : "aie";
+    const workspaceCommandPath = path.join(workspaceBin, command);
+    const pathCommandPath = path.join(prefix, command);
+    await mkdir(workspaceBin, { recursive: true });
+    await mkdir(workspacePackage, { recursive: true });
+    await mkdir(prefixPackage, { recursive: true });
+    await writeFile(workspaceCommandPath, process.platform === "win32" ? "@echo off\r\necho workspace-aie %*\r\n" : "#!/usr/bin/env sh\necho workspace-aie \"$@\"\n");
+    await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
+    await writeFile(path.join(workspacePackage, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
+    await writeFile(path.join(prefixPackage, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
+    if (process.platform !== "win32") {
+      await chmod(workspaceCommandPath, 0o755);
+      await chmod(pathCommandPath, 0o755);
+    }
+
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-install-"));
+    const env = { PATH: prefix, OS: process.env.OS };
+    const component = findQubeComponent("aie");
+    assert.ok(component);
+    const resolution = resolveComponentCommand(component, { cwd, env, packageRoot });
+
+    assertSameCommandPath(resolution?.commandPath, workspaceCommandPath);
+    assert.equal(resolution?.source, "workspace");
+    assert.equal(resolution?.error, undefined);
   });
 
   it("refuses PATH component binary when package metadata cannot be verified", async () => {
@@ -3327,7 +3469,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
 
 describe("qube init composer orchestrator", () => {
   function initEnv(packageRoot, extra = {}) {
-    return { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, ...extra };
+    return { PATH: "", Path: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, ...extra };
   }
 
   it("composes aie and aiu init from one selection set for a single host", () => {
@@ -3488,10 +3630,11 @@ describe("qube init composer orchestrator", () => {
 
   it("never reports success when a required init component is unavailable", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-missing-aiu-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-missing-aiu-cwd-"));
     createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
     // aiu is intentionally not shimmed, so it cannot be resolved.
 
-    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
+    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
     assert.notEqual(result.status, 0);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
@@ -3851,7 +3994,8 @@ describe("composer surface envelopes and naming", () => {
   it("preserves the planning failure exit code and cause in one JSON envelope", () => {
     // aiu is not resolvable at its pinned version in this workspace, so planning fails with the component-missing contract.
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-continue-json-"));
-    const result = runCli(["continue", "--json"], { cwd });
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-continue-json-install-"));
+    const result = runCli(["continue", "--json"], { cwd, env: { PATH: "", Path: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.equal(result.status, 4);
