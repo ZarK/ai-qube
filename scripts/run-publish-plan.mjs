@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PUBLISH_PACKAGES, SET_PREPARE, SET_VERIFY } from "./publish-packages.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PHASES = new Set(["prepare", "verify", "stage"]);
+const PHASES = new Set(["prepare", "verify", "publish"]);
 
 function fail(message, code = 1) {
   process.stderr.write(`${message}\n`);
@@ -51,7 +51,7 @@ function allowlistedEntry(entry) {
 const phase = process.argv[2] ?? "";
 const planPath = path.resolve(process.argv[3] ?? "publish-plan.json");
 if (!PHASES.has(phase)) {
-  fail(`Usage: node scripts/run-publish-plan.mjs <prepare|verify|stage> <plan.json>`);
+  fail(`Usage: node scripts/run-publish-plan.mjs <prepare|verify|publish> <plan.json>`);
 }
 
 const plan = JSON.parse(await readFile(planPath, "utf8"));
@@ -75,7 +75,7 @@ if (phase === "prepare") {
     runArgv(process.execPath, [path.join(ROOT, "scripts", "resolve-publish-dependencies.mjs"), manifest], ROOT);
     runArgv(process.execPath, [path.join(ROOT, "scripts", "check-publish-manifest.mjs"), manifest], ROOT);
     try {
-      runArgv("npm", ["stage", "publish", ".", "--access", "public", "--ignore-scripts"], path.join(ROOT, allowed.path));
+      runArgv("npm", ["publish", ".", "--access", "public", "--ignore-scripts"], path.join(ROOT, allowed.path));
     } finally {
       runArgv(process.execPath, [path.join(ROOT, "scripts", "restore-publish-dependencies.mjs"), manifest], ROOT);
     }

@@ -1,9 +1,9 @@
 # Release Controls
 
-QUBE packages publish from this repository through package-specific release tags
-and npm trusted publishing. The workflow is intentionally tokenless: it uses the
-GitHub Actions `id-token: write` permission only inside the publish job so npm can
-verify the workflow identity through OIDC.
+QUBE packages publish from this repository through one set tag and npm trusted
+publishing. The workflow is intentionally tokenless: it uses the GitHub Actions
+`id-token: write` permission only inside the publish job so npm can verify the
+workflow identity through OIDC.
 
 ## GitHub Controls
 
@@ -26,31 +26,50 @@ Configure each npm package with this trusted publisher:
 | Repository | `ai-qube` |
 | Workflow filename | `publish.yml` |
 | Environment | `npm-publish` |
-| Allowed action | `npm stage publish` |
+| Allowed action | `npm publish` |
 
-The GitHub environment is named `npm-publish`. Keep reviewer approval enabled for
-that environment when the repository plan supports it.
+Allow `npm publish` once on each trusted publisher. After that, pushing the set
+tag is the only maintainer action. The GitHub environment is named `npm-publish`.
+Keep reviewer approval enabled for that environment when the repository plan
+supports it. That environment approval, if required, is the proof-of-presence
+gate. There is no per-package npm UI approval step.
 
 ## Normal Package Release
 
 The maintainer triggers a release. Merge to main does not publish.
 
-To publish the current packages as one set, tag the `@tjalve/qube` version after
-that commit is on `main`:
+After the versions you want are on `main`, run one command:
 
 ```sh
 git switch main
 git pull --ff-only origin main
+pnpm run release
+```
+
+Or push the set tag yourself:
+
+```sh
 git tag publish-set-v<qube-version>
 git push origin publish-set-v<qube-version>
 ```
 
-The workflow prepares the set, checks manifests, packs the packages, installs
-them into a prefix outside the checkout, and fails if `qube`, `aie`, `aib`,
-`aiu`, or `aiq` does not start. Then it stages each package with trusted
-publishing.
+`pnpm run release -- --dry-run` prints the tag and the unpublished package list
+without pushing.
 
-To publish one package, use a package-specific tag:
+The workflow prepares the set, checks manifests and composer pins, packs every
+current workspace package from the checkout, installs those tarballs into a
+prefix outside the checkout, and fails if `qube`, `aie`, `aib`, `aiu`, or `aiq`
+does not start. Then it publishes only the versions that are not already on npm:
+
+```sh
+npm publish . --access public --ignore-scripts
+```
+
+Already-public versions are skipped. Unchanged adapters do not need a bump.
+Composer pins for Bootstrap, Executor, Quality, Umpire, CLI, and core must match
+the workspace versions; CI fails if they drift.
+
+To publish one package in an emergency, use a package-specific tag:
 
 ```sh
 git tag publish-<package>-v<version>
@@ -82,21 +101,15 @@ npm install -g --ignore-scripts @tjalve/qube@<version>
 ```
 
 Run `node scripts/print-publish-plan.mjs` from the repository root to print the
-ordered seed and staged publish commands for the current workspace versions.
+ordered seed and set-tag commands for the current workspace versions.
 The workflow verifies the tag version against the selected package manifest,
 checks that the tag commit is reachable from `origin/main`, installs dependencies
 with lifecycle scripts disabled, builds required workspace dependencies, verifies
-the selected package, and runs:
-
-```sh
-npm stage publish . --access public --ignore-scripts
-```
-
-Approve the staged package in npm after the workflow succeeds.
+the selected package, and publishes with trusted publishing.
 
 ## First Publish Exception
 
-npm staged publishing requires the package name to already exist on npm. A
+Trusted publishing requires the package name to already exist on npm. A
 brand-new package name must be seeded once with a normal authenticated publish.
 Because local shells are not a supported provenance provider, override package
 provenance for that seed publish:
@@ -108,7 +121,7 @@ cd packages/qube-core
 npm publish --access public --provenance=false --otp <otp>
 ```
 
-Seed publish order for the 0.2.0 wave:
+Seed publish order for a new name:
 
 1. `@tjalve/qube-core`
 2. `@tjalve/qube-adapter-github`
@@ -123,17 +136,7 @@ Seed publish order for the 0.2.0 wave:
 
 Use the same seed pattern for any other brand-new package name, after its
 published dependencies already exist. Then configure the trusted publisher above
-for the new package and use staged publishing for later versions.
-
-Staged publish order after seeds (tags on `main`):
-
-1. `qube-cli`
-2. all adapter keys (only needed again when adapter versions change)
-3. `aib`
-4. `aie`
-5. `aiu`
-6. `aiq`
-7. `qube`
+for the new package, allow `npm publish`, and use the set tag for later versions.
 
 For package-local installs and release checks, use exact versions and disabled
 lifecycle scripts:

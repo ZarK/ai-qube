@@ -230,5 +230,100 @@ export async function resolvePublishTag(tag, root = ROOT) {
 }
 
 export function commandPackages(plan) {
-  return plan.packages.filter(entry => typeof entry.command === "string" && entry.command.length > 0);
+  const packages = plan.verifyPackages ?? plan.packages;
+  return packages.filter(entry => typeof entry.command === "string" && entry.command.length > 0);
+}
+
+export function registryPackageUrl(packageName, registry = "https://registry.npmjs.org/") {
+  const base = String(registry).endsWith("/") ? registry : `${registry}/`;
+  return `${base}${String(packageName).replace("/", "%2f")}`;
+}
+
+export async function readPublishedVersions(packageName, options = {}) {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const url = registryPackageUrl(packageName, options.registry);
+  let response;
+  try {
+    response = await fetchImpl(url, { headers: { accept: "application/json" } });
+  } catch (error) {
+    throw Object.assign(
+      new Error(`Registry lookup for ${packageName} failed.`),
+      { reasonCode: "registry-lookup", cause: error }
+    );
+  }
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw Object.assign(
+      new Error(`Registry lookup for ${packageName} failed (${response.status}).`),
+      { reasonCode: "registry-lookup" }
+    );
+  }
+  let body;
+  try {
+    body = await response.json();
+  } catch (error) {
+    throw Object.assign(
+      new Error(`Registry lookup for ${packageName} failed.`),
+      { reasonCode: "registry-lookup", cause: error }
+    );
+  }
+  return Object.keys(body.versions ?? {});
+}
+
+export async function readPublishedVersionsForPlan(plan, options = {}) {
+  const publishedByName = new Map();
+  for (const entry of plan.packages ?? []) {
+    if (publishedByName.has(entry.packageName)) continue;
+    publishedByName.set(entry.packageName, await readPublishedVersions(entry.packageName, options));
+  }
+  return publishedByName;
+}
+
+function failFinalize(message, reasonCode) {
+  const error = new Error(message);
+  error.reasonCode = reasonCode;
+  throw error;
+}
+
+export function finalizePublishPlan(plan, publishedByName) {
+  if (!plan || !Array.isArray(plan.packages) || plan.packages.length === 0) {
+    failFinalize("Publish plan has no packages.", "empty-plan");
+  }
+  const publishedMap = publishedByName instanceof Map
+    ? publishedByName
+    : new Map(Object.entries(publishedByName ?? {}));
+
+  if (plan.mode === "package") {
+    const entry = plan.packages[0];
+    const published = publishedMap.get(entry.packageName) ?? [];
+    if (published.includes(entry.version)) {
+      failFinalize(`${entry.packageName}@${entry.version} is already on npm.`, "already-published");
+    }
+    return Object.freeze({
+      ...plan,
+      packages: Object.freeze([...plan.packages]),
+      verifyPackages: Object.freeze([...plan.packages]),
+      skipped: Object.freeze([]),
+    });
+  }
+
+  const selected = [];
+  const skipped = [];
+  for (const entry of plan.packages) {
+    const published = publishedMap.get(entry.packageName) ?? [];
+    if (published.includes(entry.version)) {
+      skipped.push(Object.freeze({ ...entry, skipReason: "already-published" }));
+    } else {
+      selected.push(entry);
+    }
+  }
+  if (selected.length === 0) {
+    failFinalize("Publish set has no unpublished packages.", "nothing-to-publish");
+  }
+  return Object.freeze({
+    ...plan,
+    packages: Object.freeze(selected),
+    verifyPackages: Object.freeze([...plan.packages]),
+    skipped: Object.freeze(skipped),
+  });
 }

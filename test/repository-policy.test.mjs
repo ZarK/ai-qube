@@ -24,7 +24,7 @@ describe("repository policy", () => {
     assert.equal(config.policy.instructions.supplyChainSafety, true);
   });
 
-  it("keeps active publishing workflow staged, tokenless, and branch guarded", () => {
+  it("keeps active publishing workflow tokenless and branch guarded", () => {
     const workflow = read(".github/workflows/publish.yml");
     const codeowners = read(".github/CODEOWNERS");
 
@@ -35,14 +35,15 @@ describe("repository policy", () => {
     assert.match(workflow, /run-publish-plan\.mjs prepare publish-plan\.json/);
     assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
     assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
-    assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
-    const stageScript = read("scripts/run-publish-plan.mjs");
-    assert.match(stageScript, /resolve-publish-dependencies\.mjs/);
-    assert.match(stageScript, /check-publish-manifest\.mjs/);
-    assert.match(stageScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts"\]/);
-    assert.match(stageScript, /restore-publish-dependencies\.mjs/);
+    assert.match(workflow, /run-publish-plan\.mjs publish publish-plan\.json/);
+    const publishScript = read("scripts/run-publish-plan.mjs");
+    assert.match(publishScript, /resolve-publish-dependencies\.mjs/);
+    assert.match(publishScript, /check-publish-manifest\.mjs/);
+    assert.match(publishScript, /\["publish", "\.", "--access", "public", "--ignore-scripts"\]/);
+    assert.match(publishScript, /restore-publish-dependencies\.mjs/);
+    assert.doesNotMatch(publishScript, /"stage"/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
-    assert.doesNotMatch(workflow, /(?:^|\s)npm publish(?:\s|$)/);
+    assert.doesNotMatch(workflow, /npm stage publish/);
     assert.match(codeowners, /^\.npmrc @ZarK$/m);
   });
 
@@ -64,8 +65,22 @@ describe("repository policy", () => {
     assert.match(rootPackage.scripts.verify, /verify:manifests/);
     assert.match(qubePackage.scripts.verify, /check-strict-package-json\.mjs/);
     assert.match(workflow, /pnpm run verify:manifests/);
-    assert.match(workflow, /node --test --test-concurrency=1 test\/local-install-qube\.test\.mjs test\/repository-policy\.test\.mjs test\/publish-tag\.test\.mjs test\/verify-installed-commands\.test\.mjs test\/adapter-package-graph\.test\.mjs/);
+    assert.match(rootPackage.scripts["version:audit"], /suite-pins\.mjs/);
+    assert.match(rootPackage.scripts.release, /release-set\.mjs/);
+    assert.match(workflow, /node --test --test-concurrency=1 test\/local-install-qube\.test\.mjs test\/repository-policy\.test\.mjs test\/publish-tag\.test\.mjs test\/publish-set\.test\.mjs test\/suite-pins\.test\.mjs test\/release-set\.test\.mjs test\/verify-installed-commands\.test\.mjs test\/adapter-package-graph\.test\.mjs/);
     assert.match(qubePackage.scripts.postpack, /restore-publish-dependencies\.mjs/);
+  });
+
+  it("documents one set-tag publish action with direct trusted publishing", () => {
+    const docs = read("docs/release-controls.md");
+    const plan = read("scripts/print-publish-plan.mjs");
+
+    assert.match(docs, /pnpm run release/);
+    assert.match(docs, /Allowed action \| `npm publish`/);
+    assert.match(docs, /npm publish \. --access public --ignore-scripts/);
+    assert.doesNotMatch(docs, /npm stage publish/);
+    assert.match(plan, /pnpm run release/);
+    assert.doesNotMatch(plan, /Approve the staged/);
   });
 
   it("keeps CI off the full AIQ suite while it is not publish-ready", () => {

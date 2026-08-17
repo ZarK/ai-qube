@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 describe("version audit", () => {
-  it("keeps package versions above audited npm-published versions", () => {
+  it("keeps package versions at or above audited npm-published versions", () => {
     const result = spawnSync(process.execPath, ["scripts/check-version-audit.mjs"], {
       cwd: new URL("..", import.meta.url),
       encoding: "utf8"

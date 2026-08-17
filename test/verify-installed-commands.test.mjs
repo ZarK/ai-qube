@@ -187,6 +187,34 @@ describe("installed command verification", () => {
     await assert.rejects(() => resolvePublishTag("publish-set-v0.0.0", repoRoot), /does not match/);
   });
 
+  it("uses verifyPackages from a filtered set plan so siblings stay local", async () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-set-"));
+    const planPath = path.join(repoRoot, "test", "tmp-verify-plan.json");
+    try {
+      writeShim(prefix, "qube", "echo help");
+      writeShim(prefix, "aie", "echo help");
+      writeFileSync(planPath, `${JSON.stringify({
+        mode: "set",
+        packages: [{ packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.6", path: "products/qube", command: "qube" }],
+        verifyPackages: [
+          { packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.6", path: "products/qube", command: "qube" },
+          { packageKey: "aie", packageName: "@tjalve/aie", version: "0.2.5", path: "products/aie", command: "aie" },
+        ],
+      })}\n`);
+      const report = await runInstalledCommandVerification({
+        repoRoot,
+        prefix,
+        skipPack: true,
+        planPath,
+      });
+      assert.equal(report.ok, true, report.error);
+      assert.deepEqual(report.probed.map(item => item.command), ["qube", "aie"]);
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+      rmSync(planPath, { force: true });
+    }
+  });
+
   it("fails closed when neither a plan nor commands are provided", async () => {
     const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-empty-"));
     try {

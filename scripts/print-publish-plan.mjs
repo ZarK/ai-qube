@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Prints the ordered publish plan for the current workspace versions.
- * Seed commands require npm OTP; staged tag publishes use GitHub Actions trusted publishing.
+ * Seed commands require npm OTP; set-tag publishes use GitHub Actions trusted publishing.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -33,11 +33,15 @@ process.stdout.write("git pull --ff-only origin main\n");
 process.stdout.write("pnpm install --frozen-lockfile --ignore-scripts\n");
 process.stdout.write("pnpm run verify\n\n");
 
-process.stdout.write("1) Preferred: publish the current packages as one set\n");
+process.stdout.write("1) One action: publish unpublished workspace versions as one set\n");
+process.stdout.write("pnpm run release\n");
+process.stdout.write("# or:\n");
 process.stdout.write(`git tag publish-set-v${qubeVersion}\n`);
 process.stdout.write(`git push origin publish-set-v${qubeVersion}\n`);
-process.stdout.write("# Approve the staged set in the npm UI after the workflow finishes.\n");
-process.stdout.write("# The workflow packs the set, installs it into a temp prefix, and checks that qube, aie, aib, aiu, and aiq start.\n\n");
+process.stdout.write("# Approve the GitHub npm-publish environment if reviewers are required.\n");
+process.stdout.write("# CI publishes every workspace version that is not already on npm and skips the rest.\n");
+process.stdout.write("# Packages become public when the job finishes. There is no npm UI approve step.\n");
+process.stdout.write("# The workflow packs the full set from the checkout, installs those tarballs, and checks that qube, aie, aib, aiu, and aiq start.\n\n");
 
 process.stdout.write("2) First-time seed publishes (npm OTP required; configure trusted publisher after each new package)\n");
 for (const key of seedKeys) {
@@ -51,13 +55,12 @@ for (const key of seedKeys) {
   process.stdout.write(`cd ${backToRoot}\n\n`);
 }
 
-process.stdout.write("3) Optional single-package staged publishes\n");
+process.stdout.write("3) Optional single-package publishes (emergencies only)\n");
 for (const key of PUBLISH_SET_ORDER) {
   const entry = PUBLISH_PACKAGES.get(key);
   const version = await readVersion(entry.packageJson);
   process.stdout.write(`git tag publish-${key}-v${version}\n`);
-  process.stdout.write(`git push origin publish-${key}-v${version}\n`);
-  process.stdout.write(`# Approve staged package in npm UI for publish-${key}-v${version}\n\n`);
+  process.stdout.write(`git push origin publish-${key}-v${version}\n\n`);
 }
 
 process.stdout.write("4) Recommended consumer install (global npm example)\n");
@@ -71,5 +74,6 @@ process.stdout.write(`npm install -g --ignore-scripts @tjalve/aie@${aieVersion} 
 process.stdout.write("Notes:\n");
 process.stdout.write("- Seed qube-core before any adapter seed publish.\n");
 process.stdout.write("- Re-run seed publishes only for package names that do not exist on npm yet.\n");
-process.stdout.write("- After the first wave, prefer publish-set-v<qubeVersion>. Use publish-* tags only for a single package.\n");
-process.stdout.write("- Do not publish from a local shell after the first seed. The maintainer pushes a tag.\n");
+process.stdout.write("- After the first wave, use publish-set-v<qubeVersion> or pnpm run release. Use publish-* tags only for a single package.\n");
+process.stdout.write("- Each npm trusted publisher must allow npm publish from .github/workflows/publish.yml and environment npm-publish.\n");
+process.stdout.write("- Do not publish from a local shell after the first seed. The maintainer pushes one set tag.\n");
