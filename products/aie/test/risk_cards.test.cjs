@@ -260,4 +260,37 @@ describe('aie risk cards', () => {
     assert.ok(planned.lanes[0].promptStackHash);
     assert.ok(planned.lanes[0].promptText.includes('Risk card '));
   });
+
+  it('keeps multi-process-concurrency faces free of review-infra nouns', () => {
+    const card = loadRiskCardCatalog().find(entry => entry.id === 'multi-process-concurrency');
+    assert.ok(card);
+    const faces = `${card.implementerFace}\n${card.reviewerFace}`.toLowerCase();
+    for (const noun of ['current-head', 'evidence publish', 'review lock', 'label mutation']) {
+      assert.equal(faces.includes(noun), false, `face leaked ${noun}`);
+    }
+    assert.equal(implementerFaceHasTestObligation(card.implementerFace), true);
+  });
+
+  it('does not activate multi-process-concurrency for a bounded-worker indexer issue', () => {
+    const selected = selectRiskCards({
+      issueText: [
+        'Index sources with a bounded, resumable worker.',
+        'Worker queue with a concurrency bound; each job is a recorded run.',
+        'A restart resumes unfinished jobs; the boot sweep marks orphaned jobs interrupted.',
+      ].join(' '),
+      paths: ['packages/storage/migrations/0001_workspace.sql'],
+    });
+    assert.equal(selected.some(card => card.id === 'multi-process-concurrency'), false);
+    assert.equal(selected.some(card => /current-head artifact/i.test(card.implementerFace)), false);
+  });
+
+  it('does not activate multi-process-concurrency from consumer lock or lockfile paths', () => {
+    assert.equal(selectRiskCards({ paths: ['apps/gateway/src/workspace-lock.ts'] }).some(card => card.id === 'multi-process-concurrency'), false);
+    assert.equal(selectRiskCards({ paths: ['pnpm-lock.yaml'] }).some(card => card.id === 'multi-process-concurrency'), false);
+  });
+
+  it('still activates multi-process-concurrency from a session-lock store path', () => {
+    const selected = selectRiskCards({ paths: ['products/aie/src/app/session_lock_store.ts'] });
+    assert.ok(selected.some(card => card.id === 'multi-process-concurrency'));
+  });
 });

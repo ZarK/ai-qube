@@ -9,6 +9,7 @@ const { describe, it } = require('node:test');
 const {
   buildModelReviewPrompt,
   buildModelRouteInvocation,
+  expectedCoverageAreas,
   isolatedRawOutputPath,
   modelRouteEnvironment,
   runModelReview,
@@ -781,6 +782,16 @@ describe('model review runner', () => {
 });
 
 describe('coverage attestation contract', () => {
+  it('defaults expected coverage to the lane id only', () => {
+    assert.deepEqual(expectedCoverageAreas({ lane: 'code-quality' }), ['code-quality']);
+    const prompt = buildModelReviewPrompt({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-lane-coverage-'))),
+      promptText: 'INSPECT EXACT LANE PROMPT',
+    });
+    assert.match(prompt, /Attest coverage for exactly these areas: code-quality\./);
+    assert.equal(prompt.includes('multi-process-concurrency'), false);
+  });
+
   function grokRun(body, coverageAreas) {
     return runModelReview({
       ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-coverage-')), 'grok-build'),

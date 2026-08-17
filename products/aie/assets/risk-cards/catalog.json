@@ -48,10 +48,10 @@
     "id": "multi-process-concurrency",
     "title": "Multi-process concurrency",
     "rank": 35,
-    "pathGlobs": ["**/*lock*", "**/*session*", "**/*runner*", "**/*parallel*"],
-    "issueKeywords": ["lock", "concurrency", "parallel", "race", "session", "atomic", "mutex", "process"],
-    "implementerFace": "Protect shared session locks, evidence writes, and provider mutations so correctness holds across independent processes, not only shared-memory calls. Prefer atomic create/replace and explicit lock owners over last-writer wins. Write a concurrent-write fixture that proves the second process cannot clobber the first process's current-head artifact.",
-    "reviewerFace": "Inspect race windows around review locks, evidence publish, and label mutations across processes. Concurrent runs must not clobber each other's current-head artifacts."
+    "pathGlobs": ["**/*session*lock*", "**/*mutex*", "**/*pidfile*", "**/*exclusive*lock*"],
+    "issueKeywords": ["mutex", "multi-process", "multiprocess", "pidfile", "exclusive lock", "exclusive-lock"],
+    "implementerFace": "Protect shared durable state so two independent processes cannot both treat themselves as the exclusive owner. Prefer an operating-system exclusive lock, a named mutex, or one connection that holds the lock over last-writer mkdir and pidfile steal. Write a concurrent-write fixture that proves the second process cannot clobber the first process's exclusive owner record.",
+    "reviewerFace": "Inspect exclusive-ownership windows only when the change claims two-process exclusion. mkdir, unlink, and pidfile steal are incomplete when two processes race. Speculative two-process hardening is advisory when the issue only requires same-process restart."
   },
   {
     "id": "filesystem-boundaries",

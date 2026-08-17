@@ -7,16 +7,17 @@
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
       "published": true,
-      "latestPublished": "0.2.3",
+      "latestPublished": "0.2.4",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
         "0.2.0",
         "0.2.1",
         "0.2.2",
-        "0.2.3"
+        "0.2.3",
+        "0.2.4"
       ],
-      "selectedVersion": "0.2.4"
+      "selectedVersion": "0.2.5"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -179,7 +180,7 @@
       "name": "@tjalve/aie",
       "packageJson": "products/aie/package.json",
       "published": true,
-      "latestPublished": "0.2.3",
+      "latestPublished": "0.2.4",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -189,9 +190,10 @@
         "0.2.0",
         "0.2.1",
         "0.2.2",
-        "0.2.3"
+        "0.2.3",
+        "0.2.4"
       ],
-      "selectedVersion": "0.2.4"
+      "selectedVersion": "0.2.5"
     },
     {
       "name": "@tjalve/aiq",

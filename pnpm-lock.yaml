@@ -408,7 +408,7 @@ importers:
         specifier: 0.2.4
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../aie
       '@tjalve/aiq':
         specifier: 0.2.4
