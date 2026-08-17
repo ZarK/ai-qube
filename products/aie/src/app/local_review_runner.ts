@@ -579,7 +579,6 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     paths: input.changedPaths ?? [],
   });
   const riskCardFragments = activatedRiskCards.map(card => formatRiskCardReviewerFragment(card));
-  const riskCardCoverageAreas = activatedRiskCards.map(card => card.id);
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   const reviewHost = configuredReviewModelHost(config);
@@ -779,7 +778,6 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptStackHash: jobPromptStackHash,
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
-              coverageAreas: riskCardCoverageAreas,
               reviewScope: plannedScope,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed
