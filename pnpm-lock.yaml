@@ -405,7 +405,7 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../aib
       '@tjalve/aie':
         specifier: 0.2.5

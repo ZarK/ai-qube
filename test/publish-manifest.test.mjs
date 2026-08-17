@@ -62,4 +62,25 @@ describe("publish manifest safety", () => {
       }
     });
   }
+
+  it("publishes Bootstrap against the same Executor the composer declares", async () => {
+    const aibSource = path.join(repoRoot, "products/aib/package.json");
+    const aie = JSON.parse(await readFile(path.join(repoRoot, "products/aie/package.json"), "utf8"));
+    const qube = JSON.parse(await readFile(path.join(repoRoot, "products/qube/package.json"), "utf8"));
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "qube-aib-executor-pin-"));
+    const tempPackageJsonPath = path.join(tempDir, "package.json");
+
+    try {
+      await copyFile(aibSource, tempPackageJsonPath);
+      const resolved = runScript("resolve-publish-dependencies.mjs", tempPackageJsonPath);
+      assert.equal(resolved.status, 0, resolved.stderr || resolved.stdout);
+
+      const aib = JSON.parse(await readFile(tempPackageJsonPath, "utf8"));
+      assert.equal(aib.dependencies["@tjalve/aie"], aie.version);
+      assert.equal(aib.dependencies["@tjalve/aie"], qube.dependencies["@tjalve/aie"]);
+      assert.equal(qube.dependencies["@tjalve/aib"], aib.version);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

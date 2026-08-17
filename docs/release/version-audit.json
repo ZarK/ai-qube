@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-08-16",
+  "checkedAt": "2026-08-17",
   "registry": "https://registry.npmjs.org/",
   "rule": "Every public installable QUBE-family package must use a monorepo version strictly greater than the latest independently published npm version. Unpublished packages may keep their selected initial version.",
   "packages": [
@@ -7,7 +7,7 @@
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
       "published": true,
-      "latestPublished": "0.2.4",
+      "latestPublished": "0.2.5",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -15,9 +15,10 @@
         "0.2.1",
         "0.2.2",
         "0.2.3",
-        "0.2.4"
+        "0.2.4",
+        "0.2.5"
       ],
-      "selectedVersion": "0.2.5"
+      "selectedVersion": "0.2.6"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -165,16 +166,17 @@
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
       "published": true,
-      "latestPublished": "0.2.3",
+      "latestPublished": "0.2.4",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
         "0.2.0",
         "0.2.1",
         "0.2.2",
-        "0.2.3"
+        "0.2.3",
+        "0.2.4"
       ],
-      "selectedVersion": "0.2.4"
+      "selectedVersion": "0.2.5"
     },
     {
       "name": "@tjalve/aie",
