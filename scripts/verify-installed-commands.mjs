@@ -325,7 +325,7 @@ export async function runInstalledCommandVerification(input = {}) {
     let planCommands = [];
     if (!packages && input.planPath) {
       const plan = loadPlan(input.planPath, repoRoot);
-      packages = plan.packages;
+      packages = plan.verifyPackages ?? plan.packages;
       planCommands = commandPackages(plan).map(entry => entry.command);
     }
     packages = packages ?? [];

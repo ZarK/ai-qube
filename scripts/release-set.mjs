@@ -1,0 +1,160 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { finalizePublishPlan, readPackageJson, readPublishedVersionsForPlan, resolvePublishTag } from "./publish-packages.mjs";
+import { inspectSuitePins, resolveSuiteRoot } from "./suite-pins.mjs";
+
+const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export function parseReleaseArgs(argv) {
+  const options = {
+    help: false,
+    json: false,
+    dryRun: false,
+    repoRoot: undefined,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === "--help" || token === "-h") options.help = true;
+    else if (token === "--json") options.json = true;
+    else if (token === "--dry-run") options.dryRun = true;
+    else if (token === "--repo-root") {
+      const value = argv[index += 1];
+      if (!value || value.startsWith("-")) {
+        throw Object.assign(new Error("--repo-root requires a value."), { reasonCode: "usage" });
+      }
+      options.repoRoot = value;
+    } else {
+      throw Object.assign(new Error(`Unknown argument: ${token}`), { reasonCode: "usage" });
+    }
+  }
+  return options;
+}
+
+function runGit(args, cwd) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  if (result.status !== 0) {
+    throw Object.assign(
+      new Error((result.stderr ?? "").trim() || `git ${args.join(" ")} failed.`),
+      { reasonCode: "git" }
+    );
+  }
+  return (result.stdout ?? "").trim();
+}
+
+export function inspectReleaseCheckout(root, git = { run: runGit }) {
+  const branch = git.run(["rev-parse", "--abbrev-ref", "HEAD"], root);
+  if (branch !== "main") {
+    throw Object.assign(new Error(`Release requires branch main, found ${branch}.`), {
+      reasonCode: "not-main",
+    });
+  }
+  const status = git.run(["status", "--porcelain", "--untracked-files=no"], root);
+  if (status.length > 0) {
+    throw Object.assign(new Error("Release requires a clean tracked working tree on main."), {
+      reasonCode: "dirty-worktree",
+    });
+  }
+  const head = git.run(["rev-parse", "HEAD"], root);
+  const originMain = git.run(["rev-parse", "origin/main"], root);
+  if (head !== originMain) {
+    throw Object.assign(new Error("Release requires HEAD to match origin/main."), {
+      reasonCode: "main-stale",
+    });
+  }
+  return { branch, head };
+}
+
+export async function planRelease(options = {}) {
+  const root = resolveSuiteRoot(options.repoRoot ?? DEFAULT_ROOT);
+  const pins = inspectSuitePins(root);
+  if (!pins.ok) {
+    throw Object.assign(new Error(pins.failures.join("\n")), { reasonCode: "split-pins" });
+  }
+  const qube = await readPackageJson("products/qube/package.json", root);
+  const tag = `publish-set-v${qube.version}`;
+  const resolved = await resolvePublishTag(tag, root);
+  const publishedByName = options.publishedByName ?? await readPublishedVersionsForPlan(resolved, options);
+  const plan = finalizePublishPlan(resolved, publishedByName);
+  return {
+    tag,
+    setVersion: qube.version,
+    packages: plan.packages.map(entry => ({
+      packageKey: entry.packageKey,
+      packageName: entry.packageName,
+      version: entry.version,
+    })),
+    skipped: (plan.skipped ?? []).map(entry => ({
+      packageKey: entry.packageKey,
+      packageName: entry.packageName,
+      version: entry.version,
+      skipReason: entry.skipReason,
+    })),
+  };
+}
+
+export async function runRelease(options = {}) {
+  const planned = await planRelease(options);
+  if (options.dryRun) {
+    return { ok: true, dryRun: true, pushed: false, ...planned };
+  }
+  const root = resolveSuiteRoot(options.repoRoot ?? DEFAULT_ROOT);
+  const git = options.git ?? { run: runGit };
+  inspectReleaseCheckout(root, git);
+  const existing = git.run(["tag", "--list", planned.tag], root);
+  if (!existing) {
+    git.run(["tag", "-a", planned.tag, "-m", `Publish set ${planned.setVersion}`], root);
+  }
+  git.run(["push", "origin", planned.tag], root);
+  return { ok: true, dryRun: false, pushed: true, ...planned };
+}
+
+function printHelp() {
+  process.stdout.write(`Usage: node scripts/release-set.mjs [--dry-run] [--json]
+
+Create and push publish-set-v<qubeVersion> from a clean current main.
+CI then publishes every workspace version that is not already on npm.
+`);
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  let parsed;
+  try {
+    parsed = parseReleaseArgs(argv);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  if (parsed.help) {
+    printHelp();
+    return;
+  }
+  try {
+    const report = await runRelease(parsed);
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+      return;
+    }
+    process.stdout.write(`${report.tag}\n`);
+    process.stdout.write(`publish ${report.packages.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
+    if (report.skipped.length > 0) {
+      process.stdout.write(`skip ${report.skipped.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
+    }
+    process.stdout.write(report.dryRun ? "dry-run: tag not pushed\n" : "pushed set tag\n");
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = error?.reasonCode === "usage" ? 2 : 1;
+  }
+}
+
+const invoked = process.argv[1] && path.normalize(process.argv[1]) === path.normalize(fileURLToPath(import.meta.url));
+if (invoked) {
+  await main();
+}

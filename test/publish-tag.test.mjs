@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+
+import { resolvePublishTag } from "../scripts/publish-packages.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -11,17 +12,26 @@ function readVersion(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8")).version;
 }
 
-function resolveTag(tag) {
-  return spawnSync(process.execPath, ["scripts/resolve-publish-tag.mjs", tag], {
-    cwd: repoRoot,
-    encoding: "utf8"
-  });
+async function resolveTag(tag) {
+  try {
+    const plan = await resolvePublishTag(tag, repoRoot);
+    return { status: 0, stdout: JSON.stringify({
+      ...plan,
+      packageKey: plan.packages[0]?.packageKey,
+      packageName: plan.packages[0]?.packageName,
+      version: plan.packages[0]?.version,
+      filter: plan.packages[0]?.filter,
+      path: plan.packages[0]?.path,
+    }), stderr: "" };
+  } catch (error) {
+    return { status: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 describe("publish tag resolution", () => {
-  it("maps package-specific publish tags to a package path and verification command", () => {
+  it("maps package-specific publish tags to a package path and verification command", async () => {
     const version = readVersion("products/qube/package.json");
-    const result = resolveTag(`publish-qube-v${version}`);
+    const result = await resolveTag(`publish-qube-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -44,18 +54,18 @@ describe("publish tag resolution", () => {
     assert.match(plan.verify, /@tjalve\/qube/);
   });
 
-  it("rejects unknown or mismatched package tags before publishing", () => {
-    const unknown = resolveTag("publish-missing-v1.2.3-rc.1+build.7");
+  it("rejects unknown or mismatched package tags before publishing", async () => {
+    const unknown = await resolveTag("publish-missing-v1.2.3-rc.1+build.7");
     assert.notEqual(unknown.status, 0);
     assert.match(unknown.stderr, /Unknown package key/);
 
-    const mismatch = resolveTag("publish-qube-v9.9.9");
+    const mismatch = await resolveTag("publish-qube-v9.9.9");
     assert.notEqual(mismatch.status, 0);
     assert.match(mismatch.stderr, /does not match/);
   });
 
-  it("uses the AIQ publish-readiness gate without the full AIQ suite", () => {
-    const result = resolveTag(`publish-aiq-v${readVersion("products/aiq/packages/cli/package.json")}`);
+  it("uses the AIQ publish-readiness gate without the full AIQ suite", async () => {
+    const result = await resolveTag(`publish-aiq-v${readVersion("products/aiq/packages/cli/package.json")}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -67,9 +77,9 @@ describe("publish tag resolution", () => {
     assert.doesNotMatch(plan.verify, /@tjalve\/aiq-workspace test(?:\s|$)/);
   });
 
-  it("maps the Claude Code adapter publish tag to the adapter package", () => {
+  it("maps the Claude Code adapter publish tag to the adapter package", async () => {
     const version = readVersion("adapters/claude-code/package.json");
-    const result = resolveTag(`publish-qube-adapter-claude-code-v${version}`);
+    const result = await resolveTag(`publish-qube-adapter-claude-code-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -90,9 +100,9 @@ describe("publish tag resolution", () => {
     assert.match(plan.verify, /@tjalve\/qube-adapter-claude-code/);
   });
 
-  it("prepares host adapters before aib and aiu single-package publish", () => {
-    const aib = JSON.parse(resolveTag(`publish-aib-v${readVersion("products/aib/package.json")}`).stdout);
-    const aiu = JSON.parse(resolveTag(`publish-aiu-v${readVersion("products/aiu/package.json")}`).stdout);
+  it("prepares host adapters before aib and aiu single-package publish", async () => {
+    const aib = JSON.parse((await resolveTag(`publish-aib-v${readVersion("products/aib/package.json")}`)).stdout);
+    const aiu = JSON.parse((await resolveTag(`publish-aiu-v${readVersion("products/aiu/package.json")}`)).stdout);
     for (const plan of [aib, aiu]) {
       assert.match(plan.prepare, /@tjalve\/qube-adapter-github/);
       assert.match(plan.prepare, /@tjalve\/qube-adapter-codex/);
@@ -101,9 +111,9 @@ describe("publish tag resolution", () => {
     }
   });
 
-  it("maps the qube-core first publish tag to the shared core package", () => {
+  it("maps the qube-core first publish tag to the shared core package", async () => {
     const version = readVersion("packages/qube-core/package.json");
-    const result = resolveTag(`publish-qube-core-v${version}`);
+    const result = await resolveTag(`publish-qube-core-v${version}`);
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -124,9 +134,9 @@ describe("publish tag resolution", () => {
     assert.match(plan.verify, /@tjalve\/qube-core/);
   });
 
-  it("maps a set tag to every current package and the composer version", () => {
+  it("maps a set tag to every current package and the composer version", async () => {
     const version = readVersion("products/qube/package.json");
-    const result = resolveTag(`publish-set-v${version}`);
+    const result = await resolveTag(`publish-set-v${version}`);
     assert.equal(result.status, 0, result.stderr);
 
     const plan = JSON.parse(result.stdout);
@@ -140,8 +150,8 @@ describe("publish tag resolution", () => {
     assert.equal(plan.packages.some(entry => entry.command === "aie"), true);
   });
 
-  it("rejects a set tag that does not match the composer version", () => {
-    const result = resolveTag("publish-set-v0.0.0");
+  it("rejects a set tag that does not match the composer version", async () => {
+    const result = await resolveTag("publish-set-v0.0.0");
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /does not match/);
   });

@@ -1,7 +1,7 @@
 {
   "checkedAt": "2026-08-17",
   "registry": "https://registry.npmjs.org/",
-  "rule": "Every public installable QUBE-family package must use a monorepo version strictly greater than the latest independently published npm version. Unpublished packages may keep their selected initial version.",
+  "rule": "Every public installable QUBE-family package must use a monorepo version equal to or greater than the latest independently published npm version. Equal versions are already shipped and are skipped by a set publish. Unpublished packages may keep their selected initial version.",
   "packages": [
     {
       "name": "@tjalve/qube",
