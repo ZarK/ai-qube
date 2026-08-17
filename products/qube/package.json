@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "QUBE composer CLI for coordinating the standalone planning, execution, quality, and continuation tools.",
   "keywords": [
     "cli",
@@ -47,7 +47,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/aib": "0.2.4",
+    "@tjalve/aib": "0.2.5",
     "@tjalve/aie": "0.2.5",
     "@tjalve/aiq": "0.2.4",
     "@tjalve/aiu": "0.0.7",
