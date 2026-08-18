@@ -660,7 +660,7 @@ export function isolatedRawOutputPath(
   headSha: string,
   lane: LocalReviewLaneId,
 ): string {
-  return join(dirname(laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane)), `${lane}.raw-output.json`);
+  return join(repoRoot, '.git', 'qube', 'aie', 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
 }
 
 function captureRawOutput(
@@ -672,7 +672,7 @@ function captureRawOutput(
   if (!result) return { evidence: null, reasonCode, error };
   try {
     const path = isolatedRawOutputPath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
     writeReviewFileGuarded(path, `${JSON.stringify({
       version: 1,
       issueNumber: input.issueNumber,
@@ -686,7 +686,7 @@ function captureRawOutput(
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       recordedAt: new Date().toISOString(),
-    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
     const relativePath = relative(input.repoRoot, path).replace(/\\/g, '/');
     return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
   } catch {
@@ -761,8 +761,12 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
     || value.coverage.length === 0
     || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
   ) return false;
-  const progressOnly = /^(?:review|inspection) (?:is )?(?:in progress|not yet complete|not complete)[.!]?$/i;
-  return progressOnly.test(evidence.summary.trim()) && progressOnly.test(evidence.completeness.trim());
+  const progressOnly = [
+    /^(?:review|inspection) (?:is )?(?:in progress|not yet complete|not complete)(?:; (?:final )?completeness (?:is )?not yet established)?[.!]?$/i,
+    /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
+  ];
+  const isProgressOnly = (text: string): boolean => progressOnly.some(pattern => pattern.test(text.trim()));
+  return isProgressOnly(evidence.summary) && isProgressOnly(evidence.completeness);
 }
 
 export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
@@ -788,10 +792,7 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
 
 function isInternalReviewPath(path: string): boolean {
   const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
-  return normalized === '.git'
-    || normalized.startsWith('.git/')
-    || normalized === '.qube'
-    || normalized.startsWith('.qube/');
+  return normalized === '.git' || normalized.startsWith('.git/');
 }
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {

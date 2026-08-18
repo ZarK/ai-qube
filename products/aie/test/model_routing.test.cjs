@@ -112,6 +112,22 @@ describe('modelRouting resolver', () => {
     assert.equal(resolved.routes['mechanical-implementation'].selected.id, 'grok-build:grok-4.5');
     assert.equal(resolved.routes['mechanical-implementation'].substitutions.length, 0);
   });
+
+  it('resolves Cursor for independent review without enabling delegated Cursor routes', () => {
+    const policy = buildModelRoutingFromSelections({
+      primaryHost: 'codex',
+      primaryModel: 'default',
+      independentReviewTier: 'review',
+    });
+    const reviewModels = getDefaults().reviewModels;
+    reviewModels.review.cursor = { model: 'cursor-review-model', effort: null };
+
+    const resolved = resolveModelRouting(policy, reviewModels, ['codex'], ['cursor']);
+
+    assert.equal(resolved.routes['independent-review'].host, 'cursor');
+    assert.equal(resolved.routes['independent-review'].model, 'cursor-review-model');
+    assert.equal(resolved.routes['mechanical-implementation'].selected.host, 'codex');
+  });
 });
 
 describe('modelRouting host assets', () => {

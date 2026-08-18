@@ -12,7 +12,7 @@ import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
 import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
-import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
+import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { reviewModeOf } from '../review_mode.js';
@@ -912,9 +912,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     }
   }
   if (runnableJobs.length > 0) {
-    // Streamed completion: each routed outcome writes its evidence and
-    // provenance as soon as it lands (serialized in completion order). Provider
-    // mutation remains batch-owned and starts only after all lane outcomes land.
+    // Keep repository evidence writes batch-atomic. Concurrent lane checkout
+    // monitors must never observe another lane's trusted bookkeeping as a host
+    // mutation, and incomplete batches must not leave partial lane evidence.
+    const routedOutcomes: Array<ModelReviewRunResult | null | undefined> = [];
     await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
       const job = runnableJobs[jobIndex];
       if (
@@ -936,6 +937,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           }
         }
       }
+      routedOutcomes[jobIndex] = routed;
+    });
+    for (let jobIndex = 0; jobIndex < runnableJobs.length; jobIndex += 1) {
+      const job = runnableJobs[jobIndex];
+      const routed = routedOutcomes[jobIndex];
       if (!routed || !routed.evidence) {
         failed = true;
         const reasonCode = routed?.reasonCode ?? 'invalid model route output';
@@ -946,7 +952,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode, reviewRouteKey(job.primaryRoute ?? job.route));
         }
         lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
-        return;
+        continue;
       }
       // Any valid completed verdict clears the lane's host-fault tally; review
       // verdicts are evidence, never faults, and never advance failover.
@@ -956,7 +962,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
-    });
+    }
   }
 
   const status: LocalReviewRunStatus = failed
