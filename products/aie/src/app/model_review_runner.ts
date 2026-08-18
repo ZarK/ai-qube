@@ -762,7 +762,7 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
     || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
   ) return false;
   const progressOnly = [
-    /^(?:review|inspection) (?:is )?(?:in progress|not yet complete|not complete)(?:; (?:final )?completeness (?:is )?not yet established)?[.!]?$/i,
+    /^(?:review|inspection) (?:is )?(?:in progress|pending|not yet complete|not complete)(?:; (?:final )?completeness (?:is )?not yet established)?[.!]?$/i,
     /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
   ];
   const isProgressOnly = (text: string): boolean => progressOnly.some(pattern => pattern.test(text.trim()));
@@ -797,6 +797,7 @@ function isInternalReviewPath(path: string): boolean {
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
   const changedPaths = new Set<string>();
+  const startedAt = Date.now();
   let watchError: string | null = null;
   const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
     const path = filename === null ? null : String(filename);
@@ -825,8 +826,24 @@ export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutM
           const diagnostic = result.error?.message ?? result.stderr ?? `git check-ignore exited with code ${String(result.status)}`;
           return `monitor error: ${sanitizedDiagnostic(diagnostic)}`;
         }
-        const ignoredPath = result.stdout.split('\0').find(Boolean);
-        if (ignoredPath) return ignoredPath;
+        const ignoredPaths = result.stdout.split('\0').filter(Boolean);
+        for (const ignoredPath of ignoredPaths) {
+          const absolutePath = resolve(repoRoot, ignoredPath);
+          const repoRelativePath = relative(repoRoot, absolutePath);
+          if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
+            return ignoredPath;
+          }
+          try {
+            const details = statSync(absolutePath);
+            // Some Windows filesystems report watcher events for read access.
+            // A real content, metadata, create, or rename change advances mtime
+            // or ctime; an access-only event leaves both timestamps unchanged.
+            if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) return ignoredPath;
+          } catch {
+            // Deletions and paths that cannot be inspected fail closed.
+            return ignoredPath;
+          }
+        }
       }
       return null;
     },
@@ -967,10 +984,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         }
       }
     }
-    if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
-    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout contents changed during isolated review execution.' };
+    if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
+    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout contents changed during isolated review execution.');
     const watchedChange = checkoutMonitor.violation();
-    if (watchedChange) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.` };
+    if (watchedChange) return captureRawOutput(input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);

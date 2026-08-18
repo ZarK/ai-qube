@@ -768,11 +768,11 @@ describe('model review runner', () => {
       status: 'inconclusive',
       severity: 'none',
       recommendation: 'inconclusive',
-      summary: 'Review in progress.',
+      summary: 'Review not yet complete.',
       blockers: [],
       findings: [],
       coverage: [{ area: 'code-quality', status: 'not-inspected' }],
-      completeness: 'Review not yet complete.',
+      completeness: 'Inspection pending.',
     };
     const attestedProgressThenFinal = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
