@@ -1209,7 +1209,7 @@ describe('init service', () => {
     const grok = profiles.find(profile => profile.id === 'grok-build');
     const cursor = profiles.find(profile => profile.id === 'cursor');
     assert.ok(cursor);
-    assert.equal(cursor.subagents.supported, true);
+    assert.equal(cursor.subagents.supported, false);
     assert.equal(cursor.hooks.supported, false);
     assert.ok(grok);
     assert.equal(grok.supportsProjectCommands, true);
@@ -1330,7 +1330,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);

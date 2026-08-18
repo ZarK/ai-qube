@@ -755,6 +755,55 @@ describe('model review runner', () => {
     assert.equal(codexProgressThenFinal.error, null);
     assert.equal(codexProgressThenFinal.evidence.status, 'passed');
 
+    const attestedProgress = {
+      ...laneResult(),
+      status: 'inconclusive',
+      severity: 'none',
+      recommendation: 'inconclusive',
+      summary: 'Review in progress.',
+      blockers: [],
+      findings: [],
+      coverage: [{ area: 'code-quality', status: 'not-inspected' }],
+      completeness: 'Review not yet complete.',
+    };
+    const attestedProgressThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(attestedProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(attestedProgressThenFinal.error, null);
+    assert.equal(attestedProgressThenFinal.evidence.status, 'passed');
+
+    const substantiveInconclusive = {
+      ...attestedProgress,
+      summary: 'Review not complete because the dependency contract could not be inspected.',
+      completeness: 'Inspection not yet complete because the dependency source was unavailable.',
+    };
+    const inconclusiveThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(substantiveInconclusive) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(inconclusiveThenFinal.reasonCode, 'model-route-multiple-terminal');
+
     const multipleFinalObjects = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',

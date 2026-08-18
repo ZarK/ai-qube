@@ -15,11 +15,6 @@ const context = {
 };
 
 describe("Cursor isolated review adapter", () => {
-  it("publishes the Cursor-owned model-routing runner path", () => {
-    assert.equal(cursor.cursorRouteRunnerPath, ".cursor/agents/qube-route-runner.md");
-    assert.equal(cursor.cursorHostProfile.subagents.supported, true);
-  });
-
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
     const built = cursor.buildCursorInvocation(context, "linux");
     assert.deepEqual(built.args.slice(0, 7), ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"]);

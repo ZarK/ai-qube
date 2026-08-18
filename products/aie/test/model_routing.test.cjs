@@ -43,6 +43,15 @@ describe('modelRouting schema', () => {
     assert.ok(result.errors.some(error => /host/.test(error.message)));
   });
 
+  it('keeps review-only hosts out of delegated model routing', () => {
+    const file = withRouting({
+      catalog: [{ id: 'cursor-review', host: 'cursor', transport: 'cli', costRank: 1, notes: 'review only' }],
+    });
+    const result = validateConfig(file);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => /host/.test(error.message)));
+  });
+
   it('rejects a fallback chain that does not end at primary', () => {
     const file = withRouting({
       primary: 'primary',
@@ -122,20 +131,6 @@ describe('modelRouting host assets', () => {
     assert.match(runners[0].body, /self-contained prompt/);
   });
 
-  it('renders Cursor routes to the Cursor-owned runner path', () => {
-    const config = getDefaults();
-    config.modelRouting = buildModelRoutingFromSelections({
-      primaryHost: 'codex',
-      primaryModel: 'default',
-      mechanical: { host: 'cursor', model: 'gpt-5.6-luna-high' },
-    });
-    const runners = renderModelRoutingRunnerFiles(config);
-    assert.deepEqual(runners.map(file => [file.host, file.relativePath]), [
-      ['cursor', '.cursor/agents/qube-route-runner.md'],
-    ]);
-    assert.match(runners[0].body, /delegated coding work on the cursor CLI/);
-  });
-
   it('writes the grok wrapper when init selects a grok mechanical route', async () => {
     const repo = cloneGitRepo('committed', 'aie-routing-');
     mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
@@ -160,28 +155,6 @@ describe('modelRouting host assets', () => {
     assert.equal(result.modelRouting.routes['independent-review'].reviewTier, 'review');
   });
 
-  it('writes the Cursor wrapper without requiring the Grok adapter path', async () => {
-    const repo = cloneGitRepo('committed', 'aie-cursor-routing-');
-    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
-    const result = await runInit({
-      target: '.',
-      tool: 'cursor',
-      dryRun: false,
-      force: false,
-      cwd: repo,
-      policy: {
-        modelRouting: buildModelRoutingFromSelections({
-          primaryHost: 'codex',
-          primaryModel: 'default',
-          mechanical: { host: 'cursor', model: 'gpt-5.6-luna-high' },
-        }),
-      },
-    });
-    assert.equal(result.ok, true, result.errors.join('\n'));
-    const agent = readConfigured(repo, '.cursor/agents/qube-route-runner.md');
-    assert.match(agent, /delegated coding work on the cursor CLI/);
-    assert.equal(result.actions.some(action => action.path?.includes('.grok/')), false);
-  });
 });
 
 function readConfigured(repo, relativePath) {

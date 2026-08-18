@@ -1,5 +1,4 @@
-import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
-import type { ReviewModelsPolicy } from '../core/policy.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId, type ReviewModelsPolicy } from '../core/policy.js';
 import { getReviewHostAdapter, isRegisteredReviewHost, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
 import { resolveModelHostExecutableSync } from './model_review_runner.js';
 import { execFileSync } from 'node:child_process';
@@ -7,14 +6,14 @@ import { execFileSync } from 'node:child_process';
 export type HostModelListingStatus = 'ready' | 'unavailable' | 'blocked';
 
 export interface HostModelListing {
-  host: ModelRoutingHostId;
+  host: ReviewModelHostId;
   status: HostModelListingStatus;
   models: string[];
   diagnostic: string | null;
 }
 
 export interface ConfiguredHostModelStatus {
-  host: ModelRoutingHostId;
+  host: ReviewModelHostId;
   configured: string[];
   listing: HostModelListing;
   served: string[];
@@ -34,7 +33,7 @@ function defaultRunCommand(executable: string, args: readonly string[]): string 
   });
 }
 
-export function configuredModelsForHost(models: ReviewModelsPolicy, host: ModelRoutingHostId): string[] {
+export function configuredModelsForHost(models: ReviewModelsPolicy, host: ReviewModelHostId): string[] {
   const ids = new Set<string>();
   for (const tier of ['review', 'economy', 'synthesis'] as const) {
     const binding = models[tier][host];
@@ -44,7 +43,7 @@ export function configuredModelsForHost(models: ReviewModelsPolicy, host: ModelR
 }
 
 export function listHostModels(
-  host: ModelRoutingHostId,
+  host: ReviewModelHostId,
   runCommand: ReviewHostProbeCommandRunner = defaultRunCommand,
 ): HostModelListing {
   let adapter;
@@ -92,14 +91,14 @@ export function listHostModels(
   return { host, status: 'unavailable', models: [], diagnostic: `The ${host} CLI does not expose a model catalog command.` };
 }
 
-function registeredIsolatedRoutingHosts(): readonly ModelRoutingHostId[] {
-  return MODEL_ROUTING_HOSTS.filter(host => isRegisteredReviewHost(host));
+function registeredIsolatedRoutingHosts(): readonly ReviewModelHostId[] {
+  return REVIEW_MODEL_HOST_IDS.filter(host => isRegisteredReviewHost(host));
 }
 
 export function reviewModelHostStatuses(
   models: ReviewModelsPolicy,
-  hosts: readonly ModelRoutingHostId[] = registeredIsolatedRoutingHosts(),
-  list: (host: ModelRoutingHostId) => HostModelListing = listHostModels,
+  hosts: readonly ReviewModelHostId[] = registeredIsolatedRoutingHosts(),
+  list: (host: ReviewModelHostId) => HostModelListing = listHostModels,
 ): ConfiguredHostModelStatus[] {
   return hosts.map(host => {
     const configured = configuredModelsForHost(models, host);

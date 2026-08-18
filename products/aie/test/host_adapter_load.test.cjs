@@ -78,7 +78,7 @@ describe('host adapter package loading', () => {
     const coreHost = readFileSync(join(repoRoot, 'packages', 'qube-core', 'src', 'agent_host.ts'), 'utf8');
     assert.match(policy, /REVIEW_MODEL_HOST_IDS = \['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'\]/);
     assert.doesNotMatch(policy, /ReviewModelHostId = '[^']*'grok'/);
-    assert.match(routing, /MODEL_ROUTING_HOSTS = Object\.freeze\(\['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'\]/);
+    assert.match(routing, /MODEL_ROUTING_HOSTS = Object\.freeze\(\['codex', 'claude-code', 'opencode', 'grok-build'\]/);
     assert.match(schema, /retiredGrokHostIdMessage/);
     assert.match(coreHost, /"grok-build"/);
     assert.doesNotMatch(coreHost, /AGENT_HOST_IDS = \["opencode", "codex", "claude-code"\]/);

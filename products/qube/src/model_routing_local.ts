@@ -1,6 +1,6 @@
 import { executableExistsOnPath } from "@tjalve/qube-core";
 
-export const MODEL_ROUTING_HOSTS = Object.freeze(["codex", "claude-code", "opencode", "grok-build", "cursor"] as const);
+export const MODEL_ROUTING_HOSTS = Object.freeze(["codex", "claude-code", "opencode", "grok-build"] as const);
 export type ModelRoutingHostId = (typeof MODEL_ROUTING_HOSTS)[number];
 
 const HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, readonly string[]>> = Object.freeze({
@@ -8,7 +8,6 @@ const HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, readonly string[]>> = O
   "claude-code": Object.freeze(["claude"]),
   opencode: Object.freeze(["opencode"]),
   "grok-build": Object.freeze(["grok"]),
-  cursor: Object.freeze(["cursor-agent", "agent"]),
 });
 
 export function isModelRoutingHost(value: string): value is ModelRoutingHostId {

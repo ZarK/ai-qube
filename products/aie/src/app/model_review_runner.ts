@@ -743,6 +743,21 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
   return result.stdout.trim();
 }
 
+function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boolean {
+  if (
+    !isRecord(value)
+    || !Array.isArray(value.coverage)
+    || evidence.status !== 'inconclusive'
+    || evidence.recommendation !== 'inconclusive'
+    || evidence.blockers.length !== 0
+    || evidence.findings.length !== 0
+    || value.coverage.length === 0
+    || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
+  ) return false;
+  const progressOnly = /^(?:review|inspection) (?:is )?(?:in progress|not yet complete|not complete)[.!]?$/i;
+  return progressOnly.test(evidence.summary.trim()) && progressOnly.test(evidence.completeness.trim());
+}
+
 export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
   const gitOutput = async (args: string[]): Promise<string> => {
     const result = await execFileAsync('git', ['-C', repoRoot, ...args], {
@@ -868,7 +883,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       for (const priorText of transientTexts) {
         let priorResult: unknown;
         try { priorResult = JSON.parse(priorText); } catch { continue; }
-        if (strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance)) {
+        const normalizedPriorResult = normalizeSchemaOptionals(priorResult);
+        const priorEvidence = strictRoutedLane(normalizedPriorResult, input, provenance);
+        if (priorEvidence && !isSupersededProgressResult(normalizedPriorResult, priorEvidence)) {
           return captureRawOutput(input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
       }

@@ -797,7 +797,6 @@ function routeRunnerPath(host: ModelRoutingHostId): string | null {
     case 'claude-code': return '.claude/agents/qube-route-runner.md';
     case 'opencode': return '.opencode/agent/qube-route-runner.md';
     case 'grok-build': return adapterRouteRunnerPath('@tjalve/qube-adapter-grok-build', 'grokBuildRouteRunnerPath');
-    case 'cursor': return adapterRouteRunnerPath('@tjalve/qube-adapter-cursor', 'cursorRouteRunnerPath');
     default: {
       const unsupportedHost: never = host;
       return unsupportedHost;
