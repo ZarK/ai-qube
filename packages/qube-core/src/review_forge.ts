@@ -49,6 +49,7 @@ export interface ReviewForgeCapabilities {
   readonly publishLocalReview?: boolean;
   readonly resolveReviewThreads?: boolean;
   readonly ciDiagnostics?: boolean;
+  readonly publishRoundReviewStatus?: boolean;
   readonly publishRoundReviewSummary?: boolean;
 }
 
@@ -215,6 +216,26 @@ export interface ReviewRoundSummaryFinding {
   readonly commentBody: string;
 }
 
+export type ReviewRoundLaneStatus = "passed" | "needs-work" | "failed" | "missing" | "pending" | "unavailable" | "invalid";
+
+export interface ReviewRoundStatusLane {
+  readonly laneId: string;
+  readonly status: ReviewRoundLaneStatus;
+  readonly blockingFindingCount: number;
+  readonly advisoryFindingCount: number;
+  readonly reason?: string | null;
+}
+
+export interface ReviewRoundStatusPublishInput {
+  readonly dryRun: boolean;
+  readonly prNumber: number;
+  readonly headSha: string;
+  readonly expectedLanes: readonly string[];
+  readonly lanes: readonly ReviewRoundStatusLane[];
+  /** Incomplete rounds cannot approve. Completed round verdicts publish through `publishRoundReviewSummary`. */
+  readonly verdict: "request-changes" | "pending" | "inconclusive";
+}
+
 export interface ReviewRoundSummaryPublishInput {
   readonly dryRun: boolean;
   readonly prNumber: number;
@@ -252,6 +273,8 @@ export interface ReviewRoundSummaryPublishResult {
   readonly nextAction: string;
 }
 
+export type ReviewRoundStatusPublishResult = ReviewRoundSummaryPublishResult;
+
 export interface ReviewForgeProvider {
   readonly id: string;
   capabilities(): ReviewForgeCapabilities;
@@ -266,6 +289,7 @@ export interface ReviewForgeProvider {
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
   /** Returns null when the provider cannot compute a diff index for this PR (e.g. it is unreachable); callers must then treat every finding as unanchored. */
   loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
+  publishRoundReviewStatus?(input: ReviewRoundStatusPublishInput): Promise<ReviewRoundStatusPublishResult>;
   publishRoundReviewSummary?(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult>;
 }
 

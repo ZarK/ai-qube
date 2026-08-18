@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "QUBE composer CLI for coordinating the standalone planning, execution, quality, and continuation tools.",
   "keywords": [
     "cli",
@@ -47,12 +47,12 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/aib": "0.2.5",
-    "@tjalve/aie": "0.2.5",
+    "@tjalve/aib": "0.2.6",
+    "@tjalve/aie": "0.2.6",
     "@tjalve/aiq": "0.2.4",
     "@tjalve/aiu": "0.0.7",
     "@tjalve/qube-cli": "0.2.1",
-    "@tjalve/qube-core": "0.2.3"
+    "@tjalve/qube-core": "0.2.4"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

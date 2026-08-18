@@ -29,6 +29,9 @@ import {
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
   type ReviewMergeBlock,
+  type ReviewRoundStatusLane,
+  type ReviewRoundStatusPublishInput,
+  type ReviewRoundStatusPublishResult,
   type ReviewForgeStatsProvider,
   type ReviewItem,
   type ReviewItemKey,
@@ -90,7 +93,45 @@ interface StatusCommentRequest {
   at: string;
 }
 
-function parseStatusCommentPayload(body: string | undefined): { rounds: Array<{ head: string; verdict: string }>; requests: StatusCommentRequest[] } {
+interface StatusCommentRound {
+  head: string;
+  verdict: string;
+  complete?: boolean;
+  lanes?: ReviewRoundStatusLane[];
+}
+
+function statusCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function statusReason(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = sanitizePublishedText(value).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return normalized === '' ? null : normalized.slice(0, 240);
+}
+
+function renderStatusText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/@/g, '&#64;');
+}
+
+function parseStatusLane(value: unknown): ReviewRoundStatusLane | null {
+  if (!isRecord(value) || typeof value.laneId !== 'string' || value.laneId.trim() === '') return null;
+  const allowed = new Set(['passed', 'needs-work', 'failed', 'missing', 'pending', 'unavailable', 'invalid']);
+  if (typeof value.status !== 'string' || !allowed.has(value.status)) return null;
+  return {
+    laneId: value.laneId.trim(),
+    status: value.status as ReviewRoundStatusLane['status'],
+    blockingFindingCount: statusCount(value.blockingFindingCount),
+    advisoryFindingCount: statusCount(value.advisoryFindingCount),
+    reason: statusReason(value.reason),
+  };
+}
+
+function parseStatusCommentPayload(body: string | undefined): { rounds: StatusCommentRound[]; requests: StatusCommentRequest[] } {
   const text = body ?? '';
   const prefix = '<!-- qube-pr-status:';
   const start = text.indexOf(prefix);
@@ -103,8 +144,16 @@ function parseStatusCommentPayload(body: string | undefined): { rounds: Array<{ 
     if (!isRecord(parsed)) return { rounds: [], requests: [] };
     const rounds = Array.isArray(parsed.rounds)
       ? parsed.rounds
-        .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
-        .map(entry => ({ head: entry.head, verdict: entry.verdict }))
+        .filter((entry): entry is Record<string, unknown> & { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
+        .map(entry => {
+          const lanes = Array.isArray(entry.lanes) ? entry.lanes.map(parseStatusLane).filter((lane): lane is ReviewRoundStatusLane => lane !== null) : [];
+          return {
+            head: entry.head,
+            verdict: entry.verdict,
+            ...(entry.complete === true ? { complete: true } : {}),
+            ...(lanes.length > 0 ? { lanes } : {}),
+          };
+        })
         .slice(-20)
       : [];
     const requests = Array.isArray(parsed.requests)
@@ -119,7 +168,7 @@ function parseStatusCommentPayload(body: string | undefined): { rounds: Array<{ 
   }
 }
 
-function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
+function parseStatusCommentRounds(body: string | undefined): StatusCommentRound[] {
   return parseStatusCommentPayload(body).rounds;
 }
 
@@ -131,16 +180,16 @@ function trustedStatusComments(comments: readonly RawComment[], trustedAuthor: T
   return comments.filter(comment => isTrustedStatusComment(comment, trustedAuthor));
 }
 
-function mergeStatusCommentPayloads(comments: readonly RawComment[]): { rounds: Array<{ head: string; verdict: string }>; requests: StatusCommentRequest[] } {
+function mergeStatusCommentPayloads(comments: readonly RawComment[]): { rounds: StatusCommentRound[]; requests: StatusCommentRequest[] } {
   const roundHeads: string[] = [];
-  const verdicts = new Map<string, string>();
+  const roundsByHead = new Map<string, StatusCommentRound>();
   const requestKeys = new Set<string>();
   const requests: StatusCommentRequest[] = [];
   for (const comment of comments) {
     const payload = parseStatusCommentPayload(comment.body);
     for (const round of payload.rounds) {
-      if (!verdicts.has(round.head)) roundHeads.push(round.head);
-      verdicts.set(round.head, round.verdict);
+      if (!roundsByHead.has(round.head)) roundHeads.push(round.head);
+      roundsByHead.set(round.head, round);
     }
     for (const request of payload.requests) {
       const key = `${request.reviewerId}\0${request.head}`;
@@ -150,7 +199,7 @@ function mergeStatusCommentPayloads(comments: readonly RawComment[]): { rounds: 
     }
   }
   return {
-    rounds: roundHeads.map(head => ({ head, verdict: verdicts.get(head) ?? 'pending' })).slice(-20),
+    rounds: roundHeads.map(head => roundsByHead.get(head) ?? { head, verdict: 'pending' }).slice(-20),
     requests: requests.slice(-40),
   };
 }
@@ -172,11 +221,31 @@ function renderStatusComment(input: {
   prNumber: number;
   headSha: string;
   verdict: string;
-  rounds: Array<{ head: string; verdict: string }>;
+  rounds: StatusCommentRound[];
   requests: StatusCommentRequest[];
 }): string {
-  const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${JSON.stringify({ version: 1, prNumber: input.prNumber, rounds: input.rounds, requests: input.requests })} -->`;
-  const history = input.rounds.map(round => `- ${round.head.slice(0, 12)}: ${round.verdict}`).join('\n');
+  const markerPayload = JSON.stringify({ version: 1, prNumber: input.prNumber, rounds: input.rounds.slice(-20), requests: input.requests.slice(-40) }).replace(/--/g, '\\u002d\\u002d');
+  const marker = `<!-- ${ROUND_STATUS_MARKER_PREFIX}:${markerPayload} -->`;
+  const current = [...input.rounds].reverse().find(round => round.head === input.headSha);
+  const currentLanes = current?.lanes ?? [];
+  const validatedCount = currentLanes.filter(lane => lane.status === 'passed' || lane.status === 'needs-work' || lane.status === 'failed').length;
+  const blockingCount = currentLanes.reduce((sum, lane) => sum + lane.blockingFindingCount, 0);
+  const advisoryCount = currentLanes.reduce((sum, lane) => sum + lane.advisoryFindingCount, 0);
+  const laneStatus = currentLanes.length === 0
+    ? []
+    : ['', 'Lane status', ...currentLanes.map(lane => {
+        const counts = `${lane.blockingFindingCount} blocking, ${lane.advisoryFindingCount} advisory`;
+        return `- ${renderStatusText(lane.laneId)}: ${lane.status} — ${counts}${lane.reason ? ` — ${renderStatusText(lane.reason)}` : ''}`;
+      })];
+  const history = input.rounds.map(round => {
+    const lanes = round.lanes ?? [];
+    const validated = lanes.filter(lane => lane.status === 'passed' || lane.status === 'needs-work' || lane.status === 'failed').length;
+    const blocking = lanes.reduce((sum, lane) => sum + lane.blockingFindingCount, 0);
+    const advisory = lanes.reduce((sum, lane) => sum + lane.advisoryFindingCount, 0);
+    const summary = lanes.length > 0 ? ` — ${validated}/${lanes.length} validated, ${blocking} blocking, ${advisory} advisory` : '';
+    const details = lanes.map(lane => `  - ${renderStatusText(lane.laneId)}: ${lane.status}${lane.reason ? ` — ${renderStatusText(lane.reason)}` : ''}`).join('\n');
+    return `- ${round.head.slice(0, 12)}: ${round.verdict}${round.complete ? ' (complete)' : ''}${summary}${details ? `\n${details}` : ''}`;
+  }).join('\n');
   const requestHistory = input.requests.length === 0
     ? '- none'
     : input.requests.map(request => `- ${request.head.slice(0, 12)}: @${request.reviewerId} at ${request.at}`).join('\n');
@@ -185,6 +254,8 @@ function renderStatusComment(input: {
     '',
     `Review status: ${input.verdict}.`,
     `Head: ${input.headSha}.`,
+    ...(currentLanes.length > 0 ? [`Validated lanes: ${validatedCount}/${currentLanes.length}.`, `Findings: ${blockingCount} blocking, ${advisoryCount} advisory.`] : []),
+    ...laneStatus,
     '',
     '<details>',
     '<summary>Round history</summary>',
@@ -384,6 +455,10 @@ export interface GitHubRoundSummaryPublishResult {
   publisherDowngradeReason?: string | null;
   failure: string | null;
   nextAction: string;
+  publisher?: import('./github_review_publisher.js').GitHubReviewPublisherIdentity;
+}
+
+export interface GitHubRoundStatusPublishResult extends ReviewRoundStatusPublishResult {
   publisher?: import('./github_review_publisher.js').GitHubReviewPublisherIdentity;
 }
 
@@ -1921,7 +1996,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewSummary: true }; }
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewStatus: true, publishRoundReviewSummary: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -2613,6 +2688,132 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     }
   }
 
+  async publishRoundReviewStatus(input: ReviewRoundStatusPublishInput): Promise<GitHubRoundStatusPublishResult> {
+    const normalizedLanes = input.lanes.map(parseStatusLane).filter((lane): lane is ReviewRoundStatusLane => lane !== null);
+    if (normalizedLanes.length !== input.lanes.length) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        failure: 'Review status publication received an invalid lane status payload.',
+        nextAction: `Regenerate the current-head lane evidence, then rerun the review status publish for #${input.prNumber}.`,
+      });
+    }
+    let repositoryName: string;
+    let trustedMarkerAuthor: string;
+    let publisher: ResolvedGitHubReviewPublisher = { accessToken: null, identity: emptyPublisherIdentity() };
+    try {
+      const repository = await this.getRepositoryIdentity();
+      repositoryName = repository.nameWithOwner;
+      const rawPr = await this.getPullRequest(input.prNumber);
+      const observedHead = typeof rawPr.headRefOid === 'string' ? rawPr.headRefOid : '';
+      if (observedHead === '') {
+        throw new Error(`pull request #${input.prNumber} did not report a head SHA, so the status head cannot be verified; fail closed and retry once GitHub reports the current head.`);
+      }
+      if (observedHead !== input.headSha) {
+        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${observedHead}; rerun the review status publish for the current PR head.`);
+      }
+      publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
+        cwd: this.options.cwd,
+        exec: this.options.exec,
+        prAuthorLogin: rawPr.author?.login ?? null,
+        mint: true,
+      });
+      if (publisher.identity.login && !this.cachedPublisherLogin) this.cachedPublisherLogin = publisher.identity.login;
+      const identityFailure = unresolvedAppPublisherReason(publisher);
+      if (identityFailure) {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          publisher: publisher.identity,
+          failure: identityFailure,
+          nextAction: `Resolve the GitHub status publisher, then rerun the review status publish for #${input.prNumber}.`,
+        });
+      }
+      trustedMarkerAuthor = trustedPublisherLogin(publisher, await this.currentLogin()) ?? '';
+      if (trustedMarkerAuthor === '') {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          publisher: publisher.identity,
+          failure: 'Publisher identity login is unresolved; review status publication is withheld.',
+          nextAction: `Resolve the publisher login, then rerun the review status publish for #${input.prNumber}.`,
+        });
+      }
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub PR status visibility or authentication, then rerun the review status publish for #${input.prNumber}.`,
+      });
+    }
+
+    try {
+      if (input.dryRun) {
+        const comments = await this.getIssueComments(repositoryName, input.prNumber);
+        const trustedAuthors: TrustedAuthorInput = [...new Set([
+          ...trustedAuthorsList(trustedMarkerAuthor),
+          ...(this.cachedPublisherLogin ? [this.cachedPublisherLogin] : []),
+        ])];
+        const trusted = trustedStatusComments(comments, trustedAuthors.length > 0 ? trustedAuthors : trustedMarkerAuthor);
+        const prior = mergeStatusCommentPayloads(trusted);
+        const current: StatusCommentRound = {
+          head: input.headSha,
+          verdict: input.verdict,
+          complete: false,
+          lanes: normalizedLanes,
+        };
+        const rounds = [...prior.rounds.filter(round => round.head !== input.headSha), current].slice(-20);
+        const plannedBody = renderStatusComment({
+          prNumber: input.prNumber,
+          headSha: input.headSha,
+          verdict: input.verdict,
+          rounds,
+          requests: prior.requests,
+        });
+        return roundSummaryPublishResult({
+          status: 'planned',
+          marker: plannedBody.split('\n', 1)[0] ?? null,
+          body: plannedBody,
+          url: trusted[0]?.url ?? null,
+          publishKind: 'issue-comment',
+          publisher: publisher.identity,
+          nextAction: `Rerun without --dry-run to update the persistent review status for #${input.prNumber}.`,
+        });
+      }
+      const freshPr = await this.getPullRequest(input.prNumber);
+      const freshHead = typeof freshPr.headRefOid === 'string' ? freshPr.headRefOid : '';
+      if (freshHead === '' || freshHead !== input.headSha) {
+        throw new Error(freshHead === ''
+          ? `pull request #${input.prNumber} stopped reporting a head SHA before status publication; fail closed and rerun pr gate.`
+          : `pull request #${input.prNumber} head changed from ${input.headSha} to ${freshHead} before status publication; rerun pr gate for the current PR head.`);
+      }
+      const persisted = await this.upsertRoundStatusComment({
+        repositoryName,
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        verdict: input.verdict,
+        complete: false,
+        lanes: normalizedLanes,
+        trustedMarkerAuthor,
+        ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
+      });
+      return roundSummaryPublishResult({
+        status: 'published',
+        marker: persisted.body.split('\n', 1)[0] ?? null,
+        body: persisted.body,
+        url: persisted.url,
+        publishKind: 'issue-comment',
+        publisher: publisher.identity,
+        nextAction: 'The persistent review status was updated; incomplete rounds did not create a formal review event.',
+      });
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub status-comment permissions or head freshness, then rerun the review status publish for #${input.prNumber}.`,
+      });
+    }
+  }
+
   async publishRoundReviewSummary(input: GitHubRoundSummaryPublishInput): Promise<GitHubRoundSummaryPublishResult> {
     let repositoryName: string;
     let comments: RawComment[];
@@ -2710,7 +2911,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         prNumber: input.prNumber,
         headSha: input.headSha,
         verdict: input.verdict,
-        comments,
+        complete: true,
         trustedMarkerAuthor,
         ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
       });
@@ -3262,10 +3463,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     prNumber: number;
     headSha: string;
     verdict: string;
-    comments: readonly RawComment[];
+    complete: boolean;
+    lanes?: readonly ReviewRoundStatusLane[];
     trustedMarkerAuthor: string;
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
-  }): Promise<void> {
+  }): Promise<{ body: string; url: string | null }> {
     const comments = await this.getIssueComments(input.repositoryName, input.prNumber);
     const trustedAuthors: TrustedAuthorInput = [...new Set([
       ...trustedAuthorsList(input.trustedMarkerAuthor),
@@ -3273,11 +3475,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     ])];
     const trusted = trustedStatusComments(comments, trustedAuthors.length > 0 ? trustedAuthors : input.trustedMarkerAuthor);
     const prior = mergeStatusCommentPayloads(trusted);
+    const previous = prior.rounds.find(round => round.head === input.headSha);
+    const current: StatusCommentRound = {
+      ...previous,
+      head: input.headSha,
+      verdict: input.verdict,
+      ...(input.complete ? { complete: true } : { complete: false }),
+      ...(input.lanes ? { lanes: [...input.lanes] } : {}),
+    };
     const rounds = [
       ...prior.rounds.filter(round => round.head !== input.headSha),
-      { head: input.headSha, verdict: input.verdict },
+      current,
     ];
-    await this.persistStatusComment({
+    const persisted = await this.persistStatusComment({
       repositoryName: input.repositoryName,
       prNumber: input.prNumber,
       headSha: input.headSha,
@@ -3288,6 +3498,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       extras: trusted.slice(1),
       ghOptions: input.ghOptions,
     });
+    return { body: persisted.body, url: persisted.url };
   }
 
   private async persistStatusComment(input: {
@@ -3295,12 +3506,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     prNumber: number;
     headSha: string;
     verdict: string;
-    rounds: Array<{ head: string; verdict: string }>;
+    rounds: StatusCommentRound[];
     requests: StatusCommentRequest[];
     existing: RawComment | undefined;
     extras: readonly RawComment[];
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
-  }): Promise<{ author: string | null }> {
+  }): Promise<{ author: string | null; body: string; url: string | null }> {
     const body = renderStatusComment({
       prNumber: input.prNumber,
       headSha: input.headSha,
@@ -3311,15 +3522,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     const commentId = input.existing ? issueCommentIdFromUrl(input.existing.url) : null;
     const payloadPath = reviewPayloadPath({ body });
     let author: string | null = input.existing?.author?.login ?? null;
+    let url: string | null = input.existing?.url ?? null;
     try {
       if (commentId) {
         const result = await runGh(['api', `repos/${input.repositoryName}/issues/comments/${commentId}`, '--method', 'PATCH', '--input', payloadPath], input.ghOptions);
         if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment update failed');
         author = commentAuthorFromApiResponse(result.stdout) ?? author;
+        url = publishedCommentUrl(result) ?? url;
       } else {
         const result = await runGh(['api', `repos/${input.repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], input.ghOptions);
         if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'gh api status comment create failed');
         author = commentAuthorFromApiResponse(result.stdout) ?? author;
+        url = publishedCommentUrl(result) ?? url;
       }
     } finally {
       cleanupReviewPayload(payloadPath);
@@ -3332,7 +3546,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         throw new Error(result.stderr || result.stdout || 'gh api status comment delete failed');
       }
     }
-    return { author };
+    return { author, body, url };
   }
 
   private async dismissSupersededRequestChanges(input: {

@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-08-17",
+  "checkedAt": "2026-08-18",
   "registry": "https://registry.npmjs.org/",
   "rule": "Every public installable QUBE-family package must use a monorepo version equal to or greater than the latest independently published npm version. Equal versions are already shipped and are skipped by a set publish. Unpublished packages may keep their selected initial version.",
   "packages": [
@@ -7,7 +7,7 @@
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
       "published": true,
-      "latestPublished": "0.2.5",
+      "latestPublished": "0.2.7",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -16,9 +16,11 @@
         "0.2.2",
         "0.2.3",
         "0.2.4",
-        "0.2.5"
+        "0.2.5",
+        "0.2.6",
+        "0.2.7"
       ],
-      "selectedVersion": "0.2.7"
+      "selectedVersion": "0.2.8"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -37,26 +39,28 @@
       "name": "@tjalve/qube-core",
       "packageJson": "packages/qube-core/package.json",
       "published": true,
-      "latestPublished": "0.2.2",
+      "latestPublished": "0.2.3",
       "publishedVersions": [
         "0.2.0",
         "0.2.1",
-        "0.2.2"
+        "0.2.2",
+        "0.2.3"
       ],
-      "selectedVersion": "0.2.3"
+      "selectedVersion": "0.2.4"
     },
     {
       "name": "@tjalve/qube-adapter-github",
       "packageJson": "adapters/github/package.json",
       "published": true,
-      "latestPublished": "0.1.3",
+      "latestPublished": "0.1.4",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
         "0.1.2",
-        "0.1.3"
+        "0.1.3",
+        "0.1.4"
       ],
-      "selectedVersion": "0.1.4"
+      "selectedVersion": "0.1.5"
     },
     {
       "name": "@tjalve/qube-adapter-codex",
@@ -103,14 +107,15 @@
       "name": "@tjalve/qube-adapter-gitlab",
       "packageJson": "adapters/gitlab/package.json",
       "published": true,
-      "latestPublished": "0.1.3",
+      "latestPublished": "0.1.4",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
         "0.1.2",
-        "0.1.3"
+        "0.1.3",
+        "0.1.4"
       ],
-      "selectedVersion": "0.1.4"
+      "selectedVersion": "0.1.5"
     },
     {
       "name": "@tjalve/qube-adapter-linear",
@@ -166,7 +171,7 @@
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
       "published": true,
-      "latestPublished": "0.2.4",
+      "latestPublished": "0.2.5",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -174,15 +179,16 @@
         "0.2.1",
         "0.2.2",
         "0.2.3",
-        "0.2.4"
+        "0.2.4",
+        "0.2.5"
       ],
-      "selectedVersion": "0.2.5"
+      "selectedVersion": "0.2.6"
     },
     {
       "name": "@tjalve/aie",
       "packageJson": "products/aie/package.json",
       "published": true,
-      "latestPublished": "0.2.4",
+      "latestPublished": "0.2.5",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -193,9 +199,10 @@
         "0.2.1",
         "0.2.2",
         "0.2.3",
-        "0.2.4"
+        "0.2.4",
+        "0.2.5"
       ],
-      "selectedVersion": "0.2.5"
+      "selectedVersion": "0.2.6"
     },
     {
       "name": "@tjalve/aiq",
