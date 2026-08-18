@@ -69,7 +69,7 @@ export function inspectAdapterPins(root, entries = ADAPTER_PACKAGES) {
   });
 }
 
-export function replaceGeneratedFile(outputPath, contents) {
+function replaceGeneratedFile(outputPath, contents) {
   const temporaryPath = `${outputPath}.${process.pid}.${randomUUID()}.tmp`;
   let temporaryExists = false;
   try {

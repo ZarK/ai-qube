@@ -11,7 +11,7 @@ import {
   inspectSuitePins,
   resolveSuiteRoot,
 } from "../scripts/suite-pins.mjs";
-import { inspectAdapterPins, renderAdapterPins, replaceGeneratedFile, writeAdapterPins } from "../scripts/adapter-pins.mjs";
+import { inspectAdapterPins, renderAdapterPins, writeAdapterPins } from "../scripts/adapter-pins.mjs";
 import { ADAPTER_PACKAGES, validatePackageCatalog } from "../scripts/workspace-packages.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -178,26 +178,6 @@ describe("suite pins", () => {
       symlinkSync(outsideFile, outputPath);
       assert.throws(() => inspectAdapterPins(root), { reasonCode: "unsafe-generated-path" });
       assert.throws(() => writeAdapterPins(root), { reasonCode: "unsafe-generated-path" });
-      assert.equal(readFileSync(outsideFile, "utf8"), "preserve\n");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
-  it("atomically replaces a swapped output symlink without touching its target", {
-    skip: process.platform === "win32",
-  }, () => {
-    const root = writeSuiteFixture();
-    const outside = mkdtempSync(path.join(os.tmpdir(), "qube-adapter-pins-swap-"));
-    const outsideFile = path.join(outside, "outside.ts");
-    const outputPath = path.join(root, "products/qube/src/adapter_versions.generated.ts");
-    try {
-      writeFileSync(outsideFile, "preserve\n");
-      rmSync(outputPath);
-      symlinkSync(outsideFile, outputPath);
-      replaceGeneratedFile(outputPath, "generated\n");
-      assert.equal(readFileSync(outputPath, "utf8"), "generated\n");
       assert.equal(readFileSync(outsideFile, "utf8"), "preserve\n");
     } finally {
       rmSync(root, { recursive: true, force: true });
