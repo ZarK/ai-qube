@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,6 +162,26 @@ describe("suite pins", () => {
     } finally {
       rmSync(missingRoot, { recursive: true, force: true });
       rmSync(invalidRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to follow a generated pin symlink outside the suite", {
+    skip: process.platform === "win32",
+  }, () => {
+    const root = writeSuiteFixture();
+    const outside = mkdtempSync(path.join(os.tmpdir(), "qube-adapter-pins-out-"));
+    const outsideFile = path.join(outside, "outside.ts");
+    const outputPath = path.join(root, "products/qube/src/adapter_versions.generated.ts");
+    try {
+      writeFileSync(outsideFile, "preserve\n");
+      rmSync(outputPath);
+      symlinkSync(outsideFile, outputPath);
+      assert.throws(() => inspectAdapterPins(root), { reasonCode: "unsafe-generated-path" });
+      assert.throws(() => writeAdapterPins(root), { reasonCode: "unsafe-generated-path" });
+      assert.equal(readFileSync(outsideFile, "utf8"), "preserve\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 

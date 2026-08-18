@@ -145,6 +145,17 @@ describe("publish tag resolution", () => {
     assert.equal(plan.packages.length, 16);
     assert.equal(plan.packages[0].packageKey, "qube-core");
     assert.equal(plan.packages.at(-1).packageKey, "qube");
+    assert.deepEqual(plan.packages.slice(2, 11).map(entry => entry.packageKey), [
+      "qube-adapter-github",
+      "qube-adapter-codex",
+      "qube-adapter-opencode",
+      "qube-adapter-claude-code",
+      "qube-adapter-gitlab",
+      "qube-adapter-linear",
+      "qube-adapter-jira",
+      "qube-adapter-jenkins",
+      "qube-adapter-grok-build",
+    ]);
     assert.equal(plan.prepare, "pnpm run build");
     assert.match(plan.verify, /version:audit/);
     assert.equal(plan.packages.some(entry => entry.command === "aie"), true);

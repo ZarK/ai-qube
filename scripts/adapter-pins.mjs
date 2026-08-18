@@ -1,10 +1,46 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { ADAPTER_PACKAGES, readCatalogManifests } from "./workspace-packages.mjs";
 
 export const ADAPTER_PINS_PATH = "products/qube/src/adapter_versions.generated.ts";
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
+
+function isOutside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative.startsWith("..") || path.isAbsolute(relative);
+}
+
+function resolveAdapterPinsPath(root, createParent = false) {
+  const realRoot = realpathSync.native(root);
+  const outputPath = path.resolve(root, ADAPTER_PINS_PATH);
+  if (isOutside(root, outputPath)) {
+    throw Object.assign(new Error(`${ADAPTER_PINS_PATH} escapes the suite root.`), { reasonCode: "unsafe-generated-path" });
+  }
+
+  const parentPath = path.dirname(outputPath);
+  const parentParts = path.relative(root, parentPath).split(path.sep).filter(Boolean);
+  let currentPath = root;
+  for (const part of parentParts) {
+    currentPath = path.join(currentPath, part);
+    if (!existsSync(currentPath)) {
+      if (!createParent) break;
+      mkdirSync(currentPath);
+    }
+    const currentStat = lstatSync(currentPath);
+    if (currentStat.isSymbolicLink() || !currentStat.isDirectory() || isOutside(realRoot, realpathSync.native(currentPath))) {
+      throw Object.assign(new Error(`${ADAPTER_PINS_PATH} has an unsafe parent path.`), { reasonCode: "unsafe-generated-path" });
+    }
+  }
+
+  if (existsSync(outputPath)) {
+    const outputStat = lstatSync(outputPath);
+    if (outputStat.isSymbolicLink() || !outputStat.isFile() || isOutside(realRoot, realpathSync.native(outputPath))) {
+      throw Object.assign(new Error(`${ADAPTER_PINS_PATH} is not a safe regular file.`), { reasonCode: "unsafe-generated-path" });
+    }
+  }
+  return outputPath;
+}
 
 export function renderAdapterPins(root, entries = ADAPTER_PACKAGES) {
   const packages = readCatalogManifests(root, entries)
@@ -21,7 +57,7 @@ export function renderAdapterPins(root, entries = ADAPTER_PACKAGES) {
 
 export function inspectAdapterPins(root, entries = ADAPTER_PACKAGES) {
   const expected = renderAdapterPins(root, entries);
-  const outputPath = path.join(root, ADAPTER_PINS_PATH);
+  const outputPath = resolveAdapterPinsPath(root);
   const actual = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : null;
   return Object.freeze({
     ok: actual === expected,
@@ -35,8 +71,7 @@ export function inspectAdapterPins(root, entries = ADAPTER_PACKAGES) {
 export function writeAdapterPins(root, entries = ADAPTER_PACKAGES) {
   const inspection = inspectAdapterPins(root, entries);
   if (inspection.changed) {
-    const outputPath = path.join(root, ADAPTER_PINS_PATH);
-    mkdirSync(path.dirname(outputPath), { recursive: true });
+    const outputPath = resolveAdapterPinsPath(root, true);
     writeFileSync(outputPath, inspection.expected, "utf8");
   }
   return Object.freeze({ ...inspection, ok: true, wrote: inspection.changed });
