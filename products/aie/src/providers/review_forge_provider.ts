@@ -5,6 +5,8 @@ import type {
   ReviewForgeLaneReviewHistory as CoreReviewForgeLaneReviewHistory,
   ReviewForgePullRequest as CoreReviewForgePullRequest,
   ReviewForgeRecentPullRequestOptions as CoreReviewForgeRecentPullRequestOptions,
+  ReviewRoundStatusPublishInput as CoreReviewRoundStatusPublishInput,
+  ReviewRoundStatusPublishResult as CoreReviewRoundStatusPublishResult,
   ReviewRoundSummaryPublishInput as CoreReviewRoundSummaryPublishInput,
   ReviewRoundSummaryPublishResult as CoreReviewRoundSummaryPublishResult,
 } from '@tjalve/qube-core';
@@ -111,6 +113,12 @@ export interface ReviewForgeRoundSummaryPublishResult extends CoreReviewRoundSum
   publisher?: ReviewForgePublisherIdentity;
 }
 
+export interface ReviewForgeRoundStatusPublishInput extends CoreReviewRoundStatusPublishInput {}
+
+export interface ReviewForgeRoundStatusPublishResult extends CoreReviewRoundStatusPublishResult {
+  publisher?: ReviewForgePublisherIdentity;
+}
+
 export interface ReviewForgePublisherIdentity {
   mode: 'user' | 'github-app' | 'token';
   identityClass: 'user' | 'github-app-installation' | 'fine-grained-token' | 'none';
@@ -132,6 +140,7 @@ export interface ReviewForgeProviderCapabilities {
   publishLaneReviewInline?: boolean;
   publishLocalReview?: boolean;
   resolveReviewThreads?: boolean;
+  publishRoundReviewStatus?: boolean;
   publishRoundReviewSummary?: boolean;
 }
 
@@ -154,6 +163,7 @@ export interface ReviewForgeProvider {
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
   /** Returns null when the provider cannot compute a diff index for this PR; callers must then treat every finding as unanchored. */
   loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
+  publishRoundReviewStatus?(input: ReviewForgeRoundStatusPublishInput): Promise<ReviewForgeRoundStatusPublishResult>;
   publishRoundReviewSummary?(input: ReviewForgeRoundSummaryPublishInput): Promise<ReviewForgeRoundSummaryPublishResult>;
 }
 
@@ -168,6 +178,7 @@ export interface ReviewForgeCapabilities {
   publishLocalReview: boolean;
   resolveReviewThreads: boolean;
   ciDiagnostics: boolean;
+  publishRoundReviewStatus: boolean;
   publishRoundReviewSummary: boolean;
 }
 
@@ -182,6 +193,7 @@ export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object
   publishLocalReview: false,
   resolveReviewThreads: false,
   ciDiagnostics: false,
+  publishRoundReviewStatus: false,
   publishRoundReviewSummary: false,
 });
 

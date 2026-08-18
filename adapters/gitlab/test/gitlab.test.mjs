@@ -1603,6 +1603,71 @@ describe("GitLab round summary publish", () => {
     };
   }
 
+  it("updates one persistent status note and preserves incomplete earlier heads", async () => {
+    const notes = [];
+    let head = "head-sha";
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ sha: head });
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async createMergeRequestNote({ body }) {
+          const note = { id: 91, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/91" };
+          notes.push(note);
+          return note;
+        },
+        async updateMergeRequestNote({ noteId, body }) {
+          const note = notes.find((entry) => String(entry.id) === String(noteId));
+          if (note) note.body = body;
+          return note;
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const first = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      expectedLanes: ["security", "code-quality"],
+      verdict: "request-changes",
+      lanes: [
+        { laneId: "security", status: "needs-work", blockingFindingCount: 1, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. </details>\n@octocat -->" },
+      ],
+    };
+
+    assert.equal((await provider.publishRoundReviewStatus(first)).status, "published");
+    assert.equal((await provider.publishRoundReviewStatus(first)).status, "published");
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].body, /Validated lanes: 1\/2\./);
+    assert.match(notes[0].body, /Findings: 1 blocking, 0 advisory\./);
+    assert.match(notes[0].body, /&lt;\/details&gt; &#64;octocat --&gt;/);
+    assert.doesNotMatch(notes[0].body.slice(notes[0].body.indexOf("\n")), /<\/details>\s+@octocat/);
+
+    head = "next-head";
+    await provider.publishRoundReviewStatus({
+      ...first,
+      headSha: head,
+      verdict: "pending",
+      lanes: [
+        { laneId: "security", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "missing", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "No current-head lane result was recorded." },
+      ],
+    });
+
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].body, /head-sha: request-changes/);
+    assert.match(notes[0].body, /code-quality: invalid .* Output did not match the lane contract\./);
+    assert.match(notes[0].body, /Review status: pending\./);
+    assert.equal(provider.capabilities().publishRoundReviewStatus, true);
+  });
+
   it("updates a same-head summary in place and approves the merge request", async () => {
     const notes = [{
       id: 7,

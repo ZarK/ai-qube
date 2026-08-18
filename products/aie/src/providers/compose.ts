@@ -310,6 +310,7 @@ function normalizeReviewCapabilities(value: { readonly [key: string]: boolean | 
     publishLocalReview: source.publishLocalReview === true,
     resolveReviewThreads: source.resolveReviewThreads === true,
     ciDiagnostics: source.ciDiagnostics === true,
+    publishRoundReviewStatus: source.publishRoundReviewStatus === true,
     publishRoundReviewSummary: source.publishRoundReviewSummary === true,
   };
 }

@@ -1054,7 +1054,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
-    const codeQualityPublished = () => fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('"lane":"code-quality"'));
+    const codeQualityPublished = () => fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('"laneId":"code-quality"'));
     let blockingMarkerSeenBeforeSlowSibling = false;
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
@@ -1103,6 +1103,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
     assert.equal(result.localReview.status === 'passed' || result.localReview.status === 'failed' || result.localReview.status === 'needs-work' || result.localReview.status === 'missing', true);
     assert.ok(result.localReviewPublish.status === 'published' || result.localReviewPublish.status === 'failed' || result.localReviewPublish.status === 'skipped');
+    assert.equal(blockingMarkerSeenBeforeSlowSibling, true);
   });
 
   it('publishes validated lanes while a failed lane leaves the round incomplete', async () => {
@@ -1119,24 +1120,25 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
       const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
       if (lane === 'tests-quality') return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false, stdinDelivered: true };
+      const blocking = lane === 'code-quality';
       const body = {
         issueNumber: 93,
         prNumber: 12,
         headSha: 'abc123',
         lane,
-        status: 'passed',
-        severity: 'none',
-        recommendation: 'approve',
-        summary: `${lane} routed review passed.`,
-        blockers: [],
-        findings: [],
+        status: blocking ? 'needs-work' : 'passed',
+        severity: blocking ? 'high' : 'none',
+        recommendation: blocking ? 'request-changes' : 'approve',
+        summary: blocking ? `${lane} found a blocking defect.` : `${lane} routed review passed.`,
+        blockers: blocking ? ['Fix the parser crash before merge.'] : [],
+        findings: blocking ? [{ id: 'cq-incomplete-1', severity: 'blocking', message: 'Fix the parser crash before merge.', location: { path: 'src/review.ts', line: 2 } }] : [],
         artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
         commands: ['git diff --check'],
         surfaces: ['PR diff'],
         contextReviewed: requiredTaskContext(),
         toolsUsed: ['git'],
         completeness: `Inspected the complete ${lane} scope at the current head.`,
-        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: blocking ? 'finding' : 'clear' })),
         preconditions: [],
       };
       return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
@@ -1158,6 +1160,9 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.lane === 'tests-quality' && lane.status === 'failed'));
     assert.notEqual(result.localReview.status, 'passed');
     assert.equal(result.shipReady.ready, false);
+    assert.equal(result.roundSummary, null, 'an incomplete round must not create a formal review summary');
+    assert.ok(fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('qube-pr-status:') && payload.body.includes('Review status: request-changes.') && payload.body.includes('Findings: 1 blocking, 0 advisory.') && payload.body.includes('tests-quality') && payload.body.includes('invalid')));
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('POST')), false);
   });
 
   it('clears a transient streamed publish failure when the batch retry lands the lane', async () => {
@@ -1218,7 +1223,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(!result.unavailable.some(entry => /transient provider failure/.test(entry)), 'a superseded streamed failure must not remain in the unavailable list');
   });
 
-  it('publishes no provider mutation when no routed lane produced terminal evidence', async () => {
+  it('publishes missing lane states without creating a formal review when no routed lane produced valid evidence', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
@@ -1247,12 +1252,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'failed');
     assert.equal(result.shipReady.ready, false);
     assert.ok(result.shipReady.reasons.length > 0);
-    // Per-lane publish-on-validate: with zero terminal lane evidence there is
-    // nothing to publish, and no lane mutation may reach the provider.
-    assert.equal(result.localReviewPublish.status, 'skipped');
-    assert.match(result.localReviewPublish.nextAction, /No routed lane holds terminal current-head evidence/);
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('qube-pr-status:') && payload.body.includes('invalid')));
+    assert.equal(result.roundSummary, null);
     assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
-    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('POST')), false);
   });
 
   it('reuses a complete trusted provider current-head lane set without executing lanes', async () => {
@@ -1347,6 +1351,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(result.roundSummary);
     assert.equal(result.roundSummary.status, 'failed');
     assert.match(String(result.roundSummary.failure), /issue number/i);
+    assert.equal(result.localReviewPublish.status, 'failed');
     const publishRecord = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '0', '12', 'abc123', 'publish.json'), 'utf8'));
     assert.equal(publishRecord.roundSummary.status, 'failed');
   });

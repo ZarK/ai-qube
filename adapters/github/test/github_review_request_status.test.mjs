@@ -140,7 +140,98 @@ function recordedRequestComments(comments) {
   return comments.filter(comment => String(comment.body ?? "").includes("Executor recorded a configured PR reviewer request"));
 }
 
+function roundStatusInput(overrides = {}) {
+  return {
+    dryRun: false,
+    prNumber: 12,
+    headSha: "abc123",
+    expectedLanes: ["security", "code-quality"],
+    verdict: "request-changes",
+    lanes: [
+      { laneId: "security", status: "needs-work", blockingFindingCount: 1, advisoryFindingCount: 0, reason: null },
+      { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract." },
+    ],
+    ...overrides,
+  };
+}
+
 describe("github reviewer request status comment", () => {
+  it("keeps a valid blocker visible when a sibling result is invalid without creating a formal review", async () => {
+    const fixture = createReviewRequestFixture();
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewStatus(roundStatusInput({
+      lanes: [
+        { laneId: "security", status: "needs-work", blockingFindingCount: 1, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. </details>\n@octocat -->" },
+      ],
+    }));
+
+    assert.equal(result.status, "published");
+    assert.equal(statusComments(fixture.comments).length, 1);
+    assert.match(statusComments(fixture.comments)[0].body, /Review status: request-changes\./);
+    assert.match(statusComments(fixture.comments)[0].body, /Validated lanes: 1\/2\./);
+    assert.match(statusComments(fixture.comments)[0].body, /Findings: 1 blocking, 0 advisory\./);
+    assert.match(statusComments(fixture.comments)[0].body, /code-quality: invalid .* Output did not match the lane contract\./);
+    assert.match(statusComments(fixture.comments)[0].body, /&lt;\/details&gt; &#64;octocat --&gt;/);
+    assert.doesNotMatch(statusComments(fixture.comments)[0].body.slice(statusComments(fixture.comments)[0].body.indexOf("\n")), /<\/details>\s+@octocat/);
+    assert.equal(fixture.calls.some(args => String(args[1] ?? "").includes("pulls/12/reviews")), false);
+  });
+
+  it("keeps a clean partial round pending and updates the existing status comment", async () => {
+    const fixture = createReviewRequestFixture();
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const input = roundStatusInput({
+      verdict: "pending",
+      lanes: [
+        { laneId: "security", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "missing", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "No current-head lane result was recorded." },
+      ],
+    });
+
+    await provider.publishRoundReviewStatus(input);
+    await provider.publishRoundReviewStatus(input);
+
+    assert.equal(statusComments(fixture.comments).length, 1);
+    assert.match(statusComments(fixture.comments)[0].body, /Review status: pending\./);
+    assert.doesNotMatch(statusComments(fixture.comments)[0].body, /Review status: approve\./);
+  });
+
+  it("preserves incomplete lane details when a later head starts", async () => {
+    const fixture = createReviewRequestFixture();
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    await provider.publishRoundReviewStatus(roundStatusInput());
+    fixture.setHead("def456");
+
+    await provider.publishRoundReviewStatus(roundStatusInput({
+      headSha: "def456",
+      verdict: "pending",
+      lanes: [
+        { laneId: "security", status: "pending", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "missing", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "No current-head lane result was recorded." },
+      ],
+    }));
+
+    const payload = parseStatusPayload(statusComments(fixture.comments)[0].body);
+    assert.equal(payload.rounds.length, 2);
+    assert.equal(payload.rounds[0].head, "abc123");
+    assert.equal(payload.rounds[0].lanes[0].blockingFindingCount, 1);
+    assert.equal(payload.rounds[0].lanes[1].reason, "Output did not match the lane contract.");
+    assert.equal(payload.rounds[1].head, "def456");
+  });
+
+  it("fails closed when the pull request head changes before status publication", async () => {
+    const fixture = createReviewRequestFixture();
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    fixture.setHead("changed-head");
+
+    const result = await provider.publishRoundReviewStatus(roundStatusInput());
+
+    assert.equal(result.status, "failed");
+    assert.match(result.failure, /head changed/);
+    assert.equal(statusComments(fixture.comments).length, 0);
+  });
+
   it("records five head changes on one status comment and posts no marker comments", async () => {
     const fixture = createReviewRequestFixture();
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });

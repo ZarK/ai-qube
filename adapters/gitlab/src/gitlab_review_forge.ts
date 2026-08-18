@@ -24,6 +24,8 @@ import {
   type ReviewLaneReviewPublishInput,
   type ReviewLaneReviewPublishResult,
   type ReviewMergeBlock,
+  type ReviewRoundStatusPublishInput,
+  type ReviewRoundStatusPublishResult,
   type ReviewRoundSummaryPublishInput,
   type ReviewRoundSummaryPublishResult,
 } from "@tjalve/qube-core";
@@ -33,6 +35,7 @@ import {
   classifyGitLabPublishError,
   discussionPosition,
   isBenignApprovalStateError,
+  normalizeStatusLanes,
   parseGitLabDiffIndex,
   parseRoundSummaryMarker,
   parseStatusNoteRounds,
@@ -345,7 +348,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   capabilities(): ReviewForgeCapabilities {
-    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewSummary: true };
+    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewStatus: true, publishRoundReviewSummary: true };
   }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
@@ -786,6 +789,87 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     return { login, tokenPresent: true, apiScope, approvalPermission, failure };
   }
 
+  async publishRoundReviewStatus(input: ReviewRoundStatusPublishInput): Promise<ReviewRoundStatusPublishResult> {
+    const normalizedLanes = normalizeStatusLanes(input.lanes);
+    if (!normalizedLanes) {
+      return {
+        status: "failed",
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        publishKind: "issue-comment",
+        failure: "Review status publication received an invalid lane status payload.",
+        nextAction: `Regenerate the current-head lane evidence, then rerun the review status publish for merge request !${input.prNumber}.`,
+      };
+    }
+    const plannedBody = renderStatusNote([{
+      head: input.headSha,
+      verdict: input.verdict,
+      complete: false,
+      lanes: normalizedLanes,
+    }], input.prNumber);
+    if (input.dryRun) {
+      return {
+        status: "planned",
+        runId: null,
+        marker: plannedBody.split("\n", 1)[0] ?? null,
+        body: plannedBody,
+        url: null,
+        publishKind: "issue-comment",
+        failure: null,
+        nextAction: `Rerun without --dry-run to update the GitLab review status for !${input.prNumber}.`,
+      };
+    }
+    try {
+      const mergeRequest = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const currentHead = typeof mergeRequest.sha === "string" ? mergeRequest.sha : "";
+      if (currentHead === "" || currentHead !== input.headSha) {
+        throw new Error(currentHead === ""
+          ? `merge request !${input.prNumber} did not report a head SHA, so the status head cannot be verified; fail closed and retry once GitLab reports the current head.`
+          : `merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`);
+      }
+      const publisher = await this.trustedMarkerAuthor();
+      if (!publisher) throw new Error("GitLab publisher identity is unresolved, so review status markers cannot be trusted. Verify GITLAB_TOKEN can call /user.");
+      const notes = await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
+      const fresh = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const freshHead = typeof fresh.sha === "string" ? fresh.sha : "";
+      if (freshHead === "" || freshHead !== input.headSha) {
+        throw new Error(freshHead === ""
+          ? `merge request !${input.prNumber} stopped reporting a head SHA before status publication; fail closed and rerun pr gate.`
+          : `merge request !${input.prNumber} head changed from ${input.headSha} to ${freshHead} before status publication; rerun pr gate for the current head.`);
+      }
+      const body = await this.upsertGitLabStatusNote({
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        verdict: input.verdict,
+        complete: false,
+        lanes: normalizedLanes,
+      }, notes, publisher);
+      return {
+        status: "published",
+        runId: null,
+        marker: body.split("\n", 1)[0] ?? null,
+        body,
+        url: null,
+        publishKind: "issue-comment",
+        failure: null,
+        nextAction: "The persistent GitLab review status was updated; incomplete rounds did not create an approval.",
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        runId: null,
+        marker: null,
+        body: plannedBody,
+        url: null,
+        publishKind: "issue-comment",
+        failure: classifyGitLabPublishError(error),
+        nextAction: `Fix GitLab status-note permissions or head freshness, then rerun pr gate for !${input.prNumber}.`,
+      };
+    }
+  }
+
   async publishRoundReviewSummary(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult> {
     const body = summaryNoteBody(input);
     if (input.dryRun) {
@@ -849,7 +933,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       };
 
       await assertHeadUnchanged();
-      await this.upsertGitLabStatusNote(input, notes, publisher);
+      await this.upsertGitLabStatusNote({ ...input, complete: true }, notes, publisher);
       let supersededPriorSummaries = 0;
       if (this.client.updateMergeRequestNote) {
         for (const record of live.filter((entry) => entry.parsed.head !== input.headSha)) {
@@ -1062,25 +1146,40 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   private async upsertGitLabStatusNote(
-    input: ReviewRoundSummaryPublishInput,
+    input: {
+      readonly prNumber: number;
+      readonly headSha: string;
+      readonly verdict: string;
+      readonly complete: boolean;
+      readonly lanes?: ReviewRoundStatusPublishInput["lanes"];
+    },
     notes: readonly GitLabNote[],
     publisher: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const existing = notes.find((note) => {
       if (parseStatusNoteRounds(note.body).length === 0 && !note.body.includes("<!-- qube-pr-status:")) return false;
       return loginsMatch(userName(note.author), publisher);
     });
     const prior = existing ? parseStatusNoteRounds(existing.body) : [];
-    const next = [...prior.filter((round) => round.head !== input.headSha), { head: input.headSha, verdict: input.verdict }];
+    const previous = prior.find((round) => round.head === input.headSha);
+    const current = {
+      ...previous,
+      head: input.headSha,
+      verdict: input.verdict,
+      ...(input.complete ? { complete: true } : { complete: false }),
+      ...(input.lanes ? { lanes: [...input.lanes] } : {}),
+    };
+    const next = [...prior.filter((round) => round.head !== input.headSha), current];
     const body = renderStatusNote(next, input.prNumber);
     if (existing) {
       if (!this.client.updateMergeRequestNote) {
         throw new Error("A GitLab status note already exists and the client cannot update notes; failing closed instead of creating a second status note.");
       }
       await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existing.id), body });
-      return;
+      return body;
     }
     await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body });
+    return body;
   }
 }
 
