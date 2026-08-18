@@ -91,7 +91,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
   return {
     text: messages[messages.length - 1]!,
     sessionId,
-    ...(messages.length > 1 ? { priorTexts: messages.slice(0, -1) } : {}),
+    ...(messages.length > 1 ? { transientTexts: messages.slice(0, -1) } : {}),
     ...(usage ? { usage } : {}),
   };
 }

@@ -1200,16 +1200,24 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   try {
     for (const laneId of requiredLanes) {
       const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+      const providerRecord = acceptedProviderLane(providerReuse, laneId, issueNumber);
       if (directoryExists && existsSync(path)) {
         const parsed = parseLaneEvidence(repoRoot, path, issueNumber, prNumber, headSha);
         if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+        // An exact-head trusted provider approval is the durable form of a
+        // previously passed local lane. Prefer it over mutable local-only
+        // provenance reconstruction, but never let it hide a local blocking or
+        // incomplete verdict.
+        if (providerRecord && parsed.lane.status === 'passed') {
+          providerLanes.push(providerReuseLane(providerRecord));
+          continue;
+        }
         localLanes.push({ ...parsed.lane, origin: 'local' });
         adapters.push(parsed.adapter);
         laneAdapters.set(laneId, parsed.adapter);
         evidenceHashes.set(laneId, parsed.evidenceSha256);
         continue;
       }
-      const providerRecord = acceptedProviderLane(providerReuse, laneId, issueNumber);
       if (providerRecord) {
         providerLanes.push(providerReuseLane(providerRecord));
         continue;

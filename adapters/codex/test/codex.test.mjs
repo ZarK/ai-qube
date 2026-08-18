@@ -69,7 +69,7 @@ describe("codex adapter", () => {
     ].join("\n"));
 
     assert.equal(parsed.text, terminal);
-    assert.deepEqual(parsed.priorTexts, [progress]);
+    assert.deepEqual(parsed.transientTexts, [progress]);
     assert.equal(parsed.sessionId, "thread-1");
   });
 });

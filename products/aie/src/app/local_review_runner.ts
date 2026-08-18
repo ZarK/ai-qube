@@ -12,7 +12,7 @@ import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
 import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
-import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
+import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { reviewModeOf } from '../review_mode.js';
@@ -134,6 +134,7 @@ interface LocalReviewRunnerInput {
   /** Issue/PR titles used only for risk-card activation (not the full review context blob). */
   riskCardIssueText?: string;
   modelRouteProcess?: ModelRouteProcess;
+  onReviewProgress?: (progress: ModelRouteProcessProgress) => void;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveModelHead?: (repoRoot: string) => Promise<string>;
   routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
@@ -144,8 +145,6 @@ interface LocalReviewRunnerInput {
   prTitle?: string;
   prBody?: string;
   diffStats?: string;
-  /** Invoked as each routed lane's evidence lands (serialized in completion order), so the caller can publish a validated lane before slower siblings finish. */
-  onLaneValidated?: (lane: LocalReviewLaneRun) => Promise<void>;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -786,6 +785,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               resolveExecutable: job.probedExecutable !== null ? async () => job.probedExecutable! : input.resolveModelHost,
               resolveHead: input.resolveModelHead,
               runProcess: input.modelRouteProcess,
+              onProgress: input.onReviewProgress,
             }),
           };
           routedJobs.push(job);
@@ -913,9 +913,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   }
   if (runnableJobs.length > 0) {
     // Streamed completion: each routed outcome writes its evidence and
-    // provenance as soon as it lands (serialized in completion order), and a
-    // validated lane is handed to the caller's per-lane hook immediately, so
-    // a blocking lane becomes provider-visible while slower siblings run.
+    // provenance as soon as it lands (serialized in completion order). Provider
+    // mutation remains batch-owned and starts only after all lane outcomes land.
     await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
       const job = runnableJobs[jobIndex];
       if (
@@ -957,13 +956,6 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
-      if (input.onLaneValidated) {
-        try {
-          await input.onLaneValidated(lanes[job.laneSlot]);
-        } catch {
-          // The hook owns its failure reporting; a hook error never fails the lane run.
-        }
-      }
     });
   }
 

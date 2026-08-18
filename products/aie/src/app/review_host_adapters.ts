@@ -27,6 +27,8 @@ export interface ReviewHostCapabilities {
 export interface ReviewHostParsedEnvelope {
   text: string;
   sessionId: string | null;
+  transientTexts?: string[];
+  /** @deprecated Use transientTexts. Earlier host messages are never review evidence. */
   priorTexts?: string[];
   usage?: LaneUsage;
 }

@@ -864,6 +864,11 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
       includeLocalReviewPrompts: readBooleanFlag(context, 'local-review-prompts'),
       forceFullReview: readBooleanFlag(context, 'full-review'),
       repoRoot: loaded.root,
+      onReviewProgress: progress => {
+        const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
+        const timeoutSeconds = Math.max(1, Math.round(progress.timeoutMs / 1000));
+        process.stderr.write(`QUBE review: ${progress.label} ${progress.phase} (${elapsedSeconds}s/${timeoutSeconds}s).\n`);
+      },
       onBeforeMutate: message => {
         warnings.push(message);
       },
