@@ -650,6 +650,20 @@ function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
       if (isRecord(event)) {
         if (event.type === 'item.completed' && isRecord(event.item) && event.item.type === 'agent_message') continue;
         if (typeof event.text === 'string' && (typeof event.sessionId === 'string' || event.sessionId === null)) continue;
+        if (
+          event.type === 'item.completed'
+          && isRecord(event.item)
+          && event.item.type === 'command_execution'
+        ) {
+          if (event.item.exit_code === 0) continue;
+          if (typeof event.item.aggregated_output === 'string') parts.push(event.item.aggregated_output);
+          continue;
+        }
+        if (event.type !== 'error' && event.type !== 'turn.failed') continue;
+        for (const field of ['message', 'error', 'detail'] as const) {
+          if (typeof event[field] === 'string') parts.push(event[field]);
+        }
+        continue;
       }
     } catch {
       // Keep non-JSON host diagnostics, including command-rejection text.

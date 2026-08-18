@@ -393,6 +393,63 @@ describe('model review runner', () => {
     assert.equal(result.evidence.status, 'passed');
   });
 
+  it('does not treat policy text in successful command output as a host fault', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-source-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-source' }),
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              exit_code: 0,
+              aggregated_output: 'diff output documents a prior blocked by policy failure',
+            },
+          }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(result.reasonCode, null);
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'passed');
+  });
+
+  it('rejects a structured failed command that reports a policy block', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-command-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-policy-command' }),
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              exit_code: 1,
+              aggregated_output: 'rejected: blocked by policy\ngit diff HEAD',
+            },
+          }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-policy-blocked');
+  });
+
   it('does not accept a schema-valid Codex verdict when the host blocked git inspection', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-valid-'));
     const result = await runModelReview({
