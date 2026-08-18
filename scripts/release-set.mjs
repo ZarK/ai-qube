@@ -20,7 +20,8 @@ export function parseReleaseArgs(argv) {
     else if (token === "--json") options.json = true;
     else if (token === "--dry-run") options.dryRun = true;
     else if (token === "--repo-root") {
-      const value = argv[index += 1];
+      index += 1;
+      const value = argv[index];
       if (!value || value.startsWith("-")) {
         throw Object.assign(new Error("--repo-root requires a value."), { reasonCode: "usage" });
       }
@@ -119,7 +120,8 @@ function printHelp() {
   process.stdout.write(`Usage: node scripts/release-set.mjs [--dry-run] [--json]
 
 Create and push publish-set-v<qubeVersion> from a clean current main.
-CI then publishes every workspace version that is not already on npm.
+CI then stages every workspace version that is not already on npm. Run
+pnpm run release:approve -- <tag> after the workflow succeeds.
 `);
 }
 
@@ -143,7 +145,7 @@ export async function main(argv = process.argv.slice(2)) {
       return;
     }
     process.stdout.write(`${report.tag}\n`);
-    process.stdout.write(`publish ${report.packages.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
+    process.stdout.write(`stage ${report.packages.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
     if (report.skipped.length > 0) {
       process.stdout.write(`skip ${report.skipped.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
     }

@@ -26,13 +26,12 @@ Configure each npm package with this trusted publisher:
 | Repository | `ai-qube` |
 | Workflow filename | `publish.yml` |
 | Environment | `npm-publish` |
-| Allowed action | `npm publish` |
+| Allowed action | `npm stage publish` |
 
-Allow `npm publish` once on each trusted publisher. After that, pushing the set
-tag is the only maintainer action. The GitHub environment is named `npm-publish`.
-Keep reviewer approval enabled for that environment when the repository plan
-supports it. That environment approval, if required, is the proof-of-presence
-gate. There is no per-package npm UI approval step.
+Allow only `npm stage publish` on each trusted publisher. Do not allow direct
+publishing and do not configure an npm token fallback. The GitHub environment is
+named `npm-publish`. Keep reviewer approval enabled for that environment when
+the repository plan supports it. npm approval remains the proof-of-presence gate.
 
 ## Normal Package Release
 
@@ -59,21 +58,44 @@ without pushing.
 The workflow prepares the set, checks manifests and composer pins, packs every
 current workspace package from the checkout, installs those tarballs into a
 prefix outside the checkout, and fails if `qube`, `aie`, `aib`, `aiu`, or `aiq`
-does not start. Then it publishes only the versions that are not already on npm:
+does not start. Then the same job stages every version that is not already on npm,
+in dependency order:
 
 ```sh
-npm publish . --access public --ignore-scripts
+npm stage publish . --access public --ignore-scripts --json
 ```
 
-Already-public versions are skipped. Unchanged adapters do not need a bump.
-Composer pins for Bootstrap, Executor, Quality, Umpire, CLI, and core must match
-the workspace versions; CI fails if they drift.
+The job records one complete receipt that binds the ordered package names,
+versions, stage IDs, dist-tags, and tarball shasums to the immutable release tag,
+commit, and workflow run. Already-public versions are skipped. Unchanged adapters
+do not need a bump. Composer pins for Bootstrap, Executor, Quality, Umpire, CLI,
+and core must match the workspace versions; CI fails if they drift.
+
+After the workflow succeeds, run one command:
+
+```sh
+pnpm run release:approve -- publish-set-v<qube-version>
+```
+
+The command finds the successful workflow run and validates its receipt against
+the local tag, `origin/main`, the package manifests at that commit, the active
+npm stages, and the public registry. It displays the complete ordered set before
+approval. npm can require authentication and proof-of-presence for each protected
+stage approval; the command does not bypass those checks. All packages were
+already built and staged together, so no dependency is rebuilt or restaged
+between approvals.
+
+If approval is interrupted, run the same command again. A package is skipped only
+when its public registry shasum matches the release receipt. Remaining matching
+stages continue in dependency order. Missing, stale, duplicate, or mismatched
+evidence fails closed before an approval call.
 
 To publish one package in an emergency, use a package-specific tag:
 
 ```sh
 git tag publish-<package>-v<version>
 git push origin publish-<package>-v<version>
+pnpm run release:approve -- publish-<package>-v<version>
 ```
 
 Valid package keys are `qube-cli`, `qube-core`, `qube-adapter-github`,
@@ -105,23 +127,15 @@ ordered seed and set-tag commands for the current workspace versions.
 The workflow verifies the tag version against the selected package manifest,
 checks that the tag commit is reachable from `origin/main`, installs dependencies
 with lifecycle scripts disabled, builds required workspace dependencies, verifies
-the selected package, and publishes with trusted publishing.
+the selected package, and stages it with trusted publishing.
 
 ## First Publish Exception
 
-Trusted publishing requires the package name to already exist on npm. A
-brand-new package name must be seeded once with a normal authenticated publish.
-Because local shells are not a supported provenance provider, override package
-provenance for that seed publish:
-
-```sh
-cd <repo-root>
-pnpm --filter @tjalve/qube-core run verify
-cd packages/qube-core
-npm publish --access public --provenance=false --otp <otp>
-```
-
-Seed publish order for a new name:
+Trusted publishing requires the package name to already exist on npm. This
+pipeline does not fall back to direct publishing for a brand-new package name.
+Bootstrap a new name through a separately reviewed and explicitly authorized
+procedure, configure its stage-only trusted publisher, and only then add it to
+this release set. Bootstrap order for new names is:
 
 1. `@tjalve/qube-core`
 2. `@tjalve/qube-adapter-github`
@@ -134,9 +148,9 @@ Seed publish order for a new name:
 9. `@tjalve/qube-adapter-jenkins`
 10. `@tjalve/qube-adapter-grok-build`
 
-Use the same seed pattern for any other brand-new package name, after its
-published dependencies already exist. Then configure the trusted publisher above
-for the new package, allow `npm publish`, and use the set tag for later versions.
+Bootstrap any other brand-new package name only after its published dependencies
+exist. Then configure the trusted publisher above for `npm stage publish` and use
+the set tag for later versions.
 
 For package-local installs and release checks, use exact versions and disabled
 lifecycle scripts:

@@ -64,5 +64,5 @@ jobs:
       - name: Verify installed entry points start
         run: node scripts/verify-installed-commands.mjs --plan publish-plan.json --json
 
-      - name: Publish selected packages
-        run: node scripts/run-publish-plan.mjs publish publish-plan.json
+      - name: Stage selected packages
+        run: node scripts/run-publish-plan.mjs stage publish-plan.json

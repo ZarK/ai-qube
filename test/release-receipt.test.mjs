@@ -1,0 +1,206 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { approvePackages, prepareApproval } from "../scripts/approve-staged-release.mjs";
+import {
+  RECEIPT_MARKER,
+  createReceipt,
+  encodeReceipt,
+  findCompleteReceipt,
+  parseStageOutput,
+  planApprovals,
+  resumeReceipt,
+  validateReceipt,
+} from "../scripts/release-receipt.mjs";
+
+const headSha = "a".repeat(40);
+const firstStage = "11111111-1111-4111-8111-111111111111";
+const secondStage = "22222222-2222-4222-8222-222222222222";
+const firstShasum = "1".repeat(40);
+const secondShasum = "2".repeat(40);
+const planned = [
+  { packageKey: "qube-core", packageName: "@tjalve/qube-core", version: "0.2.1" },
+  { packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.7" },
+];
+const staged = [
+  { ...planned[0], tag: "latest", stageId: firstStage, shasum: firstShasum },
+  { ...planned[1], tag: "latest", stageId: secondStage, shasum: secondShasum },
+];
+
+function receipt(complete = true) {
+  return createReceipt({
+    repository: "ZarK/ai-qube",
+    tag: "publish-set-v0.2.7",
+    headSha,
+    runId: "99",
+    runAttempt: "1",
+  }, planned, staged, complete);
+}
+
+function stages() {
+  return staged.map(entry => ({
+    id: entry.stageId,
+    packageName: entry.packageName,
+    version: entry.version,
+    tag: entry.tag,
+    shasum: entry.shasum,
+  }));
+}
+
+describe("staged release receipts", () => {
+  it("parses npm stage JSON and rejects an untrusted result shape", () => {
+    const output = JSON.stringify({
+      "@tjalve/qube": {
+        name: "@tjalve/qube",
+        version: "0.2.7",
+        stageId: secondStage,
+        shasum: secondShasum,
+      },
+    });
+    assert.deepEqual(parseStageOutput(output, planned[1]), staged[1]);
+    assert.throws(() => parseStageOutput("{}", planned[1]), { reasonCode: "stage-output" });
+    assert.throws(() => parseStageOutput("not-json", planned[1]), { reasonCode: "stage-output" });
+  });
+
+  it("extracts exactly one complete receipt from prefixed workflow logs", () => {
+    const expected = receipt();
+    const log = `publish\tStage\t2026-08-18 ${RECEIPT_MARKER}${encodeReceipt(expected)}\n`;
+    assert.deepEqual(findCompleteReceipt(log), expected);
+    assert.throws(() => findCompleteReceipt("no marker"), { reasonCode: "invalid-receipt" });
+    assert.throws(() => findCompleteReceipt(`${log}${log}`), { reasonCode: "invalid-receipt" });
+  });
+
+  it("requires a complete, ordered, unique receipt bound to its run", () => {
+    const valid = receipt();
+    assert.equal(validateReceipt(valid, {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: 99,
+    }), valid);
+    assert.throws(() => validateReceipt(receipt(false)), { reasonCode: "invalid-receipt" });
+
+    const reordered = structuredClone(valid);
+    reordered.packages.reverse();
+    assert.throws(() => validateReceipt(reordered), { reasonCode: "invalid-receipt" });
+
+    const duplicate = structuredClone(valid);
+    duplicate.packages[1].stageId = duplicate.packages[0].stageId;
+    assert.throws(() => validateReceipt(duplicate), { reasonCode: "invalid-receipt" });
+    assert.throws(() => validateReceipt(valid, { headSha: "b".repeat(40) }), { reasonCode: "invalid-receipt" });
+  });
+
+  it("resumes a partial approval without restaging already-public packages", () => {
+    const published = new Map([
+      ["@tjalve/qube-core", new Map([["0.2.1", firstShasum]])],
+      ["@tjalve/qube", new Map()],
+    ]);
+    const actions = planApprovals(receipt(), stages(), published);
+    assert.deepEqual(actions.map(entry => entry.action), ["skip-published", "approve"]);
+    assert.deepEqual(actions.map(entry => entry.packageKey), ["qube-core", "qube"]);
+    const calls = [];
+    const output = { write() {} };
+    assert.equal(approvePackages(actions, args => calls.push(args), output), 1);
+    assert.deepEqual(calls, [["stage", "approve", secondStage]]);
+  });
+
+  it("resumes only an exact staged prefix from the same release run", () => {
+    const checkpoint = createReceipt({
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: "99",
+      runAttempt: "1",
+    }, planned, staged.slice(0, 1), false);
+    assert.deepEqual(resumeReceipt(checkpoint, {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: "99",
+    }, planned), staged.slice(0, 1));
+    assert.throws(() => resumeReceipt(checkpoint, {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.8",
+      headSha,
+      runId: "99",
+    }, planned), { reasonCode: "invalid-receipt" });
+    assert.throws(() => resumeReceipt(checkpoint, {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: "99",
+    }, planned.slice().reverse()), { reasonCode: "invalid-receipt" });
+  });
+
+  it("fails closed on registry and active-stage mismatches", () => {
+    const wrongPublished = new Map([
+      ["@tjalve/qube-core", new Map([["0.2.1", "f".repeat(40)]])],
+    ]);
+    assert.throws(() => planApprovals(receipt(), stages(), wrongPublished), { reasonCode: "invalid-receipt" });
+
+    const wrongStages = stages();
+    wrongStages[0].shasum = "f".repeat(40);
+    assert.throws(() => planApprovals(receipt(), wrongStages, new Map()), { reasonCode: "invalid-receipt" });
+  });
+
+  it("binds approval to the successful workflow, tag commit, and package manifests", async () => {
+    const valid = receipt();
+    const stageList = stages();
+    const calls = [];
+    const commands = {
+      gh(args) {
+        if (args[0] === "repo") return JSON.stringify({ nameWithOwner: "ZarK/ai-qube" });
+        if (args[1] === "list") return JSON.stringify([{
+          databaseId: 99,
+          headSha,
+          headBranch: valid.tag,
+          status: "completed",
+          conclusion: "success",
+          createdAt: "2026-08-18T10:00:00Z",
+          url: "https://example.invalid/run/99",
+        }]);
+        return `${RECEIPT_MARKER}${encodeReceipt(valid)}`;
+      },
+      git(args) {
+        calls.push(args.join(" "));
+        if (args[0] === "rev-parse") return headSha;
+        if (args[0] === "merge-base") return "";
+        if (args[0] === "show" && args[1].endsWith("packages/qube-core/package.json")) {
+          return JSON.stringify({ name: "@tjalve/qube-core", version: "0.2.1" });
+        }
+        return JSON.stringify({ name: "@tjalve/qube", version: "0.2.7" });
+      },
+      npm(args) {
+        assert.deepEqual(args, ["stage", "list", "--json"]);
+        return JSON.stringify(stageList);
+      },
+    };
+    const prepared = await prepareApproval(valid.tag, {
+      commands,
+      fetch: async () => ({ status: 404, ok: false }),
+    });
+    assert.deepEqual(prepared.approvals.map(entry => entry.action), ["approve", "approve"]);
+    assert.equal(calls.some(call => call === `merge-base --is-ancestor ${headSha} origin/main`), true);
+  });
+
+  it("rejects a successful run from another commit before reading npm stages", async () => {
+    let npmCalled = false;
+    const commands = {
+      gh(args) {
+        if (args[0] === "repo") return JSON.stringify({ nameWithOwner: "ZarK/ai-qube" });
+        return JSON.stringify([{
+          databaseId: 99,
+          headSha: "b".repeat(40),
+          headBranch: "publish-set-v0.2.7",
+          status: "completed",
+          conclusion: "success",
+          createdAt: "2026-08-18T10:00:00Z",
+        }]);
+      },
+      git() { return headSha; },
+      npm() { npmCalled = true; return "[]"; },
+    };
+    await assert.rejects(() => prepareApproval("publish-set-v0.2.7", { commands }), { reasonCode: "workflow-run" });
+    assert.equal(npmCalled, false);
+  });
+});

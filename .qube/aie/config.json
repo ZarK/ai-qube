@@ -339,7 +339,7 @@
         {
           "name": "aiq",
           "kind": "aiq",
-          "command": "node products/aiq/packages/cli/dist/bin/aiq.js run --only 1",
+          "command": "node products/aiq/packages/cli/dist/bin/aiq.js run adapters packages products scripts test --only 1",
           "stage": "pre-pr",
           "required": true,
           "timeoutSeconds": 1200,
