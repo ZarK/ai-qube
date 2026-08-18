@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { lstat, readlink } from 'node:fs/promises';
@@ -820,36 +820,21 @@ export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutM
       if (watchError) return `monitor error: ${watchError}`;
       if (changedPaths.size === 0) return null;
       const paths = [...changedPaths];
-      for (let offset = 0; offset < paths.length; offset += 100) {
-        const batch = paths.slice(offset, offset + 100);
-        const result = spawnSync('git', ['-C', repoRoot, 'check-ignore', '-z', '--stdin'], {
-          encoding: 'utf8',
-          input: `${batch.join('\0')}\0`,
-          maxBuffer: 1024 * 1024,
-          timeout: 10_000,
-          windowsHide: true,
-        });
-        if (result.error || result.status !== 0 && result.status !== 1) {
-          const diagnostic = result.error?.message ?? result.stderr ?? `git check-ignore exited with code ${String(result.status)}`;
-          return `monitor error: ${sanitizedDiagnostic(diagnostic)}`;
+      for (const changedPath of paths) {
+        const absolutePath = resolve(repoRoot, changedPath);
+        const repoRelativePath = relative(repoRoot, absolutePath);
+        if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
+          return changedPath;
         }
-        const ignoredPaths = result.stdout.split('\0').filter(Boolean);
-        for (const ignoredPath of ignoredPaths) {
-          const absolutePath = resolve(repoRoot, ignoredPath);
-          const repoRelativePath = relative(repoRoot, absolutePath);
-          if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
-            return ignoredPath;
-          }
-          try {
-            const details = statSync(absolutePath);
-            // Some Windows filesystems report watcher events for read access.
-            // A real content, metadata, create, or rename change advances mtime
-            // or ctime; an access-only event leaves both timestamps unchanged.
-            if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) return ignoredPath;
-          } catch {
-            // Deletions and paths that cannot be inspected fail closed.
-            return ignoredPath;
-          }
+        try {
+          const details = statSync(absolutePath);
+          // Some Windows filesystems report watcher events for read access.
+          // A real content, metadata, create, or rename change advances mtime
+          // or ctime; an access-only event leaves both timestamps unchanged.
+          if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) return changedPath;
+        } catch {
+          // Deletions and paths that cannot be inspected fail closed.
+          return changedPath;
         }
       }
       return null;

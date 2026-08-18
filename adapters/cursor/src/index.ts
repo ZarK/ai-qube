@@ -1,10 +1,6 @@
-import { existsSync } from "node:fs";
-import { win32 as pathWin32 } from "node:path";
-
 import type {
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
-  IsolatedReviewHostExecutable,
   IsolatedReviewHostInvocationContext,
   IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
@@ -94,22 +90,6 @@ function requiredHelpMissing(help: string): string[] {
     .filter(option => !help.includes(option));
 }
 
-export function resolveCursorWindowsShim(
-  shim: string,
-  systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
-  pathExists: (path: string) => boolean = existsSync,
-): IsolatedReviewHostExecutable | null {
-  if (!["cursor-agent.cmd", "agent.cmd"].includes(pathWin32.basename(shim).toLowerCase())) return null;
-  const scriptName = pathWin32.basename(shim, ".cmd");
-  const script = pathWin32.join(pathWin32.dirname(shim), `${scriptName}.ps1`);
-  const powershell = pathWin32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  if (!pathExists(script) || !pathExists(powershell)) return null;
-  return {
-    executable: powershell,
-    prefixArgs: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
-  };
-}
-
 export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
   _platform: NodeJS.Platform = process.platform,
@@ -178,13 +158,11 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   executableNames: Object.freeze(["cursor-agent", "agent"]),
-  windowsExecutableNames: Object.freeze(["cursor-agent.exe", "agent.exe"]),
+  windowsExecutableNames: Object.freeze([]),
   requiresPromptFile: false,
   requiresSchemaFile: false,
-  windowsShell: "powershell",
   unsupportedPlatformMessage: "Native Windows cannot provide the required Cursor sandbox. Run QUBE and the Cursor CLI inside WSL2.",
   supportsPlatform(platform: string): boolean { return platform !== "win32"; },
-  resolveWindowsShim: resolveCursorWindowsShim,
   windowsNodeModulesScriptPath(): string | null { return null; },
   windowsFallbackExecutablePath(): string | null { return null; },
   buildInvocation(context: IsolatedReviewHostInvocationContext): IsolatedReviewHostBuiltInvocation {

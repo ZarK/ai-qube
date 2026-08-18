@@ -19,6 +19,7 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), false);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
     assert.match(cursor.isolatedReviewHostAdapter.unsupportedPlatformMessage, /WSL2/);
+    assert.equal(cursor.isolatedReviewHostAdapter.resolveWindowsShim, undefined);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
@@ -52,13 +53,6 @@ describe("Cursor isolated review adapter", () => {
 
   it("parses the official model catalog", () => {
     assert.deepEqual(cursor.parseCursorModelCatalog("Available models\n\nauto - Auto\ngpt-5.6-luna-high - GPT\nTip: use --model"), ["auto", "gpt-5.6-luna-high"]);
-  });
-
-  it("resolves the Windows PowerShell shim without a command shell", () => {
-    const shim = "C:\\Users\\test\\cursor-agent\\cursor-agent.cmd";
-    const resolved = cursor.resolveCursorWindowsShim(shim, "C:\\Windows", path => path.endsWith("cursor-agent.ps1") || path.endsWith("powershell.exe"));
-    assert.equal(resolved.executable, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    assert.deepEqual(resolved.prefixArgs.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
   });
 
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {

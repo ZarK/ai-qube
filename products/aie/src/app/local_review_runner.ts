@@ -642,6 +642,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const deltaTriage: DeltaTriageLaneResult[] = [];
   const unavailable: string[] = [];
   const routedJobs: RoutedLaneJob[] = [];
+  const dryRunExecutables = new Map<RoutedReviewHostId, ModelHostExecutable | null>();
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane) && !resolveModelReviewPlan(config, lane)));
@@ -714,12 +715,16 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const plannedScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
       let resolvedExecutable: ModelHostExecutable | null = null;
       if (input.dryRun && route) {
-        try {
-          resolvedExecutable = await (input.resolveModelHost ?? resolveModelHostExecutable)(route.host);
-        } catch {
-          // A dry run reports null when the executable cannot be resolved. The
-          // live preflight still performs the full fail-closed route probe.
+        if (!dryRunExecutables.has(route.host)) {
+          try {
+            dryRunExecutables.set(route.host, await (input.resolveModelHost ?? resolveModelHostExecutable)(route.host));
+          } catch {
+            // A dry run reports null when the executable cannot be resolved. The
+            // live preflight still performs the full fail-closed route probe.
+            dryRunExecutables.set(route.host, null);
+          }
         }
+        resolvedExecutable = dryRunExecutables.get(route.host) ?? null;
       }
       const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope, resolvedExecutable);
       if (!input.dryRun && command && !commandTrust) {

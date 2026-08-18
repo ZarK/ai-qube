@@ -1083,6 +1083,27 @@ describe('model review runner', () => {
     assert.notEqual(after, before);
   });
 
+  it('detects a tracked file that is modified and restored during review', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-restored-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    const trackedFile = join(repoRoot, 'tracked.txt');
+    writeFileSync(trackedFile, 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      writeFileSync(trackedFile, 'transient change\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      writeFileSync(trackedFile, 'committed\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.match(monitor.violation(), /tracked\.txt/);
+    } finally {
+      monitor.close();
+    }
+  });
+
   it('detects content changes inside ignored directories without scanning their contents', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-ignored-'));
     execFileSync('git', ['init', '--quiet', repoRoot]);
