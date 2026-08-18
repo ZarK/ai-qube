@@ -1055,6 +1055,26 @@ describe('model review runner', () => {
     assert.notEqual(after, before);
   });
 
+  it('detects content changes in an individually ignored file without expanding ignored directories', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-ignored-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, '.gitignore'), '.env\nignored-cache/\n');
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    writeFileSync(join(repoRoot, '.env'), 'before\n');
+    mkdirSync(join(repoRoot, 'ignored-cache'));
+    writeFileSync(join(repoRoot, 'ignored-cache', 'large.bin'), 'unchanged\n');
+
+    const before = await resolveModelReviewCheckoutState(repoRoot);
+    writeFileSync(join(repoRoot, '.env'), 'after\n');
+    const after = await resolveModelReviewCheckoutState(repoRoot);
+
+    assert.notEqual(after, before);
+  });
+
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-grok-shim-'));
     const script = join(root, 'node_modules', '@xai', 'grok', 'bin', 'grok.js');

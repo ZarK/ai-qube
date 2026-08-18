@@ -759,26 +759,48 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
 }
 
 export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
-  const gitOutput = async (args: string[]): Promise<string> => {
-    const result = await execFileAsync('git', ['-C', repoRoot, ...args], {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 30_000,
-      windowsHide: true,
-    });
-    return result.stdout;
-  };
-  const [status, stagedState, trackedNames, untrackedNames] = await Promise.all([
-    gitOutput(['status', '--porcelain=v1', '-z', '--untracked-files=all']),
-    gitOutput(['diff', '--cached', '--raw', '--no-abbrev', '--no-renames', 'HEAD', '--']),
-    gitOutput(['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--']),
-    gitOutput(['ls-files', '--others', '--exclude-standard', '-z']),
-  ]);
+  const result = await execFileAsync('git', [
+    '-C', repoRoot,
+    'status',
+    '--porcelain=v2',
+    '-z',
+    '--untracked-files=all',
+    '--ignored=matching',
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 30_000,
+    windowsHide: true,
+  });
+  const status = result.stdout;
   const hash = createHash('sha256');
-  hash.update('status\0').update(status).update('\0staged\0').update(stagedState);
-  const paths = [...new Set([...trackedNames.split('\0'), ...untrackedNames.split('\0')].filter(Boolean))].sort();
+  hash.update('status\0').update(status);
+  const paths = checkoutStatusPaths(status);
   for (const path of paths) await hashCheckoutPath(hash, repoRoot, path);
   return hash.digest('hex');
+}
+
+function checkoutStatusPaths(status: string): string[] {
+  const records = status.split('\0');
+  const paths = new Set<string>();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    if (record.startsWith('? ') || record.startsWith('! ')) {
+      paths.add(record.slice(2));
+      continue;
+    }
+    const fieldCount = record.startsWith('1 ') ? 8 : record.startsWith('2 ') ? 9 : record.startsWith('u ') ? 10 : 0;
+    if (fieldCount === 0) continue;
+    let pathOffset = 0;
+    for (let field = 0; field < fieldCount; field += 1) {
+      pathOffset = record.indexOf(' ', pathOffset) + 1;
+      if (pathOffset === 0) break;
+    }
+    if (pathOffset > 0) paths.add(record.slice(pathOffset));
+    if (record.startsWith('2 ')) index += 1;
+  }
+  return [...paths].sort();
 }
 
 async function hashCheckoutPath(hash: Hash, repoRoot: string, path: string): Promise<void> {
