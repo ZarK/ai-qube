@@ -155,7 +155,7 @@ export async function resolvePublishTag(tag, root = ROOT) {
     const qube = await readPackageJson("products/qube/package.json", root);
     const setTag = parseSetPublishTag(tag, qube.version);
     if (!setTag) {
-      fail(`Invalid publish tag "${tag}" for products/qube/package.json version ${qube.version}.`);
+      fail(`Publish tag "${tag}" does not match products/qube/package.json version ${qube.version}.`);
     }
     const { setVersion, retry } = setTag;
     const packages = [];

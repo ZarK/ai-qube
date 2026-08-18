@@ -273,7 +273,7 @@ describe('model review runner', () => {
     assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], schemaPath);
   });
 
-  it('rejects routed artifacts that the gate and publish contract would reject', async () => {
+  it('normalizes untrusted artifact digests and rejects invalid artifact contracts', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-artifact-'));
     writeFileSync(join(repoRoot, 'README.md'), 'routed artifact fixture\n');
     const codexRun = result => runModelReview({
@@ -303,14 +303,24 @@ describe('model review runner', () => {
       const uppercaseDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest.toUpperCase() }] });
       assert.equal(uppercaseDigest.evidence, null);
       assert.equal(uppercaseDigest.reasonCode, 'model-route-artifact-digest');
-      // A command observation can never carry a content digest.
+      // Valid-shaped model-transcribed digests are discarded as untrusted input.
       const digestedCommand = await codexRun({ ...laneResult(), artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: digest }] });
-      assert.equal(digestedCommand.evidence, null);
-      assert.equal(digestedCommand.reasonCode, 'model-route-artifact-digest');
-      // The exact lowercase digest still passes.
+      assert.notEqual(digestedCommand.evidence, null);
+      assert.equal(digestedCommand.reasonCode, null);
+      assert.equal(digestedCommand.evidence.artifacts[0].sha256, null);
+      // File digests are discarded whether their model-transcribed value is right or wrong.
       const validDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest }] });
       assert.notEqual(validDigest.evidence, null);
       assert.equal(validDigest.reasonCode, null);
+      assert.equal(validDigest.evidence.artifacts[0].sha256, null);
+      const wrongDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: '0'.repeat(64) }] });
+      assert.notEqual(wrongDigest.evidence, null);
+      assert.equal(wrongDigest.reasonCode, null);
+      assert.equal(wrongDigest.evidence.artifacts[0].sha256, null);
+      // Discarding a digest does not bypass the repository-relative path check.
+      const missingArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'missing-review-artifact.md', sha256: digest }] });
+      assert.equal(missingArtifact.evidence, null);
+      assert.equal(missingArtifact.reasonCode, 'model-route-contract-mismatch');
     })();
   });
 
@@ -1047,16 +1057,16 @@ describe('model review runner', () => {
     });
     assert.equal(malformedEvidence.reasonCode, 'model-route-contract-mismatch');
 
-    const forgedDigest = laneResult();
-    forgedDigest.artifacts = [{ kind: 'source', path: 'tracked.txt', sha256: '0'.repeat(64) }];
+    const untrustedDigest = laneResult();
+    untrustedDigest.artifacts = [{ kind: 'source', path: 'tracked.txt', sha256: '0'.repeat(64) }];
     writeFileSync(join(repoRoot, 'tracked.txt'), 'trusted bytes');
-    const forgedEvidence = await runModelReview({
+    const normalizedEvidence = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(forgedDigest), sessionId: 'forged' }) }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(untrustedDigest), sessionId: 'untrusted-digest' }) }),
     });
-    assert.equal(forgedEvidence.reasonCode, 'model-route-artifact-digest');
-    assert.match(forgedEvidence.error, /must set sha256 to null/);
+    assert.equal(normalizedEvidence.reasonCode, null);
+    assert.equal(normalizedEvidence.evidence.artifacts[0].sha256, null);
 
     const directoryArtifact = laneResult();
     mkdirSync(join(repoRoot, 'artifact-directory'));

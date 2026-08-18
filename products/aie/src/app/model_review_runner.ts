@@ -508,26 +508,36 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
 }
 
 function normalizeSchemaOptionals(value: unknown): unknown {
-  if (!isRecord(value) || !Array.isArray(value.findings)) return value;
-  return {
-    ...value,
-    findings: value.findings.map(finding => {
+  if (!isRecord(value)) return value;
+  const normalized: Record<string, unknown> = { ...value };
+  if (Array.isArray(value.findings)) {
+    normalized.findings = value.findings.map(finding => {
       if (!isRecord(finding)) return finding;
-      const normalized = { ...finding };
-      if (normalized.id === null) delete normalized.id;
-      if (normalized.suggestion === null) delete normalized.suggestion;
-      if (normalized.confidence === null) delete normalized.confidence;
-      if (normalized.location === null) delete normalized.location;
-      else if (isRecord(normalized.location)) {
-        const location = { ...normalized.location };
+      const normalizedFinding = { ...finding };
+      if (normalizedFinding.id === null) delete normalizedFinding.id;
+      if (normalizedFinding.suggestion === null) delete normalizedFinding.suggestion;
+      if (normalizedFinding.confidence === null) delete normalizedFinding.confidence;
+      if (normalizedFinding.location === null) delete normalizedFinding.location;
+      else if (isRecord(normalizedFinding.location)) {
+        const location = { ...normalizedFinding.location };
         if (location.line === null) delete location.line;
         if (location.endLine === null) delete location.endLine;
         if (location.side === null) delete location.side;
-        normalized.location = location;
+        normalizedFinding.location = location;
       }
-      return normalized;
-    }),
-  };
+      return normalizedFinding;
+    });
+  }
+  if (Array.isArray(value.artifacts)) {
+    normalized.artifacts = value.artifacts.map(artifact => {
+      if (!isRecord(artifact) || typeof artifact.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(artifact.sha256)) return artifact;
+      // Model-transcribed digests are not trusted evidence. Discard a valid-shaped
+      // digest while preserving the required field, then validate the artifact
+      // kind and path through the normal fail-closed contract.
+      return { ...artifact, sha256: null };
+    });
+  }
+  return normalized;
 }
 
 export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null, schemaPath: string | null = null): ModelRouteInvocation {
@@ -561,7 +571,11 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
 function artifactDigestViolation(value: unknown, repoRoot: string): string | null {
   if (!isRecord(value) || !Array.isArray(value.artifacts)) return null;
   for (const artifact of value.artifacts) {
-    if (!isRecord(artifact) || typeof artifact.path !== 'string' || typeof artifact.sha256 !== 'string') continue;
+    if (!isRecord(artifact)
+      || typeof artifact.kind !== 'string'
+      || typeof artifact.path !== 'string'
+      || typeof artifact.sha256 !== 'string'
+      || !safeArtifactPath(repoRoot, artifact.kind, artifact.path)) continue;
     if (!validArtifactDigest(repoRoot, artifact.path, artifact.sha256)) {
       return `Model review artifact "${sanitizedDiagnostic(artifact.path)}" reported an invalid digest; routed reviewers must set sha256 to null.`;
     }
