@@ -7,8 +7,7 @@ import {
   FRESH_SETUP_ROUTE_MAX_TURNS,
   FRESH_SETUP_ROUTE_TIMEOUT_SECONDS,
 } from '../config/fresh_setup_lanes.js';
-import type { ReviewFailoverPolicy, ReviewMode, ReviewModelsPolicy, ReviewRoutePolicy } from '../core/policy.js';
-import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewFailoverPolicy, type ReviewMode, type ReviewModelHostId, type ReviewModelsPolicy, type ReviewRoutePolicy } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { reviewModeOf } from '../review_mode.js';
 import { isolatedReviewHostsOnMachine, recommendedManualUiAudit, recommendedQualityControl, recommendedReviewMode, type GuideMachine } from './questions.js';
@@ -64,7 +63,7 @@ export function detectRepositoryQualityGate(repoRoot: string): GateConfig | null
   }
 }
 
-function firstInstalledHost(machine: GuideMachine): ModelRoutingHostId | null {
+function firstInstalledHost(machine: GuideMachine): ReviewModelHostId | null {
   return isolatedReviewHostsOnMachine(machine)[0] ?? null;
 }
 
@@ -197,13 +196,13 @@ export function applyFreshSetupPolicy(input: {
 }
 
 function configuredReviewModels(config: Config): string[] {
-  return MODEL_ROUTING_HOSTS
+  return REVIEW_MODEL_HOST_IDS
     .map(host => config.reviewModels.review[host]?.model)
     .filter((model): model is string => typeof model === 'string' && model.trim() !== '');
 }
 
 export function freshSetupConfigIdentity(config: Pick<Config, 'reviewMode' | 'reviewAdapter' | 'reviewProfile' | 'reviewLanes' | 'reviewRoute' | 'reviewModels'>): string {
-  const models = MODEL_ROUTING_HOSTS.flatMap(host => {
+  const models = REVIEW_MODEL_HOST_IDS.flatMap(host => {
     const model = config.reviewModels.review[host]?.model;
     return model ? [`${host}:${model}`] : [];
   });

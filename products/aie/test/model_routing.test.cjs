@@ -14,6 +14,7 @@ const {
 } = require('../dist/core/model_routing.js');
 const { renderAgentInstructions, renderModelRoutingRunnerFiles } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
+const { detectInstalledReviewHostsOnPath } = require('../dist/app/model_routing_hosts.js');
 const { runInit } = require('../dist/init/index.js');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
@@ -165,5 +166,10 @@ describe('installed host detection', () => {
   it('uses the lookup callback instead of inheriting every host', () => {
     const installed = detectInstalledRoutingHosts(command => command === 'claude');
     assert.deepEqual(installed, ['claude-code']);
+  });
+
+  it('discovers a registered review-only host without adding it to delegated routing', () => {
+    const installed = detectInstalledReviewHostsOnPath(command => command === 'cursor-agent');
+    assert.deepEqual(installed, ['cursor']);
   });
 });

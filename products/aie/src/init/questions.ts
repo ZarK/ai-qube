@@ -3,9 +3,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { listHostModels } from '../app/model_catalog.js';
 import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
-import { commandExistsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
-import type { ReviewMode, ReviewModelHostId } from '../core/policy.js';
-import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
+import { commandExistsOnPath, detectInstalledReviewHostsOnPath } from '../app/model_routing_hosts.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewMode, type ReviewModelHostId } from '../core/policy.js';
 import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
 import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
 import type { InitTool } from '../init_content.js';
@@ -16,11 +15,11 @@ import {
 } from '../audit.js';
 
 export interface GuideMachine {
-  installedHosts: readonly ModelRoutingHostId[];
+  installedHosts: readonly ReviewModelHostId[];
   agentBrowserAvailable: boolean;
   aiqAvailable: boolean;
   hasUserFacingUi: boolean;
-  liveModels?: Readonly<Partial<Record<ModelRoutingHostId, readonly string[]>>>;
+  liveModels?: Readonly<Partial<Record<ReviewModelHostId, readonly string[]>>>;
 }
 
 export interface InvocationAnswers {
@@ -45,9 +44,9 @@ export function detectGuideMachine(input: {
   aiqAvailable?: boolean;
 }): GuideMachine {
   const installedHosts = input.installedHosts
-    ? MODEL_ROUTING_HOSTS.filter(host => input.installedHosts?.includes(host))
-    : detectInstalledRoutingHostsOnPath();
-  const liveModels: Partial<Record<ModelRoutingHostId, readonly string[]>> = {};
+    ? REVIEW_MODEL_HOST_IDS.filter(host => input.installedHosts?.includes(host))
+    : detectInstalledReviewHostsOnPath();
+  const liveModels: Partial<Record<ReviewModelHostId, readonly string[]>> = {};
   for (const host of installedHosts) {
     const listing = listHostModels(host);
     if (listing.status === 'ready') liveModels[host] = listing.models;
@@ -78,7 +77,7 @@ export function detectUserFacingUi(repoRoot: string | null): boolean {
   }
 }
 
-export function isolatedReviewHostsOnMachine(machine: Pick<GuideMachine, 'installedHosts'>): readonly ModelRoutingHostId[] {
+export function isolatedReviewHostsOnMachine(machine: Pick<GuideMachine, 'installedHosts'>): readonly ReviewModelHostId[] {
   return machine.installedHosts.filter(host => isRegisteredReviewHost(host));
 }
 

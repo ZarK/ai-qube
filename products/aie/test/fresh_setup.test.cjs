@@ -176,6 +176,9 @@ describe('fresh setup defaults', () => {
     const second = freshSetupFirstPullRequestReadiness(config, ['src/index.ts']);
     assert.notEqual(second.configIdentity, identity);
     assert.equal(freshSetupConfigIdentity(config).includes('grok-other'), true);
+
+    config.reviewModels.review.cursor = { model: 'gpt-5.6-luna-high', effort: null };
+    assert.equal(freshSetupConfigIdentity(config).includes('cursor:gpt-5.6-luna-high'), true);
   });
 
   it('rejects isolated without a host and stays doctor-clean for the external fallback', async () => {

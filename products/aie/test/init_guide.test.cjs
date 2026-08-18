@@ -15,7 +15,7 @@ const {
   parseAdoptedConfig,
   classifyFromSpec,
 } = require('../dist/init/index.js');
-const { applyQuestionAnswersToPolicy, buildInitQuestions } = require('../dist/init/questions.js');
+const { applyQuestionAnswersToPolicy, buildInitQuestions, detectGuideMachine, isolatedReviewHostsOnMachine, recommendedReviewMode } = require('../dist/init/questions.js');
 const { configToFileShape, getDefaults, validateConfig } = require('../dist/config/index.js');
 
 function makeGitRepo() {
@@ -58,6 +58,18 @@ function writeSourceConfig(root, relativeDir, overrides = {}) {
 }
 
 describe('init guide questions', () => {
+  it('discovers Cursor for isolated review without making it a delegated routing host', () => {
+    const machine = detectGuideMachine({
+      repoRoot: null,
+      installedHosts: ['cursor'],
+      agentBrowserAvailable: false,
+      aiqAvailable: false,
+    });
+    assert.deepEqual(machine.installedHosts, ['cursor']);
+    assert.deepEqual(isolatedReviewHostsOnMachine(machine), ['cursor']);
+    assert.equal(recommendedReviewMode(machine), 'isolated');
+  });
+
   it('emits a machine-readable question set without writing files', async () => {
     const repo = makeGitRepo();
     const result = await buildInitPlan({
