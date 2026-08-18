@@ -284,10 +284,14 @@ describe("release preparation", () => {
     const tag = "publish-set-v0.2.9";
     const inspect = overrides => inspectSetTag(repoRoot, "0.2.9", {
       run(args) {
-        if (args[0] === "rev-parse") return head;
+        if (args[0] === "rev-parse" && args[1] !== "--verify") return head;
+        if (args[0] === "rev-parse" && args[1] === "--verify") {
+          if (args[2] === `${tag}^{commit}`) return overrides.localSha ?? head;
+          return overrides.remoteCommit ?? overrides.remotePeeled ?? overrides.remoteDirect ?? head;
+        }
         if (args[0] === "tag") return overrides.localName ?? "";
-        if (args[0] === "rev-list") return overrides.localSha ?? head;
         if (args[0] === "ls-remote") return overrides.remote ?? "";
+        if (args[0] === "fetch") return "";
         return "";
       },
     });
@@ -296,13 +300,28 @@ describe("release preparation", () => {
       localName: tag,
       localSha: head,
       remote: `${tagObject}\trefs/tags/${tag}\n${head}\trefs/tags/${tag}^{}\n`,
+      remotePeeled: head,
     }).status, "current");
-    assert.equal(inspect({ remote: `${older}\trefs/tags/${tag}\n` }).status, "occupied");
+    assert.equal(inspect({
+      remote: `${older}\trefs/tags/${tag}\n`,
+      remoteDirect: older,
+    }).status, "occupied");
     assert.throws(() => inspect({
       localName: tag,
       localSha: head,
       remote: `${older}\trefs/tags/${tag}\n`,
+      remoteDirect: older,
     }), { reasonCode: "set-tag-conflict" });
+    assert.throws(() => inspectSetTag(repoRoot, "0.2.9", {
+      run(args) {
+        if (args[0] === "rev-parse" && args[1] !== "--verify") return head;
+        if (args[0] === "tag") return "";
+        if (args[0] === "ls-remote") return `${older}\trefs/tags/${tag}\n`;
+        if (args[0] === "fetch") return "";
+        if (args[0] === "rev-parse" && args[1] === "--verify") throw new Error("tag target is not a commit");
+        return "";
+      },
+    }), { reasonCode: "set-tag-state" });
     assert.throws(() => inspectSetTag(repoRoot, "0.2.9", {
       run() { throw new Error("unreadable"); },
     }), { reasonCode: "set-tag-state" });

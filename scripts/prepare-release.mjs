@@ -101,7 +101,7 @@ function commitSha(value, label) {
   return sha;
 }
 
-function remoteTagCommit(output, tag) {
+function remoteTagRefs(output, tag) {
   const directRef = `refs/tags/${tag}`;
   const peeledRef = `${directRef}^{}`;
   let direct = null;
@@ -118,7 +118,14 @@ function remoteTagCommit(output, tag) {
     else direct = match[1];
   }
   if (peeled && !direct) fail(`Origin returned a peeled reference without ${directRef}.`, "set-tag-state");
-  return peeled ?? direct;
+  return { direct, peeled };
+}
+
+function resolveCommit(git, root, tag, revision, label) {
+  return commitSha(
+    readTagState(git, ["rev-parse", "--verify", `${revision}^{commit}`], root, tag),
+    label,
+  );
 }
 
 export function inspectSetTag(root, version, git = { run: runGit }) {
@@ -127,10 +134,17 @@ export function inspectSetTag(root, version, git = { run: runGit }) {
   const localName = String(readTagState(git, ["tag", "--list", tag], root, tag)).trim();
   if (localName && localName !== tag) fail(`Local tag lookup returned an invalid reference for ${tag}.`, "set-tag-state");
   const localSha = localName
-    ? commitSha(readTagState(git, ["rev-list", "-n", "1", tag], root, tag), `Local tag ${tag}`)
+    ? resolveCommit(git, root, tag, tag, `Local tag ${tag}`)
     : null;
   const remoteOutput = readTagState(git, ["ls-remote", "--tags", "origin", `refs/tags/${tag}`, `refs/tags/${tag}^{}`], root, tag);
-  const remoteSha = remoteTagCommit(remoteOutput, tag);
+  const remoteRefs = remoteTagRefs(remoteOutput, tag);
+  let remoteSha = null;
+  if (remoteRefs.direct) {
+    readTagState(git, ["fetch", "--no-tags", "--no-write-fetch-head", "origin", `refs/tags/${tag}`], root, tag);
+    remoteSha = resolveCommit(git, root, tag, remoteRefs.direct, `Origin tag ${tag}`);
+    const advertisedSha = remoteRefs.peeled ?? remoteRefs.direct;
+    if (remoteSha !== advertisedSha) fail(`Origin returned conflicting object state for ${tag}.`, "set-tag-state");
+  }
   if (localSha && remoteSha && localSha !== remoteSha) {
     fail(`${tag} resolves to different commits locally and on origin.`, "set-tag-conflict");
   }
