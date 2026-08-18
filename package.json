@@ -19,6 +19,7 @@
     "version:audit": "node scripts/check-version-audit.mjs && node scripts/check-strict-package-json.mjs && node scripts/suite-pins.mjs",
     "version:write": "node scripts/suite-pins.mjs --write",
     "release": "node scripts/release-set.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs",
     "release:approve": "node scripts/approve-staged-release.mjs",
     "publish:manifest": "node scripts/check-publish-manifest.mjs",
     "verify:manifests": "node scripts/check-strict-package-json.mjs",

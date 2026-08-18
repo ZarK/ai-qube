@@ -60,12 +60,13 @@ export function inspectAdapterPins(root, entries = ADAPTER_PACKAGES) {
   const expected = renderAdapterPins(root, entries);
   const outputPath = resolveAdapterPinsPath(root);
   const actual = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : null;
+  const normalizedActual = actual?.replace(/\r\n/g, "\n") ?? null;
   return Object.freeze({
-    ok: actual === expected,
-    changed: actual !== expected,
+    ok: normalizedActual === expected,
+    changed: normalizedActual !== expected,
     outputPath: ADAPTER_PINS_PATH,
     expected,
-    failure: actual === expected ? null : `${ADAPTER_PINS_PATH} is stale. Run node scripts/suite-pins.mjs --write.`,
+    failure: normalizedActual === expected ? null : `${ADAPTER_PINS_PATH} is stale. Run node scripts/suite-pins.mjs --write.`,
   });
 }
 

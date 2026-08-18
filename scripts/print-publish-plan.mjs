@@ -25,27 +25,30 @@ process.stdout.write("Adapter model: adapters are separate npm packages sourced 
 process.stdout.write("They are separate packages. qube install adds only the adapters the operator selects.\n");
 process.stdout.write("Default GitHub + Codex workflow needs: @tjalve/aie + @tjalve/qube-adapter-github + @tjalve/qube-adapter-codex (+ @tjalve/qube-core via aie).\n\n");
 
-process.stdout.write("0) Preflight (run from repo root)\n");
+process.stdout.write("0) Generate one complete release change on an issue branch\n");
+process.stdout.write("pnpm release:prepare --dry-run\n");
+process.stdout.write("pnpm release:prepare --write\n");
+process.stdout.write("# Review the generated manifests, lockfile, adapter pins, and version audit; then merge them through a PR.\n\n");
+
+process.stdout.write("1) Preflight the merged release (run from repo root)\n");
 process.stdout.write("git switch main\n");
 process.stdout.write("git pull --ff-only origin main\n");
 process.stdout.write("pnpm install --frozen-lockfile --ignore-scripts\n");
-process.stdout.write("pnpm run verify\n\n");
+process.stdout.write("pnpm run verify\n");
+process.stdout.write("pnpm release --dry-run\n\n");
 
-process.stdout.write("1) Build and stage unpublished workspace versions as one set\n");
+process.stdout.write("2) Build and stage unpublished workspace versions as one set\n");
 process.stdout.write("pnpm run release\n");
-process.stdout.write("# or:\n");
-process.stdout.write(`git tag publish-set-v${qubeVersion}\n`);
-process.stdout.write(`git push origin publish-set-v${qubeVersion}\n`);
 process.stdout.write("# CI stages every workspace version that is not already on npm and skips the rest.\n");
 process.stdout.write("# The workflow packs the full set from the checkout, installs those tarballs, and checks that qube, aie, aib, aiu, and aiq start.\n\n");
 
-process.stdout.write("2) Validate and approve the complete staged set\n");
+process.stdout.write("3) Validate and approve the complete staged set\n");
 process.stdout.write(`pnpm run release:approve -- publish-set-v${qubeVersion}\n`);
 process.stdout.write("# The command verifies the workflow run, tag commit, ordered stage IDs, and tarball shasums.\n");
 process.stdout.write("# npm authentication and proof-of-presence remain required for each protected approval.\n");
 process.stdout.write("# Re-run the same command after an interruption; matching public packages are skipped.\n\n");
 
-process.stdout.write("3) Optional single-package staged releases (emergencies only)\n");
+process.stdout.write("4) Optional single-package staged releases (emergencies only)\n");
 for (const key of PUBLISH_SET_ORDER) {
   const entry = PUBLISH_PACKAGES.get(key);
   const version = await readVersion(entry.packageJson);
@@ -54,7 +57,7 @@ for (const key of PUBLISH_SET_ORDER) {
   process.stdout.write(`pnpm run release:approve -- publish-${key}-v${version}\n\n`);
 }
 
-process.stdout.write("4) Recommended consumer install (global npm example)\n");
+process.stdout.write("5) Recommended consumer install (global npm example)\n");
 const aieVersion = await readVersion("products/aie/package.json");
 process.stdout.write(`npm install -g --ignore-scripts @tjalve/qube@${qubeVersion}\n`);
 process.stdout.write("# or minimal executor stack:\n");

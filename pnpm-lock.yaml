@@ -206,7 +206,7 @@ importers:
         specifier: 0.2.1
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-gitlab':
@@ -231,7 +231,7 @@ importers:
         specifier: 0.2.1
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-claude-code':
@@ -371,13 +371,13 @@ importers:
         specifier: 3.0.1
         version: 3.0.1
       '@tjalve/aiq':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../cli
 
   products/aiq/packages/hook:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../cli
       '@tjalve/qube-cli':
         specifier: 0.2.1
@@ -386,7 +386,7 @@ importers:
   products/aiq/packages/lsp:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../cli
 
   products/aiq/packages/model: {}
@@ -397,7 +397,7 @@ importers:
         specifier: 1.3.0
         version: 1.3.0
       '@tjalve/aiq':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../cli
 
   products/aiq/packages/reporters: {}
@@ -409,7 +409,7 @@ importers:
         version: link:../../packages/qube-cli
     devDependencies:
       '@tjalve/qube-adapter-grok-build':
-        specifier: 0.1.5
+        specifier: 0.1.6
         version: link:../../adapters/grok-build
       '@types/node':
         specifier: 25.5.0
@@ -421,22 +421,22 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../aie
       '@tjalve/aiq':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
-        specifier: 0.0.7
+        specifier: 0.0.8
         version: link:../aiu
       '@tjalve/qube-cli':
         specifier: 0.2.1
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.4
+        specifier: 0.2.5
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-claude-code':

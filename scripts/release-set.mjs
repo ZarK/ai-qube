@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { finalizePublishPlan, readPackageJson, readPublishedVersionsForPlan, resolvePublishTag } from "./publish-packages.mjs";
+import { planReleasePreparation, readReleaseChanges, resolveReleaseBaseline } from "./prepare-release.mjs";
 import { inspectSuitePins, resolveSuiteRoot } from "./suite-pins.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,10 +83,23 @@ export async function planRelease(options = {}) {
   const tag = `publish-set-v${qube.version}`;
   const resolved = await resolvePublishTag(tag, root);
   const publishedByName = options.publishedByName ?? await readPublishedVersionsForPlan(resolved, options);
+  const git = options.git ?? { run: runGit };
+  const baseline = options.baseline ?? (options.preparation ? null : resolveReleaseBaseline(root, git));
+  const preparation = options.preparation ?? planReleasePreparation(root, {
+    ...baseline,
+    changedPaths: options.changedPaths ?? readReleaseChanges(root, baseline.baselineTag, git),
+    publishedByName,
+  });
+  if (preparation.needsWrite) {
+    throw Object.assign(new Error("Release preparation is incomplete. Run `pnpm release:prepare --write`, review and merge the generated changes, then release from clean current main."), {
+      reasonCode: "release-unprepared",
+    });
+  }
   const plan = finalizePublishPlan(resolved, publishedByName);
   return {
     tag,
     setVersion: qube.version,
+    baselineTag: preparation.baselineTag ?? baseline?.baselineTag ?? null,
     packages: plan.packages.map(entry => ({
       packageKey: entry.packageKey,
       packageName: entry.packageName,
@@ -101,16 +115,24 @@ export async function planRelease(options = {}) {
 }
 
 export async function runRelease(options = {}) {
-  const planned = await planRelease(options);
   if (options.dryRun) {
+    const planned = await planRelease(options);
     return { ok: true, dryRun: true, pushed: false, ...planned };
   }
   const root = resolveSuiteRoot(options.repoRoot ?? DEFAULT_ROOT);
   const git = options.git ?? { run: runGit };
-  inspectReleaseCheckout(root, git);
+  const checkout = inspectReleaseCheckout(root, git);
+  const planned = await planRelease({ ...options, repoRoot: root, git });
   const existing = git.run(["tag", "--list", planned.tag], root);
   if (!existing) {
     git.run(["tag", "-a", planned.tag, "-m", `Publish set ${planned.setVersion}`], root);
+  } else {
+    const tagCommit = git.run(["rev-parse", `${planned.tag}^{}`], root);
+    if (tagCommit !== checkout.head) {
+      throw Object.assign(new Error(`${planned.tag} already exists at ${tagCommit}; refusing to move an immutable release tag.`), {
+        reasonCode: "tag-mismatch",
+      });
+    }
   }
   git.run(["push", "origin", planned.tag], root);
   return { ok: true, dryRun: false, pushed: true, ...planned };

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-jira",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Jira work provider adapter for QUBE issue reads, draft rendering, and unsupported lifecycle reporting.",
   "keywords": [
     "cli",

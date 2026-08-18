@@ -70,6 +70,8 @@ export const PUBLISH_PACKAGES = Object.freeze(new Map([
   ["aiq", {
     filter: "@tjalve/aiq",
     path: "products/aiq/packages/cli",
+    inputs: Object.freeze(["products/aiq"]),
+    syncPrivateVersions: true,
     packageJson: "products/aiq/packages/cli/package.json",
     prepare: buildAiqDependencies,
     verify: "pnpm --filter @tjalve/aiq-workspace run build && pnpm --filter @tjalve/aiq-workspace run test:publish-readiness",
@@ -89,8 +91,8 @@ export const PUBLISH_SET_ORDER = Object.freeze([
   "qube-core",
   "qube-cli",
   ...ADAPTER_PACKAGES.map(entry => entry.key),
-  "aib",
   "aie",
+  "aib",
   "aiu",
   "aiq",
   "qube",
@@ -217,12 +219,9 @@ export async function readPublishedVersions(packageName, options = {}) {
 }
 
 export async function readPublishedVersionsForPlan(plan, options = {}) {
-  const publishedByName = new Map();
-  for (const entry of plan.packages ?? []) {
-    if (publishedByName.has(entry.packageName)) continue;
-    publishedByName.set(entry.packageName, await readPublishedVersions(entry.packageName, options));
-  }
-  return publishedByName;
+  const packageNames = [...new Set((plan.packages ?? []).map(entry => entry.packageName))];
+  const versionSets = await Promise.all(packageNames.map(packageName => readPublishedVersions(packageName, options)));
+  return new Map(packageNames.map((packageName, index) => [packageName, versionSets[index]]));
 }
 
 function failFinalize(message, reasonCode) {

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-github",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "GitHub provider adapter for QUBE work items, pull request review, checks, and CI integrations.",
   "keywords": [
     "cli",

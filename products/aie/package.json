@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aie",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "AI Executor - autonomous GitHub issue execution for agentic development.",
   "keywords": [
     "cli",
@@ -47,7 +47,7 @@
   ],
   "dependencies": {
     "@tjalve/qube-cli": "0.2.1",
-    "@tjalve/qube-core": "0.2.4"
+    "@tjalve/qube-core": "0.2.5"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
