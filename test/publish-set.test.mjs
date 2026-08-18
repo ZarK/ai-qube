@@ -8,6 +8,7 @@ import { collectVersionAuditFailures } from "../scripts/check-version-audit.mjs"
 import {
   finalizePublishPlan,
   inspectRetryContents,
+  parseSetPublishTag,
   readPublishedVersions,
   readPublishedVersionsForPlan,
   readRegistryPackage,
@@ -46,6 +47,19 @@ describe("publish set finalization", () => {
     assert.equal(resolved.mode, "set");
     assert.equal(resolved.setVersion, version);
     assert.equal(resolved.retry, 2);
+  });
+
+  it("does not confuse a semver prerelease with a retry suffix", () => {
+    assert.deepEqual(parseSetPublishTag("publish-set-v1.2.3-retry.1", "1.2.3-retry.1"), {
+      setVersion: "1.2.3-retry.1",
+      retry: null,
+      originalTag: "publish-set-v1.2.3-retry.1",
+    });
+    assert.deepEqual(parseSetPublishTag("publish-set-v1.2.3-retry.1-retry.2", "1.2.3-retry.1"), {
+      setVersion: "1.2.3-retry.1",
+      retry: 2,
+      originalTag: "publish-set-v1.2.3-retry.1",
+    });
   });
 
   it("rejects publishable input changes on a retry", async () => {

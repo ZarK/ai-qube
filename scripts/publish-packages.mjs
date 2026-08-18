@@ -102,9 +102,6 @@ export const SET_PREPARE = "pnpm run build";
 export const SET_VERIFY = "pnpm run version:audit && pnpm run verify:manifests";
 
 const PACKAGE_TAG = /^publish-([a-z0-9-]+)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
-const SET_VERSION = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
-const SET_TAG = /^publish-set-v(.+)$/;
-const RETRY_SUFFIX = /^(.*)-retry\.([1-9][0-9]*)$/;
 
 export function repoRootFrom(moduleUrl = import.meta.url) {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
@@ -120,16 +117,18 @@ function fail(message) {
   throw error;
 }
 
-export function parseSetPublishTag(tag) {
-  const setMatch = SET_TAG.exec(tag ?? "");
-  if (!setMatch) return null;
-  const retryMatch = RETRY_SUFFIX.exec(setMatch[1]);
-  const setVersion = retryMatch?.[1] ?? setMatch[1];
-  if (!SET_VERSION.test(setVersion)) return null;
+export function parseSetPublishTag(tag, setVersion) {
+  const originalTag = `publish-set-v${setVersion}`;
+  if (tag === originalTag) {
+    return Object.freeze({ setVersion, retry: null, originalTag });
+  }
+  const escapedTag = originalTag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const retryMatch = new RegExp(`^${escapedTag}-retry\\.([1-9][0-9]*)$`).exec(tag ?? "");
+  if (!retryMatch) return null;
   return Object.freeze({
     setVersion,
-    retry: retryMatch ? Number(retryMatch[2]) : null,
-    originalTag: `publish-set-v${setVersion}`,
+    retry: Number(retryMatch[1]),
+    originalTag,
   });
 }
 
@@ -152,13 +151,13 @@ async function packagePlan(key, root) {
 }
 
 export async function resolvePublishTag(tag, root = ROOT) {
-  const setTag = parseSetPublishTag(tag);
-  if (setTag) {
-    const { setVersion, retry } = setTag;
+  if (String(tag ?? "").startsWith("publish-set-v")) {
     const qube = await readPackageJson("products/qube/package.json", root);
-    if (qube.version !== setVersion) {
-      fail(`Set tag version ${setVersion} does not match products/qube/package.json version ${qube.version}.`);
+    const setTag = parseSetPublishTag(tag, qube.version);
+    if (!setTag) {
+      fail(`Invalid publish tag "${tag}" for products/qube/package.json version ${qube.version}.`);
     }
+    const { setVersion, retry } = setTag;
     const packages = [];
     for (const key of PUBLISH_SET_ORDER) {
       packages.push(await packagePlan(key, root));

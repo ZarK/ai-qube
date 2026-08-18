@@ -68,11 +68,11 @@ function inspectTag(receipt, git = { run: (args) => run("git", args) }) {
     throw Object.assign(new Error("Receipt packages are not in dependency order."), { reasonCode: "tag-mismatch" });
   }
 
-  const setTag = parseSetPublishTag(receipt.tag);
-  if (setTag) {
+  if (receipt.tag.startsWith("publish-set-v")) {
     const qube = PUBLISH_PACKAGES.get("qube");
     const manifest = parseJson(git.run(["show", `${receipt.headSha}:${qube.packageJson}`]), qube.packageJson);
-    if (manifest.version !== setTag.setVersion) throw Object.assign(new Error("Set tag version does not match the release commit."), { reasonCode: "tag-mismatch" });
+    const setTag = parseSetPublishTag(receipt.tag, manifest.version);
+    if (!setTag) throw Object.assign(new Error("Set tag version does not match the release commit."), { reasonCode: "tag-mismatch" });
     if (setTag.retry !== null) {
       const originalCommit = git.run(["rev-parse", `${setTag.originalTag}^{commit}`]);
       git.run(["merge-base", "--is-ancestor", originalCommit, receipt.headSha]);
