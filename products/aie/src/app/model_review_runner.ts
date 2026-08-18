@@ -681,6 +681,7 @@ function captureRawOutput(
       lane: input.lane,
       host: input.plan.host,
       reasonCode,
+      diagnostic: redact(error).slice(0, 1_000),
       stdout: redact(result.stdout).slice(0, MAX_OUTPUT_BYTES),
       stderr: redact(result.stderr).slice(0, MAX_OUTPUT_BYTES),
       exitCode: result.exitCode,
@@ -764,6 +765,8 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
   const progressOnly = [
     /\b(?:in progress|pending|incomplete|not (?:yet )?complet(?:e|ed)|not yet (?:been )?inspected|inspecting)\b/i,
     /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
+    /^(?:review )?not started[.!]?$/i,
+    /^not inspected[.!]?$/i,
   ];
   const substantiveReason = /\b(?:because|blocked|unavailable|unable|failed|error|cannot|can't|could not|missing)\b/i;
   const isProgressOnly = (text: string): boolean => (
@@ -801,14 +804,28 @@ function isInternalReviewPath(path: string): boolean {
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
   let changedPath: string | null = null;
+  const startedAt = Date.now();
   let watchError: string | null = null;
   // QUBE requires Node 24 or newer. Recursive Linux watching has been
   // supported since Node 19.1; unavailable filesystem backends still fail
   // closed through the surrounding runModelReview error boundary.
-  const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
+  const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (eventType, filename) => {
     const path = filename === null ? null : String(filename);
     if (path === null || isInternalReviewPath(path)) return;
-    changedPath ??= path;
+    if (eventType === 'rename') {
+      changedPath ??= path;
+      return;
+    }
+    try {
+      const details = statSync(resolve(repoRoot, path));
+      // Some Windows filesystems report change events for read access. Inspect
+      // metadata while handling the event, before a later timestamp restore can
+      // hide an observed write. The final checkout digest remains a second check.
+      if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) changedPath ??= path;
+    } catch {
+      // Deletions and paths that cannot be inspected fail closed.
+      changedPath ??= path;
+    }
   });
   watcher.on('error', error => {
     watchError = sanitizedDiagnostic(error.message) || 'Checkout monitoring failed.';

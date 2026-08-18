@@ -296,6 +296,7 @@ describe('model review runner', () => {
       const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
       assert.equal(raw.headSha, 'abc123');
       assert.equal(raw.reasonCode, 'model-route-contract-mismatch');
+      assert.match(raw.diagnostic, /did not match/);
       assert.ok(typeof raw.stdout === 'string' && raw.stdout.length > 0);
       // Uppercase digests are rejected exactly as laneArtifactViolation rejects them.
       const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
@@ -768,11 +769,11 @@ describe('model review runner', () => {
       status: 'inconclusive',
       severity: 'none',
       recommendation: 'inconclusive',
-      summary: 'Review not yet completed.',
+      summary: 'Review not started.',
       blockers: [],
       findings: [],
       coverage: [{ area: 'code-quality', status: 'not-inspected' }],
-      completeness: 'Inspection pending.',
+      completeness: 'Not inspected.',
     };
     const secondAttestedProgress = {
       ...attestedProgress,
