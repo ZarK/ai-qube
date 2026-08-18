@@ -163,7 +163,7 @@ describe("github reviewer request status comment", () => {
     const result = await provider.publishRoundReviewStatus(roundStatusInput({
       lanes: [
         { laneId: "security", status: "needs-work", blockingFindingCount: 1, advisoryFindingCount: 0, reason: null },
-        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. </details>\n@octocat -->" },
+        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. token=sk-abcdefghijklmnopqrstuvwxyz123456 at C:\\Users\\me\\secret.txt </details>\n@octocat -->" },
       ],
     }));
 
@@ -173,6 +173,8 @@ describe("github reviewer request status comment", () => {
     assert.match(statusComments(fixture.comments)[0].body, /Validated lanes: 1\/2\./);
     assert.match(statusComments(fixture.comments)[0].body, /Findings: 1 blocking, 0 advisory\./);
     assert.match(statusComments(fixture.comments)[0].body, /code-quality: invalid .* Output did not match the lane contract\./);
+    assert.match(statusComments(fixture.comments)[0].body, /token=\[REDACTED\].*\[local-path\]/);
+    assert.doesNotMatch(statusComments(fixture.comments)[0].body.slice(statusComments(fixture.comments)[0].body.indexOf("\n")), /sk-abcdefghijklmnopqrstuvwxyz|C:\\Users/);
     assert.match(statusComments(fixture.comments)[0].body, /&lt;\/details&gt; &#64;octocat --&gt;/);
     assert.doesNotMatch(statusComments(fixture.comments)[0].body.slice(statusComments(fixture.comments)[0].body.indexOf("\n")), /<\/details>\s+@octocat/);
     assert.equal(fixture.calls.some(args => String(args[1] ?? "").includes("pulls/12/reviews")), false);

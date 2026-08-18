@@ -106,7 +106,7 @@ function statusCount(value: unknown): number {
 
 function statusReason(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = sanitizePublishedText(value).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
   return normalized === '' ? null : normalized.slice(0, 240);
 }
 
@@ -2746,32 +2746,31 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     }
 
     try {
-      const comments = await this.getIssueComments(repositoryName, input.prNumber);
-      const trustedAuthors: TrustedAuthorInput = [...new Set([
-        ...trustedAuthorsList(trustedMarkerAuthor),
-        ...(this.cachedPublisherLogin ? [this.cachedPublisherLogin] : []),
-      ])];
-      const trusted = trustedStatusComments(comments, trustedAuthors.length > 0 ? trustedAuthors : trustedMarkerAuthor);
-      const prior = mergeStatusCommentPayloads(trusted);
-      const current: StatusCommentRound = {
-        head: input.headSha,
-        verdict: input.verdict,
-        complete: false,
-        lanes: normalizedLanes,
-      };
-      const rounds = [...prior.rounds.filter(round => round.head !== input.headSha), current].slice(-20);
-      const plannedBody = renderStatusComment({
-        prNumber: input.prNumber,
-        headSha: input.headSha,
-        verdict: input.verdict,
-        rounds,
-        requests: prior.requests,
-      });
-      const marker = plannedBody.split('\n', 1)[0] ?? null;
       if (input.dryRun) {
+        const comments = await this.getIssueComments(repositoryName, input.prNumber);
+        const trustedAuthors: TrustedAuthorInput = [...new Set([
+          ...trustedAuthorsList(trustedMarkerAuthor),
+          ...(this.cachedPublisherLogin ? [this.cachedPublisherLogin] : []),
+        ])];
+        const trusted = trustedStatusComments(comments, trustedAuthors.length > 0 ? trustedAuthors : trustedMarkerAuthor);
+        const prior = mergeStatusCommentPayloads(trusted);
+        const current: StatusCommentRound = {
+          head: input.headSha,
+          verdict: input.verdict,
+          complete: false,
+          lanes: normalizedLanes,
+        };
+        const rounds = [...prior.rounds.filter(round => round.head !== input.headSha), current].slice(-20);
+        const plannedBody = renderStatusComment({
+          prNumber: input.prNumber,
+          headSha: input.headSha,
+          verdict: input.verdict,
+          rounds,
+          requests: prior.requests,
+        });
         return roundSummaryPublishResult({
           status: 'planned',
-          marker,
+          marker: plannedBody.split('\n', 1)[0] ?? null,
           body: plannedBody,
           url: trusted[0]?.url ?? null,
           publishKind: 'issue-comment',
@@ -2798,7 +2797,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       });
       return roundSummaryPublishResult({
         status: 'published',
-        marker: persisted.body.split('\n', 1)[0] ?? marker,
+        marker: persisted.body.split('\n', 1)[0] ?? null,
         body: persisted.body,
         url: persisted.url,
         publishKind: 'issue-comment',

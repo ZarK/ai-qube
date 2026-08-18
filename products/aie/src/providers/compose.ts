@@ -69,6 +69,7 @@ const REVIEW_CAPABILITY_IDS = [
   'publishLocalReview',
   'resolveReviewThreads',
   'ciDiagnostics',
+  'publishRoundReviewStatus',
   'publishRoundReviewSummary',
 ] as const;
 

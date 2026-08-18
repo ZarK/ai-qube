@@ -34,8 +34,22 @@ function statusCount(value: unknown): number {
 
 function statusReason(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = redactStatusReason(value).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   return normalized === "" ? null : normalized.slice(0, 240);
+}
+
+function redactStatusReason(value: string): string {
+  return value
+    .replace(/\b(?:ghp_|github_pat_|ghs_|gho_|ghu_)[A-Za-z0-9_]{10,}\b/g, "[REDACTED]")
+    .replace(/\bglpat-[A-Za-z0-9_-]{10,}\b/g, "[REDACTED]")
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED PRIVATE KEY]")
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[REDACTED]")
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s'"`]+/gi, "$1[REDACTED]")
+    .replace(/\b([A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|access[_-]?token)[A-Za-z0-9_.-]*)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|`[^`]*`|[^\s,;&)]+)/gi, "$1$2[REDACTED]")
+    .replace(/\\\\[A-Za-z0-9._$-]+\\[^\r\n)<>]+/g, "[local-path]")
+    .replace(/\b[A-Za-z]:[\\/][^\r\n)<>]+/g, "[local-path]")
+    .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, "$1[local-path]");
 }
 
 function renderStatusText(value: string): string {

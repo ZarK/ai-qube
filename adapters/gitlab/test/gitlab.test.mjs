@@ -1638,7 +1638,7 @@ describe("GitLab round summary publish", () => {
       verdict: "request-changes",
       lanes: [
         { laneId: "security", status: "needs-work", blockingFindingCount: 1, advisoryFindingCount: 0, reason: null },
-        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. </details>\n@octocat -->" },
+        { laneId: "code-quality", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Output did not match the lane contract. token=sk-abcdefghijklmnopqrstuvwxyz123456 at C:\\Users\\me\\secret.txt </details>\n@octocat -->" },
       ],
     };
 
@@ -1647,6 +1647,8 @@ describe("GitLab round summary publish", () => {
     assert.equal(notes.length, 1);
     assert.match(notes[0].body, /Validated lanes: 1\/2\./);
     assert.match(notes[0].body, /Findings: 1 blocking, 0 advisory\./);
+    assert.match(notes[0].body, /token=\[REDACTED\].*\[local-path\]/);
+    assert.doesNotMatch(notes[0].body.slice(notes[0].body.indexOf("\n")), /sk-abcdefghijklmnopqrstuvwxyz|C:\\Users/);
     assert.match(notes[0].body, /&lt;\/details&gt; &#64;octocat --&gt;/);
     assert.doesNotMatch(notes[0].body.slice(notes[0].body.indexOf("\n")), /<\/details>\s+@octocat/);
 
