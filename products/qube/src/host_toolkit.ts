@@ -16,7 +16,7 @@ export const PROVIDER_MCP_CONFIG_PATHS = Object.freeze([
   path.posix.join(".cursor", "mcp.json"),
 ]);
 
-export type ToolkitHostId = "generic" | "codex" | "claude-code" | "grok-build" | "opencode";
+export type ToolkitHostId = "generic" | "codex" | "claude-code" | "grok-build" | "opencode" | "cursor";
 export type ToolkitAssetKind = "instruction" | "subagent" | "command" | "skill" | "hook" | "cli-dependency";
 export type ToolkitHostStatus = "complete" | "missing" | "partial" | "unknown";
 export type ToolkitCliStatus = "pass" | "missing" | "unauthenticated" | "unverified" | "not-required";
@@ -104,9 +104,10 @@ const HOST_DISPLAY_NAMES: Readonly<Record<ToolkitHostId, string>> = Object.freez
   "claude-code": "Claude Code",
   "grok-build": "Grok Build",
   opencode: "OpenCode",
+  cursor: "Cursor",
 });
 
-const KNOWN_HOSTS = Object.freeze(["generic", "codex", "claude-code", "grok-build", "opencode"] as const);
+const KNOWN_HOSTS = Object.freeze(["generic", "codex", "claude-code", "grok-build", "opencode", "cursor"] as const);
 
 function asset(
   id: string,
@@ -178,11 +179,18 @@ function genericAssets(): readonly ToolkitAsset[] {
   return Object.freeze([]);
 }
 
+function cursorAssets(): readonly ToolkitAsset[] {
+  return Object.freeze([
+    asset("cursor-instructions", "instruction", "aie", "Always-loaded Cursor instructions.", { path: "AGENTS.md" }),
+  ]);
+}
+
 function assetsForHost(host: ToolkitHostId): readonly ToolkitAsset[] {
   if (host === "claude-code") return claudeCodeAssets();
   if (host === "codex") return codexAssets();
   if (host === "opencode") return opencodeAssets();
   if (host === "grok-build") return grokBuildAssets();
+  if (host === "cursor") return cursorAssets();
   return genericAssets();
 }
 

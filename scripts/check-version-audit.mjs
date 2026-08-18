@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PUBLISH_PACKAGES } from "./publish-packages.mjs";
+
 const auditPath = "docs/release/version-audit.json";
 
 export function compareSemver(left, right) {
@@ -30,9 +32,15 @@ function comparePrerelease(left, right) {
   return left < right ? -1 : 1;
 }
 
-export function collectVersionAuditFailures(audit, readManifest) {
+export function collectVersionAuditFailures(audit, readManifest, expectedPackages = []) {
   const failures = [];
+  const auditedPaths = new Set();
   for (const entry of audit.packages ?? []) {
+    if (auditedPaths.has(entry.packageJson)) {
+      failures.push(`${entry.packageJson}: duplicate version audit entry`);
+      continue;
+    }
+    auditedPaths.add(entry.packageJson);
     const packageJson = readManifest(entry.packageJson);
     if (packageJson.name !== entry.name) {
       failures.push(`${entry.packageJson}: expected package name ${entry.name}, found ${packageJson.name}`);
@@ -44,6 +52,11 @@ export function collectVersionAuditFailures(audit, readManifest) {
       failures.push(`${entry.name}: package version ${packageJson.version} must not be behind audited npm latest ${entry.latestPublished}`);
     }
   }
+  for (const expected of expectedPackages) {
+    if (!auditedPaths.has(expected.packageJson)) {
+      failures.push(`${expected.packageJson}: publishable package is missing from ${auditPath}`);
+    }
+  }
   return failures;
 }
 
@@ -51,7 +64,7 @@ export async function main(root = process.cwd()) {
   const audit = JSON.parse(await readFile(path.join(root, auditPath), "utf8"));
   const failures = collectVersionAuditFailures(audit, relativePath => (
     JSON.parse(readFileSync(path.resolve(root, relativePath), "utf8"))
-  ));
+  ), [...PUBLISH_PACKAGES.values()]);
 
   if (failures.length > 0) {
     process.stderr.write(`${failures.join("\n")}\n`);

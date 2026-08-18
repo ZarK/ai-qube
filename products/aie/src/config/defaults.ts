@@ -179,7 +179,7 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
 
 function cloneReviewModelTierMap(tierMap: ReviewModelsPolicy['review'] | undefined): ReviewModelsPolicy['review'] {
   const cloned: ReviewModelsPolicy['review'] = {};
-  for (const host of ['codex', 'claude-code', 'opencode', 'grok-build'] as const) {
+  for (const host of ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'] as const) {
     const binding = tierMap?.[host];
     if (binding) cloned[host] = { ...binding };
   }

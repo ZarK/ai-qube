@@ -289,7 +289,7 @@ export {
 
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
-export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "jira" | "jenkins" | "codex" | "opencode" | "claude-code" | "grok-build";
+export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "jira" | "jenkins" | "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
@@ -313,7 +313,7 @@ export interface QubeProductContract {
 }
 
 export interface QubeAdapterContract {
-  readonly id: "github" | "gitlab" | "linear" | "jira" | "jenkins" | "codex" | "opencode" | "claude-code" | "grok-build";
+  readonly id: "github" | "gitlab" | "linear" | "jira" | "jenkins" | "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
   readonly packageName: string;
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
@@ -679,6 +679,20 @@ export const grokBuildAdapterContract = defineQubeAdapter({
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
+export const cursorAdapterContract = defineQubeAdapter({
+  id: "cursor",
+  packageName: "@tjalve/qube-adapter-cursor",
+  surface: "cursor",
+  owns: ["isolated-review-invocation", "cursor-model-catalog", "windows-cursor-resolution", "unsupported-capability-reporting"],
+  boundary: "Cursor supplies read-only review compute only; QUBE validates evidence, protects the checkout, and owns every provider mutation.",
+  capabilities: Object.freeze([
+    adapterCapability("isolated-review", "supported", "@tjalve/qube-adapter-cursor", "Build a fresh Cursor Ask-mode invocation and parse one terminal JSON result."),
+    adapterCapability("list-models", "supported", "@tjalve/qube-adapter-cursor", "Read the official Cursor CLI model catalog without reading stored credentials."),
+    adapterCapability("publish-review", "unsupported", "@tjalve/aie", "Cursor has no provider publication capability; Executor owns formal review publication."),
+  ]),
+  contractOnly: false,
+} satisfies QubeAdapterContract);
+
 export const claudeCodeAdapterContract = defineQubeAdapter({
   id: "claude-code",
   packageName: "@tjalve/qube-adapter-claude-code",
@@ -757,7 +771,7 @@ export const qubeProductContracts = [
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"],
+    surfaces: ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build", "cursor"],
   },
   {
     id: "executor",
@@ -765,7 +779,7 @@ export const qubeProductContracts = [
     commandName: "aie",
     role: "Execute issue-driven work through repository and review gates.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build"],
+    surfaces: ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build", "cursor"],
   },
   {
     id: "quality",

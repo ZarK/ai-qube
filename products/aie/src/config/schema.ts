@@ -1294,7 +1294,7 @@ function readModelCatalog(value: unknown, errors: ValidationError[]): ModelCatal
       return;
     }
     if (!isModelRoutingHost(host)) {
-      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok-build'].join(', ')}` });
+      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'].join(', ')}` });
       return;
     }
     if (entry.transport !== 'cli' && entry.transport !== 'host') {

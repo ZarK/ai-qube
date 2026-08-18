@@ -973,6 +973,7 @@ export function configuredReviewModelHost(config: {
   if (localHost) return localHost;
   const review = config.reviewModels.review;
   if (review['grok-build']) return 'grok-build';
+  if (review.cursor) return 'cursor';
   if (review.codex) return 'codex';
   if (review['claude-code']) return 'claude-code';
   if (review.opencode) return 'opencode';
@@ -980,7 +981,7 @@ export function configuredReviewModelHost(config: {
 }
 
 function isReviewModelHost(value: unknown): value is ReviewModelHostId {
-  return value === 'codex' || value === 'claude-code' || value === 'opencode' || value === 'grok-build';
+  return value === 'codex' || value === 'claude-code' || value === 'opencode' || value === 'grok-build' || value === 'cursor';
 }
 
 export function resolveReviewModelTier(models: ReviewModelsPolicy, tier: ReviewModelTierId, host: ReviewModelHostId): ReviewModelTierResolution {

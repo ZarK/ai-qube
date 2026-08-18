@@ -21,7 +21,7 @@ export interface HostReviewRunnerAdapter {
   probeCapability(configHints?: JsonObject): Promise<HostReviewRunnerCapabilities | CodexReviewCapability>;
 }
 
-export const AGENT_HOST_IDS = ["opencode", "codex", "claude-code", "grok-build"] as const;
+export const AGENT_HOST_IDS = ["opencode", "codex", "claude-code", "grok-build", "cursor"] as const;
 export type AgentHostId = (typeof AGENT_HOST_IDS)[number];
 
 export const RETIRED_GROK_HOST_ID = "grok";
@@ -31,6 +31,7 @@ export const GROK_BUILD_WINDOWS_EXECUTABLE_NAMES = ["grok.exe"] as const;
 export const ISOLATED_REVIEW_HOST_PACKAGE_NAMES = Object.freeze({
   codex: "@tjalve/qube-adapter-codex",
   "grok-build": "@tjalve/qube-adapter-grok-build",
+  cursor: "@tjalve/qube-adapter-cursor",
 } as const);
 
 export function retiredGrokHostIdMessage(): string {
@@ -99,6 +100,7 @@ export interface IsolatedReviewHostAdapter {
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
   readonly windowsShell?: "powershell";
+  resolveWindowsShim?(shim: string): IsolatedReviewHostExecutable | null;
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(

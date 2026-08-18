@@ -2,6 +2,7 @@
 export const adapterPackageVersions = Object.freeze({
   "@tjalve/qube-adapter-claude-code": "0.1.4",
   "@tjalve/qube-adapter-codex": "0.1.6",
+  "@tjalve/qube-adapter-cursor": "0.1.0",
   "@tjalve/qube-adapter-github": "0.1.5",
   "@tjalve/qube-adapter-gitlab": "0.1.5",
   "@tjalve/qube-adapter-grok-build": "0.1.5",

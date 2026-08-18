@@ -37,12 +37,13 @@ describe("qube core contracts", () => {
   });
 
   it("owns the public host id set and isolated-review contract", () => {
-    assert.deepEqual([...core.AGENT_HOST_IDS], ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual([...core.AGENT_HOST_IDS], ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.ok(!core.AGENT_HOST_IDS.includes("grok"));
     assert.equal(core.RETIRED_GROK_HOST_ID, "grok");
     assert.match(core.retiredGrokHostIdMessage(), /Use `grok-build`/);
     assert.deepEqual([...core.GROK_BUILD_EXECUTABLE_NAMES], ["grok"]);
     assert.equal(core.ISOLATED_REVIEW_HOST_PACKAGE_NAMES["grok-build"], "@tjalve/qube-adapter-grok-build");
+    assert.equal(core.ISOLATED_REVIEW_HOST_PACKAGE_NAMES.cursor, "@tjalve/qube-adapter-cursor");
   });
 
   it("keeps product contracts standalone and provider-neutral", () => {
@@ -59,8 +60,8 @@ describe("qube core contracts", () => {
   it("keeps host integration surfaces explicit per product", () => {
     const surfaces = new Map(qubeProductContracts.map((product) => [product.id, product.surfaces]));
 
-    assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"]);
-    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build"]);
+    assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build", "cursor"]);
+    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(surfaces.get("quality"), ["cli"]);
     assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
   });
@@ -313,6 +314,9 @@ describe("qube core contracts", () => {
     }
     assert.equal(typeof core.githubAdapterContract, "object");
     assert.equal(typeof core.opencodeAdapterContract, "object");
+    assert.equal(typeof core.cursorAdapterContract, "object");
+    assert.ok(core.cursorAdapterContract.capabilities.some(capability => capability.id === "publish-review" && capability.support === "unsupported"));
+    assert.equal("connection" in core.cursorAdapterContract, false);
   });
 });
 

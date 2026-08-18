@@ -20,7 +20,7 @@ export type InstallQuestion = {
   readonly reason: string;
 };
 
-export const ISOLATED_REVIEW_HOSTS = Object.freeze(["codex", "grok-build"] as const);
+export const ISOLATED_REVIEW_HOSTS = Object.freeze(["codex", "grok-build", "cursor"] as const);
 export const INSTALL_REVIEW_MODES = Object.freeze(["isolated", "host", "external"] as const);
 export const DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT = "~/.qube/verification";
 export type InstallReviewMode = (typeof INSTALL_REVIEW_MODES)[number];
@@ -64,7 +64,7 @@ export function invalidInstallGuideFlag(flags: Readonly<Record<string, unknown>>
     const hosts = readList(flags.host);
     const selectedHosts = hosts.length > 0 ? hosts : (flags.yes === true ? ["generic"] : []);
     if (reviewMode === "isolated" && selectedHosts.length > 0 && !isolatedReviewAvailable(selectedHosts)) {
-      return "Isolated review is not available because no selected host adapter can run isolated review. Use --review-mode host or --review-mode external, or select Codex or Grok Build.";
+      return "Isolated review is not available because no selected host adapter can run isolated review. Use --review-mode host or --review-mode external, or select Codex, Grok Build, or Cursor.";
     }
   }
   const evidenceRoot = flags["ui-audit-evidence-root"];
@@ -235,6 +235,7 @@ const INSTALL_OPTION_LABELS: Readonly<Record<string, string>> = Object.freeze({
   opencode: "OpenCode",
   "claude-code": "Claude Code",
   "grok-build": "Grok Build",
+  cursor: "Cursor",
   github: "GitHub",
   gitlab: "GitLab",
   linear: "Linear",

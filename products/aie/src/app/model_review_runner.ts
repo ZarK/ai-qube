@@ -154,6 +154,7 @@ export interface ModelReviewRunInput {
   routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
+  resolveCheckoutState?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
   onProgress?: (progress: ModelRouteProcessProgress) => void;
 }
@@ -211,6 +212,8 @@ export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelH
     for (const executableName of adapter.executableNames) {
       const shim = findOnPathSync(`${executableName}.cmd`);
       if (!shim) continue;
+      const adapterResolved = adapter.resolveWindowsShim?.(shim);
+      if (adapterResolved) return adapterResolved;
       const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
       const script = adapter.windowsNodeModulesScriptPath(dirname(shim));
@@ -738,6 +741,11 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
   return result.stdout.trim();
 }
 
+export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
+  const result = await execFileAsync('git', ['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  return createHash('sha256').update(result.stdout).digest('hex');
+}
+
 export async function runModelReview(input: ModelReviewRunInput): Promise<ModelReviewRunResult> {
   const invocationId = randomUUID();
   const prompt = buildModelReviewPrompt(input);
@@ -745,7 +753,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   let schemaPath: string | null = null;
   try {
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
+    const resolveCheckoutState = input.resolveCheckoutState
+      ?? (input.resolveHead ? async () => 'test-checkout-state' : resolveModelReviewCheckoutState);
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD does not match the requested pull request head.' };
+    const checkoutState = await resolveCheckoutState(input.repoRoot);
     const adapter = getReviewHostAdapter(input.plan.host);
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
     const routeDirectory = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route');
@@ -813,6 +824,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       }
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
+    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout contents changed during isolated review execution.' };
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);

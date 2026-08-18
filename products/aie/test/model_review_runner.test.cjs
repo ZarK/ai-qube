@@ -911,6 +911,16 @@ describe('model review runner', () => {
     });
     assert.equal(checkoutMismatch.reasonCode, 'model-route-checkout-mismatch');
 
+    const checkoutStates = ['before', 'after'];
+    const checkoutContentsChanged = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveCheckoutState: async () => checkoutStates.shift(),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'drift' }) }),
+    });
+    assert.equal(checkoutContentsChanged.reasonCode, 'model-route-checkout-mismatch');
+    assert.match(checkoutContentsChanged.error, /contents changed/);
+
     const promptFailure = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',

@@ -1,7 +1,7 @@
 import { posix as pathPosix } from 'path';
 import { isMissingAdapterPackage } from './missing_adapter_package.js';
 
-export type AgentHostId = 'opencode' | 'codex' | 'claude-code' | 'grok-build';
+export type AgentHostId = 'opencode' | 'codex' | 'claude-code' | 'grok-build' | 'cursor';
 export type AgentHostSelection = AgentHostId | 'all';
 
 export interface InstructionTarget {
@@ -168,8 +168,8 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   supportsProjectCommands: true,
 };
 
-const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
-const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
+const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor'];
+const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor'];
 
 const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
   opencode: BUILTIN_OPENCODE_PROFILE,
@@ -180,6 +180,7 @@ const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
   Object.freeze({ id: 'codex', displayName: 'Codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
   Object.freeze({ id: 'claude-code', displayName: 'Claude Code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
   Object.freeze({ id: 'grok-build', displayName: 'Grok Build', packageName: '@tjalve/qube-adapter-grok-build', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'cursor', displayName: 'Cursor', packageName: '@tjalve/qube-adapter-cursor', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
 ]);
 
 export function reviewerDisplayName(hostId: string | null | undefined): string {
@@ -196,6 +197,7 @@ const HOST_PROFILE_EXPORTS: Readonly<Record<AgentHostId, string>> = Object.freez
   codex: 'codexHostProfile',
   'claude-code': 'claudeCodeHostProfile',
   'grok-build': 'grokBuildHostProfile',
+  cursor: 'cursorHostProfile',
 });
 
 const profileCache = new Map<AgentHostId, AgentHostProfile | null>();
@@ -320,7 +322,7 @@ export function parseAgentHostSelection(value: string): AgentHostId[] | null {
       selected.push(...ALL_HOST_IDS);
       continue;
     }
-    if (part === 'opencode' || part === 'codex' || part === 'claude-code' || part === 'grok-build') {
+    if (part === 'opencode' || part === 'codex' || part === 'claude-code' || part === 'grok-build' || part === 'cursor') {
       selected.push(part);
       continue;
     }

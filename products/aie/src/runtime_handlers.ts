@@ -312,8 +312,8 @@ async function handleView(context: Parameters<RuntimeCommandHandler>[0]) {
 async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
   const target = stringArg(context, 'target');
   if (!target || isHelpToken(target)) {
-    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
-      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
+      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       commandDescription('init'),
       '',
       'Behavior:',

@@ -11,6 +11,7 @@ export const ADAPTER_PACKAGES = Object.freeze([
   { key: "qube-adapter-jira", name: "@tjalve/qube-adapter-jira", path: "adapters/jira", packageJson: "adapters/jira/package.json" },
   { key: "qube-adapter-jenkins", name: "@tjalve/qube-adapter-jenkins", path: "adapters/jenkins", packageJson: "adapters/jenkins/package.json" },
   { key: "qube-adapter-grok-build", name: "@tjalve/qube-adapter-grok-build", path: "adapters/grok-build", packageJson: "adapters/grok-build/package.json" },
+  { key: "qube-adapter-cursor", name: "@tjalve/qube-adapter-cursor", path: "adapters/cursor", packageJson: "adapters/cursor/package.json" },
 ]);
 
 export function validatePackageCatalog(entries = ADAPTER_PACKAGES) {

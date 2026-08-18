@@ -327,7 +327,7 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
     assert.match(installHelp.stdout, /--host <value>/);
     assert.match(installHelp.stdout, /Default: generic/);
-    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, opencode/);
+    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, cursor, opencode/);
     assert.match(installHelp.stdout, /--work-provider <value>/);
     assert.match(installHelp.stdout, /Default: github/);
     assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
@@ -506,6 +506,7 @@ describe("qube composer CLI", () => {
         ["codex", "installed", false, "adapter-contract"],
         ["claude-code", "installed", false, "adapter-contract"],
         ["grok-build", "optional", false, "adapter-contract"],
+        ["cursor", "optional", false, "adapter-contract"],
         ["opencode", "optional", false, "adapter-contract"]
       ]
     );
@@ -1863,6 +1864,26 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "@tjalve/qube-adapter-grok-build"
     ));
     assert.doesNotMatch(command, /qube-adapter-claude-code|qube-adapter-codex|qube-adapter-opencode/);
+  });
+
+  it("installs only the Cursor review adapter for --host cursor", () => {
+    const result = runCli([
+      "install",
+      "--yes",
+      "--dry-run",
+      "--json",
+      "--host",
+      "cursor",
+      "--work-provider",
+      "github"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const command = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "package-install").command;
+    assert.equal(command, qubePnpmAddCommandWith(
+      "@tjalve/qube-adapter-cursor",
+      "@tjalve/qube-adapter-github"
+    ));
+    assert.doesNotMatch(command, /qube-adapter-claude-code|qube-adapter-codex|qube-adapter-grok-build|qube-adapter-opencode/);
   });
 
   it("keeps --apply --json without --yes in plan mode", () => {

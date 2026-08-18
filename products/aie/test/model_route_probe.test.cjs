@@ -64,6 +64,34 @@ describe('model route probe', () => {
     assert.equal(check.diagnostic, null);
   });
 
+  it('probes Cursor version, capabilities, browser authentication, and model before the batch', () => {
+    const commands = [];
+    const check = probeModelRoute('cursor', 'gpt-5.6-luna-high', (_executable, args) => {
+      commands.push(args);
+      if (args.at(-1) === '--version') return '2026.08.11-build\n';
+      if (args.at(-1) === '--help') return '--print --output-format --mode ask --model --workspace --sandbox';
+      if (args.includes('status')) return JSON.stringify({ status: 'authenticated', isAuthenticated: true, userInfo: { email: 'private@example.test' } });
+      if (args.at(-1) === 'models') return 'Available models\n\ngpt-5.6-luna-high - GPT';
+      throw new Error(`unexpected probe command: ${args.join(' ')}`);
+    }, () => ({ executable: 'powershell.exe', prefixArgs: ['-File', 'cursor-agent.ps1'] }));
+    assert.equal(check.status, 'ready');
+    assert.equal(check.modelListed, true);
+    assert.equal(check.executable, 'powershell.exe');
+    assert.ok(commands.every(args => args[0] === '-File' && args[1] === 'cursor-agent.ps1'));
+  });
+
+  it('blocks Cursor before a lane when browser login is missing', () => {
+    const check = probeModelRoute('cursor', 'gpt-5.6-luna-high', (_executable, args) => {
+      if (args.at(-1) === '--version') return '2026.08.11-build';
+      if (args.at(-1) === '--help') return '--print --output-format --mode ask --model --workspace --sandbox';
+      if (args.includes('status')) return JSON.stringify({ status: 'unauthenticated', isAuthenticated: false });
+      return 'Available models\n\ngpt-5.6-luna-high - GPT';
+    }, () => 'cursor-agent');
+    assert.equal(check.status, 'blocked');
+    assert.match(check.diagnostic, /cursor-agent login/);
+    assert.doesNotMatch(check.diagnostic, /private@example/);
+  });
+
   it('blocks when the configured model is missing from the Codex catalog', () => {
     const check = probeModelRoute('codex', 'gpt-missing', (_executable, args) => {
       if (args[0] === '--version') return 'codex-cli 0.1.0\n';
