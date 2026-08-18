@@ -22,6 +22,11 @@ export interface PrThreadResolveResult extends ResolveReviewThreadResult {
   all: boolean;
 }
 
+function githubLoginsMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  const withoutBotSuffix = (login: string | null | undefined): string | null => login?.replace(/\[bot\]$/i, '') ?? null;
+  return loginsMatch(left, right) || loginsMatch(withoutBotSuffix(left), withoutBotSuffix(right));
+}
+
 export async function runPrThreadResolveService(options: PrThreadResolveOptions): Promise<PrThreadResolveResult> {
   const config = await loadConfig(options.repoRoot ?? process.cwd()) ?? getDefaults();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.repoRoot, exec: options.exec, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
@@ -38,7 +43,7 @@ export async function runPrThreadResolveService(options: PrThreadResolveOptions)
       ?? config.providers.review.publisher?.githubApp?.login
       ?? config.providers.review.publisher?.token?.login
       ?? null;
-    if (!publisherLogin && options.includeOtherAuthors !== true) {
+    if (options.publisherLogin == null && options.includeOtherAuthors !== true) {
       try {
         const resolved = await resolveGitHubReviewPublisher(config.providers.review.publisher ?? null, {
           cwd: options.repoRoot,
@@ -47,13 +52,13 @@ export async function runPrThreadResolveService(options: PrThreadResolveOptions)
         });
         publisherLogin = resolved.identity.login;
       } catch {
-        publisherLogin = null;
+        // Retain the trusted configured login when live identity resolution is unavailable.
       }
     }
     if (options.includeOtherAuthors === true) {
       threadIds = resolvable.map(thread => thread.id);
     } else {
-      const matchesPublisher = (author: string | null | undefined): boolean => loginsMatch(author, publisherLogin);
+      const matchesPublisher = (author: string | null | undefined): boolean => githubLoginsMatch(author, publisherLogin);
       threadIds = resolvable.filter(thread => matchesPublisher(thread.author)).map(thread => thread.id);
       skippedOtherAuthorIds = resolvable.filter(thread => !matchesPublisher(thread.author)).map(thread => thread.id);
     }

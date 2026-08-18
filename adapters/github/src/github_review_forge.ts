@@ -1745,8 +1745,8 @@ function findingThreadsFromRaw(threads: RawThreadNode[]): ReviewFindingThread[] 
 
 function trustedPublisherLogins(trustedAuthor: TrustedAuthorInput): string[] {
   if (trustedAuthor === 'any-valid-marker' || trustedAuthor == null) return [];
-  if (typeof trustedAuthor === 'string') return [trustedAuthor];
-  return [...trustedAuthor];
+  const logins = typeof trustedAuthor === 'string' ? [trustedAuthor] : [...trustedAuthor];
+  return [...new Set(logins.flatMap(login => [login, login.replace(/\[bot\]$/i, '')]))];
 }
 
 function reviewConversations(threads: RawThreadNode[]): ReviewConversation[] {

@@ -195,6 +195,21 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
   });
 
+  it('resolves a GitHub App thread when the API omits the bot suffix', async () => {
+    const threads = [
+      { id: 'PRRT_bot_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'qube-review' }, body: 'Addressed bot finding.', url: 'https://github.com/example/repo/pull/12#discussion_r8' }] } },
+    ];
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const result = await runPrThreadResolveService({
+      prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec, publisherLogin: 'qube-review[bot]',
+    });
+
+    assert.equal(result.status, 'resolved');
+    assert.deepEqual(result.resolvedThreadIds, ['PRRT_bot_1']);
+    assert.deepEqual(result.skippedThreadIds, []);
+  });
+
   it('skips explicit review thread ids that are not unresolved viewer-resolvable threads on the selected PR', async () => {
     const threads = [
       { id: 'PRRT_resolve_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
