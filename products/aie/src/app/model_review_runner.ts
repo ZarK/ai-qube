@@ -790,8 +790,8 @@ function isInternalReviewPath(path: string): boolean {
   const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
   return normalized === '.git'
     || normalized.startsWith('.git/')
-    || normalized === '.qube/aie/reviews'
-    || normalized.startsWith('.qube/aie/reviews/');
+    || normalized === '.qube'
+    || normalized.startsWith('.qube/');
 }
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {

@@ -1087,10 +1087,14 @@ describe('model review runner', () => {
     execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
     execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
     mkdirSync(join(repoRoot, 'ignored-cache'));
+    mkdirSync(join(repoRoot, '.qube', 'aie', 'reviews'), { recursive: true });
     const ignoredFile = join(repoRoot, 'ignored-cache', 'large.bin');
     writeFileSync(ignoredFile, 'before\n');
     const monitor = watchModelReviewCheckout(repoRoot);
     try {
+      writeFileSync(join(repoRoot, '.qube', 'aie', 'reviews', 'lane.json'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.equal(monitor.violation(), null);
       writeFileSync(ignoredFile, 'after!\n');
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.match(monitor.violation(), /ignored-cache/);
