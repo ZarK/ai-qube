@@ -71,6 +71,7 @@ export interface ReviewHostAdapter {
   readonly windowsExecutableNames: readonly string[];
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
+  readonly windowsShell?: 'powershell';
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;

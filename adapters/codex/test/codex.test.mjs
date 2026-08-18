@@ -31,6 +31,7 @@ describe("codex adapter", () => {
   it("exports the isolated-review runner", () => {
     assert.equal(isolatedReviewHostAdapter.id, "codex");
     assert.deepEqual([...isolatedReviewHostAdapter.executableNames], ["codex"]);
+    assert.equal(isolatedReviewHostAdapter.windowsShell, "powershell");
     const built = isolatedReviewHostAdapter.buildInvocation({
       repoRoot: "/repo",
       model: "gpt-5.6-luna",
@@ -56,5 +57,19 @@ describe("codex adapter", () => {
     );
     assert.equal(built.stdin, "inspect");
     assert.deepEqual(parseCodexModelCatalog(JSON.stringify({ models: [{ slug: "gpt-5.6-luna" }, { slug: "  " }] })), ["gpt-5.6-luna"]);
+  });
+
+  it("keeps progress messages separate from the terminal response", () => {
+    const progress = JSON.stringify({ status: "pending" });
+    const terminal = JSON.stringify({ status: "passed" });
+    const parsed = isolatedReviewHostAdapter.parseEnvelope([
+      JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: progress } }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: terminal } }),
+    ].join("\n"));
+
+    assert.equal(parsed.text, terminal);
+    assert.deepEqual(parsed.priorTexts, [progress]);
+    assert.equal(parsed.sessionId, "thread-1");
   });
 });

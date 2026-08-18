@@ -25,7 +25,7 @@ const cssTreePatchTarget = path.join(
 await mkdir(path.dirname(outfile), { recursive: true });
 await mkdir(path.dirname(cssTreePatchTarget), { recursive: true });
 
-await build({
+const buildResult = await build({
   absWorkingDir: workspaceRoot,
   banner: {
     js: '#!/usr/bin/env node\nimport { createRequire as __createRequire } from "node:module";\nconst require = __createRequire(import.meta.url);',
@@ -37,13 +37,18 @@ await build({
   outfile,
   platform: "node",
   target: "node20",
+  write: false,
 });
 
 const [{ version: cssTreeVersion }, { version: stylelintVersion }] = await Promise.all([
   readPackageVersion(cssTreePackageJsonPath),
   readPackageVersion(stylelintPackageJsonPath),
 ]);
-const bundleSource = await readFile(outfile, "utf8");
+const bundleOutput = buildResult.outputFiles?.find((output) => path.resolve(output.path) === path.resolve(outfile));
+if (!bundleOutput) {
+  throw new Error(`Expected esbuild to return the action bundle for ${outfile}.`);
+}
+const bundleSource = bundleOutput.text;
 const patchedBundleSource = applyRequiredPatternReplacement(
   applyRequiredPatternReplacement(
     applyRequiredPatternReplacement(

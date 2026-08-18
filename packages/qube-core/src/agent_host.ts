@@ -96,6 +96,7 @@ export interface IsolatedReviewHostAdapter {
   readonly requiredCapabilities: readonly IsolatedReviewHostCapabilityNeed[];
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
+  readonly windowsShell?: "powershell";
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(

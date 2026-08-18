@@ -87,7 +87,13 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
     const eventUsage = usageFromCodexEvent(record);
     if (eventUsage) usage = eventUsage;
   }
-  return messages.length === 1 ? { text: messages[0]!, sessionId, ...(usage ? { usage } : {}) } : null;
+  if (messages.length === 0) return null;
+  return {
+    text: messages[messages.length - 1]!,
+    sessionId,
+    ...(messages.length > 1 ? { priorTexts: messages.slice(0, -1) } : {}),
+    ...(usage ? { usage } : {}),
+  };
 }
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
@@ -96,6 +102,7 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   requiresPromptFile: false,
   requiresSchemaFile: true,
+  windowsShell: "powershell",
   executableNames: Object.freeze(["codex"]),
   windowsExecutableNames: Object.freeze(["codex.exe"]),
   windowsNodeModulesScriptPath(shimDir: string): string | null {

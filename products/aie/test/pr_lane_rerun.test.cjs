@@ -78,4 +78,40 @@ describe('pr lane rerun', () => {
     assert.ok(!names.includes('issue-compliance'));
     assert.ok(!names.includes('security'));
   });
+
+  it('reports a failed named-lane attempt with its route reason', async () => {
+    const config = getDefaults();
+    config.reviewMode = 'isolated';
+    config.reviewAdapter = 'local';
+    config.reviewProfile = 'local-focused';
+    config.reviewLanes = defaultFreshSetupLanes();
+    const result = await runPrLaneRerun({
+      config,
+      repoRoot: process.cwd(),
+      prNumber: 12,
+      lane: 'code-quality',
+      headSha: 'abc123',
+      issueNumbers: [551],
+      changedPaths: ['src/index.ts'],
+      runRunner: async () => ({
+        status: 'failed',
+        lanes: [{
+          lane: 'code-quality',
+          status: 'failed',
+          evidenceSource: null,
+          blocker: 'model-route-output-envelope',
+          summary: 'The host returned no supported terminal response.',
+        }],
+        unavailable: [],
+      }),
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.executions, 1);
+    assert.equal(result.attempted, true);
+    assert.equal(result.reasonCode, 'model-route-output-envelope');
+    assert.deepEqual(result.lanesRun, ['code-quality']);
+    assert.match(result.errors[0], /model-route-output-envelope/);
+    assert.match(result.nextAction, /Fix model-route-output-envelope/);
+  });
 });

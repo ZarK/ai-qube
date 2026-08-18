@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import type { RoutedReviewHostId } from '../core/policy.js';
-import { resolveModelHostExecutableSync } from './model_review_runner.js';
+import { modelRouteEnvironment, resolveModelHostExecutableSync, windowsPowerShellRouteEnvironment } from './model_review_runner.js';
 import {
   getReviewHostAdapter,
   missingReviewHostCapabilities,
@@ -38,6 +38,7 @@ function defaultProbeCommandRunner(executable: string, args: readonly string[]):
     maxBuffer: PROBE_MAX_BUFFER,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: modelRouteEnvironment(),
   });
 }
 
@@ -70,6 +71,21 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       resolved: null,
       diagnostic: `The ${host} review host adapter is missing required capabilities (${missingCapabilities.join(', ')}). Fix the registered adapter capabilities before running routed review lanes.`,
     };
+  }
+  if (process.platform === 'win32' && adapter.windowsShell === 'powershell') {
+    const shellHealth = windowsPowerShellRouteEnvironment(process.env);
+    if (shellHealth.status === 'blocked') {
+      return {
+        host,
+        model,
+        status: 'blocked',
+        executable: null,
+        version: null,
+        modelListed: null,
+        resolved: null,
+        diagnostic: shellHealth.diagnostic,
+      };
+    }
   }
   // Probe and execution share one resolver so a ready verdict always refers to
   // the executable routed execution would actually spawn.

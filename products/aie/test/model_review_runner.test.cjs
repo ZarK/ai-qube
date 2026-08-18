@@ -12,6 +12,7 @@ const {
   expectedCoverageAreas,
   isolatedRawOutputPath,
   modelRouteEnvironment,
+  windowsPowerShellRouteEnvironment,
   runModelReview,
   runModelRouteProcess,
   resolveWindowsNodeShim,
@@ -104,7 +105,9 @@ describe('model review runner', () => {
         schemaPath: null,
         timeoutMs: 5_000,
       });
-      assert.deepEqual(JSON.parse(result.stdout), { secret: null, path: process.env.PATH ?? null });
+      const routeEnvironment = modelRouteEnvironment();
+      const routePathKey = Object.keys(routeEnvironment).find(key => key.toUpperCase() === 'PATH');
+      assert.deepEqual(JSON.parse(result.stdout), { secret: null, path: routePathKey ? routeEnvironment[routePathKey] : null });
       assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' }).PATH, 'kept');
       assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' })[secretName], undefined);
       assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' }).GH_TOKEN, undefined);
@@ -112,6 +115,36 @@ describe('model review runner', () => {
       if (previous === undefined) delete process.env[secretName];
       else process.env[secretName] = previous;
     }
+  });
+
+  it('removes incomplete PowerShell Core paths and requires a healthy Windows fallback', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-powershell-health-'));
+    const broken = join(root, 'broken');
+    const healthy = join(root, 'healthy');
+    const systemRoot = join(root, 'windows');
+    mkdirSync(broken, { recursive: true });
+    mkdirSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Management'), { recursive: true });
+    mkdirSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Utility'), { recursive: true });
+    writeFileSync(join(broken, 'pwsh.exe'), '');
+    writeFileSync(join(healthy, 'pwsh.exe'), '');
+    writeFileSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'), '');
+    writeFileSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'), '');
+
+    const blocked = windowsPowerShellRouteEnvironment({ PATH: broken, SYSTEMROOT: systemRoot });
+    assert.equal(blocked.status, 'blocked');
+    assert.deepEqual(blocked.removedPathEntries, [broken]);
+    assert.match(blocked.diagnostic, /built-in module directory is incomplete/);
+    assert.equal(blocked.environment.PATH, '');
+
+    mkdirSync(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'), { recursive: true });
+    writeFileSync(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), '');
+    const fallback = windowsPowerShellRouteEnvironment({ PATH: `${broken};${root}`, SYSTEMROOT: systemRoot });
+    assert.equal(fallback.status, 'ready');
+    assert.equal(fallback.environment.PATH, root);
+
+    const completeCore = windowsPowerShellRouteEnvironment({ PATH: `${healthy};${root}`, SYSTEMROOT: join(root, 'missing') });
+    assert.equal(completeCore.status, 'ready');
+    assert.equal(completeCore.environment.PATH, `${healthy};${root}`);
   });
 
   it('terminates a fake host at the configured execution bound', async () => {
@@ -542,6 +575,25 @@ describe('model review runner', () => {
     assert.equal(malformed.evidence, null);
     assert.equal(malformed.reasonCode, 'model-route-malformed-json');
 
+    const malformedProgress = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'not-json' } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(malformedProgress.evidence, null);
+    assert.equal(malformedProgress.reasonCode, 'model-route-malformed-progress');
+    const malformedProgressRaw = JSON.parse(readFileSync(isolatedRawOutputPath(repoRoot, 309, 310, 'abc123', 'code-quality'), 'utf8'));
+    assert.equal(malformedProgressRaw.reasonCode, 'model-route-malformed-progress');
+
     const multipleCodexMessages = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
       resolveExecutable: async () => 'codex.exe',
@@ -554,7 +606,34 @@ describe('model review runner', () => {
       }),
     });
     assert.equal(multipleCodexMessages.evidence, null);
-    assert.equal(multipleCodexMessages.reasonCode, 'model-route-output-envelope');
+    assert.equal(multipleCodexMessages.reasonCode, 'model-route-multiple-terminal');
+
+    const codexProgress = {
+      ...laneResult(),
+      status: 'pending',
+      severity: 'none',
+      recommendation: 'pending',
+      summary: 'Inspection in progress.',
+      blockers: [],
+      findings: [],
+    };
+    const codexProgressThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-progress' }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(codexProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(codexProgressThenFinal.error, null);
+    assert.equal(codexProgressThenFinal.evidence.status, 'passed');
 
     const multipleFinalObjects = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
@@ -568,7 +647,7 @@ describe('model review runner', () => {
       }),
     });
     assert.equal(multipleFinalObjects.evidence, null);
-    assert.equal(multipleFinalObjects.reasonCode, 'model-route-contract-mismatch');
+    assert.equal(multipleFinalObjects.reasonCode, 'model-route-multiple-terminal');
 
     const progressThenFinal = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
@@ -618,7 +697,7 @@ describe('model review runner', () => {
       }),
     });
     assert.equal(contradictorySequence.evidence, null);
-    assert.equal(contradictorySequence.reasonCode, 'model-route-contract-mismatch');
+    assert.equal(contradictorySequence.reasonCode, 'model-route-contradictory-progress');
 
     const missingDigest = laneResult();
     delete missingDigest.artifacts[0].sha256;
