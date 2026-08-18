@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -1092,11 +1092,13 @@ describe('model review runner', () => {
     writeFileSync(trackedFile, 'committed\n');
     execFileSync('git', ['-C', repoRoot, 'add', 'tracked.txt']);
     execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    const committedMtime = statSync(trackedFile).mtime;
     const monitor = watchModelReviewCheckout(repoRoot);
     try {
       writeFileSync(trackedFile, 'transient change\n');
       await new Promise(resolve => setTimeout(resolve, 100));
       writeFileSync(trackedFile, 'committed\n');
+      utimesSync(trackedFile, committedMtime, committedMtime);
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.match(monitor.violation(), /tracked\.txt/);
     } finally {

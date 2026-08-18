@@ -800,8 +800,7 @@ function isInternalReviewPath(path: string): boolean {
 }
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
-  const changedPaths = new Set<string>();
-  const startedAt = Date.now();
+  let changedPath: string | null = null;
   let watchError: string | null = null;
   // QUBE requires Node 24 or newer. Recursive Linux watching has been
   // supported since Node 19.1; unavailable filesystem backends still fail
@@ -809,7 +808,7 @@ export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutM
   const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
     const path = filename === null ? null : String(filename);
     if (path === null || isInternalReviewPath(path)) return;
-    changedPaths.add(path);
+    changedPath ??= path;
   });
   watcher.on('error', error => {
     watchError = sanitizedDiagnostic(error.message) || 'Checkout monitoring failed.';
@@ -818,26 +817,7 @@ export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutM
     close: () => watcher.close(),
     violation: () => {
       if (watchError) return `monitor error: ${watchError}`;
-      if (changedPaths.size === 0) return null;
-      const paths = [...changedPaths];
-      for (const changedPath of paths) {
-        const absolutePath = resolve(repoRoot, changedPath);
-        const repoRelativePath = relative(repoRoot, absolutePath);
-        if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
-          return changedPath;
-        }
-        try {
-          const details = statSync(absolutePath);
-          // Some Windows filesystems report watcher events for read access.
-          // A real content, metadata, create, or rename change advances mtime
-          // or ctime; an access-only event leaves both timestamps unchanged.
-          if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) return changedPath;
-        } catch {
-          // Deletions and paths that cannot be inspected fail closed.
-          return changedPath;
-        }
-      }
-      return null;
+      return changedPath;
     },
   };
 }
