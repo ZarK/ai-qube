@@ -102,7 +102,9 @@ export const SET_PREPARE = "pnpm run build";
 export const SET_VERIFY = "pnpm run version:audit && pnpm run verify:manifests";
 
 const PACKAGE_TAG = /^publish-([a-z0-9-]+)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
-const SET_TAG = /^publish-set-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+const SET_VERSION = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+const SET_TAG = /^publish-set-v(.+)$/;
+const RETRY_SUFFIX = /^(.*)-retry\.([1-9][0-9]*)$/;
 
 export function repoRootFrom(moduleUrl = import.meta.url) {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
@@ -118,6 +120,19 @@ function fail(message) {
   throw error;
 }
 
+export function parseSetPublishTag(tag) {
+  const setMatch = SET_TAG.exec(tag ?? "");
+  if (!setMatch) return null;
+  const retryMatch = RETRY_SUFFIX.exec(setMatch[1]);
+  const setVersion = retryMatch?.[1] ?? setMatch[1];
+  if (!SET_VERSION.test(setVersion)) return null;
+  return Object.freeze({
+    setVersion,
+    retry: retryMatch ? Number(retryMatch[2]) : null,
+    originalTag: `publish-set-v${setVersion}`,
+  });
+}
+
 async function packagePlan(key, root) {
   const entry = PUBLISH_PACKAGES.get(key);
   if (!entry) fail(`Unknown package key "${key}". Valid keys: ${[...PUBLISH_PACKAGES.keys()].join(", ")}.`);
@@ -128,6 +143,7 @@ async function packagePlan(key, root) {
     version: packageJson.version,
     filter: entry.filter,
     path: entry.path,
+    inputs: entry.inputs ?? [entry.path],
     packageJson: entry.packageJson,
     prepare: entry.prepare,
     verify: entry.verify,
@@ -136,9 +152,9 @@ async function packagePlan(key, root) {
 }
 
 export async function resolvePublishTag(tag, root = ROOT) {
-  const setMatch = SET_TAG.exec(tag ?? "");
-  if (setMatch) {
-    const setVersion = setMatch[1];
+  const setTag = parseSetPublishTag(tag);
+  if (setTag) {
+    const { setVersion, retry } = setTag;
     const qube = await readPackageJson("products/qube/package.json", root);
     if (qube.version !== setVersion) {
       fail(`Set tag version ${setVersion} does not match products/qube/package.json version ${qube.version}.`);
@@ -150,6 +166,7 @@ export async function resolvePublishTag(tag, root = ROOT) {
     return Object.freeze({
       mode: "set",
       setVersion,
+      retry,
       prepare: SET_PREPARE,
       verify: SET_VERIFY,
       packages,
@@ -158,7 +175,7 @@ export async function resolvePublishTag(tag, root = ROOT) {
 
   const match = PACKAGE_TAG.exec(tag ?? "");
   if (!match) {
-    fail(`Invalid publish tag "${tag}". Expected publish-<package>-v<version> or publish-set-v<qubeVersion>.`);
+    fail(`Invalid publish tag "${tag}". Expected publish-<package>-v<version>, publish-set-v<qubeVersion>, or publish-set-v<qubeVersion>-retry.<number>.`);
   }
   const [, packageKey, tagVersion] = match;
   if (packageKey === "set") {
@@ -188,6 +205,23 @@ export function registryPackageUrl(packageName, registry = "https://registry.npm
 }
 
 export async function readPublishedVersions(packageName, options = {}) {
+  return (await readRegistryPackage(packageName, options)).versions;
+}
+
+export function inspectRetryContents(plan, originalCommit, root, git) {
+  const inputs = [...new Set((plan.packages ?? []).flatMap(entry => entry.inputs ?? [entry.path]))];
+  if (inputs.length === 0) fail("Retry publish plan has no package inputs.");
+  try {
+    git.run(["diff", "--quiet", `${originalCommit}..HEAD`, "--", ...inputs], root);
+  } catch (error) {
+    throw Object.assign(new Error("Publishable package contents changed after the original set tag; prepare a new release instead of retrying the old set."), {
+      reasonCode: "retry-content-drift",
+      cause: error,
+    });
+  }
+}
+
+export async function readRegistryPackage(packageName, options = {}) {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const url = registryPackageUrl(packageName, options.registry);
   let response;
@@ -199,7 +233,7 @@ export async function readPublishedVersions(packageName, options = {}) {
       { reasonCode: "registry-lookup", cause: error }
     );
   }
-  if (response.status === 404) return [];
+  if (response.status === 404) return Object.freeze({ packageName, exists: false, versions: Object.freeze([]) });
   if (!response.ok) {
     throw Object.assign(
       new Error(`Registry lookup for ${packageName} failed (${response.status}).`),
@@ -215,13 +249,22 @@ export async function readPublishedVersions(packageName, options = {}) {
       { reasonCode: "registry-lookup", cause: error }
     );
   }
-  return Object.keys(body.versions ?? {});
+  return Object.freeze({
+    packageName,
+    exists: true,
+    versions: Object.freeze(Object.keys(body.versions ?? {})),
+  });
+}
+
+export async function readRegistryPackagesForPlan(plan, options = {}) {
+  const packageNames = [...new Set((plan.packages ?? []).map(entry => entry.packageName))];
+  const packages = await Promise.all(packageNames.map(packageName => readRegistryPackage(packageName, options)));
+  return new Map(packages.map(entry => [entry.packageName, entry]));
 }
 
 export async function readPublishedVersionsForPlan(plan, options = {}) {
-  const packageNames = [...new Set((plan.packages ?? []).map(entry => entry.packageName))];
-  const versionSets = await Promise.all(packageNames.map(packageName => readPublishedVersions(packageName, options)));
-  return new Map(packageNames.map((packageName, index) => [packageName, versionSets[index]]));
+  const packages = await readRegistryPackagesForPlan(plan, options);
+  return new Map([...packages].map(([packageName, entry]) => [packageName, entry.versions]));
 }
 
 function failFinalize(message, reasonCode) {

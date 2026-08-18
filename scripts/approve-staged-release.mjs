@@ -4,12 +4,11 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
-import { PUBLISH_PACKAGES, PUBLISH_SET_ORDER, registryPackageUrl } from "./publish-packages.mjs";
+import { PUBLISH_PACKAGES, PUBLISH_SET_ORDER, parseSetPublishTag, registryPackageUrl } from "./publish-packages.mjs";
 import { findCompleteReceipt, planApprovals, validateReceipt } from "./release-receipt.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
-const SET_TAG = /^publish-set-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 const PACKAGE_TAG = /^publish-(.+)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 
 function commandError(command, args, result) {
@@ -69,11 +68,15 @@ function inspectTag(receipt, git = { run: (args) => run("git", args) }) {
     throw Object.assign(new Error("Receipt packages are not in dependency order."), { reasonCode: "tag-mismatch" });
   }
 
-  const setMatch = SET_TAG.exec(receipt.tag);
-  if (setMatch) {
+  const setTag = parseSetPublishTag(receipt.tag);
+  if (setTag) {
     const qube = PUBLISH_PACKAGES.get("qube");
     const manifest = parseJson(git.run(["show", `${receipt.headSha}:${qube.packageJson}`]), qube.packageJson);
-    if (manifest.version !== setMatch[1]) throw Object.assign(new Error("Set tag version does not match the release commit."), { reasonCode: "tag-mismatch" });
+    if (manifest.version !== setTag.setVersion) throw Object.assign(new Error("Set tag version does not match the release commit."), { reasonCode: "tag-mismatch" });
+    if (setTag.retry !== null) {
+      const originalCommit = git.run(["rev-parse", `${setTag.originalTag}^{commit}`]);
+      git.run(["merge-base", "--is-ancestor", originalCommit, receipt.headSha]);
+    }
     return;
   }
   const packageMatch = PACKAGE_TAG.exec(receipt.tag);

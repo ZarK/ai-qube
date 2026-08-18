@@ -1,13 +1,55 @@
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { finalizePublishPlan, readPublishedVersionsForPlan, resolvePublishTag } from "./publish-packages.mjs";
+import { finalizePublishPlan, inspectRetryContents, readRegistryPackagesForPlan, resolvePublishTag } from "./publish-packages.mjs";
 import { prepareRelease } from "./prepare-release.mjs";
+
+function runGit(args, cwd) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+  if (result.status !== 0) {
+    throw Object.assign(new Error((result.stderr ?? "").trim() || `git ${args.join(" ")} failed.`), {
+      reasonCode: "retry-base",
+    });
+  }
+  return String(result.stdout ?? "").trim();
+}
+
+export function inspectRetryPublishTag(resolved, root, git = { run: runGit }) {
+  if (!resolved.retry) return null;
+  const originalTag = `publish-set-v${resolved.setVersion}`;
+  let originalCommit;
+  try {
+    originalCommit = git.run(["rev-parse", `${originalTag}^{commit}`], root);
+    git.run(["merge-base", "--is-ancestor", originalCommit, "HEAD"], root);
+  } catch (error) {
+    throw Object.assign(new Error(`Retry tag requires ${originalTag} as an immutable ancestor.`), {
+      reasonCode: "retry-base",
+      cause: error,
+    });
+  }
+  return { originalTag, originalCommit };
+}
 
 export async function resolvePublishPlan(tag, options = {}) {
   const resolved = await resolvePublishTag(tag, options.root);
-  const publishedByName = options.publishedByName ?? await readPublishedVersionsForPlan(resolved, options);
-  if (resolved.mode === "set") {
+  const registryPackages = options.registryPackages ?? (options.publishedByName
+    ? new Map(resolved.packages.map(entry => [entry.packageName, {
+      packageName: entry.packageName,
+      exists: !(options.missingPackageNames ?? []).includes(entry.packageName),
+      versions: options.publishedByName.get(entry.packageName) ?? [],
+    }]))
+    : await readRegistryPackagesForPlan(resolved, options));
+  const missing = resolved.packages.filter(entry => registryPackages.get(entry.packageName)?.exists !== true);
+  if (missing.length > 0) {
+    throw Object.assign(new Error(`npm staged publishing cannot create package names: ${missing.map(entry => entry.packageName).join(", ")}. Complete the one-time bootstrap procedure first.`), {
+      reasonCode: "package-bootstrap",
+    });
+  }
+  const publishedByName = options.publishedByName ?? new Map(
+    [...registryPackages].map(([packageName, entry]) => [packageName, entry.versions])
+  );
+  if (resolved.mode === "set" && resolved.retry === null) {
     const preparation = await (options.prepareRelease ?? prepareRelease)({
       repoRoot: options.root,
       publishedByName,
@@ -19,7 +61,17 @@ export async function resolvePublishPlan(tag, options = {}) {
       });
     }
   }
-  return finalizePublishPlan(resolved, publishedByName);
+  if (resolved.retry !== null) {
+    const retryBase = inspectRetryPublishTag(resolved, options.root, options.git);
+    inspectRetryContents(resolved, retryBase.originalCommit, options.root, options.git ?? { run: runGit });
+  }
+  const plan = finalizePublishPlan(resolved, publishedByName);
+  if (resolved.retry !== null && plan.skipped.length === 0) {
+    throw Object.assign(new Error(`Retry is unnecessary because no versions from publish-set-v${resolved.setVersion} are public.`), {
+      reasonCode: "retry-unnecessary",
+    });
+  }
+  return plan;
 }
 
 export async function main(tag = process.argv[2] ?? "") {
