@@ -1047,6 +1047,9 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.notEqual(unavailable.status, "ok");
     assert.match(unavailable.summary, /No installed modelRouting host/);
     assert.ok(unavailable.resolution.substitutions.length >= 1);
+
+    const cursorReview = await runModelRoutingDoctor(cwd, command => command === "cursor-agent", "linux");
+    assert.equal(cursorReview.resolution.routes["independent-review"].host, "cursor");
   });
 
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {

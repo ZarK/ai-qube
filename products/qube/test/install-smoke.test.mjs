@@ -405,7 +405,11 @@ async function createFakeComponentTarball(component, root, packDir) {
   if (component.name === "@tjalve/aie") {
     await writeFile(
       path.join(componentRoot, "index.js"),
-      "export function validateConfig(config) { return { ok: true, errors: [], config }; }\n"
+      [
+        "export function validateConfig(config) { return { ok: true, errors: [], config }; }",
+        "export function detectInstalledReviewHostsOnPath() { return []; }",
+        "",
+      ].join("\n")
     );
   }
   await writeFile(
