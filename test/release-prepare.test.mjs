@@ -10,6 +10,7 @@ import { PUBLISH_PACKAGES, PUBLISH_SET_ORDER } from "../scripts/publish-packages
 import {
   applyReleasePreparation,
   compareVersions,
+  inspectSetTag,
   parseChangedPaths,
   planReleasePreparation,
   prepareRelease,
@@ -67,12 +68,13 @@ function createFixture() {
   return { root, publishedByName };
 }
 
-function planFixture(fixture, changedPaths) {
+function planFixture(fixture, changedPaths, options = {}) {
   return planReleasePreparation(fixture.root, {
     baselineTag: "publish-set-v0.2.8",
     baselineSha: "a".repeat(40),
     changedPaths,
     publishedByName: fixture.publishedByName,
+    ...options,
   });
 }
 
@@ -105,6 +107,7 @@ describe("release preparation", () => {
         baseline: { baselineTag: "publish-set-v0.2.8", baselineSha: "a".repeat(40) },
         changedPaths: ["packages/qube-core/src/index.ts"],
         publishedByName: fixture.publishedByName,
+        setTagState: { status: "absent", tag: null },
       });
       assert.equal(report.dryRun, true);
       assert.equal(report.baselineTag, "publish-set-v0.2.8");
@@ -154,6 +157,41 @@ describe("release preparation", () => {
       assert.equal(cursorReport.direct, true);
       assert.equal(cursorReport.fromVersion, "0.1.0");
       assert.equal(cursorReport.toVersion, "0.1.0");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("advances only the composer when its immutable set tag belongs to an older commit", () => {
+    const fixture = createFixture();
+    try {
+      const aie = JSON.parse(readFileSync(path.join(fixture.root, "products/aie/package.json"), "utf8"));
+      const qube = JSON.parse(readFileSync(path.join(fixture.root, "products/qube/package.json"), "utf8"));
+      fixture.publishedByName.set(aie.name, ["0.2.6"]);
+      fixture.publishedByName.set(qube.name, ["0.2.8"]);
+      const currentPlan = planFixture(fixture, ["products/aie/src/app/model_review_runner.ts"], {
+        setTagState: { status: "current", tag: `publish-set-v${qube.version}` },
+      });
+      assert.equal(currentPlan.reports.find(report => report.packageKey === "qube").toVersion, qube.version);
+      assert.deepEqual(currentPlan.replacementPackages, []);
+      const plan = planFixture(fixture, ["products/aie/src/app/model_review_runner.ts"], {
+        setTagState: { status: "occupied", tag: `publish-set-v${qube.version}` },
+      });
+      const versions = new Map(plan.reports.map(report => [report.packageKey, report.toVersion]));
+      assert.equal(versions.get("aie"), aie.version);
+      assert.equal(versions.get("qube"), bumpPatch(qube.version));
+      assert.equal(plan.setTag, `publish-set-v${bumpPatch(qube.version)}`);
+      assert.equal(plan.replacesSetTag, `publish-set-v${qube.version}`);
+      assert.deepEqual(plan.replacementPackages, ["qube"]);
+      assert.deepEqual(plan.versionChanges, [{
+        packageKey: "qube",
+        packageName: "@tjalve/qube",
+        from: qube.version,
+        to: bumpPatch(qube.version),
+      }]);
+      assert.throws(() => planFixture(fixture, [], {
+        setTagState: { status: "occupied", tag: "publish-set-v9.9.9" },
+      }), { reasonCode: "set-tag-state" });
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -237,5 +275,36 @@ describe("release preparation", () => {
     assert.equal(compareVersions("0.2.8-rc.1", "0.2.8"), -1);
     assert.equal(compareVersions("0.2.10", "0.2.9"), 1);
     assert.equal(compareVersions("1.0.0-B", "1.0.0-a"), -1);
+  });
+
+  it("distinguishes absent, current, occupied, conflicting, and unreadable set tags", () => {
+    const head = "a".repeat(40);
+    const older = "b".repeat(40);
+    const tagObject = "c".repeat(40);
+    const tag = "publish-set-v0.2.9";
+    const inspect = overrides => inspectSetTag(repoRoot, "0.2.9", {
+      run(args) {
+        if (args[0] === "rev-parse") return head;
+        if (args[0] === "tag") return overrides.localName ?? "";
+        if (args[0] === "rev-list") return overrides.localSha ?? head;
+        if (args[0] === "ls-remote") return overrides.remote ?? "";
+        return "";
+      },
+    });
+    assert.equal(inspect({}).status, "absent");
+    assert.equal(inspect({
+      localName: tag,
+      localSha: head,
+      remote: `${tagObject}\trefs/tags/${tag}\n${head}\trefs/tags/${tag}^{}\n`,
+    }).status, "current");
+    assert.equal(inspect({ remote: `${older}\trefs/tags/${tag}\n` }).status, "occupied");
+    assert.throws(() => inspect({
+      localName: tag,
+      localSha: head,
+      remote: `${older}\trefs/tags/${tag}\n`,
+    }), { reasonCode: "set-tag-conflict" });
+    assert.throws(() => inspectSetTag(repoRoot, "0.2.9", {
+      run() { throw new Error("unreadable"); },
+    }), { reasonCode: "set-tag-state" });
   });
 });
