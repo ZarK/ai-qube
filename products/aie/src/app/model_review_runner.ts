@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { lstat, readlink } from 'node:fs/promises';
@@ -795,19 +795,40 @@ function isInternalReviewPath(path: string): boolean {
 }
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
-  let changedPath: string | null = null;
+  const changedPaths = new Set<string>();
   let watchError: string | null = null;
   const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
     const path = filename === null ? null : String(filename);
-    if (changedPath !== null || path !== null && isInternalReviewPath(path)) return;
-    changedPath = path ?? '(unknown checkout path)';
+    if (path === null || isInternalReviewPath(path)) return;
+    changedPaths.add(path);
   });
   watcher.on('error', error => {
     watchError = sanitizedDiagnostic(error.message) || 'Checkout monitoring failed.';
   });
   return {
     close: () => watcher.close(),
-    violation: () => watchError ? `monitor error: ${watchError}` : changedPath,
+    violation: () => {
+      if (watchError) return `monitor error: ${watchError}`;
+      if (changedPaths.size === 0) return null;
+      const paths = [...changedPaths];
+      for (let offset = 0; offset < paths.length; offset += 100) {
+        const batch = paths.slice(offset, offset + 100);
+        const result = spawnSync('git', ['-C', repoRoot, 'check-ignore', '-z', '--stdin'], {
+          encoding: 'utf8',
+          input: `${batch.join('\0')}\0`,
+          maxBuffer: 1024 * 1024,
+          timeout: 10_000,
+          windowsHide: true,
+        });
+        if (result.error || result.status !== 0 && result.status !== 1) {
+          const diagnostic = result.error?.message ?? result.stderr ?? `git check-ignore exited with code ${String(result.status)}`;
+          return `monitor error: ${sanitizedDiagnostic(diagnostic)}`;
+        }
+        const ignoredPath = result.stdout.split('\0').find(Boolean);
+        if (ignoredPath) return ignoredPath;
+      }
+      return null;
+    },
   };
 }
 
