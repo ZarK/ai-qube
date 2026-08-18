@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PUBLISH_PACKAGES, SET_PREPARE, SET_VERIFY } from "./publish-packages.mjs";
-import { createReceipt, parseStageOutput, resumeReceipt, saveReceipt } from "./release-receipt.mjs";
+import { createReceipt, parseStageOutput, resumeReceipt, saveReceipt, writeStageIntent } from "./release-receipt.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PHASES = new Set(["prepare", "verify", "stage"]);
@@ -99,12 +99,16 @@ if (phase === "prepare") {
   try {
     const checkpoint = JSON.parse(await readFile(receiptPath, "utf8"));
     staged = resumeReceipt(checkpoint, context, plan.packages);
+    await saveReceipt(createReceipt(context, plan.packages, staged, checkpoint.complete), receiptPath);
     if (checkpoint.complete) {
-      await saveReceipt(checkpoint, receiptPath);
       process.exit(0);
     }
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+    if (String(context.runAttempt) !== "1") {
+      fail("A retry has no restored staging checkpoint. Refusing to restage packages.");
+    }
+    await saveReceipt(createReceipt(context, plan.packages, [], false), receiptPath);
   }
   for (const entry of plan.packages.slice(staged.length)) {
     const allowed = allowlistedEntry(entry);
@@ -112,6 +116,7 @@ if (phase === "prepare") {
     runArgv(process.execPath, [path.join(ROOT, "scripts", "resolve-publish-dependencies.mjs"), manifest], ROOT);
     runArgv(process.execPath, [path.join(ROOT, "scripts", "check-publish-manifest.mjs"), manifest], ROOT);
     try {
+      writeStageIntent(context, entry);
       const stdout = runCaptured(
         "npm",
         ["stage", "publish", ".", "--access", "public", "--ignore-scripts", "--json"],

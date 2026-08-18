@@ -3,14 +3,19 @@ import { describe, it } from "node:test";
 
 import { approvePackages, prepareApproval, readPublishedShasums } from "../scripts/approve-staged-release.mjs";
 import {
+  CHECKPOINT_MARKER,
   RECEIPT_MARKER,
+  STAGE_INTENT_MARKER,
   createReceipt,
   encodeReceipt,
   findCompleteReceipt,
+  findResumeReceipt,
   parseStageOutput,
   planApprovals,
+  restoreReceiptAttempt,
   resumeReceipt,
   validateReceipt,
+  writeStageIntent,
 } from "../scripts/release-receipt.mjs";
 
 const headSha = "a".repeat(40);
@@ -70,6 +75,73 @@ describe("staged release receipts", () => {
     assert.throws(() => findCompleteReceipt(`${log}${log}`), { reasonCode: "invalid-receipt" });
   });
 
+  it("restores the latest confirmed cross-attempt checkpoint and detects an in-flight stage", () => {
+    const context = {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: "99",
+      runAttempt: "1",
+    };
+    const empty = createReceipt(context, planned, [], false);
+    const checkpoint = createReceipt(context, planned, staged.slice(0, 1), false);
+    let intentLine = "";
+    writeStageIntent(context, planned[0], { write(value) { intentLine += value; } });
+    assert.match(intentLine, new RegExp(STAGE_INTENT_MARKER));
+
+    const confirmedLog = [
+      `${CHECKPOINT_MARKER}${encodeReceipt(empty)}`,
+      intentLine.trim(),
+      `${CHECKPOINT_MARKER}${encodeReceipt(checkpoint)}`,
+    ].join("\n");
+    assert.deepEqual(findResumeReceipt(confirmedLog), { receipt: checkpoint, pendingIntent: null });
+
+    const interrupted = findResumeReceipt(`${CHECKPOINT_MARKER}${encodeReceipt(empty)}\n${intentLine}`);
+    assert.deepEqual(interrupted.receipt, empty);
+    assert.equal(interrupted.pendingIntent.packageName, planned[0].packageName);
+  });
+
+  it("rebinds a prior workflow checkpoint and fails closed on ambiguous retries", () => {
+    const priorContext = {
+      repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7",
+      headSha,
+      runId: "99",
+      runAttempt: "1",
+    };
+    const retryContext = { ...priorContext, runAttempt: "2" };
+    const checkpoint = createReceipt(priorContext, planned, staged.slice(0, 1), false);
+    const restored = restoreReceiptAttempt({
+      attempt: 1,
+      headSha,
+      stageConclusion: "failure",
+      log: `${CHECKPOINT_MARKER}${encodeReceipt(checkpoint)}`,
+    }, retryContext, planned);
+    assert.equal(restored.runAttempt, "2");
+    assert.deepEqual(restored.packages, staged.slice(0, 1));
+
+    let intentLine = "";
+    writeStageIntent(priorContext, planned[1], { write(value) { intentLine += value; } });
+    assert.throws(() => restoreReceiptAttempt({
+      attempt: 1,
+      headSha,
+      stageConclusion: "failure",
+      log: `${CHECKPOINT_MARKER}${encodeReceipt(checkpoint)}\n${intentLine}`,
+    }, retryContext, planned), { reasonCode: "invalid-receipt" });
+    assert.equal(restoreReceiptAttempt({
+      attempt: 1,
+      headSha,
+      stageConclusion: "skipped",
+      log: "",
+    }, retryContext, planned), null);
+    assert.throws(() => restoreReceiptAttempt({
+      attempt: 1,
+      headSha,
+      stageConclusion: "failure",
+      log: "",
+    }, retryContext, planned), { reasonCode: "invalid-receipt" });
+  });
+
   it("requires a complete, ordered, unique receipt bound to its run", () => {
     const valid = receipt();
     assert.equal(validateReceipt(valid, {
@@ -87,6 +159,8 @@ describe("staged release receipts", () => {
     const duplicate = structuredClone(valid);
     duplicate.packages[1].stageId = duplicate.packages[0].stageId;
     assert.throws(() => validateReceipt(duplicate), { reasonCode: "invalid-receipt" });
+    const { runAttempt: _runAttempt, ...missingAttempt } = structuredClone(valid);
+    assert.throws(() => validateReceipt(missingAttempt), { reasonCode: "invalid-receipt" });
     assert.throws(() => validateReceipt(valid, { headSha: "b".repeat(40) }), { reasonCode: "invalid-receipt" });
   });
 

@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 export const RECEIPT_SCHEMA = "qube-stage-set/v1";
 export const RECEIPT_MARKER = "QUBE_STAGE_RECEIPT=";
 export const CHECKPOINT_MARKER = "QUBE_STAGE_CHECKPOINT=";
+export const STAGE_INTENT_MARKER = "QUBE_STAGE_INTENT=";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA1 = /^[0-9a-f]{40}$/i;
@@ -98,6 +99,65 @@ export function findCompleteReceipt(log) {
   return decodeReceipt(markers[0]);
 }
 
+export function findResumeReceipt(log) {
+  let latestReceipt = null;
+  let pendingIntent = null;
+  for (const line of String(log).split(/\r?\n/)) {
+    const checkpointAt = line.indexOf(CHECKPOINT_MARKER);
+    const completeAt = line.indexOf(RECEIPT_MARKER);
+    const intentAt = line.indexOf(STAGE_INTENT_MARKER);
+    if (checkpointAt >= 0 || completeAt >= 0) {
+      const marker = checkpointAt >= 0 ? CHECKPOINT_MARKER : RECEIPT_MARKER;
+      const markerAt = checkpointAt >= 0 ? checkpointAt : completeAt;
+      latestReceipt = decodeReceipt(line.slice(markerAt + marker.length).trim());
+      pendingIntent = null;
+    } else if (intentAt >= 0) {
+      pendingIntent = decodeReceipt(line.slice(intentAt + STAGE_INTENT_MARKER.length).trim());
+    }
+  }
+  return { receipt: latestReceipt, pendingIntent };
+}
+
+export function writeStageIntent(context, entry, output = process.stdout) {
+  const intent = {
+    repository: context.repository,
+    tag: context.tag,
+    headSha: context.headSha,
+    runId: String(context.runId),
+    runAttempt: String(context.runAttempt),
+    packageKey: entry.packageKey,
+    packageName: entry.packageName,
+    version: entry.version,
+  };
+  output.write(`${STAGE_INTENT_MARKER}${encodeReceipt(intent)}\n`);
+  return intent;
+}
+
+export function restoreReceiptAttempt(attempt, context, plannedPackages) {
+  const attemptNumber = Number(attempt?.attempt);
+  const currentAttempt = Number(context.runAttempt);
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber >= currentAttempt) {
+    throw receiptError("Checkpoint workflow attempt is invalid.");
+  }
+  if (attempt.headSha !== context.headSha) throw receiptError("Checkpoint workflow head does not match.");
+
+  const restored = findResumeReceipt(attempt.log);
+  if (restored.pendingIntent) {
+    throw receiptError(`Workflow attempt ${attemptNumber} ended during an npm staging request.`);
+  }
+  if (!restored.receipt) {
+    if (attempt.stageConclusion !== "skipped") {
+      throw receiptError(`Workflow attempt ${attemptNumber} has no trustworthy staging checkpoint.`);
+    }
+    return null;
+  }
+  if (String(restored.receipt.runAttempt) !== String(attemptNumber)) {
+    throw receiptError(`Workflow attempt ${attemptNumber} contains a checkpoint from another attempt.`);
+  }
+  const staged = resumeReceipt(restored.receipt, context, plannedPackages);
+  return createReceipt(context, plannedPackages, staged, restored.receipt.complete);
+}
+
 export function validateReceipt(receipt, expected = {}, options = {}) {
   if (!receipt || receipt.schema !== RECEIPT_SCHEMA) throw receiptError("The release receipt schema is not supported.");
   if (options.allowIncomplete !== true && receipt.complete !== true) throw receiptError("The release receipt is incomplete.");
@@ -105,6 +165,7 @@ export function validateReceipt(receipt, expected = {}, options = {}) {
   requireText(receipt.repository, "Receipt repository");
   requireText(receipt.tag, "Receipt tag");
   requireText(receipt.runId, "Receipt run ID");
+  if (!/^[1-9][0-9]*$/.test(receipt.runAttempt ?? "")) throw receiptError("Receipt run attempt is invalid.");
   if (!COMMIT_SHA.test(receipt.headSha ?? "")) throw receiptError("Receipt head SHA is invalid.");
   if (expected.repository && receipt.repository !== expected.repository) throw receiptError("Receipt repository does not match.");
   if (expected.tag && receipt.tag !== expected.tag) throw receiptError("Receipt tag does not match.");

@@ -37,10 +37,17 @@ describe("repository policy", () => {
     assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
     assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
     const publishScript = read("scripts/run-publish-plan.mjs");
+    const restoreScript = read("scripts/restore-stage-receipt.mjs");
     assert.match(publishScript, /resolve-publish-dependencies\.mjs/);
     assert.match(publishScript, /check-publish-manifest\.mjs/);
     assert.match(publishScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts", "--json"\]/);
     assert.match(publishScript, /restore-publish-dependencies\.mjs/);
+    assert.match(workflow, /actions:\s*read/);
+    assert.match(workflow, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+    assert.match(workflow, /restore-stage-receipt\.mjs publish-plan\.json/);
+    assert.match(restoreScript, /"--attempt", String\(priorAttempt\)/);
+    assert.match(restoreScript, /restoreReceiptAttempt/);
+    assert.match(publishScript, /writeStageIntent/);
     assert.doesNotMatch(publishScript, /\["publish", "\."/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.doesNotMatch(workflow, /npm publish/);

@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
+      actions: read
       contents: read
       id-token: write
     steps:
@@ -51,6 +52,11 @@ jobs:
         run: |
           node scripts/resolve-publish-tag.mjs "${GITHUB_REF_NAME}" > publish-plan.json
           node -e "const p=require('./publish-plan.json'); console.log('mode=' + p.mode); console.log('verify=' + p.verify); console.log('prepare=' + p.prepare);" >> "$GITHUB_OUTPUT"
+
+      - name: Restore staging checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/restore-stage-receipt.mjs publish-plan.json
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts

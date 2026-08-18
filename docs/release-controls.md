@@ -1,9 +1,10 @@
 # Release Controls
 
 QUBE packages publish from this repository through one set tag and npm trusted
-publishing. The workflow is intentionally tokenless: it uses the GitHub Actions
-`id-token: write` permission only inside the publish job so npm can verify the
-workflow identity through OIDC.
+publishing. npm publication is intentionally tokenless: the publish job uses
+`id-token: write` so npm can verify the workflow identity through OIDC. Its
+short-lived GitHub token has read-only access to repository contents and prior
+workflow-attempt logs so a retry can restore a staging checkpoint.
 
 ## GitHub Controls
 
@@ -70,6 +71,14 @@ versions, stage IDs, dist-tags, and tarball shasums to the immutable release tag
 commit, and workflow run. Already-public versions are skipped. Unchanged adapters
 do not need a bump. Composer pins for Bootstrap, Executor, Quality, Umpire, CLI,
 and core must match the workspace versions; CI fails if they drift.
+
+The job writes a checkpoint marker before staging and after every confirmed npm
+stage. A rerun restores the latest checkpoint from a prior attempt only after it
+matches the same workflow run, tag, commit, package plan, and attempt number. An
+intent marker is written before each npm request. If an attempt ends after an
+intent without a confirming checkpoint, the retry fails closed for manual npm
+stage inspection instead of risking a duplicate stage. No npm credential is used
+to restore the checkpoint.
 
 After the workflow succeeds, run one command:
 

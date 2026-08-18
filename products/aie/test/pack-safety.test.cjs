@@ -118,7 +118,7 @@ describe('package publish surface safety', () => {
     assert.equal(pkg.publishConfig.provenance, true);
     assert.equal(pkg.scripts.verify, 'pnpm run lint && pnpm run test && pnpm run pack:check');
     assert.match(workflow, /^permissions:\n {2}contents: read$/m);
-    assert.match(workflow, /permissions:\n\s+contents: read\n\s+id-token: write/);
+    assert.match(workflow, /permissions:\n\s+actions: read\n\s+contents: read\n\s+id-token: write/);
     assert.match(workflow, /environment: npm-publish/);
     assert.match(workflow, /runs-on: ubuntu-latest/);
     assert.match(workflow, /node-version: 24/);
@@ -132,6 +132,8 @@ describe('package publish surface safety', () => {
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
     assert.match(publishScript, /\["stage", "publish", "\.", "--access", "public", "--ignore-scripts", "--json"\]/);
     assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);
+    assert.match(workflow, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+    assert.match(workflow, /restore-stage-receipt\.mjs publish-plan\.json/);
     assert.match(workflow, /run-publish-plan\.mjs stage publish-plan\.json/);
     assert.doesNotMatch(workflow, /npm publish/);
     assert.doesNotMatch(publishScript, /\["publish", "\."/);
