@@ -270,6 +270,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
     '--- EXACT QUBE LANE PROMPT START ---',
     input.promptText,
     '--- EXACT QUBE LANE PROMPT END ---',
+    'FINAL OUTPUT CHECK: Build coverage after findings. Every coverage area with one or more findings must use status "finding"; use "clear" only when that area has no findings, and use "not-inspected" only with an inconclusive verdict. Recheck verdict consistency, then emit exactly one terminal JSON object.',
   ].join('\n');
 }
 

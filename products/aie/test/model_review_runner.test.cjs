@@ -459,6 +459,13 @@ describe('model review runner', () => {
     assert.equal(result.evidence.status, 'passed');
   });
 
+  it('repeats the coverage consistency check immediately before terminal output', () => {
+    const prompt = buildModelReviewPrompt(reviewInput('C:\\repo'));
+    assert.match(prompt, /--- EXACT QUBE LANE PROMPT END ---\nFINAL OUTPUT CHECK:/);
+    assert.match(prompt, /coverage area with one or more findings must use status "finding"/);
+    assert.ok(prompt.endsWith('emit exactly one terminal JSON object.'));
+  });
+
   it('does not treat policy-matching source text from a failed inspection command as a host fault', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-regex-'));
     const result = await runModelReview({
