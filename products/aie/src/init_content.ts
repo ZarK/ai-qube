@@ -781,21 +781,28 @@ export function renderModelRoutingRunnerFiles(config: Config): Array<{
   });
 }
 
-function grokBuildRouteRunnerPath(): string | null {
+function adapterRouteRunnerPath(packageName: string, exportName: string): string | null {
   try {
-    const imported = requireAdapter('@tjalve/qube-adapter-grok-build') as { grokBuildRouteRunnerPath?: unknown };
-    return typeof imported.grokBuildRouteRunnerPath === 'string' ? imported.grokBuildRouteRunnerPath : null;
+    const imported = requireAdapter(packageName) as Record<string, unknown>;
+    return typeof imported[exportName] === 'string' ? imported[exportName] : null;
   } catch (error) {
-    if (isMissingAdapterPackage(error, '@tjalve/qube-adapter-grok-build')) return null;
+    if (isMissingAdapterPackage(error, packageName)) return null;
     throw error;
   }
 }
 
 function routeRunnerPath(host: ModelRoutingHostId): string | null {
-  if (host === 'codex') return '.codex/agents/qube-route-runner.toml';
-  if (host === 'claude-code') return '.claude/agents/qube-route-runner.md';
-  if (host === 'opencode') return '.opencode/agent/qube-route-runner.md';
-  return grokBuildRouteRunnerPath();
+  switch (host) {
+    case 'codex': return '.codex/agents/qube-route-runner.toml';
+    case 'claude-code': return '.claude/agents/qube-route-runner.md';
+    case 'opencode': return '.opencode/agent/qube-route-runner.md';
+    case 'grok-build': return adapterRouteRunnerPath('@tjalve/qube-adapter-grok-build', 'grokBuildRouteRunnerPath');
+    case 'cursor': return adapterRouteRunnerPath('@tjalve/qube-adapter-cursor', 'cursorRouteRunnerPath');
+    default: {
+      const unsupportedHost: never = host;
+      return unsupportedHost;
+    }
+  }
 }
 
 function renderRouteRunner(host: ModelRoutingHostId, routing: ModelRoutingPolicy): string {

@@ -1209,7 +1209,7 @@ describe('init service', () => {
     const grok = profiles.find(profile => profile.id === 'grok-build');
     const cursor = profiles.find(profile => profile.id === 'cursor');
     assert.ok(cursor);
-    assert.equal(cursor.subagents.supported, false);
+    assert.equal(cursor.subagents.supported, true);
     assert.equal(cursor.hooks.supported, false);
     assert.ok(grok);
     assert.equal(grok.supportsProjectCommands, true);

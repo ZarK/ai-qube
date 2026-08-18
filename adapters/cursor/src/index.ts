@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { win32 as pathWin32 } from "node:path";
+import { posix as pathPosix, win32 as pathWin32 } from "node:path";
 
 import type {
   IsolatedReviewHostAdapter,
@@ -13,6 +13,7 @@ import type {
 
 export const CURSOR_HOST_ID = "cursor" as const;
 export const CURSOR_MINIMUM_DATE_VERSION = "2026.08.11";
+export const cursorRouteRunnerPath = pathPosix.join(".cursor", "agents", "qube-route-runner.md");
 
 export const cursorHostProfile = Object.freeze({
   id: CURSOR_HOST_ID,
@@ -27,7 +28,7 @@ export const cursorHostProfile = Object.freeze({
   dialogue: Object.freeze({
     expectation: "Use Cursor only as isolated review compute. QUBE owns evidence validation and provider publication.",
   }),
-  subagents: Object.freeze({ supported: false, instruction: "Do not use Cursor subagents for QUBE routed review. QUBE starts one fresh Cursor process per lane." }),
+  subagents: Object.freeze({ supported: true, instruction: "Cursor custom agents may run configured modelRouting delegation. Do not use Cursor subagents for QUBE routed review; QUBE starts one fresh sandboxed Cursor process per lane." }),
   hooks: Object.freeze({ supported: false, description: "QUBE does not install Cursor hooks." }),
   supportsProjectCommands: false,
 });
