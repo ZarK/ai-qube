@@ -130,21 +130,28 @@ describe('model review runner', () => {
     writeFileSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'), '');
     writeFileSync(join(healthy, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'), '');
 
-    const blocked = windowsPowerShellRouteEnvironment({ PATH: broken, SYSTEMROOT: systemRoot });
+    const blocked = windowsPowerShellRouteEnvironment({ PATH: broken, SYSTEMROOT: systemRoot, PSModulePath: join(root, 'polluted-modules') });
     assert.equal(blocked.status, 'blocked');
     assert.deepEqual(blocked.removedPathEntries, [broken]);
     assert.match(blocked.diagnostic, /built-in module directory is incomplete/);
     assert.equal(blocked.environment.PATH, '');
+    assert.equal(blocked.environment.PSModulePath, '');
 
-    mkdirSync(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'), { recursive: true });
-    writeFileSync(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), '');
-    const fallback = windowsPowerShellRouteEnvironment({ PATH: `${broken};${root}`, SYSTEMROOT: systemRoot });
+    const fallbackDirectory = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0');
+    mkdirSync(join(fallbackDirectory, 'Modules', 'Microsoft.PowerShell.Management'), { recursive: true });
+    mkdirSync(join(fallbackDirectory, 'Modules', 'Microsoft.PowerShell.Utility'), { recursive: true });
+    writeFileSync(join(fallbackDirectory, 'powershell.exe'), '');
+    writeFileSync(join(fallbackDirectory, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'), '');
+    writeFileSync(join(fallbackDirectory, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'), '');
+    const fallback = windowsPowerShellRouteEnvironment({ PATH: `${broken};${root}`, SYSTEMROOT: systemRoot, PSModulePath: join(root, 'polluted-modules') });
     assert.equal(fallback.status, 'ready');
-    assert.equal(fallback.environment.PATH, root);
+    assert.equal(fallback.environment.PATH, `${root};${fallbackDirectory}`);
+    assert.equal(fallback.environment.PSModulePath, join(fallbackDirectory, 'Modules'));
 
     const completeCore = windowsPowerShellRouteEnvironment({ PATH: `${healthy};${root}`, SYSTEMROOT: join(root, 'missing') });
     assert.equal(completeCore.status, 'ready');
     assert.equal(completeCore.environment.PATH, `${healthy};${root}`);
+    assert.equal(completeCore.environment.PSModulePath, join(healthy, 'Modules'));
   });
 
   it('terminates a fake host at the configured execution bound', async () => {
@@ -164,6 +171,30 @@ describe('model review runner', () => {
 
     assert.equal(result.timedOut, true);
     assert.notEqual(result.exitCode, 0);
+  });
+
+  it('reports bounded process progress without changing the host envelope', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-fake-progress-'));
+    const fakeHost = join(repoRoot, 'fake-progress.cjs');
+    writeFileSync(fakeHost, `setTimeout(() => process.stdout.write('done'), 350);\n`);
+    const progress = [];
+
+    const result = await runModelRouteProcess({
+      executable: process.execPath,
+      args: [fakeHost],
+      cwd: repoRoot,
+      stdin: null,
+      promptPath: null,
+      schemaPath: null,
+      timeoutMs: 1_000,
+      progressLabel: 'code-quality via fake-host',
+      progressIntervalMs: 50,
+      onProgress: event => progress.push(event),
+    });
+
+    assert.equal(result.stdout, 'done');
+    assert.deepEqual(progress.map(event => event.phase), ['started', 'waiting', 'completed']);
+    assert.ok(progress.every(event => event.label === 'code-quality via fake-host' && event.elapsedMs <= event.timeoutMs));
   });
 
   it('force-terminates a fake host that ignores graceful shutdown', async () => {
@@ -214,7 +245,7 @@ describe('model review runner', () => {
     assert.match(prompt, /Inspect the full current-head diff for this lane/);
     assert.match(prompt, /passed maps to approve/);
     assert.match(prompt, /keep blockers empty and severity below high/);
-    assert.match(prompt, /progress snapshot and must report status "pending", recommendation "pending", severity "none"/);
+    assert.match(prompt, /Do not emit JSON progress, pending envelopes, or interim verdicts/);
     assert.equal(invocation.args.includes(prompt), false);
     assert.deepEqual(invocation.args.slice(-2), ['--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
@@ -295,6 +326,8 @@ describe('model review runner', () => {
         assert.equal(schema.properties.issueNumber.type, 'integer');
         assert.equal(schema.properties.lane.const, 'code-quality');
         assert.equal(schema.properties.lane.type, 'string');
+        assert.deepEqual(schema.properties.status.enum, ['passed', 'failed', 'needs-work', 'inconclusive']);
+        assert.deepEqual(schema.properties.recommendation.enum, ['approve', 'request-changes', 'inconclusive']);
         assert.deepEqual(schema.properties.findings.items.required, ['id', 'severity', 'message', 'suggestion', 'location', 'confidence']);
         assert.deepEqual(schema.properties.findings.items.properties.confidence, { anyOf: [{ type: 'number', minimum: 0, maximum: 1 }, { type: 'null' }] });
         assert.deepEqual(schema.properties.artifacts.items.required, ['kind', 'path', 'sha256']);
@@ -646,10 +679,8 @@ describe('model review runner', () => {
         ].join('\n'),
       }),
     });
-    assert.equal(malformedProgress.evidence, null);
-    assert.equal(malformedProgress.reasonCode, 'model-route-malformed-progress');
-    const malformedProgressRaw = JSON.parse(readFileSync(isolatedRawOutputPath(repoRoot, 309, 310, 'abc123', 'code-quality'), 'utf8'));
-    assert.equal(malformedProgressRaw.reasonCode, 'model-route-malformed-progress');
+    assert.equal(malformedProgress.error, null);
+    assert.equal(malformedProgress.evidence.status, 'passed', 'transient host prose must not become lane evidence');
 
     const multipleCodexMessages = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
@@ -753,8 +784,22 @@ describe('model review runner', () => {
         stdout: JSON.stringify({ text: `${JSON.stringify(contradictoryPending)}\n${JSON.stringify(laneResult())}`, sessionId: 'contradictory' }),
       }),
     });
-    assert.equal(contradictorySequence.evidence, null);
-    assert.equal(contradictorySequence.reasonCode, 'model-route-contradictory-progress');
+    assert.equal(contradictorySequence.error, null);
+    assert.equal(contradictorySequence.evidence.status, 'passed', 'nonterminal transient JSON must not affect the final verdict');
+
+    const nonterminalFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(codexProgress), sessionId: 'pending-final' }),
+      }),
+    });
+    assert.equal(nonterminalFinal.evidence, null);
+    assert.equal(nonterminalFinal.reasonCode, 'model-route-nonterminal-result');
 
     const missingDigest = laneResult();
     delete missingDigest.artifacts[0].sha256;
@@ -987,8 +1032,8 @@ describe('coverage attestation contract', () => {
   });
 });
 
-describe('interim snapshot coverage relaxation', () => {
-  it('accepts interim pending snapshots without coverage before an attested final result', async () => {
+describe('transient host message isolation', () => {
+  it('ignores a transient pending object without coverage before an attested final result', async () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
     delete pending.coverage;
     const result = await runModelReview({
@@ -1000,7 +1045,7 @@ describe('interim snapshot coverage relaxation', () => {
     assert.equal(result.evidence.status, 'passed');
   });
 
-  it('still rejects a final result without coverage even when interim snapshots omit it', async () => {
+  it('still rejects a final result without coverage when transient messages omit it', async () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
     delete pending.coverage;
     const final = laneResult();
@@ -1015,8 +1060,8 @@ describe('interim snapshot coverage relaxation', () => {
   });
 });
 
-describe('interim snapshot freeform coverage tolerance', () => {
-  it('ignores freeform coverage areas in interim snapshots', async () => {
+describe('transient host coverage isolation', () => {
+  it('ignores freeform coverage areas in transient messages', async () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.', coverage: [{ area: 'made-up-area', status: 'clear' }] };
     const result = await runModelReview({
       ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim2-')), 'grok-build'),

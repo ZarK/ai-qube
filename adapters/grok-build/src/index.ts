@@ -256,7 +256,7 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
     ?? readGrokUsage(record.tokens);
   return {
     text: objects[objects.length - 1]!,
-    priorTexts: objects.slice(0, -1),
+    transientTexts: objects.slice(0, -1),
     sessionId,
     ...(usage ? { usage } : {}),
   };

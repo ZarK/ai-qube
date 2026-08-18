@@ -46,6 +46,26 @@ describe("source-checkout QUBE install", () => {
     assert.equal(quotePosixShellArg("/tmp/it's/bin"), `'/tmp/it'\\''s/bin'`);
   });
 
+  it("retries a bounded Git fixture cleanup after pack-directory races", async () => {
+    let attempts = 0;
+    const waits = [];
+    await removeFixtureRoot("bounded-fixture-root", {
+      remove: async (target, options) => {
+        attempts += 1;
+        assert.equal(target, "bounded-fixture-root");
+        assert.deepEqual(options, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
+        if (attempts < 3) {
+          const error = new Error("pack directory is still changing");
+          error.code = "ENOTEMPTY";
+          throw error;
+        }
+      },
+      wait: async milliseconds => { waits.push(milliseconds); },
+    });
+    assert.equal(attempts, 3);
+    assert.deepEqual(waits, [100, 200]);
+  });
+
   it("installs a fixture checkout without packing and keeps git clean", async () => {
     const fixture = await createFixture();
     try {
@@ -525,11 +545,28 @@ async function createFixture() {
     lockDir,
     prefix: path.join(prefixRoot, "prefix"),
     async cleanup() {
-      await rm(root, { recursive: true, force: true });
-      await rm(lockDir, { recursive: true, force: true });
-      await rm(prefixRoot, { recursive: true, force: true });
+      await removeFixtureRoot(root);
+      await removeFixtureRoot(lockDir);
+      await removeFixtureRoot(prefixRoot);
     },
   };
+}
+
+async function removeFixtureRoot(root, options = {}) {
+  // Git can finish closing pack files just after the fixture command exits.
+  // Retry only this explicit mkdtemp root; never widen or follow the target.
+  const remove = options.remove ?? rm;
+  const wait = options.wait ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      await remove(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
+      return;
+    } catch (error) {
+      const retryable = error && typeof error === "object" && ["ENOTEMPTY", "EBUSY", "EPERM"].includes(error.code);
+      if (!retryable || attempt === 6) throw error;
+      await wait(attempt * 100);
+    }
+  }
 }
 
 function writePackage(dir, name, version, binRelative, source) {

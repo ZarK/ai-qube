@@ -43,6 +43,16 @@ export interface ModelRouteInvocation {
   promptPath: string | null;
   schemaPath: string | null;
   timeoutMs: number;
+  progressLabel?: string;
+  progressIntervalMs?: number;
+  onProgress?: (progress: ModelRouteProcessProgress) => void;
+}
+
+export interface ModelRouteProcessProgress {
+  phase: 'started' | 'waiting' | 'completed' | 'timed-out';
+  label: string;
+  elapsedMs: number;
+  timeoutMs: number;
 }
 
 export interface ModelRouteProcessResult {
@@ -80,30 +90,41 @@ function healthyPowerShellCoreDirectory(directory: string, pathExists: PathExist
     && pathExists(join(directory, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'));
 }
 
+function healthyWindowsPowerShellDirectory(directory: string, pathExists: PathExists): boolean {
+  return pathExists(join(directory, 'powershell.exe'))
+    && pathExists(join(directory, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'))
+    && pathExists(join(directory, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'));
+}
+
 export function windowsPowerShellRouteEnvironment(
   source: NodeJS.ProcessEnv,
   pathExists: PathExists = existsSync,
 ): WindowsPowerShellRouteHealth {
   const pathKey = Object.keys(source).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+  const modulePathKey = Object.keys(source).find(key => key.toUpperCase() === 'PSMODULEPATH') ?? 'PSModulePath';
   const pathEntries = String(source[pathKey] ?? '').split(';').map(unquotePathEntry).filter(Boolean);
   const removedPathEntries: string[] = [];
-  let healthyCore = false;
+  const modulePaths: string[] = [];
   const keptPathEntries = pathEntries.filter(entry => {
     if (!pathExists(join(entry, 'pwsh.exe'))) return true;
     if (healthyPowerShellCoreDirectory(entry, pathExists)) {
-      healthyCore = true;
+      modulePaths.push(join(entry, 'Modules'));
       return true;
     }
     removedPathEntries.push(entry);
     return false;
   });
   const systemRoot = source.SYSTEMROOT ?? source.SystemRoot ?? source.WINDIR ?? source.WinDir;
-  const windowsPowerShell = systemRoot
-    ? join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const windowsPowerShellDirectory = systemRoot
+    ? join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
     : null;
-  const healthyFallback = windowsPowerShell !== null && pathExists(windowsPowerShell);
-  const environment = { ...source, [pathKey]: keptPathEntries.join(';') };
-  if (healthyCore || healthyFallback) {
+  const healthyFallback = windowsPowerShellDirectory !== null && healthyWindowsPowerShellDirectory(windowsPowerShellDirectory, pathExists);
+  if (healthyFallback && windowsPowerShellDirectory) {
+    modulePaths.push(join(windowsPowerShellDirectory, 'Modules'));
+    if (!keptPathEntries.some(entry => entry.toLowerCase() === windowsPowerShellDirectory.toLowerCase())) keptPathEntries.push(windowsPowerShellDirectory);
+  }
+  const environment = { ...source, [pathKey]: keptPathEntries.join(';'), [modulePathKey]: [...new Set(modulePaths)].join(';') };
+  if (modulePaths.length > 0) {
     return { status: 'ready', environment, removedPathEntries, diagnostic: null };
   }
   const incomplete = removedPathEntries.length > 0
@@ -134,6 +155,7 @@ export interface ModelReviewRunInput {
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
+  onProgress?: (progress: ModelRouteProcessProgress) => void;
 }
 
 export function expectedCoverageAreas(input: Pick<ModelReviewRunInput, 'lane' | 'coverageAreas'>): string[] {
@@ -221,8 +243,8 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Blocker admissibility: a blocking finding must either name a violated acceptance criterion of the active issue with a concrete failing scenario, or demonstrate a correctness or security defect introduced by this diff with a concrete input and wrong outcome. Findings on pre-existing code adjacent to the diff, architecture preferences, and speculative hardening are advisory at most. Favor passed once the diff definitely improves the system and satisfies its acceptance criteria; a diff does not need to be perfect.',
     'Finding locations must prefer a tight destination-side span: set line to the first changed statement and endLine to at most line+9. Wider evidence belongs in the message, not in a 10-plus-line selection. When a safe one-hunk replacement exists, set suggestion to the exact replacement text for those anchored lines only, with the same line count as line..endLine. Set suggestion to null when the fix is prose, spans files, or cannot replace the anchored lines exactly. Never put English instructions in suggestion.',
     'When provider-visible lane feedback shows this lane already reviewed this pull request in an earlier round, verify whether the previously reported blockers are fixed and whether those fixes introduced new defects; do not re-open the full review surface or raise new blockers outside that fix delta.',
-    'Verdict consistency is validated after generation: recommendation derives from status (passed maps to approve; failed and needs-work map to request-changes; pending, missing, and stale map to pending; inconclusive maps to inconclusive). blockers entries, blocking-severity findings, and severity high or critical are valid only on a failed or needs-work result, which must carry severity high or critical and at least one blockers entry. A passed or inconclusive result must keep blockers empty and severity below high; name what an inconclusive result is missing in summary and completeness, never in blockers.',
-    'Any JSON you emit before your final turn is treated as a progress snapshot and must report status "pending", recommendation "pending", severity "none", and empty blockers and findings; only your final result carries the real verdict.',
+    'Verdict consistency is validated after generation: recommendation derives from status (passed maps to approve; failed and needs-work map to request-changes; inconclusive maps to inconclusive). blockers entries, blocking-severity findings, and severity high or critical are valid only on a failed or needs-work result, which must carry severity high or critical and at least one blockers entry. A passed or inconclusive result must keep blockers empty and severity below high; name what an inconclusive result is missing in summary and completeness, never in blockers.',
+    'Do not emit JSON progress, pending envelopes, or interim verdicts. Host progress is transient; emit exactly one JSON object only when the review is complete.',
     LANE_ARTIFACT_REQUIREMENT,
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
@@ -270,9 +292,9 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
       prNumber: { type: 'integer', const: input.prNumber },
       headSha: { type: 'string', const: input.headSha },
       lane: { type: 'string', const: input.lane },
-      status: { type: 'string', enum: ['passed', 'failed', 'needs-work', 'pending', 'missing', 'stale', 'unavailable', 'malformed', 'inconclusive'] },
+      status: { type: 'string', enum: ['passed', 'failed', 'needs-work', 'inconclusive'] },
       severity: { type: 'string', enum: ['none', 'low', 'medium', 'high', 'critical'] },
-      recommendation: { type: 'string', enum: ['approve', 'request-changes', 'pending', 'inconclusive'] },
+      recommendation: { type: 'string', enum: ['approve', 'request-changes', 'inconclusive'] },
       summary: { type: 'string', minLength: 1 },
       blockers: stringArray,
       findings: {
@@ -341,9 +363,9 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
   });
 }
 
-const STATUS_VALUES = new Set(['passed', 'failed', 'needs-work', 'pending', 'missing', 'stale', 'unavailable', 'malformed', 'inconclusive']);
+const STATUS_VALUES = new Set(['passed', 'failed', 'needs-work', 'inconclusive']);
 const SEVERITY_VALUES = new Set(['none', 'low', 'medium', 'high', 'critical']);
-const RECOMMENDATION_VALUES = new Set(['approve', 'request-changes', 'pending', 'inconclusive']);
+const RECOMMENDATION_VALUES = new Set(['approve', 'request-changes', 'inconclusive']);
 const FINDING_SEVERITY_VALUES = new Set(['blocking', 'advisory']);
 const CONTEXT_KIND_VALUES = new Set(['agents', 'issue-body', 'issue-comment', 'milestone', 'functional-requirement', 'linked-issue', 'pr-body', 'pr-comment', 'review-thread', 'doc', 'diff', 'ci', 'manual-qa']);
 const CONTEXT_TRUST_VALUES = new Set(['policy', 'trusted-provider', 'repo-doc', 'untrusted-task-input', 'local-evidence']);
@@ -395,42 +417,31 @@ function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): b
   }
 }
 
-function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance, mode: 'final' | 'interim' = 'final'): LaneEvidence | null {
-  // Coverage attestation is a final-result contract: schema-constrained hosts must
-  // attest the final object, while free-form interim progress snapshots may omit it.
-  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions', ...(mode === 'final' ? ['coverage'] : [])];
-  if (!isRecord(value) || !hasExactKeys(value, required, mode === 'interim' ? ['coverage'] : undefined)) return null;
+function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
+  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'];
+  if (!isRecord(value) || !hasExactKeys(value, required)) return null;
   if (value.issueNumber !== input.issueNumber || value.prNumber !== input.prNumber || value.headSha !== input.headSha || value.lane !== input.lane) return null;
   // Coverage attestation: exactly one entry per expected inspection area, and the
   // attested states must be consistent with the reported findings.
   const areas = expectedCoverageAreas(input);
   let anyNotInspected = false;
   let allClear = false;
-  // Interim snapshots are free-form model emissions: coverage is neither required
-  // nor validated there, so partial or freeform interim attestations cannot fail
-  // the run. Only the schema-constrained final result is bound to the contract.
-  if (mode === 'final') {
-    if (!Array.isArray(value.coverage)) return null;
-    const coverage = value.coverage;
-    if (!coverage.every(entry => isRecord(entry)
-      && hasExactKeys(entry, ['area', 'status'])
-      && typeof entry.area === 'string' && areas.includes(entry.area)
-      && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
-    if (mode === 'final') {
-      const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
-      if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
-    }
-    anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
-    allClear = coverage.length > 0 && coverage.every(entry => (entry as { status: string }).status === 'clear');
-  }
+  if (!Array.isArray(value.coverage)) return null;
+  const coverage = value.coverage;
+  if (!coverage.every(entry => isRecord(entry)
+    && hasExactKeys(entry, ['area', 'status'])
+    && typeof entry.area === 'string' && areas.includes(entry.area)
+    && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
+  const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
+  if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
+  anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
+  allClear = coverage.length > 0 && coverage.every(entry => (entry as { status: string }).status === 'clear');
   if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status) || typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity) || typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return null;
   const expectedRecommendation = value.status === 'passed'
     ? 'approve'
     : value.status === 'failed' || value.status === 'needs-work'
       ? 'request-changes'
-      : value.status === 'pending' || value.status === 'missing' || value.status === 'stale'
-        ? 'pending'
-        : 'inconclusive';
+      : 'inconclusive';
   if (value.recommendation !== expectedRecommendation) return null;
   if (typeof value.summary !== 'string' || value.summary.trim() === '' || typeof value.completeness !== 'string' || value.completeness.trim() === '') return null;
   if (!isStringArray(value.blockers) || !isStringArray(value.commands) || !isStringArray(value.surfaces) || !isStringArray(value.toolsUsed) || !isStringArray(value.preconditions)) return null;
@@ -459,22 +470,20 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     || value.blockers.length === 0)) return null;
   if (requestsChanges && (value.blockers.length === 0
     || value.severity !== 'high' && value.severity !== 'critical')) return null;
-  if (mode === 'final') {
-    if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
+  if (!Array.isArray(value.artifacts)
+    || value.status !== 'inconclusive' && value.artifacts.length === 0
+    || !value.artifacts.every(item => isRecord(item)
       && hasExactKeys(item, ['kind', 'path', 'sha256'])
       && typeof item.kind === 'string' && item.kind.trim() !== ''
       && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
       && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
-    if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
+  if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
       && hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
       && typeof item.kind === 'string' && CONTEXT_KIND_VALUES.has(item.kind)
       && typeof item.source === 'string' && item.source.trim() !== ''
       && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
       && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
-  } else if (!Array.isArray(value.artifacts) || !Array.isArray(value.contextReviewed)) {
-    return null;
-  }
-  if (mode === 'final' && Array.isArray(value.findings) && value.findings.length > 0 && allClear) return null;
+  if (value.findings.length > 0 && allClear) return null;
   const candidate: Record<string, unknown> = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;
   if (anyNotInspected && candidate.status === 'passed') {
@@ -524,11 +533,27 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     schemaJson: reviewResultSchema(input),
   };
   const built = adapter.buildInvocation(context, executable);
-  return { executable: executablePath, args: [...prefixArgs, ...built.args], cwd: input.repoRoot, stdin: built.stdin, promptPath, schemaPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
+  return {
+    executable: executablePath,
+    args: [...prefixArgs, ...built.args],
+    cwd: input.repoRoot,
+    stdin: built.stdin,
+    promptPath,
+    schemaPath,
+    timeoutMs: input.plan.timeoutSeconds * 1000,
+    progressLabel: `${input.lane} via ${input.plan.host}`,
+    onProgress: input.onProgress,
+  };
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {
   return new Promise(resolve => {
+    const startedAt = Date.now();
+    const label = invocation.progressLabel ?? invocation.executable;
+    const notify = (phase: ModelRouteProcessProgress['phase']): void => {
+      try { invocation.onProgress?.({ phase, label, elapsedMs: Math.max(0, Date.now() - startedAt), timeoutMs: invocation.timeoutMs }); }
+      catch { /* Progress reporting must never alter review execution. */ }
+    };
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       detached: process.platform !== 'win32',
@@ -545,13 +570,18 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     let settled = false;
     let forceTimer: NodeJS.Timeout | null = null;
     let forceCommandTimer: NodeJS.Timeout | null = null;
+    const progressTimer = setInterval(() => notify('waiting'), Math.max(250, invocation.progressIntervalMs ?? 30_000));
+    progressTimer.unref();
+    notify('started');
     const append = (current: string, chunk: Buffer): string => (current + chunk.toString('utf8')).slice(-MAX_OUTPUT_BYTES);
     const finish = (code: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(progressTimer);
       if (forceTimer) clearTimeout(forceTimer);
       if (forceCommandTimer) clearTimeout(forceCommandTimer);
+      if (!timedOut) notify('completed');
       resolve({ exitCode: typeof code === 'number' ? code : 1, stdout, stderr, timedOut, stdinDelivered });
     };
     const killPosixGroup = (signal: NodeJS.Signals): void => {
@@ -590,6 +620,7 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     child.on('error', error => { stderr = `${stderr}\n${error.message}`; });
     const timer = setTimeout(() => {
       timedOut = true;
+      notify('timed-out');
       if (process.platform !== 'win32') killPosixGroup('SIGTERM');
       forceTimer = setTimeout(forceKill, FORCE_KILL_GRACE_MS);
     }, invocation.timeoutMs);
@@ -754,35 +785,19 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       invocationId,
       routeSource: input.routeSource ?? 'configured',
     };
-    if ('priorTexts' in parsedHostOutput) {
-      const priorTexts = parsedHostOutput.priorTexts;
-      if (!Array.isArray(priorTexts) || !priorTexts.every((text): text is string => typeof text === 'string')) {
-        return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned an invalid structured snapshot envelope.');
+    if ('transientTexts' in parsedHostOutput || 'priorTexts' in parsedHostOutput) {
+      const transientTexts = parsedHostOutput.transientTexts ?? parsedHostOutput.priorTexts;
+      if (!Array.isArray(transientTexts) || !transientTexts.every((text): text is string => typeof text === 'string')) {
+        return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
       }
-      if (priorTexts.length >= input.plan.maxTurns) {
-        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned more structured snapshots than the configured turn bound.');
+      if (transientTexts.length >= input.plan.maxTurns) {
+        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned more transient host messages than the configured turn bound.');
       }
-      for (const priorText of priorTexts) {
+      for (const priorText of transientTexts) {
         let priorResult: unknown;
-        try { priorResult = JSON.parse(priorText); } catch {
-          return captureRawOutput(input, result, 'model-route-malformed-progress', 'Model review route returned malformed JSON in a progress snapshot.');
-        }
-        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'interim');
-        if (!priorEvidence
-          || priorEvidence.status !== 'pending'
-          || priorEvidence.recommendation !== 'pending'
-          || priorEvidence.severity !== 'none'
-          || priorEvidence.blockers.length > 0
-          || priorEvidence.findings.length > 0) {
-          const priorTerminal = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'final');
-          return captureRawOutput(
-            input,
-            result,
-            priorTerminal ? 'model-route-multiple-terminal' : 'model-route-contradictory-progress',
-            priorTerminal
-              ? 'Model review route returned more than one terminal result.'
-              : 'Model review route returned a contradictory or invalid progress snapshot before its terminal result.',
-          );
+        try { priorResult = JSON.parse(priorText); } catch { continue; }
+        if (strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance)) {
+          return captureRawOutput(input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
       }
     }
@@ -791,6 +806,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) {
+      if (isRecord(modelResult) && typeof modelResult.status === 'string' && !STATUS_VALUES.has(modelResult.status)) {
+        return captureRawOutput(input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive.`);
+      }
       return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
     }
     return {

@@ -49,6 +49,8 @@ export type IsolatedReviewHostExecutable = string | { executable: string; prefix
 export interface IsolatedReviewHostParsedEnvelope {
   readonly text: string;
   readonly sessionId: string | null;
+  readonly transientTexts?: readonly string[];
+  /** @deprecated Use transientTexts. Earlier host messages are never review evidence. */
   readonly priorTexts?: readonly string[];
   readonly usage?: Record<string, unknown>;
 }

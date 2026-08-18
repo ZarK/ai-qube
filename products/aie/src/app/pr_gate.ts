@@ -22,12 +22,12 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, gitDeltaPathsSync, readCurrentHeadLaneEvidence, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
-import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewLaneRun, type LocalReviewRunResult } from './local_review_runner.js';
+import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
-import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
+import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -201,6 +201,7 @@ export interface PrGateOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   onBeforeMutate?: (message: string) => void | Promise<void>;
   modelRouteProcess?: ModelRouteProcess;
+  onReviewProgress?: (progress: ModelRouteProcessProgress) => void;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveModelHead?: (repoRoot: string) => Promise<string>;
   routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
@@ -867,11 +868,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
   try {
   const carryForwardScope = carryForwardScopeFromConfig(config);
-  // Validated lane results update one persistent provider status while sibling
-  // lanes are still running. The status marker is not review evidence and can
-  // never approve an incomplete round; formal review publication remains a
-  // separate all-lanes-complete step below.
-  const streamedFailuresByLane = new Map<string, string>();
+  // Provider mutation is batch-owned. An incomplete batch can publish one
+  // terminal diagnostic status; a complete batch publishes one formal summary.
+  const statusPublishFailures = new Map<string, string>();
   const publishUnavailable: string[] = [];
   const roundStatusByLane = new Map<string, ReviewRoundStatusLane>(activeFocuses.map(laneId => [laneId, {
     laneId,
@@ -881,7 +880,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     reason: null,
   }]));
   const roundStatusState: { latest: import('../providers/review_forge_provider.js').ReviewForgeRoundStatusPublishResult | null } = { latest: null };
-  let streamingDisclosed = false;
+  let providerStatusDisclosed = false;
   const roundStatusLanes = (): ReviewRoundStatusLane[] => activeFocuses.map(laneId => roundStatusByLane.get(laneId) ?? {
     laneId,
     status: 'missing',
@@ -891,13 +890,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   });
   const publishRoundStatus = async (): Promise<void> => {
     if (dryRun || sessionLockBlocksExecution || provider.capabilities().publishRoundReviewStatus !== true || !provider.publishRoundReviewStatus) return;
-    if (!streamingDisclosed) {
+    if (!providerStatusDisclosed) {
       await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
-      streamingDisclosed = true;
+      providerStatusDisclosed = true;
     }
     if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
       const failure = `Review status publication was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}.`;
-      streamedFailuresByLane.set('round-status', failure);
+      statusPublishFailures.set('round-status', failure);
       return;
     }
     const lanes = roundStatusLanes();
@@ -914,30 +913,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     });
     roundStatusState.latest = result;
     if (result.status === 'failed') {
-      streamedFailuresByLane.set('round-status', result.failure ?? result.nextAction);
+      statusPublishFailures.set('round-status', result.failure ?? result.nextAction);
     } else {
-      streamedFailuresByLane.delete('round-status');
+      statusPublishFailures.delete('round-status');
     }
   };
-  const streamLanePublish = !dryRun && routedFocuses.length > 0 && !sessionLockBlocksExecution
-    ? async (lane: LocalReviewLaneRun): Promise<void> => {
-        if (lane.status !== 'completed') return;
-        const laneEvidence = readCurrentHeadLaneEvidence(repoRoot, lane.issueNumber, options.prNumber, finalSnapshot.pr.headRefOid, lane.lane);
-        if (!laneEvidence || (laneEvidence.status !== 'passed' && laneEvidence.status !== 'failed' && laneEvidence.status !== 'needs-work')) return;
-        roundStatusByLane.set(lane.lane, {
-          laneId: lane.lane,
-          status: laneEvidence.status,
-          blockingFindingCount: laneEvidence.findings.filter(finding => finding.severity === 'blocking').length,
-          advisoryFindingCount: laneEvidence.findings.filter(finding => finding.severity === 'advisory').length,
-          reason: null,
-        });
-        try {
-          await publishRoundStatus();
-        } catch (error: unknown) {
-          streamedFailuresByLane.set(lane.lane, error instanceof Error ? error.message : String(error));
-        }
-      }
-    : undefined;
   // The lock is released after evidence read and provider publish complete; a
   // crashed gate's lock goes stale immediately via the holder pid liveness rule.
   let localReviewRunner: LocalReviewRunResult;
@@ -961,11 +941,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     prBody: bundlePrBody,
     diffStats,
     modelRouteProcess: options.modelRouteProcess,
+    onReviewProgress: options.onReviewProgress,
     resolveModelHost: options.resolveModelHost,
     resolveModelHead: options.resolveModelHead,
     routeProbe: options.routeProbe,
     providerLaneReuse,
-    onLaneValidated: streamLanePublish,
   });
   const localReview = readLocalReviewGate({
     repoRoot,
@@ -1020,11 +1000,12 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       reason: run?.blocker ?? run?.summary ?? 'No current-head lane result was recorded.',
     });
   }
-  if (deferProviderMutation && !sessionLockBlocksExecution) {
+  const batchComplete = activeFocuses.length > 0 && roundStatusLanes().every(lane => lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work');
+  if (deferProviderMutation && !sessionLockBlocksExecution && !batchComplete) {
     try {
       await publishRoundStatus();
     } catch (error: unknown) {
-      streamedFailuresByLane.set('round-status', error instanceof Error ? error.message : String(error));
+      statusPublishFailures.set('round-status', error instanceof Error ? error.message : String(error));
     }
   }
   // Resolved once and reused for both the fix batch (below) and the review
@@ -1041,13 +1022,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   } else if (deferProviderMutation) {
     const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
     if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
-      publishUnavailable.push(...streamedFailuresByLane.values());
+      publishUnavailable.push(...statusPublishFailures.values());
       publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the routed lanes for the new head.`);
       localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no further provider mutation was performed.');
     } else {
       await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
       if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
-        publishUnavailable.push(...streamedFailuresByLane.values());
+        publishUnavailable.push(...statusPublishFailures.values());
         publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
         localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no further provider mutation was performed.');
       } else {
@@ -1067,8 +1048,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           if (latestRoundStatusPublish.status === 'failed') {
             publishUnavailable.push(latestRoundStatusPublish.failure ?? latestRoundStatusPublish.nextAction);
           }
-        } else if (streamedFailuresByLane.size > 0) {
-          const failure = [...streamedFailuresByLane.values()].join(' ');
+        } else if (statusPublishFailures.size > 0) {
+          const failure = [...statusPublishFailures.values()].join(' ');
           localReviewPublish = {
             status: 'failed',
             runId: null,
@@ -1091,14 +1072,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // status above remains the provider-visible record for partial or invalid
   // rounds and cannot be mistaken for approval evidence.
   let roundSummary: import('../providers/review_forge_provider.js').ReviewForgeRoundSummaryPublishResult | null = null;
-  const roundComplete = activeFocuses.length > 0 && roundStatusLanes().every(lane => lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work');
+  const roundComplete = batchComplete;
   const missingIssueForRoutedRound = deferProviderMutation && finalSnapshot.closingIssueNumbers.length === 0;
-  const shouldPublishRoundSummary = !dryRun && !sessionLockBlocksExecution
-    && (roundComplete || missingIssueForRoutedRound)
-    && (localReviewPublish.status === 'published'
-      || localReviewPublish.status === 'failed'
-      || (localReviewPublish.status === 'skipped' && localReview.status === 'passed')
-      || missingIssueForRoutedRound);
+  const shouldPublishRoundSummary = deferProviderMutation && !dryRun && !sessionLockBlocksExecution
+    && (roundComplete || missingIssueForRoutedRound);
   if (shouldPublishRoundSummary) {
     const issueNumberForSummary = localReview.evidence.find(entry => typeof entry.issueNumber === 'number' && entry.issueNumber > 0)?.issueNumber ?? null;
     if (issueNumberForSummary === null) {
@@ -1121,23 +1098,59 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         nextAction: roundSummary.nextAction,
       };
     } else {
-      try {
-        const providerReuseLanesForSummary = localReview.evidence.flatMap(evidence => evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id));
-        const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
-        const summaryPublished = await runPrReviewSummaryPublishWithProvider(provider, {
-          prNumber: options.prNumber,
-          issueNumber: issueNumberForSummary,
-          headSha: finalSnapshot.pr.headRefOid,
-          repository: reviewRepositoryFromPullRequestUrl(finalSnapshot.pr.url),
-          repoRoot,
-          exec: options.exec,
-          expectedLanes: activeFocuses,
-          providerReuseLanes: providerReuseLanesForSummary,
-          changedPaths: summaryDeltaPaths,
-          nitCap: config.reviewNitCap,
-        });
-        roundSummary = summaryPublished.publish;
-        if (roundSummary.status === 'failed') {
+      const publishHead = await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot);
+      if (publishHead !== finalSnapshot.pr.headRefOid) {
+        const failure = `Round summary publication was withheld because local checkout HEAD changed from ${finalSnapshot.pr.headRefOid} to ${publishHead}.`;
+        publishUnavailable.push(failure);
+        localReviewPublish = pendingLocalReviewPublish(`${failure} Rerun the routed lanes for the current head.`);
+      } else {
+        try {
+          const providerReuseLanesForSummary = localReview.evidence.flatMap(evidence => evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id));
+          const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
+          const summaryPublished = await runPrReviewSummaryPublishWithProvider(provider, {
+            prNumber: options.prNumber,
+            issueNumber: issueNumberForSummary,
+            headSha: finalSnapshot.pr.headRefOid,
+            repository: reviewRepositoryFromPullRequestUrl(finalSnapshot.pr.url),
+            repoRoot,
+            exec: options.exec,
+            expectedLanes: activeFocuses,
+            providerReuseLanes: providerReuseLanesForSummary,
+            changedPaths: summaryDeltaPaths,
+            nitCap: config.reviewNitCap,
+          });
+          roundSummary = summaryPublished.publish;
+          if (roundSummary.status === 'failed') {
+            localReviewPublish = {
+              status: 'failed',
+              runId: null,
+              marker: roundSummary.marker,
+              body: roundSummary.body,
+              url: roundSummary.url,
+              failure: roundSummary.failure,
+              nextAction: roundSummary.nextAction,
+            };
+          } else if (roundSummary.status === 'published' || roundSummary.status === 'skipped') {
+            localReviewPublish = {
+              status: roundSummary.status === 'skipped' ? 'skipped' : 'published',
+              runId: null,
+              marker: roundSummary.marker,
+              body: roundSummary.body,
+              url: roundSummary.url,
+              failure: null,
+              nextAction: roundSummary.nextAction,
+            };
+          }
+        } catch (error: unknown) {
+          roundSummary = {
+            status: 'failed',
+            runId: null,
+            marker: null,
+            body: null,
+            url: null,
+            failure: error instanceof Error ? error.message : String(error),
+            nextAction: 'Round summary publishing failed. No partial round was published; fix provider access and rerun this gate.',
+          };
           localReviewPublish = {
             status: 'failed',
             runId: null,
@@ -1147,36 +1160,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
             failure: roundSummary.failure,
             nextAction: roundSummary.nextAction,
           };
-        } else if (roundSummary.status === 'published' || roundSummary.status === 'skipped') {
-          localReviewPublish = {
-            status: roundSummary.status === 'skipped' ? 'skipped' : 'published',
-            runId: null,
-            marker: roundSummary.marker,
-            body: roundSummary.body,
-            url: roundSummary.url,
-            failure: null,
-            nextAction: roundSummary.nextAction,
-          };
         }
-      } catch (error: unknown) {
-        roundSummary = {
-          status: 'failed',
-          runId: null,
-          marker: null,
-          body: null,
-          url: null,
-          failure: error instanceof Error ? error.message : String(error),
-          nextAction: 'Round summary publishing failed; the persistent review status remains the provider-visible state.',
-        };
-        localReviewPublish = {
-          status: 'failed',
-          runId: null,
-          marker: roundSummary.marker,
-          body: roundSummary.body,
-          url: roundSummary.url,
-          failure: roundSummary.failure,
-          nextAction: roundSummary.nextAction,
-        };
       }
     }
   }

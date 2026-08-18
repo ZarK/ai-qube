@@ -820,9 +820,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const exec = async args => {
-      // Reject lane-feedback mutations by shape (streaming publishes lanes
-      // before the idempotent review-request marker is applied), leaving the
-      // request marker itself deliverable.
+      // Reject the formal complete-batch review mutation while leaving the
+      // idempotent review-request marker deliverable.
       const isReviewPost = args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST';
       const isLaneComment = args[0] === 'pr' && args[1] === 'comment' && String(args[4] ?? '').includes('qube-pr-review:');
       if (isReviewPost || isLaneComment) throw new Error('provider rejected the lane mutation');
@@ -1044,7 +1043,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.shipReady.ready, false);
   });
 
-  it('publishes a validated blocking lane before slower siblings finish', async () => {
+  it('withholds provider publication until slower siblings finish', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
@@ -1060,12 +1059,9 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
       const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
       if (lane === 'final-gate') {
-        // The slow sibling: wait (bounded) until the blocking lane's marker
-        // reached the provider, proving publication happened mid-batch.
-        for (let attempt = 0; attempt < 200 && !codeQualityPublished(); attempt += 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        // No validated sibling may mutate the provider while this lane is active.
         blockingMarkerSeenBeforeSlowSibling = codeQualityPublished();
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
       const blocking = lane === 'code-quality';
       const body = {
@@ -1103,10 +1099,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
     assert.equal(result.localReview.status === 'passed' || result.localReview.status === 'failed' || result.localReview.status === 'needs-work' || result.localReview.status === 'missing', true);
     assert.ok(result.localReviewPublish.status === 'published' || result.localReviewPublish.status === 'failed' || result.localReviewPublish.status === 'skipped');
-    assert.equal(blockingMarkerSeenBeforeSlowSibling, true);
+    assert.equal(blockingMarkerSeenBeforeSlowSibling, false);
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'), 'the complete terminal batch must publish after every sibling finishes');
   });
 
-  it('publishes validated lanes while a failed lane leaves the round incomplete', async () => {
+  it('publishes one terminal status when a failed lane leaves the round incomplete', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
@@ -1154,18 +1151,20 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       resolveModelHead: async () => 'abc123',
     });
 
-    // One flaked lane never withholds the others: every validated lane
-    // publishes at this head, the round stays incomplete on the provider
-    // record, and ship-ready remains blocked by the missing lane evidence.
+    // One flaked lane produces one persistent terminal status, no formal or
+    // per-lane review publication, and ship-ready remains blocked.
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.lane === 'tests-quality' && lane.status === 'failed'));
     assert.notEqual(result.localReview.status, 'passed');
     assert.equal(result.shipReady.ready, false);
     assert.equal(result.roundSummary, null, 'an incomplete round must not create a formal review summary');
-    assert.ok(fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('qube-pr-status:') && payload.body.includes('Review status: request-changes.') && payload.body.includes('Findings: 1 blocking, 0 advisory.') && payload.body.includes('tests-quality') && payload.body.includes('invalid')));
+    const statusPayloads = fixture.reviewPayloads.filter(payload => typeof payload.body === 'string' && payload.body.includes('qube-pr-status:'));
+    const statusMutations = fixture.calls.filter(args => args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST');
+    assert.equal(statusMutations.length, 1, 'an incomplete batch must publish exactly one terminal provider mutation');
+    assert.ok(statusPayloads[0].body.includes('Review status: request-changes.') && statusPayloads[0].body.includes('Findings: 1 blocking, 0 advisory.') && statusPayloads[0].body.includes('tests-quality') && statusPayloads[0].body.includes('invalid'));
     assert.equal(fixture.calls.some(args => args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('POST')), false);
   });
 
-  it('clears a transient streamed publish failure when the batch retry lands the lane', async () => {
+  it('retries one atomic formal publish after a transient provider failure', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
@@ -1181,8 +1180,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       const isLaneComment = args[0] === 'pr' && args[1] === 'comment' && String(args[4] ?? '').includes('qube-pr-review:');
       if (isReviewPost || isLaneComment) {
         laneMutations += 1;
-        // Only the very first streamed lane mutation fails transiently; the
-        // batch retry and every other lane publish succeed.
+        // Only the first complete-batch mutation fails transiently; the
+        // publisher retry succeeds without exposing a partial lane batch.
         if (laneMutations === 1) throw new Error('transient provider failure');
       }
       return fixture.exec(args);
@@ -1215,12 +1214,12 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
 
-    // The batch retry is the arbiter: once it lands the lane, the transient
-    // streamed failure must not poison the aggregate publish status.
+    // The complete-batch retry is the arbiter; the transient failure must not
+    // poison the aggregate publish status.
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
-    assert.ok(!result.unavailable.some(entry => /transient provider failure/.test(entry)), 'a superseded streamed failure must not remain in the unavailable list');
+    assert.ok(!result.unavailable.some(entry => /transient provider failure/.test(entry)), 'a recovered batch failure must not remain in the unavailable list');
   });
 
   it('publishes missing lane states without creating a formal review when no routed lane produced valid evidence', async () => {
@@ -1300,6 +1299,47 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const publishRecord = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'publish.json'), 'utf8'));
     assert.ok(['skipped', 'published', 'failed'].includes(publishRecord.status));
     assert.ok(Array.isArray(publishRecord.lanes));
+
+    // Deliberately stale local-only provenance must not shadow the exact-head,
+    // trusted provider batch during a later reconstruction.
+    writeLocalEvidence(repo, localEvidence(), { rewritePromptHashes: false });
+    const { readLocalReviewGate } = require('../dist/local_review_evidence.js');
+    const reconstructed = readLocalReviewGate({
+      repoRoot: repo,
+      issueNumbers: [93],
+      prNumber: 12,
+      headSha: 'abc123',
+      reviewers: [],
+      required: true,
+      profile,
+      activeFocuses: laneIds,
+      expectedPromptStackHashes: Object.fromEntries(laneIds.map(lane => [lane, 'f'.repeat(64)])),
+      providerLaneReuse: result.localReview.providerReuse,
+    });
+    assert.equal(reconstructed.status, 'passed');
+    assert.ok(reconstructed.evidence[0].lanes.every(lane => lane.origin === 'trusted-provider'));
+
+    const blockingLocal = localEvidence({ laneStatus: 'needs-work', blockers: ['A current local blocker must remain visible.'] });
+    blockingLocal.lanes = blockingLocal.lanes.map(lane => lane.id === 'code-quality' ? {
+      ...lane,
+      severity: 'high',
+      findings: [{ id: 'local-blocker', severity: 'blocking', message: 'A current local blocker must remain visible.', location: { path: 'src/review.ts', line: 2 } }],
+    } : lane);
+    writeLocalEvidence(repo, blockingLocal, { rewritePromptHashes: false });
+    const blocked = readLocalReviewGate({
+      repoRoot: repo,
+      issueNumbers: [93],
+      prNumber: 12,
+      headSha: 'abc123',
+      reviewers: [],
+      required: true,
+      profile,
+      activeFocuses: laneIds,
+      expectedPromptStackHashes: Object.fromEntries(laneIds.map(lane => [lane, 'f'.repeat(64)])),
+      providerLaneReuse: result.localReview.providerReuse,
+    });
+    assert.notEqual(blocked.status, 'passed');
+    assert.equal(blocked.evidence[0].lanes.find(lane => lane.id === 'code-quality').origin, 'local', 'provider approval must not hide a local blocking verdict');
   });
 
   it('reports a visible round-summary error when no issue number can be resolved', async () => {
@@ -1673,6 +1713,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       assert.equal(evidence.status, 'passed');
       assert.equal(evidence.lane, lane.lane);
     }
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', '.review-lock.json')), false, 'timeout and process failures must not leave a review session lock');
     assert.match(result.localReviewRunner.summary, /Local review runner failed 2 lane\(s\)/);
     assert.ok(result.localReviewRunner.summary.includes(timedOutLane) && result.localReviewRunner.summary.includes(failedLane));
   });
