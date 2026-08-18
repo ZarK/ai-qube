@@ -36,25 +36,37 @@ the repository plan supports it. npm approval remains the proof-of-presence gate
 
 ## Normal Package Release
 
-The maintainer triggers a release. Merge to main does not publish.
+The maintainer triggers a release. Merge to main does not publish. Generate the
+complete version change on an issue branch before the release PR:
 
-After the versions you want are on `main`, run one command:
+```sh
+pnpm release:prepare --dry-run
+pnpm release:prepare --write
+```
+
+The preparation command finds the newest reachable prior `publish-set-v*` tag,
+compares its commit with the current branch, and checks the live npm registry. It
+bumps each changed public package once, preserves an unpublished initial version,
+propagates internal dependency releases in publish order, generates the composer
+and adapter pins, refreshes the version audit, and updates the lockfile with
+lifecycle scripts disabled. Review and merge those generated changes through the
+normal pull request controls. Package versions do not need to be copied into
+release scripts by hand.
+
+After the preparation PR is on `main`, run:
 
 ```sh
 git switch main
 git pull --ff-only origin main
+pnpm release --dry-run
 pnpm run release
 ```
 
-Or push the set tag yourself:
-
-```sh
-git tag publish-set-v<qube-version>
-git push origin publish-set-v<qube-version>
-```
-
-`pnpm run release -- --dry-run` prints the tag and the unpublished package list
-without pushing.
+`pnpm release --dry-run` prints the tag and the unpublished package list.
+The release command refuses a dirty, stale, non-main, or incompletely prepared
+checkout. It also refuses to move an existing immutable set tag. The workflow
+repeats the preparation check, so a manually pushed incomplete set tag cannot
+bypass this control.
 
 The workflow prepares the set, checks manifests and composer pins, packs every
 current workspace package from the checkout, installs those tarballs into a
@@ -110,8 +122,8 @@ pnpm run release:approve -- publish-<package>-v<version>
 Valid package keys are `qube-cli`, `qube-core`, `qube-adapter-github`,
 `qube-adapter-codex`, `qube-adapter-opencode`, `qube-adapter-claude-code`,
 `qube-adapter-gitlab`, `qube-adapter-linear`, `qube-adapter-jira`,
-`qube-adapter-jenkins`, `qube-adapter-grok-build`, `aib`, `aie`, `aiu`,
-`aiq`, and `qube`.
+`qube-adapter-jenkins`, `qube-adapter-grok-build`, `qube-adapter-cursor`,
+`aib`, `aie`, `aiu`, `aiq`, and `qube`.
 
 Adapter packages are separate npm packages sourced from `adapters/*` in this
 monorepo. `@tjalve/aie` lists them as optional dependencies; install only the
@@ -156,6 +168,7 @@ this release set. Bootstrap order for new names is:
 8. `@tjalve/qube-adapter-jira`
 9. `@tjalve/qube-adapter-jenkins`
 10. `@tjalve/qube-adapter-grok-build`
+11. `@tjalve/qube-adapter-cursor`
 
 Bootstrap any other brand-new package name only after its published dependencies
 exist. Then configure the trusted publisher above for `npm stage publish` and use

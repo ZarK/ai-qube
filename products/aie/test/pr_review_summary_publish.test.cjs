@@ -118,7 +118,7 @@ describe('GitHub round summary publish', () => {
     const commentBody = renderInlineCommentBody(current);
     const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
-    const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const publishedReview = { id: 555, author: { login: 'executor[bot]' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
     const fixture = makePrExec({
       prViews: [basePr({ reviews: [publishedReview], latestReviews: [publishedReview] })],
       pullReviews: [publishedReview],

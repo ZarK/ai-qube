@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { inspectReleaseCheckout, parseReleaseArgs, planRelease, runRelease } from "../scripts/release-set.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const prepared = Object.freeze({ needsWrite: false, baselineTag: "publish-set-v0.2.8" });
 
 function publishedMapFromWorkspace(unpublishedKeys = ["qube"]) {
   const audit = JSON.parse(readFileSync(path.join(repoRoot, "docs/release/version-audit.json"), "utf8"));
@@ -28,6 +29,7 @@ describe("release set", () => {
       repoRoot,
       dryRun: true,
       publishedByName: publishedMapFromWorkspace(["qube"]),
+      preparation: prepared,
     });
     const qubeVersion = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
     assert.equal(report.ok, true);
@@ -40,7 +42,7 @@ describe("release set", () => {
 
   it("fails when every workspace version is already on npm", async () => {
     await assert.rejects(
-      () => planRelease({ repoRoot, publishedByName: publishedMapFromWorkspace([]) }),
+      () => planRelease({ repoRoot, publishedByName: publishedMapFromWorkspace([]), preparation: prepared }),
       { reasonCode: "nothing-to-publish" }
     );
   });
@@ -64,6 +66,18 @@ describe("release set", () => {
       },
     };
     assert.throws(() => inspectReleaseCheckout(repoRoot, dirty), { reasonCode: "dirty-worktree" });
+
+    const untracked = {
+      run(args) {
+        if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return "main";
+        if (args[0] === "status") {
+          assert.ok(args.includes("--untracked-files=normal"));
+          return "?? scratch.txt";
+        }
+        return "abc";
+      },
+    };
+    assert.throws(() => inspectReleaseCheckout(repoRoot, untracked), { reasonCode: "dirty-worktree" });
   });
 
   it("pushes the annotated set tag only from a clean current main", async () => {
@@ -81,12 +95,46 @@ describe("release set", () => {
     const report = await runRelease({
       repoRoot,
       publishedByName: publishedMapFromWorkspace(["qube"]),
+      preparation: prepared,
       git,
     });
     assert.equal(report.ok, true);
     assert.equal(report.pushed, true);
     assert.equal(commands.some(line => line.startsWith("tag -a publish-set-v")), true);
     assert.equal(commands.some(line => line.startsWith("push origin publish-set-v")), true);
+  });
+
+  it("refuses an incomplete generated release preparation", async () => {
+    await assert.rejects(
+      () => planRelease({
+        repoRoot,
+        publishedByName: publishedMapFromWorkspace(["qube"]),
+        preparation: { needsWrite: true, baselineTag: "publish-set-v0.2.8" },
+      }),
+      { reasonCode: "release-unprepared" }
+    );
+  });
+
+  it("refuses to move an existing set tag to another commit", async () => {
+    const git = {
+      run(args) {
+        if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return "main";
+        if (args[0] === "status") return "";
+        if (args[0] === "rev-parse" && args[1]?.endsWith("^{}")) return "other-sha";
+        if (args[0] === "rev-parse") return "same-sha";
+        if (args[0] === "tag" && args[1] === "--list") return args[2];
+        return "";
+      },
+    };
+    await assert.rejects(
+      () => runRelease({
+        repoRoot,
+        publishedByName: publishedMapFromWorkspace(["qube"]),
+        preparation: prepared,
+        git,
+      }),
+      { reasonCode: "tag-mismatch" }
+    );
   });
 
   it("parses dry-run and rejects unknown flags", () => {

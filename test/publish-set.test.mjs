@@ -8,9 +8,11 @@ import { collectVersionAuditFailures } from "../scripts/check-version-audit.mjs"
 import {
   finalizePublishPlan,
   readPublishedVersions,
+  readPublishedVersionsForPlan,
   registryPackageUrl,
   resolvePublishTag,
 } from "../scripts/publish-packages.mjs";
+import { resolvePublishPlan } from "../scripts/resolve-publish-tag.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -111,5 +113,60 @@ describe("publish set finalization", () => {
       [{ packageJson: "adapters/cursor/package.json" }]
     );
     assert.deepEqual(failures, ["adapters/cursor/package.json: publishable package is missing from docs/release/version-audit.json"]);
+  });
+
+  it("reads independent registry packages concurrently and deduplicates names", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    let calls = 0;
+    const versions = await readPublishedVersionsForPlan({
+      packages: [
+        packageEntry("one", "@tjalve/one", "1.0.0"),
+        packageEntry("two", "@tjalve/two", "1.0.0"),
+        packageEntry("one-again", "@tjalve/one", "1.0.0"),
+      ],
+    }, {
+      fetch: async () => {
+        calls += 1;
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active -= 1;
+        return { ok: true, status: 200, json: async () => ({ versions: { "1.0.0": {} } }) };
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(maximumActive, 2);
+    assert.deepEqual(versions.get("@tjalve/one"), ["1.0.0"]);
+  });
+
+  it("enforces generated preparation even when a set tag is pushed manually", async () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const tag = `publish-set-v${version}`;
+    const resolved = await resolvePublishTag(tag, repoRoot);
+    const publishedByName = new Map(resolved.packages.map(entry => [
+      entry.packageName,
+      entry.packageKey === "qube" ? [] : [entry.version],
+    ]));
+    let preparationOptions;
+    const plan = await resolvePublishPlan(tag, {
+      root: repoRoot,
+      publishedByName,
+      prepareRelease: async options => {
+        preparationOptions = options;
+        return { needsWrite: false };
+      },
+    });
+    assert.equal(plan.packages.length, 1);
+    assert.equal(preparationOptions.excludeBaselineTag, tag);
+
+    await assert.rejects(
+      () => resolvePublishPlan(tag, {
+        root: repoRoot,
+        publishedByName,
+        prepareRelease: async () => ({ needsWrite: true }),
+      }),
+      { reasonCode: "release-unprepared" }
+    );
   });
 });

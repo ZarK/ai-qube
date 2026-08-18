@@ -148,6 +148,17 @@ describe("suite pins", () => {
     }
   });
 
+  it("accepts generated adapter pins with Windows line endings", () => {
+    const root = writeSuiteFixture();
+    try {
+      const outputPath = path.join(root, "products/qube/src/adapter_versions.generated.ts");
+      writeFileSync(outputPath, readFileSync(outputPath, "utf8").replace(/\n/g, "\r\n"));
+      assert.equal(inspectAdapterPins(root).ok, true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects duplicate catalog rows, missing manifests, and non-exact versions", () => {
     assert.throws(() => validatePackageCatalog([ADAPTER_PACKAGES[0], ADAPTER_PACKAGES[0]]), {
       reasonCode: "duplicate-catalog-entry",

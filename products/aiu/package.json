@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiu",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "AI Umpire package foundation and CLI for safe agent continuation.",
   "keywords": [
     "cli",
@@ -57,7 +57,7 @@
     "typecheck": "tsc --noEmit --pretty false"
   },
   "devDependencies": {
-    "@tjalve/qube-adapter-grok-build": "0.1.5",
+    "@tjalve/qube-adapter-grok-build": "0.1.6",
     "@types/node": "25.5.0",
     "typescript": "6.0.2"
   },

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq-internal-github-action",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,14 +10,17 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "action.yml"],
+  "files": [
+    "dist",
+    "action.yml"
+  ],
   "scripts": {
     "build": "tsc -b && node ../../scripts/build-github-action-bundle.mjs"
   },
   "dependencies": {
     "@actions/artifact": "6.2.1",
     "@actions/core": "3.0.1",
-    "@tjalve/aiq": "0.2.4"
+    "@tjalve/aiq": "0.2.5"
   },
   "repository": {
     "type": "git",

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
   "license": "MIT",
   "author": "tjalve",
@@ -52,8 +52,16 @@
   "engines": {
     "node": ">=24.0.0"
   },
-  "keywords": ["aiq", "code-quality", "quality-gate", "ai-agents"],
-  "files": ["dist", "README.md"],
+  "keywords": [
+    "aiq",
+    "code-quality",
+    "quality-gate",
+    "ai-agents"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -b ../../packages/model ../../packages/config-schema ../../packages/engine ../../packages/reporters ../../packages/benchmark . && node ../../scripts/build-aiq-package.mjs"
   },
