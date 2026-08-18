@@ -18,6 +18,7 @@
     "site:preview": "node scripts/serve-docs.mjs",
     "version:audit": "node scripts/check-version-audit.mjs && node scripts/check-strict-package-json.mjs && node scripts/suite-pins.mjs",
     "release": "node scripts/release-set.mjs",
+    "release:approve": "node scripts/approve-staged-release.mjs",
     "publish:manifest": "node scripts/check-publish-manifest.mjs",
     "verify:manifests": "node scripts/check-strict-package-json.mjs",
     "publish:plan": "node scripts/print-publish-plan.mjs",
