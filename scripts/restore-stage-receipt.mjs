@@ -105,4 +105,4 @@ for (let priorAttempt = currentAttempt - 1; priorAttempt >= 1; priorAttempt -= 1
   }
 }
 
-await saveCheckpoint(createReceipt(context, plan.packages, [], false));
+fail("No prior workflow attempt contains a trustworthy staging checkpoint.");

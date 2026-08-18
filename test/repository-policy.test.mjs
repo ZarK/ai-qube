@@ -47,6 +47,7 @@ describe("repository policy", () => {
     assert.match(workflow, /restore-stage-receipt\.mjs publish-plan\.json/);
     assert.match(restoreScript, /"--attempt", String\(priorAttempt\)/);
     assert.match(restoreScript, /restoreReceiptAttempt/);
+    assert.match(restoreScript, /No prior workflow attempt contains a trustworthy staging checkpoint/);
     assert.match(publishScript, /writeStageIntent/);
     assert.doesNotMatch(publishScript, /\["publish", "\."/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
