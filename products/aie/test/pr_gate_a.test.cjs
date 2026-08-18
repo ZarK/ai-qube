@@ -1714,6 +1714,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       assert.equal(evidence.lane, lane.lane);
     }
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', '.review-lock.json')), false, 'timeout and process failures must not leave a review session lock');
+    assert.deepEqual(result.reviewSessionLocks, [], 'the terminal gate result must not report its own cleared lock as active');
     assert.match(result.localReviewRunner.summary, /Local review runner failed 2 lane\(s\)/);
     assert.ok(result.localReviewRunner.summary.includes(timedOutLane) && result.localReviewRunner.summary.includes(failedLane));
   });

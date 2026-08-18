@@ -863,7 +863,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     ? { held: false, activeLock: null }
     : acquireReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
   const activeSessionLock = sessionLockAcquisition.activeLock ?? undefined;
-  const gateSessionLockHeld = sessionLockAcquisition.held;
+  let gateSessionLockHeld = sessionLockAcquisition.held;
   // Fail closed: lanes execute only while this gate provably holds the lock.
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
   try {
@@ -1254,6 +1254,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       lanes: roundStatusLanes().map(lane => ({ lane: lane.laneId, status: lane.status, failure: lane.reason ?? null })),
       roundSummary: roundSummary ? { status: roundSummary.status, failure: roundSummary.failure ?? null } : null,
     });
+  }
+  if (gateSessionLockHeld) {
+    clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+    gateSessionLockHeld = false;
   }
   return {
     ok: true,

@@ -246,7 +246,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Verdict consistency is validated after generation: recommendation derives from status (passed maps to approve; failed and needs-work map to request-changes; inconclusive maps to inconclusive). blockers entries, blocking-severity findings, and severity high or critical are valid only on a failed or needs-work result, which must carry severity high or critical and at least one blockers entry. A passed or inconclusive result must keep blockers empty and severity below high; name what an inconclusive result is missing in summary and completeness, never in blockers.',
     'Do not emit JSON progress, pending envelopes, or interim verdicts. Host progress is transient; emit exactly one JSON object only when the review is complete.',
     LANE_ARTIFACT_REQUIREMENT,
-    'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
+    'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". Set every artifact sha256 field to null; QUBE validates artifact paths and does not ask the model to transcribe file digests.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
     'The exact lane prompt may describe the complete persisted evidence object. For routed execution, this stricter outer contract is authoritative: return only the fields listed above, and QUBE injects profile, adapter, promptStack, runnerProvenance, and recordedAt.',
     'Do not include runnerProvenance or promptStack; QUBE records those from the trusted invocation.',
@@ -335,7 +335,7 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
           properties: {
             kind: { type: 'string', minLength: 1 },
             path: { type: 'string', minLength: 1 },
-            sha256: { anyOf: [{ type: 'string', pattern: '^[a-fA-F0-9]{64}$' }, { type: 'null' }] },
+            sha256: { type: 'null' },
           },
         },
       },
@@ -544,6 +544,17 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     progressLabel: `${input.lane} via ${input.plan.host}`,
     onProgress: input.onProgress,
   };
+}
+
+function artifactDigestViolation(value: unknown, repoRoot: string): string | null {
+  if (!isRecord(value) || !Array.isArray(value.artifacts)) return null;
+  for (const artifact of value.artifacts) {
+    if (!isRecord(artifact) || typeof artifact.path !== 'string' || typeof artifact.sha256 !== 'string') continue;
+    if (!validArtifactDigest(repoRoot, artifact.path, artifact.sha256)) {
+      return `Model review artifact "${sanitizedDiagnostic(artifact.path)}" reported an invalid digest; routed reviewers must set sha256 to null.`;
+    }
+  }
+  return null;
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {
@@ -809,6 +820,8 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       if (isRecord(modelResult) && typeof modelResult.status === 'string' && !STATUS_VALUES.has(modelResult.status)) {
         return captureRawOutput(input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive.`);
       }
+      const digestViolation = artifactDigestViolation(modelResult, input.repoRoot);
+      if (digestViolation) return captureRawOutput(input, result, 'model-route-artifact-digest', digestViolation);
       return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
     }
     return {

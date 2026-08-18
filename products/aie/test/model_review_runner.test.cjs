@@ -297,11 +297,11 @@ describe('model review runner', () => {
       const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
       const uppercaseDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest.toUpperCase() }] });
       assert.equal(uppercaseDigest.evidence, null);
-      assert.equal(uppercaseDigest.reasonCode, 'model-route-contract-mismatch');
+      assert.equal(uppercaseDigest.reasonCode, 'model-route-artifact-digest');
       // A command observation can never carry a content digest.
       const digestedCommand = await codexRun({ ...laneResult(), artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: digest }] });
       assert.equal(digestedCommand.evidence, null);
-      assert.equal(digestedCommand.reasonCode, 'model-route-contract-mismatch');
+      assert.equal(digestedCommand.reasonCode, 'model-route-artifact-digest');
       // The exact lowercase digest still passes.
       const validDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest }] });
       assert.notEqual(validDigest.evidence, null);
@@ -331,6 +331,7 @@ describe('model review runner', () => {
         assert.deepEqual(schema.properties.findings.items.required, ['id', 'severity', 'message', 'suggestion', 'location', 'confidence']);
         assert.deepEqual(schema.properties.findings.items.properties.confidence, { anyOf: [{ type: 'number', minimum: 0, maximum: 1 }, { type: 'null' }] });
         assert.deepEqual(schema.properties.artifacts.items.required, ['kind', 'path', 'sha256']);
+        assert.deepEqual(schema.properties.artifacts.items.properties.sha256, { type: 'null' });
         assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], invocation.schemaPath);
         return {
           exitCode: 0,
@@ -935,7 +936,8 @@ describe('model review runner', () => {
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(forgedDigest), sessionId: 'forged' }) }),
     });
-    assert.equal(forgedEvidence.reasonCode, 'model-route-contract-mismatch');
+    assert.equal(forgedEvidence.reasonCode, 'model-route-artifact-digest');
+    assert.match(forgedEvidence.error, /must set sha256 to null/);
 
     const directoryArtifact = laneResult();
     mkdirSync(join(repoRoot, 'artifact-directory'));
