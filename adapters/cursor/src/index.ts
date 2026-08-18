@@ -112,18 +112,30 @@ export function resolveCursorWindowsShim(
 
 export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
-  platform: NodeJS.Platform = process.platform,
+  _platform: NodeJS.Platform = process.platform,
 ): IsolatedReviewHostBuiltInvocation {
-  const args = ["--print", "--output-format", "json", "--mode", "ask"];
-  if (platform !== "win32") args.push("--sandbox", "enabled");
+  const args = ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"];
   if (context.model) args.push("--model", context.model);
   args.push("--workspace", context.repoRoot);
   return { args, stdin: context.prompt };
 }
 
-function probeCursor({ model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {
+export function probeCursor(
+  { model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext,
+  platform: NodeJS.Platform = process.platform,
+): IsolatedReviewHostProbeResult {
+  if (platform === "win32") {
+    return {
+      status: "blocked",
+      modelListed: null,
+      diagnostic: "Cursor review lanes require the Cursor sandbox, which is not available on native Windows. Run QUBE and the official Cursor CLI in WSL2, Linux, or macOS. QUBE will not weaken review isolation to use native Windows Ask mode.",
+    };
+  }
   const reportedDate = dateVersion(version);
-  if (reportedDate && reportedDate < CURSOR_MINIMUM_DATE_VERSION) {
+  if (!reportedDate) {
+    return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI reported an unsupported version (${sanitize(version) || "empty version"}). Install an official date-versioned Cursor CLI release before running routed review lanes.` };
+  }
+  if (reportedDate < CURSOR_MINIMUM_DATE_VERSION) {
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI version ${sanitize(version)} is older than the supported ${CURSOR_MINIMUM_DATE_VERSION} capability baseline. Update the official CLI before running routed review lanes.` };
   }
   let help: string;
@@ -133,8 +145,8 @@ function probeCursor({ model, executable, prefixArgs, runCommand, version }: Iso
     return { status: "blocked", modelListed: null, diagnostic: "The Cursor CLI resolved but its capability help could not be read. Repair the official CLI before running routed review lanes." };
   }
   const missing = requiredHelpMissing(help);
-  if (missing.length > 0 || !/\bask\b/i.test(help) || (process.platform !== "win32" && !help.includes("--sandbox"))) {
-    const capabilities = [...missing, ...(!/\bask\b/i.test(help) ? ["ask-mode"] : []), ...(process.platform !== "win32" && !help.includes("--sandbox") ? ["--sandbox"] : [])];
+  if (missing.length > 0 || !/\bask\b/i.test(help) || !help.includes("--sandbox")) {
+    const capabilities = [...missing, ...(!/\bask\b/i.test(help) ? ["ask-mode"] : []), ...(!help.includes("--sandbox") ? ["--sandbox"] : [])];
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI does not expose required isolated-review capabilities (${capabilities.join(", ")}). Update the official CLI before running routed review lanes.` };
   }
   let authenticated: boolean | null;

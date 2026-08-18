@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { createHash, randomUUID, type Hash } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { lstat, readlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { resolveExecutable } from '@tjalve/qube-core';
@@ -261,6 +262,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   return [
     'You are an isolated read-only QUBE review lane runner.',
     `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
+    'Prefer Git and Node.js for portable file inspection. If a PowerShell built-in module fails to load, continue with Git, Node.js, or cmd.exe read-only equivalents; do not retry the broken cmdlet or mistake its source text for a policy rejection.',
     'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section.',
     reviewResultContract(input),
     input.reviewScope ? buildDeltaPromptSection(input.reviewScope) : 'Inspect the full current-head diff for this lane.',
@@ -719,7 +721,7 @@ function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
 }
 
 function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
-  return /blocked by policy|rejected:\s*blocked/i.test(inspectionPolicyHaystack(result));
+  return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
@@ -742,8 +744,56 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
 }
 
 export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
-  const result = await execFileAsync('git', ['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
-  return createHash('sha256').update(result.stdout).digest('hex');
+  const gitOutput = async (args: string[]): Promise<string> => {
+    const result = await execFileAsync('git', ['-C', repoRoot, ...args], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 30_000,
+      windowsHide: true,
+    });
+    return result.stdout;
+  };
+  const [status, stagedState, trackedNames, untrackedNames] = await Promise.all([
+    gitOutput(['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+    gitOutput(['diff', '--cached', '--raw', '--no-abbrev', '--no-renames', 'HEAD', '--']),
+    gitOutput(['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--']),
+    gitOutput(['ls-files', '--others', '--exclude-standard', '-z']),
+  ]);
+  const hash = createHash('sha256');
+  hash.update('status\0').update(status).update('\0staged\0').update(stagedState);
+  const paths = [...new Set([...trackedNames.split('\0'), ...untrackedNames.split('\0')].filter(Boolean))].sort();
+  for (const path of paths) await hashCheckoutPath(hash, repoRoot, path);
+  return hash.digest('hex');
+}
+
+async function hashCheckoutPath(hash: Hash, repoRoot: string, path: string): Promise<void> {
+  hash.update('\0path\0').update(path);
+  const absolutePath = resolve(repoRoot, path);
+  const repoRelativePath = relative(repoRoot, absolutePath);
+  if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
+    throw new Error(`Git reported a path outside the review checkout: ${path}`);
+  }
+  let details;
+  try {
+    details = await lstat(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      hash.update('\0missing');
+      return;
+    }
+    throw error;
+  }
+  hash.update(`\0mode\0${details.mode}\0size\0${details.size}`);
+  if (details.isSymbolicLink()) {
+    hash.update('\0symlink\0').update(await readlink(absolutePath));
+    return;
+  }
+  if (!details.isFile()) {
+    hash.update('\0non-file');
+    return;
+  }
+  hash.update('\0content\0');
+  for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
 }
 
 export async function runModelReview(input: ModelReviewRunInput): Promise<ModelReviewRunResult> {

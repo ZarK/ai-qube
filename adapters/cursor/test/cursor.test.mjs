@@ -24,10 +24,10 @@ describe("Cursor isolated review adapter", () => {
     }
   });
 
-  it("uses Ask-mode isolation without claiming the unavailable native Windows sandbox", () => {
+  it("never builds an invocation that weakens sandbox isolation", () => {
     const built = cursor.buildCursorInvocation(context, "win32");
     assert.ok(built.args.includes("ask"));
-    assert.equal(built.args.includes("--sandbox"), false);
+    assert.deepEqual(built.args.slice(5, 7), ["--sandbox", "enabled"]);
   });
 
   it("parses exactly one successful terminal result", () => {
@@ -63,10 +63,13 @@ describe("Cursor isolated review adapter", () => {
       return "";
     };
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
-    assert.equal(cursor.isolatedReviewHostAdapter.probeAfterVersion(base).status, "ready");
-    assert.equal(cursor.isolatedReviewHostAdapter.probeAfterVersion({ ...base, version: "2025.01.01-old" }).status, "blocked");
-    assert.equal(cursor.isolatedReviewHostAdapter.probeAfterVersion({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }).status, "blocked");
-    assert.equal(cursor.isolatedReviewHostAdapter.probeAfterVersion({ ...base, model: "missing" }).modelListed, false);
-    assert.equal(cursor.isolatedReviewHostAdapter.probeAfterVersion({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "--print" : output(args) }).status, "blocked");
+    assert.equal(cursor.probeCursor(base, "linux").status, "ready");
+    assert.equal(cursor.probeCursor(base, "win32").status, "blocked");
+    assert.match(cursor.probeCursor(base, "win32").diagnostic, /WSL2/);
+    assert.equal(cursor.probeCursor({ ...base, version: "cursor-dev" }, "linux").status, "blocked");
+    assert.equal(cursor.probeCursor({ ...base, version: "2025.01.01-old" }, "linux").status, "blocked");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");
+    assert.equal(cursor.probeCursor({ ...base, model: "missing" }, "linux").modelListed, false);
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "--print" : output(args) }, "linux").status, "blocked");
   });
 });

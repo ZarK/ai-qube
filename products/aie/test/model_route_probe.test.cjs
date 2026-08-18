@@ -74,10 +74,14 @@ describe('model route probe', () => {
       if (args.at(-1) === 'models') return 'Available models\n\ngpt-5.6-luna-high - GPT';
       throw new Error(`unexpected probe command: ${args.join(' ')}`);
     }, () => ({ executable: 'powershell.exe', prefixArgs: ['-File', 'cursor-agent.ps1'] }));
-    assert.equal(check.status, 'ready');
-    assert.equal(check.modelListed, true);
+    assert.equal(check.status, process.platform === 'win32' ? 'blocked' : 'ready');
+    assert.equal(check.modelListed, process.platform === 'win32' ? null : true);
     assert.equal(check.executable, 'powershell.exe');
-    assert.ok(commands.every(args => args[0] === '-File' && args[1] === 'cursor-agent.ps1'));
+    if (process.platform === 'win32') {
+      assert.match(check.diagnostic, /WSL2/);
+    } else {
+      assert.ok(commands.every(args => args[0] === '-File' && args[1] === 'cursor-agent.ps1'));
+    }
   });
 
   it('blocks Cursor before a lane when browser login is missing', () => {
@@ -88,7 +92,7 @@ describe('model route probe', () => {
       return 'Available models\n\ngpt-5.6-luna-high - GPT';
     }, () => 'cursor-agent');
     assert.equal(check.status, 'blocked');
-    assert.match(check.diagnostic, /cursor-agent login/);
+    assert.match(check.diagnostic, process.platform === 'win32' ? /WSL2/ : /cursor-agent login/);
     assert.doesNotMatch(check.diagnostic, /private@example/);
   });
 

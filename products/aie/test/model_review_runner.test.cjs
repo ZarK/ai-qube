@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -16,6 +17,7 @@ const {
   runModelReview,
   runModelRouteProcess,
   resolveWindowsNodeShim,
+  resolveModelReviewCheckoutState,
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok-build') {
@@ -230,6 +232,7 @@ describe('model review runner', () => {
     assert.equal(invocation.stdin, prompt);
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);
+    assert.match(prompt, /If a PowerShell built-in module fails to load/);
     // The prompt must state the exact verdict-consistency and progress-snapshot
     // rules the strict validator enforces, or hosts fail on rules they never saw.
     assert.match(prompt, /Verdict consistency is validated after generation/);
@@ -454,6 +457,34 @@ describe('model review runner', () => {
     assert.equal(result.reasonCode, null);
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'passed');
+  });
+
+  it('does not treat policy-matching source text from a failed inspection command as a host fault', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-regex-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-policy-regex' }),
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              exit_code: 1,
+              aggregated_output: '721: return /blocked by policy|rejected:\\s*blocked/i.test(inspectionPolicyHaystack(result));',
+            },
+          }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(result.reasonCode, null);
+    assert.notEqual(result.evidence, null);
   });
 
   it('rejects a structured failed command that reports a policy block', async () => {
@@ -958,6 +989,21 @@ describe('model review runner', () => {
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(directoryArtifact), sessionId: 'directory' }) }),
     });
     assert.equal(directoryEvidence.reasonCode, 'model-route-contract-mismatch');
+  });
+
+  it('detects content changes when a tracked file was already dirty', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-content-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'dirty before review\n');
+    const before = await resolveModelReviewCheckoutState(repoRoot);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'changed during review\n');
+    const after = await resolveModelReviewCheckoutState(repoRoot);
+    assert.notEqual(after, before);
   });
 
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
