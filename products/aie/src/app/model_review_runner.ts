@@ -762,10 +762,14 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
     || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
   ) return false;
   const progressOnly = [
-    /^(?:review|inspection) (?:is )?(?:in progress|pending|not yet complete|not complete)(?:; (?:final )?completeness (?:is )?not yet established)?[.!]?$/i,
+    /\b(?:in progress|pending|incomplete|not (?:yet )?complete|not yet (?:been )?inspected)\b/i,
     /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
   ];
-  const isProgressOnly = (text: string): boolean => progressOnly.some(pattern => pattern.test(text.trim()));
+  const substantiveReason = /\b(?:because|blocked|unavailable|unable|failed|error|cannot|can't|could not|missing)\b/i;
+  const isProgressOnly = (text: string): boolean => (
+    !substantiveReason.test(text)
+    && progressOnly.some(pattern => pattern.test(text.trim()))
+  );
   return isProgressOnly(evidence.summary) && isProgressOnly(evidence.completeness);
 }
 

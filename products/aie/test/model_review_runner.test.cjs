@@ -774,6 +774,11 @@ describe('model review runner', () => {
       coverage: [{ area: 'code-quality', status: 'not-inspected' }],
       completeness: 'Inspection pending.',
     };
+    const secondAttestedProgress = {
+      ...attestedProgress,
+      summary: 'Review is still in progress.',
+      completeness: 'Security inspection is not complete.',
+    };
     const attestedProgressThenFinal = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
       resolveExecutable: async () => 'codex.exe',
@@ -784,6 +789,7 @@ describe('model review runner', () => {
         stdinDelivered: true,
         stdout: [
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(attestedProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(secondAttestedProgress) } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
         ].join('\n'),
       }),
