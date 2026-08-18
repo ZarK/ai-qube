@@ -768,7 +768,7 @@ describe('model review runner', () => {
       status: 'inconclusive',
       severity: 'none',
       recommendation: 'inconclusive',
-      summary: 'Review not yet complete.',
+      summary: 'Review not yet completed.',
       blockers: [],
       findings: [],
       coverage: [{ area: 'code-quality', status: 'not-inspected' }],
@@ -776,7 +776,7 @@ describe('model review runner', () => {
     };
     const secondAttestedProgress = {
       ...attestedProgress,
-      summary: 'Review is still in progress.',
+      summary: 'Inspecting the requested delta and its performance-sensitive call paths.',
       completeness: 'Security inspection is not complete.',
     };
     const attestedProgressThenFinal = await runModelReview({
