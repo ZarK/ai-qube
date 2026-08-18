@@ -57,6 +57,14 @@ export function listHostModels(
       diagnostic: error instanceof Error ? error.message : String(error),
     };
   }
+  if (adapter.supportsPlatform && !adapter.supportsPlatform(process.platform)) {
+    return {
+      host,
+      status: 'blocked',
+      models: [],
+      diagnostic: adapter.unsupportedPlatformMessage ?? `The ${host} review host does not support ${process.platform}.`,
+    };
+  }
   let executable: string;
   let prefixArgs: string[] = [];
   try {

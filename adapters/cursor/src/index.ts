@@ -122,7 +122,7 @@ export function buildCursorInvocation(
 
 export function probeCursor(
   { model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext,
-  platform: NodeJS.Platform = process.platform,
+  platform: string = process.platform,
 ): IsolatedReviewHostProbeResult {
   if (platform === "win32") {
     return {
@@ -182,6 +182,8 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   requiresPromptFile: false,
   requiresSchemaFile: false,
   windowsShell: "powershell",
+  unsupportedPlatformMessage: "Native Windows cannot provide the required Cursor sandbox. Run QUBE and the Cursor CLI inside WSL2.",
+  supportsPlatform(platform: string): boolean { return platform !== "win32"; },
   resolveWindowsShim: resolveCursorWindowsShim,
   windowsNodeModulesScriptPath(): string | null { return null; },
   windowsFallbackExecutablePath(): string | null { return null; },
@@ -189,7 +191,9 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
     return buildCursorInvocation(context);
   },
   parseEnvelope: parseCursorEnvelope,
-  probeAfterVersion: probeCursor,
+  probeAfterVersion(context: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {
+    return probeCursor(context, context.platform ?? process.platform);
+  },
   listCatalog({ executable, prefixArgs, runCommand }: Pick<IsolatedReviewHostProbeContext, "executable" | "prefixArgs" | "runCommand">): string[] | null {
     return parseCursorModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
   },

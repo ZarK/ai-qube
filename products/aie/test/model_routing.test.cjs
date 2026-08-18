@@ -169,7 +169,8 @@ describe('installed host detection', () => {
   });
 
   it('discovers a registered review-only host without adding it to delegated routing', () => {
-    const installed = detectInstalledReviewHostsOnPath(command => command === 'cursor-agent');
+    const installed = detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'linux');
     assert.deepEqual(installed, ['cursor']);
+    assert.deepEqual(detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'win32'), []);
   });
 });

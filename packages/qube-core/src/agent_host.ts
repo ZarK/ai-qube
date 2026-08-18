@@ -83,6 +83,7 @@ export interface IsolatedReviewHostProbeContext {
   readonly prefixArgs: readonly string[];
   readonly runCommand: IsolatedReviewHostProbeCommandRunner;
   readonly version: string;
+  readonly platform?: string;
 }
 
 export interface IsolatedReviewHostProbeResult {
@@ -100,6 +101,8 @@ export interface IsolatedReviewHostAdapter {
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
   readonly windowsShell?: "powershell";
+  readonly unsupportedPlatformMessage?: string;
+  supportsPlatform?(platform: string): boolean;
   resolveWindowsShim?(shim: string): IsolatedReviewHostExecutable | null;
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;

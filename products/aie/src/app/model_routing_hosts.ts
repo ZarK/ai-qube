@@ -20,12 +20,15 @@ export function detectInstalledRoutingHostsOnPath(
 
 export function detectInstalledReviewHostsOnPath(
   lookup: (command: string) => boolean = commandExistsOnPath,
+  platform: string = process.platform,
 ): readonly ReviewModelHostId[] {
   const routingHosts = new Set(detectInstalledRoutingHosts(lookup));
   return REVIEW_MODEL_HOST_IDS.filter(host => {
     if (routingHosts.has(host as ModelRoutingHostId)) return true;
     if (!isRegisteredReviewHost(host)) return false;
-    return getReviewHostAdapter(host).executableNames.some(lookup);
+    const adapter = getReviewHostAdapter(host);
+    if (adapter.supportsPlatform && !adapter.supportsPlatform(platform)) return false;
+    return adapter.executableNames.some(lookup);
   });
 }
 

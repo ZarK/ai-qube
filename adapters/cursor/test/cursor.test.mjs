@@ -15,6 +15,12 @@ const context = {
 };
 
 describe("Cursor isolated review adapter", () => {
+  it("declares native Windows unsupported while allowing WSL and Unix hosts", () => {
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), false);
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
+    assert.match(cursor.isolatedReviewHostAdapter.unsupportedPlatformMessage, /WSL2/);
+  });
+
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
     const built = cursor.buildCursorInvocation(context, "linux");
     assert.deepEqual(built.args.slice(0, 7), ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"]);

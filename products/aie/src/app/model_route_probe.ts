@@ -42,7 +42,7 @@ function defaultProbeCommandRunner(executable: string, args: readonly string[]):
   });
 }
 
-export function probeModelRoute(host: RoutedProbeHost, model: string | null, runCommand: RouteProbeCommandRunner = defaultProbeCommandRunner, resolveExecutable: RouteProbeExecutableResolver = resolveModelHostExecutableSync): RouteProbeCheck {
+export function probeModelRoute(host: RoutedProbeHost, model: string | null, runCommand: RouteProbeCommandRunner = defaultProbeCommandRunner, resolveExecutable: RouteProbeExecutableResolver = resolveModelHostExecutableSync, platform: string = process.platform): RouteProbeCheck {
   let adapter;
   try {
     adapter = getReviewHostAdapter(host);
@@ -72,7 +72,19 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       diagnostic: `The ${host} review host adapter is missing required capabilities (${missingCapabilities.join(', ')}). Fix the registered adapter capabilities before running routed review lanes.`,
     };
   }
-  if (process.platform === 'win32' && adapter.windowsShell === 'powershell') {
+  if (adapter.supportsPlatform && !adapter.supportsPlatform(platform)) {
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable: null,
+      version: null,
+      modelListed: null,
+      resolved: null,
+      diagnostic: adapter.unsupportedPlatformMessage ?? `The ${host} review host does not support ${platform}.`,
+    };
+  }
+  if (platform === 'win32' && adapter.windowsShell === 'powershell') {
     const shellHealth = windowsPowerShellRouteEnvironment(process.env);
     if (shellHealth.status === 'blocked') {
       return {
@@ -136,7 +148,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       diagnostic: `The ${commandName} CLI resolved but reported an empty version. Fix the ${commandName} CLI installation before running routed review lanes.`,
     };
   }
-  const probeResult = adapter.probeAfterVersion({ model, executable, prefixArgs, runCommand, version });
+  const probeResult = adapter.probeAfterVersion({ model, executable, prefixArgs, runCommand, version, platform });
   if (probeResult.status === 'blocked') {
     return { host, model, status: 'blocked', executable, version, modelListed: probeResult.modelListed, resolved: null, diagnostic: probeResult.diagnostic };
   }
