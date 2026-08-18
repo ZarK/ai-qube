@@ -13,6 +13,8 @@ export interface PrLaneRerunResult {
   lane: string;
   headSha: string;
   executions: number;
+  attempted: boolean;
+  reasonCode: string | null;
   lanesRun: string[];
   reusedLanes: string[];
   errors: string[];
@@ -29,6 +31,7 @@ export async function runPrLaneRerun(input: {
   dryRun?: boolean;
   exec?: PrGateExec;
   changedPaths?: readonly string[];
+  runRunner?: typeof runLocalReviewRunner;
 }): Promise<PrLaneRerunResult> {
   const dryRun = input.dryRun === true;
   if (!isLocalReviewLaneId(input.lane)) {
@@ -40,6 +43,8 @@ export async function runPrLaneRerun(input: {
       lane: input.lane,
       headSha: input.headSha,
       executions: 0,
+      attempted: false,
+      reasonCode: null,
       lanesRun: [],
       reusedLanes: [],
       errors: [`Unknown review lane "${input.lane}".`],
@@ -57,13 +62,15 @@ export async function runPrLaneRerun(input: {
       lane,
       headSha: input.headSha,
       executions: 0,
+      attempted: false,
+      reasonCode: null,
       lanesRun: [],
       reusedLanes: [],
       errors: [`Lane ${lane} is not active for the current change set.`],
       nextAction: `Choose an active lane (${active.join(', ') || 'none'}) and rerun \`aie pr lane rerun ${input.prNumber} <lane>\`.`,
     };
   }
-  const runner = await runLocalReviewRunner(input.config, {
+  const runner = await (input.runRunner ?? runLocalReviewRunner)(input.config, {
     repoRoot: input.repoRoot,
     issueNumbers: input.issueNumbers,
     prNumber: input.prNumber,
@@ -76,10 +83,21 @@ export async function runPrLaneRerun(input: {
     onlyLanes: [lane],
     forceLanes: [lane],
   });
-  const lanesRun = [...new Set(runner.lanes.filter(item => item.evidenceSource === 'fresh-run' || item.status === 'planned').map(item => item.lane))];
+  const attemptedRuns = runner.lanes.filter(item => item.lane === lane && (
+    item.evidenceSource === 'fresh-run'
+    || item.status === 'planned'
+    || item.status === 'failed'
+    || item.status === 'unavailable'
+  ));
+  const lanesRun = [...new Set(attemptedRuns.map(item => item.lane))];
   const reusedLanes = [...new Set(runner.lanes.filter(item => item.evidenceSource === 'local' || item.evidenceSource === 'trusted-provider').map(item => item.lane))];
-  const executions = runner.lanes.filter(item => item.lane === lane && (item.evidenceSource === 'fresh-run' || item.status === 'planned')).length;
-  const ok = runner.unavailable.length === 0 && lanesRun.length === 1 && lanesRun[0] === lane && executions >= 1;
+  const executions = attemptedRuns.length;
+  const failedRun = attemptedRuns.find(item => item.status === 'failed' || item.status === 'unavailable');
+  const reasonCode = failedRun?.blocker && /^[a-z0-9-]+$/.test(failedRun.blocker) ? failedRun.blocker : null;
+  const ok = runner.unavailable.length === 0 && !failedRun && lanesRun.length === 1 && lanesRun[0] === lane && executions >= 1;
+  const laneErrors = failedRun
+    ? [`${reasonCode ? `[${reasonCode}] ` : ''}${failedRun.summary}`]
+    : [];
   return {
     ok,
     command: 'pr lane rerun',
@@ -88,14 +106,18 @@ export async function runPrLaneRerun(input: {
     lane,
     headSha: input.headSha,
     executions,
+    attempted: executions > 0,
+    reasonCode,
     lanesRun,
     reusedLanes,
-    errors: ok ? [] : (runner.unavailable.length > 0 ? runner.unavailable : [`Lane ${lane} did not run alone.`]),
+    errors: ok ? [] : (laneErrors.length > 0 ? laneErrors : (runner.unavailable.length > 0 ? runner.unavailable : [`Lane ${lane} did not run alone.`])),
     nextAction: ok
       ? (dryRun
         ? `Planned ${lane} once. Omit --dry-run to run the lane, then rerun \`aie pr gate ${input.prNumber}\`.`
         : `Reran ${lane} once. Rerun \`aie pr gate ${input.prNumber}\` to publish and inspect the current head.`)
-      : `Fix the lane runner error, then run \`aie pr lane rerun ${input.prNumber} ${lane}\` again.`,
+      : (reasonCode
+        ? `Fix ${reasonCode}, then run \`aie pr lane rerun ${input.prNumber} ${lane}\` again.`
+        : `Fix the lane runner error, then run \`aie pr lane rerun ${input.prNumber} ${lane}\` again.`),
   };
 }
 
@@ -133,8 +155,10 @@ export function formatPrLaneRerun(result: PrLaneRerunResult): string {
   const lines = [
     `PR lane rerun for #${result.prNumber} ${result.lane}: ${result.ok ? 'ok' : 'failed'}.`,
     `Executions: ${result.executions}.`,
+    `Attempted: ${result.attempted ? 'yes' : 'no'}.`,
     `Lanes run: ${result.lanesRun.join(', ') || 'none'}.`,
   ];
+  if (result.reasonCode) lines.push(`Reason: ${result.reasonCode}.`);
   for (const error of result.errors) lines.push(`- ${error}`);
   lines.push(`Next action: ${result.nextAction}`);
   return `${lines.join('\n')}\n`;

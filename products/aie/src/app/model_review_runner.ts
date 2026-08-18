@@ -56,7 +56,65 @@ export interface ModelRouteProcessResult {
 export type ModelRouteProcess = (invocation: ModelRouteInvocation) => Promise<ModelRouteProcessResult>;
 
 export function modelRouteEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(source).filter(([key, value]) => value !== undefined && ROUTE_ENVIRONMENT_KEYS.has(key.toUpperCase())));
+  const environment = Object.fromEntries(Object.entries(source).filter(([key, value]) => value !== undefined && ROUTE_ENVIRONMENT_KEYS.has(key.toUpperCase())));
+  return process.platform === 'win32' ? windowsPowerShellRouteEnvironment(environment).environment : environment;
+}
+
+export interface WindowsPowerShellRouteHealth {
+  status: 'ready' | 'blocked';
+  environment: NodeJS.ProcessEnv;
+  removedPathEntries: string[];
+  diagnostic: string | null;
+}
+
+type PathExists = (path: string) => boolean;
+
+function unquotePathEntry(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+}
+
+function healthyPowerShellCoreDirectory(directory: string, pathExists: PathExists): boolean {
+  return pathExists(join(directory, 'pwsh.exe'))
+    && pathExists(join(directory, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1'))
+    && pathExists(join(directory, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'));
+}
+
+export function windowsPowerShellRouteEnvironment(
+  source: NodeJS.ProcessEnv,
+  pathExists: PathExists = existsSync,
+): WindowsPowerShellRouteHealth {
+  const pathKey = Object.keys(source).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+  const pathEntries = String(source[pathKey] ?? '').split(';').map(unquotePathEntry).filter(Boolean);
+  const removedPathEntries: string[] = [];
+  let healthyCore = false;
+  const keptPathEntries = pathEntries.filter(entry => {
+    if (!pathExists(join(entry, 'pwsh.exe'))) return true;
+    if (healthyPowerShellCoreDirectory(entry, pathExists)) {
+      healthyCore = true;
+      return true;
+    }
+    removedPathEntries.push(entry);
+    return false;
+  });
+  const systemRoot = source.SYSTEMROOT ?? source.SystemRoot ?? source.WINDIR ?? source.WinDir;
+  const windowsPowerShell = systemRoot
+    ? join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : null;
+  const healthyFallback = windowsPowerShell !== null && pathExists(windowsPowerShell);
+  const environment = { ...source, [pathKey]: keptPathEntries.join(';') };
+  if (healthyCore || healthyFallback) {
+    return { status: 'ready', environment, removedPathEntries, diagnostic: null };
+  }
+  const incomplete = removedPathEntries.length > 0
+    ? ' PowerShell Core is present on PATH but its built-in module directory is incomplete.'
+    : '';
+  return {
+    status: 'blocked',
+    environment,
+    removedPathEntries,
+    diagnostic: `No healthy PowerShell is available for the routed Windows host.${incomplete} Install a complete PowerShell distribution or restore Windows PowerShell before running review lanes.`,
+  };
 }
 
 export interface ModelReviewRunInput {
@@ -592,6 +650,20 @@ function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
       if (isRecord(event)) {
         if (event.type === 'item.completed' && isRecord(event.item) && event.item.type === 'agent_message') continue;
         if (typeof event.text === 'string' && (typeof event.sessionId === 'string' || event.sessionId === null)) continue;
+        if (
+          event.type === 'item.completed'
+          && isRecord(event.item)
+          && event.item.type === 'command_execution'
+        ) {
+          if (event.item.exit_code === 0) continue;
+          if (typeof event.item.aggregated_output === 'string') parts.push(event.item.aggregated_output);
+          continue;
+        }
+        if (event.type !== 'error' && event.type !== 'turn.failed') continue;
+        for (const field of ['message', 'error', 'detail'] as const) {
+          if (typeof event[field] === 'string') parts.push(event[field]);
+        }
+        continue;
       }
     } catch {
       // Keep non-JSON host diagnostics, including command-rejection text.
@@ -685,15 +757,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if ('priorTexts' in parsedHostOutput) {
       const priorTexts = parsedHostOutput.priorTexts;
       if (!Array.isArray(priorTexts) || !priorTexts.every((text): text is string => typeof text === 'string')) {
-        return captureRawOutput(input, result, 'model-route-output-envelope', 'Grok review route returned an invalid structured snapshot envelope.');
+        return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned an invalid structured snapshot envelope.');
       }
       if (priorTexts.length >= input.plan.maxTurns) {
-        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Grok review route returned more structured snapshots than the configured turn bound.');
+        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned more structured snapshots than the configured turn bound.');
       }
       for (const priorText of priorTexts) {
         let priorResult: unknown;
         try { priorResult = JSON.parse(priorText); } catch {
-          return captureRawOutput(input, result, 'model-route-malformed-json', 'Grok review route returned a malformed structured progress snapshot.');
+          return captureRawOutput(input, result, 'model-route-malformed-progress', 'Model review route returned malformed JSON in a progress snapshot.');
         }
         const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'interim');
         if (!priorEvidence
@@ -702,7 +774,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
           || priorEvidence.severity !== 'none'
           || priorEvidence.blockers.length > 0
           || priorEvidence.findings.length > 0) {
-          return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Grok review route returned a contradictory or non-pending progress snapshot before its final result.');
+          const priorTerminal = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'final');
+          return captureRawOutput(
+            input,
+            result,
+            priorTerminal ? 'model-route-multiple-terminal' : 'model-route-contradictory-progress',
+            priorTerminal
+              ? 'Model review route returned more than one terminal result.'
+              : 'Model review route returned a contradictory or invalid progress snapshot before its terminal result.',
+          );
         }
       }
     }
