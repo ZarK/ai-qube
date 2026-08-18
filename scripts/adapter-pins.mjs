@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { ADAPTER_PACKAGES, readCatalogManifests } from "./workspace-packages.mjs";
@@ -68,11 +69,24 @@ export function inspectAdapterPins(root, entries = ADAPTER_PACKAGES) {
   });
 }
 
+export function replaceGeneratedFile(outputPath, contents) {
+  const temporaryPath = `${outputPath}.${process.pid}.${randomUUID()}.tmp`;
+  let temporaryExists = false;
+  try {
+    writeFileSync(temporaryPath, contents, { encoding: "utf8", flag: "wx", mode: 0o644 });
+    temporaryExists = true;
+    renameSync(temporaryPath, outputPath);
+    temporaryExists = false;
+  } finally {
+    if (temporaryExists) rmSync(temporaryPath, { force: true });
+  }
+}
+
 export function writeAdapterPins(root, entries = ADAPTER_PACKAGES) {
   const inspection = inspectAdapterPins(root, entries);
   if (inspection.changed) {
     const outputPath = resolveAdapterPinsPath(root, true);
-    writeFileSync(outputPath, inspection.expected, "utf8");
+    replaceGeneratedFile(outputPath, inspection.expected);
   }
   return Object.freeze({ ...inspection, ok: true, wrote: inspection.changed });
 }
