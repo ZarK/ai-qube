@@ -84,6 +84,81 @@ export function resolveReleaseBaseline(root, git = { run: runGit }, options = {}
   return { baselineTag, baselineSha };
 }
 
+function readTagState(git, args, root, tag) {
+  try {
+    return git.run(args, root);
+  } catch (error) {
+    throw Object.assign(new Error(`Cannot inspect immutable set tag ${tag}; verify local and origin tag access before preparing a release.`), {
+      reasonCode: "set-tag-state",
+      cause: error,
+    });
+  }
+}
+
+function commitSha(value, label) {
+  const sha = String(value ?? "").trim();
+  if (!/^[0-9a-f]{40}$/i.test(sha)) fail(`${label} did not resolve to a commit.`, "set-tag-state");
+  return sha;
+}
+
+function remoteTagRefs(output, tag) {
+  const directRef = `refs/tags/${tag}`;
+  const peeledRef = `${directRef}^{}`;
+  let direct = null;
+  let peeled = null;
+  for (const line of String(output).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
+    const match = /^([0-9a-f]{40})\s+(refs\/tags\/[^\s]+)$/i.exec(line);
+    if (!match || (match[2] !== directRef && match[2] !== peeledRef)) {
+      fail(`Origin returned an invalid reference while inspecting ${tag}.`, "set-tag-state");
+    }
+    const field = match[2] === peeledRef ? "peeled" : "direct";
+    const current = field === "peeled" ? peeled : direct;
+    if (current && current !== match[1]) fail(`Origin returned conflicting references for ${tag}.`, "set-tag-state");
+    if (field === "peeled") peeled = match[1];
+    else direct = match[1];
+  }
+  if (peeled && !direct) fail(`Origin returned a peeled reference without ${directRef}.`, "set-tag-state");
+  return { direct, peeled };
+}
+
+function resolveCommit(git, root, tag, revision, label) {
+  return commitSha(
+    readTagState(git, ["rev-parse", "--verify", `${revision}^{commit}`], root, tag),
+    label,
+  );
+}
+
+export function inspectSetTag(root, version, git = { run: runGit }) {
+  const tag = `publish-set-v${version}`;
+  const headSha = commitSha(readTagState(git, ["rev-parse", "HEAD"], root, tag), "HEAD");
+  const localName = String(readTagState(git, ["tag", "--list", tag], root, tag)).trim();
+  if (localName && localName !== tag) fail(`Local tag lookup returned an invalid reference for ${tag}.`, "set-tag-state");
+  const localSha = localName
+    ? resolveCommit(git, root, tag, tag, `Local tag ${tag}`)
+    : null;
+  const remoteOutput = readTagState(git, ["ls-remote", "--tags", "origin", `refs/tags/${tag}`, `refs/tags/${tag}^{}`], root, tag);
+  const remoteRefs = remoteTagRefs(remoteOutput, tag);
+  let remoteSha = null;
+  if (remoteRefs.direct) {
+    readTagState(git, ["fetch", "--no-tags", "--no-write-fetch-head", "origin", `refs/tags/${tag}`], root, tag);
+    remoteSha = resolveCommit(git, root, tag, remoteRefs.direct, `Origin tag ${tag}`);
+    const advertisedSha = remoteRefs.peeled ?? remoteRefs.direct;
+    if (remoteSha !== advertisedSha) fail(`Origin returned conflicting object state for ${tag}.`, "set-tag-state");
+  }
+  if (localSha && remoteSha && localSha !== remoteSha) {
+    fail(`${tag} resolves to different commits locally and on origin.`, "set-tag-conflict");
+  }
+  const tagSha = remoteSha ?? localSha;
+  return {
+    tag,
+    headSha,
+    localSha,
+    remoteSha,
+    tagSha,
+    status: tagSha === null ? "absent" : tagSha === headSha ? "current" : "occupied",
+  };
+}
+
 export function readReleaseChanges(root, baselineTag, git = { run: runGit }) {
   return parseChangedPaths(git.run(["diff", "--name-only", "-z", `${baselineTag}...HEAD`, "--"], root));
 }
@@ -197,6 +272,16 @@ function nextVersion(packageName, currentVersion, versions) {
   return candidate;
 }
 
+function nextReservedVersion(packageName, currentVersion, versions) {
+  const registryVersion = nextVersion(packageName, currentVersion, versions);
+  if (registryVersion !== currentVersion) return registryVersion;
+  const candidate = bumpPatch(currentVersion);
+  if (versions.includes(candidate)) {
+    fail(`${packageName}@${candidate} is already published; refusing to reuse a reserved set version.`, "registry-version-drift");
+  }
+  return candidate;
+}
+
 function buildVersionAudit(current, reports, publishedByName) {
   const prior = new Map((current.packages ?? []).map(entry => [entry.name, entry]));
   return {
@@ -229,6 +314,15 @@ export function planReleasePreparation(root, options) {
   const packageByName = new Map(packages.map(entry => [entry.manifest.name, entry]));
   const directKeys = new Set(packages.filter(entry => changedPaths.some(changedPath => ownsPath(entry.catalog, changedPath))).map(entry => entry.packageKey));
   const plannedVersions = new Map(packages.map(entry => [entry.manifest.name, entry.originalVersion]));
+  const setTagState = options.setTagState ?? { status: "absent", tag: null };
+  if (!new Set(["absent", "current", "occupied"]).has(setTagState.status)) {
+    fail("Release preparation received an invalid set tag state.", "set-tag-state");
+  }
+  const currentComposer = packages.find(entry => entry.packageKey === "qube");
+  const currentSetTag = `publish-set-v${currentComposer.originalVersion}`;
+  if (setTagState.status !== "absent" && setTagState.tag !== currentSetTag) {
+    fail(`Release preparation tag state does not match ${currentSetTag}.`, "set-tag-state");
+  }
   const reports = [];
 
   for (const entry of packages) {
@@ -249,8 +343,11 @@ export function planReleasePreparation(root, options) {
     ));
     const direct = directKeys.has(entry.packageKey);
     const propagated = dependencyChanges.length > 0 || adapterDependencyChanged;
+    const replacement = entry.packageKey === "qube" && setTagState.status === "occupied";
     let version = entry.originalVersion;
-    if (direct || propagated) {
+    if (replacement) {
+      version = nextReservedVersion(entry.manifest.name, version, publishedVersions(publishedByName, entry.manifest.name));
+    } else if (direct || propagated) {
       const published = publishedVersions(publishedByName, entry.manifest.name);
       version = nextVersion(entry.manifest.name, version, published);
     }
@@ -262,6 +359,7 @@ export function planReleasePreparation(root, options) {
       packageJson: entry.catalog.packageJson,
       direct,
       propagated,
+      replacement,
       dependencyChanges,
       fromVersion: entry.originalVersion,
       toVersion: version,
@@ -305,12 +403,17 @@ export function planReleasePreparation(root, options) {
   const generatedPinsChanged = inspectAdapterPins(root).changed || reports.some(entry => (
     entry.packageKey.startsWith("qube-adapter-") && entry.fromVersion !== entry.toVersion
   ));
+  const composer = reports.find(entry => entry.packageKey === "qube");
   return {
     baselineTag: options.baselineTag,
     baselineSha: options.baselineSha,
+    setTag: `publish-set-v${composer.toVersion}`,
+    replacesSetTag: setTagState.status === "occupied" ? setTagState.tag : null,
+    setTagState: setTagState.status,
     changedPaths: [...changedPaths],
     directPackages: reports.filter(entry => entry.direct).map(entry => entry.packageKey),
     propagatedPackages: reports.filter(entry => entry.propagated).map(entry => entry.packageKey),
+    replacementPackages: reports.filter(entry => entry.replacement).map(entry => entry.packageKey),
     versionChanges: versionChanges.map(entry => ({ packageKey: entry.packageKey, packageName: entry.packageName, from: entry.fromVersion, to: entry.toVersion })),
     stageOrder: reports.filter(entry => !publishedVersions(publishedByName, entry.packageName).includes(entry.toVersion)).map(entry => ({ packageKey: entry.packageKey, packageName: entry.packageName, version: entry.toVersion })),
     needsWrite: manifestChanges.length > 0 || workspaceChanges.length > 0 || auditChanged || generatedPinsChanged,
@@ -404,9 +507,10 @@ export async function prepareRelease(options = {}) {
   const baseline = options.baseline ?? resolveReleaseBaseline(root, git, { excludeTag: options.excludeBaselineTag });
   const changedPaths = options.changedPaths ?? readReleaseChanges(root, baseline.baselineTag, git);
   const qube = readJson(root, "products/qube/package.json");
+  const setTagState = options.setTagState ?? inspectSetTag(root, qube.version, git);
   const resolved = await resolvePublishTag(`publish-set-v${qube.version}`, root);
   const publishedByName = options.publishedByName ?? await readPublishedVersionsForPlan(resolved, options);
-  const plan = planReleasePreparation(root, { ...baseline, changedPaths, publishedByName });
+  const plan = planReleasePreparation(root, { ...baseline, changedPaths, publishedByName, setTagState });
   if (!options.write) return { ok: true, dryRun: true, wrote: false, ...plan, reports: undefined, workspaceChanges: plan.workspaceChanges.map(change => ({ packageJson: change.packageJson, versionChange: change.versionChange, dependencyChanges: change.dependencyChanges })), expectedAudit: undefined };
   return { ok: true, dryRun: false, ...applyReleasePreparation(root, plan, publishedByName, options), reports: undefined, workspaceChanges: plan.workspaceChanges.map(change => ({ packageJson: change.packageJson, versionChange: change.versionChange, dependencyChanges: change.dependencyChanges })), expectedAudit: undefined };
 }
@@ -431,7 +535,7 @@ export async function main(argv = process.argv.slice(2)) {
       return;
     }
     const report = await prepareRelease(options);
-    process.stdout.write(options.json ? `${JSON.stringify(report)}\n` : `${report.baselineTag}: ${report.stageOrder.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
+    process.stdout.write(options.json ? `${JSON.stringify(report)}\n` : `${report.setTag}: ${report.stageOrder.map(entry => `${entry.packageName}@${entry.version}`).join(", ")}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = error?.reasonCode === "usage" ? 2 : 1;

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "QUBE composer CLI for coordinating the standalone planning, execution, quality, and continuation tools.",
   "keywords": [
     "cli",

@@ -53,6 +53,12 @@ lifecycle scripts disabled. Review and merge those generated changes through the
 normal pull request controls. Package versions do not need to be copied into
 release scripts by hand.
 
+If the current composer version already has an immutable set tag on an older
+commit, the same preparation command preserves valid unpublished component
+versions and advances the composer once to produce a new set tag. It verifies
+local and origin tag identity and stops when either tag state is unreadable or the
+two sources disagree.
+
 After the preparation PR is on `main`, run:
 
 ```sh
