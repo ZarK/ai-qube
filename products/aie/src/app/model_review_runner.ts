@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -158,6 +158,12 @@ export interface ModelReviewRunInput {
   resolveCheckoutState?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
   onProgress?: (progress: ModelRouteProcessProgress) => void;
+  watchCheckout?: (repoRoot: string) => ModelReviewCheckoutMonitor;
+}
+
+export interface ModelReviewCheckoutMonitor {
+  close(): void;
+  violation(): string | null;
 }
 
 export function expectedCoverageAreas(input: Pick<ModelReviewRunInput, 'lane' | 'coverageAreas'>): string[] {
@@ -766,7 +772,6 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
     '--porcelain=v2',
     '-z',
     '--untracked-files=all',
-    '--ignored=matching',
   ], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -779,6 +784,31 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
   const paths = checkoutStatusPaths(status);
   for (const path of paths) await hashCheckoutPath(hash, repoRoot, path);
   return hash.digest('hex');
+}
+
+function isInternalReviewPath(path: string): boolean {
+  const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return normalized === '.git'
+    || normalized.startsWith('.git/')
+    || normalized === '.qube/aie/reviews'
+    || normalized.startsWith('.qube/aie/reviews/');
+}
+
+export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
+  let changedPath: string | null = null;
+  let watchError: string | null = null;
+  const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
+    const path = filename === null ? null : String(filename);
+    if (changedPath !== null || path !== null && isInternalReviewPath(path)) return;
+    changedPath = path ?? '(unknown checkout path)';
+  });
+  watcher.on('error', error => {
+    watchError = sanitizedDiagnostic(error.message) || 'Checkout monitoring failed.';
+  });
+  return {
+    close: () => watcher.close(),
+    violation: () => watchError ? `monitor error: ${watchError}` : changedPath,
+  };
 }
 
 function checkoutStatusPaths(status: string): string[] {
@@ -839,7 +869,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   const prompt = buildModelReviewPrompt(input);
   let promptPath: string | null = null;
   let schemaPath: string | null = null;
+  let checkoutMonitor: ModelReviewCheckoutMonitor | null = null;
   try {
+    checkoutMonitor = (input.watchCheckout ?? watchModelReviewCheckout)(input.repoRoot);
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
     const resolveCheckoutState = input.resolveCheckoutState
       ?? (input.resolveHead ? async () => 'test-checkout-state' : resolveModelReviewCheckoutState);
@@ -915,6 +947,8 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
     if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout contents changed during isolated review execution.' };
+    const watchedChange = checkoutMonitor.violation();
+    if (watchedChange) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.` };
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
@@ -938,6 +972,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   } catch (error: unknown) {
     return { evidence: null, reasonCode: 'model-route-unavailable', error: sanitizedDiagnostic(error instanceof Error ? error.message : String(error)) };
   } finally {
+    checkoutMonitor?.close();
     if (promptPath) rmSync(promptPath, { force: true });
     if (schemaPath) rmSync(schemaPath, { force: true });
   }

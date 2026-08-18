@@ -18,6 +18,7 @@ const {
   runModelRouteProcess,
   resolveWindowsNodeShim,
   resolveModelReviewCheckoutState,
+  watchModelReviewCheckout,
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok-build') {
@@ -1008,6 +1009,20 @@ describe('model review runner', () => {
     assert.equal(checkoutContentsChanged.reasonCode, 'model-route-checkout-mismatch');
     assert.match(checkoutContentsChanged.error, /contents changed/);
 
+    let monitorClosed = false;
+    const watchedChange = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      watchCheckout: () => ({
+        close: () => { monitorClosed = true; },
+        violation: () => 'ignored-cache/large.bin',
+      }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'watched-drift' }) }),
+    });
+    assert.equal(watchedChange.reasonCode, 'model-route-checkout-mismatch');
+    assert.match(watchedChange.error, /ignored-cache\/large\.bin/);
+    assert.equal(monitorClosed, true);
+
     const promptFailure = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
@@ -1062,7 +1077,7 @@ describe('model review runner', () => {
     assert.notEqual(after, before);
   });
 
-  it('detects content changes in an individually ignored file without expanding ignored directories', async () => {
+  it('detects content changes inside ignored directories without scanning their contents', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-ignored-'));
     execFileSync('git', ['init', '--quiet', repoRoot]);
     execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
@@ -1071,15 +1086,17 @@ describe('model review runner', () => {
     writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
     execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
     execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
-    writeFileSync(join(repoRoot, '.env'), 'before\n');
     mkdirSync(join(repoRoot, 'ignored-cache'));
-    writeFileSync(join(repoRoot, 'ignored-cache', 'large.bin'), 'unchanged\n');
-
-    const before = await resolveModelReviewCheckoutState(repoRoot);
-    writeFileSync(join(repoRoot, '.env'), 'after\n');
-    const after = await resolveModelReviewCheckoutState(repoRoot);
-
-    assert.notEqual(after, before);
+    const ignoredFile = join(repoRoot, 'ignored-cache', 'large.bin');
+    writeFileSync(ignoredFile, 'before\n');
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      writeFileSync(ignoredFile, 'after!\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.match(monitor.violation(), /ignored-cache/);
+    } finally {
+      monitor.close();
+    }
   });
 
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
