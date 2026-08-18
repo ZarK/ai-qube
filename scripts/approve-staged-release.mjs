@@ -84,7 +84,7 @@ function inspectTag(receipt, git = { run: (args) => run("git", args) }) {
   }
 }
 
-async function readPublishedShasums(packages, fetchImpl = globalThis.fetch) {
+export async function readPublishedShasums(packages, fetchImpl = globalThis.fetch) {
   const published = new Map();
   for (const entry of packages) {
     const response = await fetchImpl(registryPackageUrl(entry.packageName), { headers: { accept: "application/json" } });
@@ -94,10 +94,17 @@ async function readPublishedShasums(packages, fetchImpl = globalThis.fetch) {
     }
     if (!response.ok) throw Object.assign(new Error(`Registry lookup for ${entry.packageName} failed (${response.status}).`), { reasonCode: "registry-lookup" });
     const packument = await response.json();
-    const versions = new Map(Object.entries(packument.versions ?? {}).map(([version, manifest]) => [
-      version,
-      String(manifest?.dist?.shasum ?? "").toLowerCase(),
-    ]));
+    const versions = new Map();
+    const manifest = packument.versions?.[entry.version];
+    if (manifest) {
+      const shasum = String(manifest.dist?.shasum ?? "").toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(shasum)) {
+        throw Object.assign(new Error(`Registry lookup for ${entry.packageName}@${entry.version} returned an invalid shasum.`), {
+          reasonCode: "registry-lookup",
+        });
+      }
+      versions.set(entry.version, shasum);
+    }
     published.set(entry.packageName, versions);
   }
   return published;

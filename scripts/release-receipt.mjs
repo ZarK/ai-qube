@@ -169,8 +169,9 @@ export function planApprovals(receipt, stages, publishedByName = new Map()) {
   validateReceipt(receipt);
   if (!Array.isArray(stages)) throw receiptError("npm staged package list is invalid.");
   return receipt.packages.map(entry => {
-    const published = publishedByName.get(entry.packageName)?.get(entry.version);
-    if (published) {
+    const publishedVersions = publishedByName.get(entry.packageName);
+    if (publishedVersions?.has(entry.version)) {
+      const published = publishedVersions.get(entry.version);
       if (String(published).toLowerCase() !== entry.shasum) {
         throw receiptError(`Published shasum does not match for ${entry.packageName}@${entry.version}.`);
       }

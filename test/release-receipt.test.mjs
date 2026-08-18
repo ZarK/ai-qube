@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { approvePackages, prepareApproval } from "../scripts/approve-staged-release.mjs";
+import { approvePackages, prepareApproval, readPublishedShasums } from "../scripts/approve-staged-release.mjs";
 import {
   RECEIPT_MARKER,
   createReceipt,
@@ -137,10 +137,24 @@ describe("staged release receipts", () => {
       ["@tjalve/qube-core", new Map([["0.2.1", "f".repeat(40)]])],
     ]);
     assert.throws(() => planApprovals(receipt(), stages(), wrongPublished), { reasonCode: "invalid-receipt" });
+    const missingPublishedShasum = new Map([
+      ["@tjalve/qube-core", new Map([["0.2.1", ""]])],
+    ]);
+    assert.throws(() => planApprovals(receipt(), stages(), missingPublishedShasum), { reasonCode: "invalid-receipt" });
 
     const wrongStages = stages();
     wrongStages[0].shasum = "f".repeat(40);
     assert.throws(() => planApprovals(receipt(), wrongStages, new Map()), { reasonCode: "invalid-receipt" });
+  });
+
+  it("rejects a published target version without a valid registry shasum", async () => {
+    await assert.rejects(() => readPublishedShasums([planned[0]], async () => ({
+      status: 200,
+      ok: true,
+      async json() {
+        return { versions: { "0.2.1": { dist: {} } } };
+      },
+    })), { reasonCode: "registry-lookup" });
   });
 
   it("binds approval to the successful workflow, tag commit, and package manifests", async () => {
