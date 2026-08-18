@@ -1,4 +1,4 @@
-import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from './policy.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId, type ReviewModelTierId, type ReviewModelsPolicy } from './policy.js';
 import { resolveReviewModelTier } from '../app/local_review_runner_support.js';
 
 export const MODEL_ROUTE_CLASSES = Object.freeze([
@@ -219,6 +219,7 @@ export function resolveModelRouting(
   policy: ModelRoutingPolicy,
   reviewModels: ReviewModelsPolicy,
   installedHosts: readonly ModelRoutingHostId[],
+  installedReviewHosts: readonly ReviewModelHostId[] = installedHosts,
 ): ModelRoutingResolution {
   const catalogById = new Map(policy.catalog.map(entry => [entry.id, entry]));
   const primary = catalogById.get(policy.primary);
@@ -230,7 +231,7 @@ export function resolveModelRouting(
   const mechanical = resolveDelegatedRoute(policy, 'mechanical-implementation', catalogById, installed, substitutions);
   const exploration = resolveDelegatedRoute(policy, 'exploration-investigation', catalogById, installed, substitutions);
   const synthesis = resolveDelegatedRoute(policy, 'synthesis-judgment', catalogById, installed, substitutions);
-  const independent = resolveIndependentReviewRoute(policy, reviewModels, installed);
+  const independent = resolveIndependentReviewRoute(policy, reviewModels, new Set(installedReviewHosts));
   if (independent.substitution) {
     substitutions.push({
       from: `reviewModels.${independent.reviewTier}`,
@@ -307,7 +308,7 @@ function resolveDelegatedRoute(
 function resolveIndependentReviewRoute(
   policy: ModelRoutingPolicy,
   reviewModels: ReviewModelsPolicy,
-  installed: Set<ModelRoutingHostId>,
+  installed: Set<ReviewModelHostId>,
 ): ResolvedIndependentReviewRoute {
   const reviewTier = policy.routes['independent-review'].reviewTier;
   const host = firstInstalledReviewHost(installed);
@@ -332,8 +333,8 @@ function resolveIndependentReviewRoute(
   };
 }
 
-function firstInstalledReviewHost(installed: Set<ModelRoutingHostId>): ReviewModelHostId | null {
-  for (const host of MODEL_ROUTING_HOSTS) {
+function firstInstalledReviewHost(installed: Set<ReviewModelHostId>): ReviewModelHostId | null {
+  for (const host of REVIEW_MODEL_HOST_IDS) {
     if (installed.has(host)) return host;
   }
   return null;

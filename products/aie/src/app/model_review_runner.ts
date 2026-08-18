@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { createHash, randomUUID, type Hash } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { lstat, readlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { resolveExecutable } from '@tjalve/qube-core';
@@ -154,8 +155,15 @@ export interface ModelReviewRunInput {
   routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
+  resolveCheckoutState?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
   onProgress?: (progress: ModelRouteProcessProgress) => void;
+  watchCheckout?: (repoRoot: string) => ModelReviewCheckoutMonitor;
+}
+
+export interface ModelReviewCheckoutMonitor {
+  close(): void;
+  violation(): string | null;
 }
 
 export function expectedCoverageAreas(input: Pick<ModelReviewRunInput, 'lane' | 'coverageAreas'>): string[] {
@@ -211,6 +219,8 @@ export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelH
     for (const executableName of adapter.executableNames) {
       const shim = findOnPathSync(`${executableName}.cmd`);
       if (!shim) continue;
+      const adapterResolved = adapter.resolveWindowsShim?.(shim);
+      if (adapterResolved) return adapterResolved;
       const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
       const script = adapter.windowsNodeModulesScriptPath(dirname(shim));
@@ -258,6 +268,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   return [
     'You are an isolated read-only QUBE review lane runner.',
     `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
+    'Prefer Git and Node.js for portable file inspection. If a PowerShell built-in module fails to load, continue with Git, Node.js, or cmd.exe read-only equivalents; do not retry the broken cmdlet or mistake its source text for a policy rejection.',
     'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section.',
     reviewResultContract(input),
     input.reviewScope ? buildDeltaPromptSection(input.reviewScope) : 'Inspect the full current-head diff for this lane.',
@@ -265,6 +276,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
     '--- EXACT QUBE LANE PROMPT START ---',
     input.promptText,
     '--- EXACT QUBE LANE PROMPT END ---',
+    'FINAL OUTPUT CHECK: Build coverage after findings. Every coverage area with one or more findings must use status "finding"; use "clear" only when that area has no findings, and use "not-inspected" only with an inconclusive verdict. Recheck verdict consistency, then emit exactly one terminal JSON object.',
   ].join('\n');
 }
 
@@ -648,7 +660,7 @@ export function isolatedRawOutputPath(
   headSha: string,
   lane: LocalReviewLaneId,
 ): string {
-  return join(dirname(laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane)), `${lane}.raw-output.json`);
+  return join(repoRoot, '.git', 'qube', 'aie', 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
 }
 
 function captureRawOutput(
@@ -660,7 +672,7 @@ function captureRawOutput(
   if (!result) return { evidence: null, reasonCode, error };
   try {
     const path = isolatedRawOutputPath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
     writeReviewFileGuarded(path, `${JSON.stringify({
       version: 1,
       issueNumber: input.issueNumber,
@@ -669,12 +681,13 @@ function captureRawOutput(
       lane: input.lane,
       host: input.plan.host,
       reasonCode,
+      diagnostic: redact(error).slice(0, 1_000),
       stdout: redact(result.stdout).slice(0, MAX_OUTPUT_BYTES),
       stderr: redact(result.stderr).slice(0, MAX_OUTPUT_BYTES),
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       recordedAt: new Date().toISOString(),
-    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
     const relativePath = relative(input.repoRoot, path).replace(/\\/g, '/');
     return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
   } catch {
@@ -716,7 +729,7 @@ function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
 }
 
 function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
-  return /blocked by policy|rejected:\s*blocked/i.test(inspectionPolicyHaystack(result));
+  return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
@@ -738,14 +751,160 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
   return result.stdout.trim();
 }
 
+function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boolean {
+  if (
+    !isRecord(value)
+    || !Array.isArray(value.coverage)
+    || evidence.status !== 'inconclusive'
+    || evidence.recommendation !== 'inconclusive'
+    || evidence.blockers.length !== 0
+    || evidence.findings.length !== 0
+    || value.coverage.length === 0
+    || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
+  ) return false;
+  const progressOnly = [
+    /\b(?:in progress|pending|incomplete|not (?:yet )?complet(?:e|ed)|not yet (?:been )?inspected|inspecting)\b/i,
+    /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
+    /^(?:review )?not started[.!]?$/i,
+    /^not inspected[.!]?$/i,
+  ];
+  const substantiveReason = /\b(?:because|blocked|unavailable|unable|failed|error|cannot|can't|could not|missing)\b/i;
+  const isProgressOnly = (text: string): boolean => (
+    !substantiveReason.test(text)
+    && progressOnly.some(pattern => pattern.test(text.trim()))
+  );
+  return isProgressOnly(evidence.summary) && isProgressOnly(evidence.completeness);
+}
+
+export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
+  const result = await execFileAsync('git', [
+    '-C', repoRoot,
+    'status',
+    '--porcelain=v2',
+    '-z',
+    '--untracked-files=all',
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 30_000,
+    windowsHide: true,
+  });
+  const status = result.stdout;
+  const hash = createHash('sha256');
+  hash.update('status\0').update(status);
+  const paths = checkoutStatusPaths(status);
+  for (const path of paths) await hashCheckoutPath(hash, repoRoot, path);
+  return hash.digest('hex');
+}
+
+function isInternalReviewPath(path: string): boolean {
+  const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return normalized === '.git' || normalized.startsWith('.git/');
+}
+
+export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
+  let changedPath: string | null = null;
+  const startedAt = Date.now();
+  let watchError: string | null = null;
+  // QUBE requires Node 24 or newer. Recursive Linux watching has been
+  // supported since Node 19.1; unavailable filesystem backends still fail
+  // closed through the surrounding runModelReview error boundary.
+  const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (eventType, filename) => {
+    const path = filename === null ? null : String(filename);
+    if (path === null || isInternalReviewPath(path)) return;
+    if (eventType === 'rename') {
+      changedPath ??= path;
+      return;
+    }
+    try {
+      const details = statSync(resolve(repoRoot, path));
+      // Some Windows filesystems report change events for read access. Inspect
+      // metadata while handling the event, before a later timestamp restore can
+      // hide an observed write. The final checkout digest remains a second check.
+      if (details.mtimeMs >= startedAt - 1_000 || details.ctimeMs >= startedAt - 1_000) changedPath ??= path;
+    } catch {
+      // Deletions and paths that cannot be inspected fail closed.
+      changedPath ??= path;
+    }
+  });
+  watcher.on('error', error => {
+    watchError = sanitizedDiagnostic(error.message) || 'Checkout monitoring failed.';
+  });
+  return {
+    close: () => watcher.close(),
+    violation: () => {
+      if (watchError) return `monitor error: ${watchError}`;
+      return changedPath;
+    },
+  };
+}
+
+function checkoutStatusPaths(status: string): string[] {
+  const records = status.split('\0');
+  const paths = new Set<string>();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    if (record.startsWith('? ') || record.startsWith('! ')) {
+      paths.add(record.slice(2));
+      continue;
+    }
+    const fieldCount = record.startsWith('1 ') ? 8 : record.startsWith('2 ') ? 9 : record.startsWith('u ') ? 10 : 0;
+    if (fieldCount === 0) continue;
+    let pathOffset = 0;
+    for (let field = 0; field < fieldCount; field += 1) {
+      pathOffset = record.indexOf(' ', pathOffset) + 1;
+      if (pathOffset === 0) break;
+    }
+    if (pathOffset > 0) paths.add(record.slice(pathOffset));
+    if (record.startsWith('2 ')) index += 1;
+  }
+  return [...paths].sort();
+}
+
+async function hashCheckoutPath(hash: Hash, repoRoot: string, path: string): Promise<void> {
+  hash.update('\0path\0').update(path);
+  const absolutePath = resolve(repoRoot, path);
+  const repoRelativePath = relative(repoRoot, absolutePath);
+  if (repoRelativePath === '..' || repoRelativePath.startsWith(`..${sep}`) || isAbsolute(repoRelativePath)) {
+    throw new Error(`Git reported a path outside the review checkout: ${path}`);
+  }
+  let details;
+  try {
+    details = await lstat(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      hash.update('\0missing');
+      return;
+    }
+    throw error;
+  }
+  hash.update(`\0mode\0${details.mode}\0size\0${details.size}`);
+  if (details.isSymbolicLink()) {
+    hash.update('\0symlink\0').update(await readlink(absolutePath));
+    return;
+  }
+  if (!details.isFile()) {
+    hash.update('\0non-file');
+    return;
+  }
+  hash.update('\0content\0');
+  for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
+}
+
 export async function runModelReview(input: ModelReviewRunInput): Promise<ModelReviewRunResult> {
   const invocationId = randomUUID();
   const prompt = buildModelReviewPrompt(input);
   let promptPath: string | null = null;
   let schemaPath: string | null = null;
+  let checkoutMonitor: ModelReviewCheckoutMonitor | null = null;
   try {
+    checkoutMonitor = (input.watchCheckout ?? watchModelReviewCheckout)(input.repoRoot);
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
+    const resolveCheckoutState = input.resolveCheckoutState
+      ?? (input.resolveHead ? async () => 'test-checkout-state' : resolveModelReviewCheckoutState);
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD does not match the requested pull request head.' };
+    const checkoutState = await resolveCheckoutState(input.repoRoot);
     const adapter = getReviewHostAdapter(input.plan.host);
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
     const routeDirectory = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route');
@@ -807,12 +966,17 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       for (const priorText of transientTexts) {
         let priorResult: unknown;
         try { priorResult = JSON.parse(priorText); } catch { continue; }
-        if (strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance)) {
+        const normalizedPriorResult = normalizeSchemaOptionals(priorResult);
+        const priorEvidence = strictRoutedLane(normalizedPriorResult, input, provenance);
+        if (priorEvidence && !isSupersededProgressResult(normalizedPriorResult, priorEvidence)) {
           return captureRawOutput(input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
       }
     }
-    if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
+    if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
+    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout contents changed during isolated review execution.');
+    const watchedChange = checkoutMonitor.violation();
+    if (watchedChange) return captureRawOutput(input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
@@ -836,6 +1000,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   } catch (error: unknown) {
     return { evidence: null, reasonCode: 'model-route-unavailable', error: sanitizedDiagnostic(error instanceof Error ? error.message : String(error)) };
   } finally {
+    checkoutMonitor?.close();
     if (promptPath) rmSync(promptPath, { force: true });
     if (schemaPath) rmSync(schemaPath, { force: true });
   }

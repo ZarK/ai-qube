@@ -37,4 +37,21 @@ describe('review model catalog', () => {
     assert.deepEqual(statuses[0].served, []);
     assert.deepEqual(statuses[0].absent, []);
   });
+
+  it('includes registered review-only hosts in the default diagnostic catalog', () => {
+    const models = {
+      review: { cursor: { model: 'gpt-5.6-luna-high', effort: null } },
+      economy: {},
+      synthesis: {},
+    };
+    const statuses = reviewModelHostStatuses(models, undefined, host => ({
+      host,
+      status: 'ready',
+      models: host === 'cursor' ? ['gpt-5.6-luna-high'] : [],
+      diagnostic: null,
+    }));
+    const cursor = statuses.find(item => item.host === 'cursor');
+    assert.ok(cursor);
+    assert.deepEqual(cursor.served, ['gpt-5.6-luna-high']);
+  });
 });

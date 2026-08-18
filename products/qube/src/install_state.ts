@@ -77,7 +77,7 @@ function declaredPackageVersion(manifest: Record<string, unknown>, name: string)
 export function instructionTargetsForHosts(hosts: readonly string[]): readonly string[] {
   const targets = new Set<string>();
   for (const host of hosts) {
-    if (host === "codex" || host === "grok-build" || host === "opencode") targets.add("AGENTS.md");
+    if (host === "codex" || host === "grok-build" || host === "opencode" || host === "cursor") targets.add("AGENTS.md");
     if (host === "claude-code") targets.add("CLAUDE.md");
   }
   return [...targets];

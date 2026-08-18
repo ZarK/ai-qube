@@ -1183,7 +1183,7 @@ describe('init service', () => {
     const repo = makeGitRepo();
     const all = await buildInitPlan({ target: '.', tool: 'all', dryRun: true, force: false, cwd: repo });
     assert.equal(all.ok, true);
-    assert.deepEqual(all.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
+    assert.deepEqual(all.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     assert.ok(all.actions.some(action => action.path === 'CLAUDE.md'));
 
     const invalid = await buildInitPlan({ target: '.', tool: 'bad-tool', dryRun: true, force: false, cwd: repo });
@@ -1202,11 +1202,15 @@ describe('init service', () => {
     const codex = profiles.find(profile => profile.id === 'codex');
     const claude = profiles.find(profile => profile.id === 'claude-code');
 
-    assert.equal(profiles.length, 4);
+    assert.equal(profiles.length, 5);
     assert.ok(opencode);
     assert.ok(codex);
     assert.ok(claude);
     const grok = profiles.find(profile => profile.id === 'grok-build');
+    const cursor = profiles.find(profile => profile.id === 'cursor');
+    assert.ok(cursor);
+    assert.equal(cursor.subagents.supported, false);
+    assert.equal(cursor.hooks.supported, false);
     assert.ok(grok);
     assert.equal(grok.supportsProjectCommands, true);
     assert.ok(grok.commandTargets.some(target => target.path === pathPosix.join('.grok', 'commands', 'make-it-so.md')));
@@ -1221,7 +1225,7 @@ describe('init service', () => {
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
     const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');
-    assert.deepEqual(agentsHosts, ['opencode', 'codex', 'grok-build']);
+    assert.deepEqual(agentsHosts, ['opencode', 'codex', 'grok-build', 'cursor']);
 
     const wrapperPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { legacyScripts: 'install-wrappers' } } });
     const cleanupPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { cleanupKnownHelpers: true } } });
@@ -1326,7 +1330,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);
@@ -1393,7 +1397,7 @@ describe('init command metadata', () => {
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(result.status, 0);
-    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
+    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     assert.equal(parsed.policy.namingRules, true);
     assert.equal(parsed.policy.milestoneOrdering, true);
     assert.equal(parsed.policy.missingMilestonePolicy, 'ignore');
@@ -1431,7 +1435,7 @@ describe('init command metadata', () => {
     const tool = metadata.flagDetails.find(flag => flag.name === '--tool');
     const missingMilestone = metadata.flagDetails.find(flag => flag.name === '--missing-milestone');
     const age = metadata.flagDetails.find(flag => flag.name === '--package-age-days');
-    assert.deepEqual(tool.options, ['opencode', 'codex', 'claude-code', 'grok-build', 'all']);
+    assert.deepEqual(tool.options, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor', 'all']);
     assert.deepEqual(missingMilestone.options, ['ignore', 'warn', 'block']);
     assert.equal(age.type, 'integer');
   });
@@ -1551,7 +1555,7 @@ describe('managed section checksum normalization', () => {
   });
 
   it('renders the seven review-cadence lines in the managed instruction text', async () => {
-    const hosts = await getAgentHostProfiles(['opencode', 'codex', 'claude-code', 'grok-build']);
+    const hosts = await getAgentHostProfiles(['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     const instructions = renderAgentInstructions(getDefaults(), hosts);
     assertPrCadence(instructions);
     assert.equal(extractPrCadenceLines(instructions).length, 7);
@@ -1561,7 +1565,7 @@ describe('managed section checksum normalization', () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true, result.errors.join('\n'));
-    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
+    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     assertPrCadence(readFileSync(join(repo, 'AGENTS.md'), 'utf8'));
     assertPrCadence(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'));
     assert.doesNotMatch(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /PR review and merge culture/);

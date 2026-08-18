@@ -14,6 +14,7 @@ const {
 } = require('../dist/core/model_routing.js');
 const { renderAgentInstructions, renderModelRoutingRunnerFiles } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
+const { detectInstalledReviewHostsOnPath } = require('../dist/app/model_routing_hosts.js');
 const { runInit } = require('../dist/init/index.js');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
@@ -37,6 +38,15 @@ describe('modelRouting schema', () => {
   it('rejects an unknown host', () => {
     const file = withRouting({
       catalog: [{ id: 'x', host: 'gemini', transport: 'cli', costRank: 1, notes: 'no' }],
+    });
+    const result = validateConfig(file);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => /host/.test(error.message)));
+  });
+
+  it('keeps review-only hosts out of delegated model routing', () => {
+    const file = withRouting({
+      catalog: [{ id: 'cursor-review', host: 'cursor', transport: 'cli', costRank: 1, notes: 'review only' }],
     });
     const result = validateConfig(file);
     assert.equal(result.ok, false);
@@ -102,6 +112,22 @@ describe('modelRouting resolver', () => {
     assert.equal(resolved.routes['mechanical-implementation'].selected.id, 'grok-build:grok-4.5');
     assert.equal(resolved.routes['mechanical-implementation'].substitutions.length, 0);
   });
+
+  it('resolves Cursor for independent review without enabling delegated Cursor routes', () => {
+    const policy = buildModelRoutingFromSelections({
+      primaryHost: 'codex',
+      primaryModel: 'default',
+      independentReviewTier: 'review',
+    });
+    const reviewModels = getDefaults().reviewModels;
+    reviewModels.review.cursor = { model: 'cursor-review-model', effort: null };
+
+    const resolved = resolveModelRouting(policy, reviewModels, ['codex'], ['cursor']);
+
+    assert.equal(resolved.routes['independent-review'].host, 'cursor');
+    assert.equal(resolved.routes['independent-review'].model, 'cursor-review-model');
+    assert.equal(resolved.routes['mechanical-implementation'].selected.host, 'codex');
+  });
 });
 
 describe('modelRouting host assets', () => {
@@ -145,6 +171,7 @@ describe('modelRouting host assets', () => {
     assert.ok(result.modelRouting);
     assert.equal(result.modelRouting.routes['independent-review'].reviewTier, 'review');
   });
+
 });
 
 function readConfigured(repo, relativePath) {
@@ -155,5 +182,22 @@ describe('installed host detection', () => {
   it('uses the lookup callback instead of inheriting every host', () => {
     const installed = detectInstalledRoutingHosts(command => command === 'claude');
     assert.deepEqual(installed, ['claude-code']);
+  });
+
+  it('discovers a registered review-only host without adding it to delegated routing', () => {
+    const installed = detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'linux');
+    assert.deepEqual(installed, ['cursor']);
+    assert.deepEqual(detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'win32'), []);
+  });
+
+  it('reuses an existing delegated-host scan while discovering review-only hosts', () => {
+    const lookups = [];
+    const installed = detectInstalledReviewHostsOnPath(command => {
+      lookups.push(command);
+      return command === 'cursor-agent';
+    }, 'linux', ['codex']);
+
+    assert.deepEqual(installed, ['codex', 'cursor']);
+    assert.equal(lookups.includes('codex'), false);
   });
 });

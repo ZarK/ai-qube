@@ -327,7 +327,7 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
     assert.match(installHelp.stdout, /--host <value>/);
     assert.match(installHelp.stdout, /Default: generic/);
-    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, opencode/);
+    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, cursor, opencode/);
     assert.match(installHelp.stdout, /--work-provider <value>/);
     assert.match(installHelp.stdout, /Default: github/);
     assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
@@ -506,6 +506,7 @@ describe("qube composer CLI", () => {
         ["codex", "installed", false, "adapter-contract"],
         ["claude-code", "installed", false, "adapter-contract"],
         ["grok-build", "optional", false, "adapter-contract"],
+        ["cursor", "optional", false, "adapter-contract"],
         ["opencode", "optional", false, "adapter-contract"]
       ]
     );
@@ -1046,6 +1047,9 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.notEqual(unavailable.status, "ok");
     assert.match(unavailable.summary, /No installed modelRouting host/);
     assert.ok(unavailable.resolution.substitutions.length >= 1);
+
+    const cursorReview = await runModelRoutingDoctor(cwd, command => command === "cursor-agent", "linux");
+    assert.equal(cursorReview.resolution.routes["independent-review"].host, "cursor");
   });
 
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
@@ -1863,6 +1867,26 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "@tjalve/qube-adapter-grok-build"
     ));
     assert.doesNotMatch(command, /qube-adapter-claude-code|qube-adapter-codex|qube-adapter-opencode/);
+  });
+
+  it("installs only the Cursor review adapter for --host cursor", () => {
+    const result = runCli([
+      "install",
+      "--yes",
+      "--dry-run",
+      "--json",
+      "--host",
+      "cursor",
+      "--work-provider",
+      "github"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const command = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "package-install").command;
+    assert.equal(command, qubePnpmAddCommandWith(
+      "@tjalve/qube-adapter-cursor",
+      "@tjalve/qube-adapter-github"
+    ));
+    assert.doesNotMatch(command, /qube-adapter-claude-code|qube-adapter-codex|qube-adapter-grok-build|qube-adapter-opencode/);
   });
 
   it("keeps --apply --json without --yes in plan mode", () => {
@@ -3664,6 +3688,39 @@ describe("qube init composer orchestrator", () => {
       "synthesis-judgment",
       "independent-review",
     ]);
+  });
+
+  it("keeps Cursor review-only in the top-level modelRouting contract", () => {
+    const schema = runCli(["schema", "--json"]);
+    assert.equal(schema.status, 0);
+    const parsedSchema = JSON.parse(schema.stdout);
+    const init = parsedSchema.commands.find(command => command.name === "init");
+    const primaryHost = init.flags.find(flag => flag.name === "primary-host");
+    assert.doesNotMatch(primaryHost.description, /cursor/i);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-init-"));
+    const result = runCli([
+      "init", ".",
+      "--host", "cursor",
+      "--yes",
+      "--json",
+      "--primary-host", "cursor",
+      "--primary-model", "default",
+    ], { cwd });
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.match(String(parsed.error ?? result.stderr), /Use one of: codex, claude-code, opencode, grok-build\./);
+
+    const routeResult = runCli([
+      "init", ".",
+      "--host", "cursor",
+      "--yes",
+      "--json",
+      "--route-mechanical-implementation", "cursor:gpt-5.6-luna-high",
+    ], { cwd });
+    assert.notEqual(routeResult.status, 0);
+    const parsedRoute = JSON.parse(routeResult.stdout);
+    assert.match(String(parsedRoute.error ?? routeResult.stderr), /using codex, claude-code, opencode, or grok-build\./);
   });
 
   it("refuses an uninstalled modelRouting host during init", () => {

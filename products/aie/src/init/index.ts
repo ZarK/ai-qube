@@ -1,7 +1,7 @@
 import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { resolveModelRouting } from '../core/model_routing.js';
-import { detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
+import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { getAgentHostProfiles, getAllAgentHostProfiles } from '../agent_hosts.js';
 import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
 import { renderInitFiles } from '../init_renderer.js';
@@ -622,7 +622,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: ['Review mode isolated requires an installed review host adapter: codex or grok-build.'],
+        errors: ['Review mode isolated requires an installed review host adapter: codex, grok-build, or cursor.'],
         nextCommand: 'Install a review host or pass --review-mode external or --review-mode host.',
         questions: askedQuestions,
         unansweredQuestionIds: unanswered,
@@ -654,7 +654,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, grok-build, or all.`],
+        errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, grok-build, cursor, or all.`],
         nextCommand: 'Run `qube aie init --help` to see supported tool values.',
         questions,
         unansweredQuestionIds: unanswered,
@@ -792,7 +792,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       warnings,
       errors,
       nextCommand: nextCommand(errors.length === 0, awaitingAnswers),
-      modelRouting: resolveModelRouting(config.modelRouting, config.reviewModels, detectInstalledRoutingHostsOnPath()),
+      modelRouting: resolveModelRouting(config.modelRouting, config.reviewModels, detectInstalledRoutingHostsOnPath(), detectInstalledReviewHostsOnPath()),
       questions: awaitingAnswers ? askedQuestions : questions,
       unansweredQuestionIds: unanswered,
       setupSummary,

@@ -53,7 +53,7 @@ describe('release readiness repository fixtures', () => {
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     const alias = readFileSync(join(repo, '.opencode', 'commands', 'makeitso.md'), 'utf8');
 
-    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build']);
+    assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     assert.match(agents, /OpenCode: instructions target `AGENTS\.md`/);
     assert.match(agents, /Codex: instructions target `AGENTS\.md`/);
     assert.match(claude, /Claude Code: instructions target `CLAUDE\.md`/);

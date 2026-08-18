@@ -57,6 +57,7 @@ export interface ReviewHostProbeContext {
   prefixArgs: readonly string[];
   runCommand: ReviewHostProbeCommandRunner;
   version: string;
+  platform: string;
 }
 
 export interface ReviewHostProbeResult {
@@ -74,6 +75,9 @@ export interface ReviewHostAdapter {
   readonly requiresPromptFile: boolean;
   readonly requiresSchemaFile: boolean;
   readonly windowsShell?: 'powershell';
+  readonly unsupportedPlatformMessage?: string;
+  supportsPlatform?(platform: string): boolean;
+  resolveWindowsShim?(shim: string): ModelHostExecutable | null;
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;

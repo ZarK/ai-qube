@@ -42,7 +42,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--from', type: 'string', description: 'Adopt policy from a working-directory-relative path or an owner/repo slug' },
   { name: '--review-mode', type: 'string', description: 'Review mode written to Executor config', options: ['external', 'host', 'isolated'] },
   { name: '--publisher', type: 'string', description: 'Review publisher identity', options: ['user', 'github-app', 'token'] },
-  { name: '--tool', type: 'string', description: 'Agent host projection to install', options: ['opencode', 'codex', 'claude-code', 'grok-build', 'all'], default: 'opencode' },
+  { name: '--tool', type: 'string', description: 'Agent host projection to install', options: ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor', 'all'], default: 'opencode' },
   { name: '--work-provider', type: 'string', description: 'Active work provider written to Executor config', options: ['github', 'gitlab', 'linear', 'jira'] },
   { name: '--review-provider', type: 'string', description: 'Active review provider written to Executor config', options: ['github', 'gitlab'] },
   { name: '--ci-provider', type: 'string', description: 'Active CI provider written to Executor config', options: ['github', 'gitlab', 'jenkins'] },

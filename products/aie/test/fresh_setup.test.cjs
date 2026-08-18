@@ -176,6 +176,9 @@ describe('fresh setup defaults', () => {
     const second = freshSetupFirstPullRequestReadiness(config, ['src/index.ts']);
     assert.notEqual(second.configIdentity, identity);
     assert.equal(freshSetupConfigIdentity(config).includes('grok-other'), true);
+
+    config.reviewModels.review.cursor = { model: 'gpt-5.6-luna-high', effort: null };
+    assert.equal(freshSetupConfigIdentity(config).includes('cursor:gpt-5.6-luna-high'), true);
   });
 
   it('rejects isolated without a host and stays doctor-clean for the external fallback', async () => {
@@ -302,6 +305,25 @@ describe('fresh setup defaults', () => {
     assert.deepEqual(policy.reviewModels.economy.codex, { model: 'gpt-5.6-luna', effort: 'high' });
     assert.ok(policy.gates.some(gate => gate.kind === 'aiq' && gate.command === defaultAiqLintFormatGate().command));
     assert.ok(!policy.gates.some(gate => /changed-files|git diff --name-only/.test(gate.command)));
+  });
+
+  it('writes a Cursor route and model when Cursor is the installed review host', () => {
+    const { applyFreshSetupPolicy } = require('../dist/init/fresh_setup.js');
+    const policy = applyFreshSetupPolicy({
+      policy: {},
+      machine: {
+        installedHosts: ['cursor'],
+        agentBrowserAvailable: false,
+        aiqAvailable: false,
+        hasUserFacingUi: false,
+        liveModels: { cursor: ['gpt-5.6-luna-high'] },
+      },
+      repoRoot: null,
+      fromAdopted: false,
+    });
+    assert.equal(policy.reviewMode, 'isolated');
+    assert.equal(policy.reviewRoute.host, 'cursor');
+    assert.deepEqual(policy.reviewModels.review.cursor, { model: 'gpt-5.6-luna-high', effort: null });
   });
 
   it('does not default Grok review to grok-4.5 and leaves Quality Control off without AIQ', () => {

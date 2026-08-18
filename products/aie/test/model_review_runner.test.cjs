@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { execFileSync } = require('node:child_process');
+const { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -16,6 +17,8 @@ const {
   runModelReview,
   runModelRouteProcess,
   resolveWindowsNodeShim,
+  resolveModelReviewCheckoutState,
+  watchModelReviewCheckout,
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok-build') {
@@ -230,6 +233,7 @@ describe('model review runner', () => {
     assert.equal(invocation.stdin, prompt);
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);
+    assert.match(prompt, /If a PowerShell built-in module fails to load/);
     // The prompt must state the exact verdict-consistency and progress-snapshot
     // rules the strict validator enforces, or hosts fail on rules they never saw.
     assert.match(prompt, /Verdict consistency is validated after generation/);
@@ -292,6 +296,7 @@ describe('model review runner', () => {
       const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
       assert.equal(raw.headSha, 'abc123');
       assert.equal(raw.reasonCode, 'model-route-contract-mismatch');
+      assert.match(raw.diagnostic, /did not match/);
       assert.ok(typeof raw.stdout === 'string' && raw.stdout.length > 0);
       // Uppercase digests are rejected exactly as laneArtifactViolation rejects them.
       const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
@@ -454,6 +459,41 @@ describe('model review runner', () => {
     assert.equal(result.reasonCode, null);
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'passed');
+  });
+
+  it('repeats the coverage consistency check immediately before terminal output', () => {
+    const prompt = buildModelReviewPrompt(reviewInput('C:\\repo'));
+    assert.match(prompt, /--- EXACT QUBE LANE PROMPT END ---\nFINAL OUTPUT CHECK:/);
+    assert.match(prompt, /coverage area with one or more findings must use status "finding"/);
+    assert.ok(prompt.endsWith('emit exactly one terminal JSON object.'));
+  });
+
+  it('does not treat policy-matching source text from a failed inspection command as a host fault', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-regex-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-policy-regex' }),
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              exit_code: 1,
+              aggregated_output: '721: return /blocked by policy|rejected:\\s*blocked/i.test(inspectionPolicyHaystack(result));',
+            },
+          }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(result.reasonCode, null);
+    assert.notEqual(result.evidence, null);
   });
 
   it('rejects a structured failed command that reports a policy block', async () => {
@@ -724,6 +764,61 @@ describe('model review runner', () => {
     assert.equal(codexProgressThenFinal.error, null);
     assert.equal(codexProgressThenFinal.evidence.status, 'passed');
 
+    const attestedProgress = {
+      ...laneResult(),
+      status: 'inconclusive',
+      severity: 'none',
+      recommendation: 'inconclusive',
+      summary: 'Review not started.',
+      blockers: [],
+      findings: [],
+      coverage: [{ area: 'code-quality', status: 'not-inspected' }],
+      completeness: 'Not inspected.',
+    };
+    const secondAttestedProgress = {
+      ...attestedProgress,
+      summary: 'Inspecting the requested delta and its performance-sensitive call paths.',
+      completeness: 'Security inspection is not complete.',
+    };
+    const attestedProgressThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(attestedProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(secondAttestedProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(attestedProgressThenFinal.error, null);
+    assert.equal(attestedProgressThenFinal.evidence.status, 'passed');
+
+    const substantiveInconclusive = {
+      ...attestedProgress,
+      summary: 'Review not complete because the dependency contract could not be inspected.',
+      completeness: 'Inspection not yet complete because the dependency source was unavailable.',
+    };
+    const inconclusiveThenFinal = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(substantiveInconclusive) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(inconclusiveThenFinal.reasonCode, 'model-route-multiple-terminal');
+
     const multipleFinalObjects = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
@@ -911,6 +1006,30 @@ describe('model review runner', () => {
     });
     assert.equal(checkoutMismatch.reasonCode, 'model-route-checkout-mismatch');
 
+    const checkoutStates = ['before', 'after'];
+    const checkoutContentsChanged = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveCheckoutState: async () => checkoutStates.shift(),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'drift' }) }),
+    });
+    assert.equal(checkoutContentsChanged.reasonCode, 'model-route-checkout-mismatch');
+    assert.match(checkoutContentsChanged.error, /contents changed/);
+
+    let monitorClosed = false;
+    const watchedChange = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      watchCheckout: () => ({
+        close: () => { monitorClosed = true; },
+        violation: () => 'ignored-cache/large.bin',
+      }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'watched-drift' }) }),
+    });
+    assert.equal(watchedChange.reasonCode, 'model-route-checkout-mismatch');
+    assert.match(watchedChange.error, /ignored-cache\/large\.bin/);
+    assert.equal(monitorClosed, true);
+
     const promptFailure = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       resolveExecutable: async () => 'grok.exe',
@@ -948,6 +1067,70 @@ describe('model review runner', () => {
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(directoryArtifact), sessionId: 'directory' }) }),
     });
     assert.equal(directoryEvidence.reasonCode, 'model-route-contract-mismatch');
+  });
+
+  it('detects content changes when a tracked file was already dirty', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-content-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'dirty before review\n');
+    const before = await resolveModelReviewCheckoutState(repoRoot);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'changed during review\n');
+    const after = await resolveModelReviewCheckoutState(repoRoot);
+    assert.notEqual(after, before);
+  });
+
+  it('detects a tracked file that is modified and restored during review', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-restored-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    const trackedFile = join(repoRoot, 'tracked.txt');
+    writeFileSync(trackedFile, 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    const committedMtime = statSync(trackedFile).mtime;
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      writeFileSync(trackedFile, 'transient change\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      writeFileSync(trackedFile, 'committed\n');
+      utimesSync(trackedFile, committedMtime, committedMtime);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.match(monitor.violation(), /tracked\.txt/);
+    } finally {
+      monitor.close();
+    }
+  });
+
+  it('detects content changes inside ignored directories without scanning their contents', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-ignored-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, '.gitignore'), '.env\nignored-cache/\n');
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    mkdirSync(join(repoRoot, 'ignored-cache'));
+    mkdirSync(join(repoRoot, '.git', 'qube', 'aie', 'model-route'), { recursive: true });
+    const ignoredFile = join(repoRoot, 'ignored-cache', 'large.bin');
+    writeFileSync(ignoredFile, 'before\n');
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      writeFileSync(join(repoRoot, '.git', 'qube', 'aie', 'model-route', 'lane.json'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.equal(monitor.violation(), null);
+      writeFileSync(ignoredFile, 'after!\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.match(monitor.violation(), /ignored-cache/);
+    } finally {
+      monitor.close();
+    }
   });
 
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {

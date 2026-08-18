@@ -168,6 +168,14 @@
       "selectedVersion": "0.1.5"
     },
     {
+      "name": "@tjalve/qube-adapter-cursor",
+      "packageJson": "adapters/cursor/package.json",
+      "published": false,
+      "latestPublished": null,
+      "publishedVersions": [],
+      "selectedVersion": "0.1.0"
+    },
+    {
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
       "published": true,

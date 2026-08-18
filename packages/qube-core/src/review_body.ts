@@ -338,6 +338,7 @@ function wrapCollapsed(profile: ReviewRenderCapabilityProfile, title: string, co
 
 export function reviewHostDisplayName(host: string): string {
   if (host === "grok" || host === "grok-build") return "Grok Build";
+  if (host === "cursor") return "Cursor";
   if (host === "claude-code") return "Claude Code";
   if (host === "opencode") return "OpenCode";
   if (host === "codex") return "Codex";

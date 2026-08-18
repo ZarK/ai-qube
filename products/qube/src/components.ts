@@ -1,6 +1,7 @@
 import {
   claudeCodeAdapterContract,
   codexAdapterContract,
+  cursorAdapterContract,
   grokBuildAdapterContract,
   gitLabAdapterContract,
   githubAdapterContract,
@@ -137,6 +138,7 @@ export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freez
   adapterOption(codexAdapterContract, "installed", "Codex host capability reporting uses the Codex adapter contract and AGENTS.md host profile."),
   adapterOption(claudeCodeAdapterContract, "installed", "Claude Code host capability reporting uses the Claude Code adapter contract."),
   adapterOption(grokBuildAdapterContract, "optional", "Grok Build host capability reporting uses the Grok Build adapter contract."),
+  adapterOption(cursorAdapterContract, "optional", "Cursor supplies isolated read-only review compute through the official CLI."),
   adapterOption(opencodeAdapterContract, "optional", "OpenCode host capability reporting uses the OpenCode adapter contract and remains explicit about unsupported PR and branch mutations."),
 ]);
 

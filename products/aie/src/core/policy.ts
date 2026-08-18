@@ -49,7 +49,7 @@ export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
 export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
 export type ReviewModelTierId = 'review' | 'economy' | 'synthesis';
-export const REVIEW_MODEL_HOST_IDS = ['codex', 'claude-code', 'opencode', 'grok-build'] as const;
+export const REVIEW_MODEL_HOST_IDS = ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'] as const;
 export type ReviewModelHostId = (typeof REVIEW_MODEL_HOST_IDS)[number];
 export type ReviewModelEffort = 'low' | 'medium' | 'high';
 // Runtime-validated against the review host adapter registry

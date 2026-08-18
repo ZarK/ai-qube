@@ -101,7 +101,7 @@ const offlineFlag = defineFlag({
 
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
-type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build";
+type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
 type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
 type InstallCiProvider = "github" | "gitlab" | "jenkins" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
@@ -436,6 +436,7 @@ const installOptionLabels: Readonly<Record<string, string>> = Object.freeze({
   "opencode": "OpenCode",
   "claude-code": "Claude Code",
   "grok-build": "Grok Build",
+  cursor: "Cursor",
   "github": "GitHub",
   "gitlab": "GitLab",
   "linear": "Linear",
@@ -5659,7 +5660,7 @@ function createInstallConnections(selections: InstallSelections): readonly Conne
   return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
 }
 
-const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code", "grok-build"] as const);
+const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code", "grok-build", "cursor"] as const);
 const AIE_INIT_ALL_TOOLS = Object.freeze(["opencode", "codex", "claude-code"] as const);
 type AieInitHostTool = (typeof AIE_INIT_HOST_TOOLS)[number];
 type AieInitTool = AieInitHostTool | "all" | "all,grok-build" | `${AieInitHostTool},${string}`;
@@ -5670,6 +5671,7 @@ function mapSelectedInitTools(hosts: readonly InstallHost[]): Set<AieInitHostToo
     if (host === "claude-code") mapped.add("claude-code");
     else if (host === "codex") mapped.add("codex");
     else if (host === "grok-build") mapped.add("grok-build");
+    else if (host === "cursor") mapped.add("cursor");
     else if (host === "opencode") mapped.add("opencode");
   }
   return mapped;
@@ -5694,7 +5696,7 @@ function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieI
   if (hasClassicAllTools(mapped)) return Object.freeze(["all"]);
   const tools: AieInitTool[] = [];
   for (const tool of AIE_INIT_HOST_TOOLS) {
-    if (mapped.has(tool)) tools.push(tool);
+    if (tool !== "cursor" && mapped.has(tool)) tools.push(tool);
   }
   return Object.freeze(tools);
 }

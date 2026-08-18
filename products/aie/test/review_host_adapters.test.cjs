@@ -33,13 +33,15 @@ function fakeAdapter(overrides = {}) {
 }
 
 describe('review host adapter registry', () => {
-  it('lists and resolves the Codex and Grok Build package adapters', () => {
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
+  it('lists and resolves the packaged review host adapters', () => {
+    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'cursor', 'grok-build']);
     assert.equal(isRegisteredReviewHost('codex'), true);
     assert.equal(isRegisteredReviewHost('grok-build'), true);
+    assert.equal(isRegisteredReviewHost('cursor'), true);
     assert.equal(isRegisteredReviewHost('unknown-host'), false);
     assert.equal(getReviewHostAdapter('codex').id, 'codex');
     assert.equal(getReviewHostAdapter('grok-build').id, 'grok-build');
+    assert.equal(getReviewHostAdapter('cursor').id, 'cursor');
   });
 
   it('rejects an unregistered host id with a named reason', () => {
@@ -72,14 +74,14 @@ describe('review host adapter registry', () => {
     assert.equal(isRegisteredReviewHost('fake-review-host'), false);
   });
 
-  it('restores the registered Codex and Grok Build adapters after reset', () => {
+  it('restores the packaged adapters after reset', () => {
     registerReviewHostAdapterForTests(fakeAdapter({ id: 'another-fake-host' }));
     try {
       assert.ok(listReviewHostIds().includes('another-fake-host'));
     } finally {
       resetReviewHostAdaptersForTests();
     }
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'grok-build']);
+    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'cursor', 'grok-build']);
   });
 
   it('parses a Grok json-schema envelope when text is already an object', () => {
@@ -124,9 +126,10 @@ describe('review host adapter registry', () => {
     }), null);
   });
 
-  it('reports no missing capabilities for the packaged Codex and Grok Build adapters', () => {
+  it('reports no missing capabilities for the packaged adapters', () => {
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('codex')), []);
     assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('grok-build')), []);
+    assert.deepEqual(missingReviewHostCapabilities(getReviewHostAdapter('cursor')), []);
   });
 
   it('names every required capability the adapter does not declare', () => {

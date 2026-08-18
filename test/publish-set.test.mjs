@@ -30,8 +30,8 @@ describe("publish set finalization", () => {
     const plan = finalizePublishPlan(resolved, publishedByName);
     assert.equal(plan.packages.length, 1);
     assert.equal(plan.packages[0].packageKey, "qube");
-    assert.equal(plan.verifyPackages.length, 16);
-    assert.equal(plan.skipped.length, 15);
+    assert.equal(plan.verifyPackages.length, resolved.packages.length);
+    assert.equal(plan.skipped.length, resolved.packages.length - 1);
     assert.equal(plan.skipped.every(entry => entry.skipReason === "already-published"), true);
     assert.equal(plan.verifyPackages.some(entry => entry.packageKey === "aie"), true);
   });
@@ -102,5 +102,14 @@ describe("publish set finalization", () => {
     }, relativePath => manifests[relativePath]);
     assert.equal(behind.length, 1);
     assert.match(behind[0], /must not be behind/);
+  });
+
+  it("rejects a publishable package missing from the version audit", () => {
+    const failures = collectVersionAuditFailures(
+      { packages: [] },
+      () => { throw new Error("unexpected manifest read"); },
+      [{ packageJson: "adapters/cursor/package.json" }]
+    );
+    assert.deepEqual(failures, ["adapters/cursor/package.json: publishable package is missing from docs/release/version-audit.json"]);
   });
 });

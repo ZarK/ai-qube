@@ -779,8 +779,12 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewLanes.find(lane => lane.id === 'code-quality').route = { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 };
     config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'high' };
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+    const resolvedHosts = [];
 
-    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec, includeLocalReviewPrompts: true });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec, includeLocalReviewPrompts: true, resolveModelHost: async host => {
+      resolvedHosts.push(host);
+      return `${host}.exe`;
+    } });
 
     assert.equal(result.localReviewRunner.status, 'planned');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route));
@@ -791,6 +795,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.host, 'grok-build');
     assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.model, 'grok-4.5');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route.isolation === 'read-only'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.resolvedExecutable === `${lane.route.host}.exe`));
+    assert.deepEqual(resolvedHosts.sort(), ['codex', 'grok-build']);
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.promptStackHash.length === 64));
   });
 

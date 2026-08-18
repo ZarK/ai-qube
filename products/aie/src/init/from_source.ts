@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { AIE_CONFIG_FILENAME, validateConfig } from '../config/index.js';
-import { MODEL_ROUTING_HOSTS, type ModelRoutingHostId } from '../core/model_routing.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId } from '../core/policy.js';
 import { isReviewMode } from '../review_mode.js';
 import { isolatedReviewHostPackageName } from '../app/review_host_adapters.js';
 import { isolatedReviewHostsOnMachine, type GuideMachine } from './questions.js';
@@ -229,15 +229,15 @@ export function adjustAdoptedRecord(record: Record<string, unknown>, machine: Gu
   for (const tierName of ['review', 'economy', 'synthesis'] as const) {
     const tier = isPlainObject(models[tierName]) ? models[tierName] : undefined;
     if (!tier) continue;
-    for (const host of MODEL_ROUTING_HOSTS) {
+    for (const host of REVIEW_MODEL_HOST_IDS) {
       if (tier[host] === undefined) continue;
       if (isolatedReviewHostPackageName(host)) {
-        if (isolatedReviewHostsOnMachine(machine).includes(host as ModelRoutingHostId)) continue;
+        if (isolatedReviewHostsOnMachine(machine).includes(host as ReviewModelHostId)) continue;
         delete tier[host];
         adjustments.push(`Removed ${tierName} model binding for ${host} because that isolated review host adapter is not installed.`);
         continue;
       }
-      if (machine.installedHosts.includes(host as ModelRoutingHostId)) continue;
+      if (machine.installedHosts.includes(host as ReviewModelHostId)) continue;
       delete tier[host];
       adjustments.push(`Removed ${tierName} model binding for ${host} because that host is not installed on this machine.`);
     }
