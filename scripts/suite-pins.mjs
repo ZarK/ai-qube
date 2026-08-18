@@ -2,6 +2,8 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { inspectAdapterPins, writeAdapterPins } from "./adapter-pins.mjs";
+
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const QUBE_PACKAGE_JSON = "products/qube/package.json";
 const AIB_PACKAGE_JSON = "products/aib/package.json";
@@ -131,6 +133,8 @@ export function inspectSuitePins(root, options = {}) {
   }
 
   const failures = [];
+  const adapterPins = inspectAdapterPins(root, options.adapterPackages);
+  if (!adapterPins.ok) failures.push(adapterPins.failure);
   const expectedPins = {};
   for (const pin of COMPOSER_PINS) {
     const expected = workspaceVersions.get(pin.name);
@@ -154,6 +158,11 @@ export function inspectSuitePins(root, options = {}) {
     aibVersion: aib.version,
     aieVersion: aie.version,
     resolvedAie,
+    adapterPins: {
+      ok: adapterPins.ok,
+      changed: adapterPins.changed,
+      outputPath: adapterPins.outputPath,
+    },
   };
 }
 
@@ -165,6 +174,7 @@ export function alignSuitePins(root, options = {}) {
   const aib = readJson(root, AIB_PACKAGE_JSON);
   const aie = readJson(root, AIE_PACKAGE_JSON);
   const changed = [];
+  const adapterPinsChanged = inspection.adapterPins.changed;
 
   const aiePublished = isPublished("@tjalve/aie", aie.version, audit, publishedByName);
   const aibPublished = isPublished("@tjalve/aib", aib.version, audit, publishedByName);
@@ -185,15 +195,16 @@ export function alignSuitePins(root, options = {}) {
   }
 
   const qubePublished = isPublished("@tjalve/qube", qube.version, audit, publishedByName);
-  if ((pinsChanged || changed.length > 0) && qubePublished) {
+  if ((pinsChanged || adapterPinsChanged || changed.length > 0) && qubePublished) {
     qube.version = bumpPatch(qube.version);
     changed.push({ name: "@tjalve/qube", version: qube.version });
   }
   if (pinsChanged || changed.some(item => item.name === "@tjalve/qube")) {
     writeJson(root, QUBE_PACKAGE_JSON, qube);
   }
+  const adapterPins = writeAdapterPins(root, options.adapterPackages);
 
-  if (changed.length > 0 || pinsChanged) {
+  if (changed.length > 0 || pinsChanged || adapterPins.wrote) {
     for (const entry of audit.packages ?? []) {
       if (entry.name === "@tjalve/aib") entry.selectedVersion = aib.version;
       if (entry.name === "@tjalve/qube") entry.selectedVersion = qube.version;
@@ -205,15 +216,16 @@ export function alignSuitePins(root, options = {}) {
   return {
     ...after,
     changed,
-    wrote: changed.length > 0 || pinsChanged,
+    wrote: changed.length > 0 || pinsChanged || adapterPins.wrote,
   };
 }
 
 function printHelp() {
   process.stdout.write(`Usage: node scripts/suite-pins.mjs [--check|--write] [--json] [--repo-root <dir>]
 
-Check that composer pins match workspace versions. --write rewrites drifted
-pins and bumps only products that would otherwise republish an already-public version.
+Check that composer and generated adapter pins match workspace versions. --write
+rewrites drifted pins and bumps only products that would otherwise republish an
+already-public version.
 `);
 }
 

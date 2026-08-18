@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ADAPTER_PACKAGES, readCatalogManifests } from "../../../scripts/workspace-packages.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const packageJson = JSON.parse(readFileSync(`${packageRoot}/package.json`, "utf8"));
 
 const componentCatalog = [
@@ -38,17 +40,9 @@ export const expectedComponentRows = componentFixtures.map(({ id, command, name,
 export const aibVersion = dependencyVersion("@tjalve/aib");
 export const aieVersion = dependencyVersion("@tjalve/aie");
 
-export const adapterPackageVersions = Object.freeze({
-  "@tjalve/qube-adapter-claude-code": "0.1.4",
-  "@tjalve/qube-adapter-codex": "0.1.6",
-  "@tjalve/qube-adapter-github": "0.1.5",
-  "@tjalve/qube-adapter-gitlab": "0.1.5",
-  "@tjalve/qube-adapter-jenkins": "0.1.4",
-  "@tjalve/qube-adapter-jira": "0.1.4",
-  "@tjalve/qube-adapter-linear": "0.1.4",
-  "@tjalve/qube-adapter-opencode": "0.1.4",
-  "@tjalve/qube-adapter-grok-build": "0.1.5"
-});
+export const adapterPackageVersions = Object.freeze(Object.fromEntries(
+  readCatalogManifests(repoRoot, ADAPTER_PACKAGES).map(entry => [entry.name, entry.version])
+));
 
 export function qubePnpmAddCommandWith(...adapterNames) {
   const specs = [

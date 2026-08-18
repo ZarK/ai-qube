@@ -2,20 +2,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ADAPTER_PACKAGES } from "./workspace-packages.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const buildQubeCore = "pnpm --filter @tjalve/qube-core run build";
-const buildGitHubAdapter = "pnpm --filter @tjalve/qube-adapter-github run build";
-const buildCodexAdapter = "pnpm --filter @tjalve/qube-adapter-codex run build";
-const buildClaudeCodeAdapter = "pnpm --filter @tjalve/qube-adapter-claude-code run build";
-const buildOpenCodeAdapter = "pnpm --filter @tjalve/qube-adapter-opencode run build";
-const buildGitLabAdapter = "pnpm --filter @tjalve/qube-adapter-gitlab run build";
-const buildLinearAdapter = "pnpm --filter @tjalve/qube-adapter-linear run build";
-const buildJiraAdapter = "pnpm --filter @tjalve/qube-adapter-jira run build";
-const buildJenkinsAdapter = "pnpm --filter @tjalve/qube-adapter-jenkins run build";
-const buildGrokBuildAdapter = "pnpm --filter @tjalve/qube-adapter-grok-build run build";
 const buildQubeCli = "pnpm --filter @tjalve/qube-cli run build";
-const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildGitLabAdapter} && ${buildLinearAdapter} && ${buildJiraAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildOpenCodeAdapter} && ${buildGrokBuildAdapter} && ${buildQubeCli}`;
+const buildAdapters = ADAPTER_PACKAGES.map(entry => `pnpm --filter ${entry.name} run build`).join(" && ");
+const buildAieDependencies = `${buildQubeCore} && ${buildAdapters} && ${buildQubeCli}`;
 const buildAiqDependencies = `${buildAieDependencies} && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build`;
 
 function adapterEntry(filter, packageJson) {
@@ -36,51 +30,11 @@ export const PUBLISH_PACKAGES = Object.freeze(new Map([
     verify: "pnpm --filter @tjalve/qube-core run verify",
     command: null,
   }],
-  ["qube-adapter-github", {
-    ...adapterEntry("@tjalve/qube-adapter-github", "adapters/github/package.json"),
-    path: "adapters/github",
+  ...ADAPTER_PACKAGES.map(entry => [entry.key, {
+    ...adapterEntry(entry.name, entry.packageJson),
+    path: entry.path,
     command: null,
-  }],
-  ["qube-adapter-codex", {
-    ...adapterEntry("@tjalve/qube-adapter-codex", "adapters/codex/package.json"),
-    path: "adapters/codex",
-    command: null,
-  }],
-  ["qube-adapter-opencode", {
-    ...adapterEntry("@tjalve/qube-adapter-opencode", "adapters/opencode/package.json"),
-    path: "adapters/opencode",
-    command: null,
-  }],
-  ["qube-adapter-claude-code", {
-    ...adapterEntry("@tjalve/qube-adapter-claude-code", "adapters/claude-code/package.json"),
-    path: "adapters/claude-code",
-    command: null,
-  }],
-  ["qube-adapter-gitlab", {
-    ...adapterEntry("@tjalve/qube-adapter-gitlab", "adapters/gitlab/package.json"),
-    path: "adapters/gitlab",
-    command: null,
-  }],
-  ["qube-adapter-linear", {
-    ...adapterEntry("@tjalve/qube-adapter-linear", "adapters/linear/package.json"),
-    path: "adapters/linear",
-    command: null,
-  }],
-  ["qube-adapter-jira", {
-    ...adapterEntry("@tjalve/qube-adapter-jira", "adapters/jira/package.json"),
-    path: "adapters/jira",
-    command: null,
-  }],
-  ["qube-adapter-jenkins", {
-    ...adapterEntry("@tjalve/qube-adapter-jenkins", "adapters/jenkins/package.json"),
-    path: "adapters/jenkins",
-    command: null,
-  }],
-  ["qube-adapter-grok-build", {
-    ...adapterEntry("@tjalve/qube-adapter-grok-build", "adapters/grok-build/package.json"),
-    path: "adapters/grok-build",
-    command: null,
-  }],
+  }]),
   ["qube-cli", {
     filter: "@tjalve/qube-cli",
     path: "packages/qube-cli",
@@ -134,15 +88,7 @@ export const PUBLISH_PACKAGES = Object.freeze(new Map([
 export const PUBLISH_SET_ORDER = Object.freeze([
   "qube-core",
   "qube-cli",
-  "qube-adapter-github",
-  "qube-adapter-codex",
-  "qube-adapter-opencode",
-  "qube-adapter-claude-code",
-  "qube-adapter-gitlab",
-  "qube-adapter-linear",
-  "qube-adapter-jira",
-  "qube-adapter-jenkins",
-  "qube-adapter-grok-build",
+  ...ADAPTER_PACKAGES.map(entry => entry.key),
   "aib",
   "aie",
   "aiu",

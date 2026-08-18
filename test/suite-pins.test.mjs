@@ -11,6 +11,8 @@ import {
   inspectSuitePins,
   resolveSuiteRoot,
 } from "../scripts/suite-pins.mjs";
+import { inspectAdapterPins, renderAdapterPins, writeAdapterPins } from "../scripts/adapter-pins.mjs";
+import { ADAPTER_PACKAGES, validatePackageCatalog } from "../scripts/workspace-packages.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -38,6 +40,10 @@ function writeSuiteFixture(overrides = {}) {
   writePackage(root, "products/aiu/package.json", "@tjalve/aiu", "0.0.7");
   writePackage(root, "packages/qube-cli/package.json", "@tjalve/qube-cli", "0.2.1");
   writePackage(root, "packages/qube-core/package.json", "@tjalve/qube-core", "0.2.3");
+  for (const entry of ADAPTER_PACKAGES) {
+    writePackage(root, entry.packageJson, entry.name, overrides.adapterVersions?.[entry.name] ?? "0.1.0");
+  }
+  writeAdapterPins(root);
   mkdirSync(path.join(root, "docs", "release"), { recursive: true });
   writeFileSync(path.join(root, "docs/release/version-audit.json"), `${JSON.stringify({
     packages: [
@@ -94,6 +100,68 @@ describe("suite pins", () => {
       assert.equal(report.expectedPins["@tjalve/aib"], "0.2.6");
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails stale generated adapter pins and rewrites them with the release pins", () => {
+    const root = writeSuiteFixture();
+    const github = ADAPTER_PACKAGES.find(entry => entry.name === "@tjalve/qube-adapter-github");
+    try {
+      writePackage(root, github.packageJson, github.name, "0.1.1");
+      const stale = inspectSuitePins(root);
+      assert.equal(stale.ok, false);
+      assert.match(stale.failures.join("\n"), /adapter_versions\.generated\.ts is stale/);
+
+      const report = alignSuitePins(root, {
+        publishedByName: new Map([
+          ["@tjalve/qube", ["0.2.6"]],
+          ["@tjalve/aib", []],
+          ["@tjalve/aie", []],
+        ]),
+      });
+      assert.equal(report.ok, true, report.failures.join("\n"));
+      assert.equal(report.qubeVersion, "0.2.7");
+      assert.equal(report.adapterPins.ok, true);
+      assert.match(renderAdapterPins(root), /"@tjalve\/qube-adapter-github": "0\.1\.1"/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("generates a newly cataloged adapter without a second version table", () => {
+    const root = writeSuiteFixture();
+    const added = {
+      key: "qube-adapter-example",
+      name: "@tjalve/qube-adapter-example",
+      path: "adapters/example",
+      packageJson: "adapters/example/package.json",
+    };
+    try {
+      writePackage(root, added.packageJson, added.name, "1.2.3");
+      const entries = [...ADAPTER_PACKAGES, added];
+      const output = renderAdapterPins(root, entries);
+      assert.match(output, /"@tjalve\/qube-adapter-example": "1\.2\.3"/);
+      assert.equal(writeAdapterPins(root, entries).wrote, true);
+      assert.equal(inspectAdapterPins(root, entries).ok, true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate catalog rows, missing manifests, and non-exact versions", () => {
+    assert.throws(() => validatePackageCatalog([ADAPTER_PACKAGES[0], ADAPTER_PACKAGES[0]]), {
+      reasonCode: "duplicate-catalog-entry",
+    });
+    const missingRoot = writeSuiteFixture();
+    const invalidRoot = writeSuiteFixture();
+    try {
+      rmSync(path.join(missingRoot, ADAPTER_PACKAGES[0].packageJson));
+      assert.throws(() => renderAdapterPins(missingRoot), { reasonCode: "invalid-package-path" });
+      writePackage(invalidRoot, ADAPTER_PACKAGES[0].packageJson, ADAPTER_PACKAGES[0].name, "workspace:*");
+      assert.throws(() => renderAdapterPins(invalidRoot), { reasonCode: "invalid-version" });
+    } finally {
+      rmSync(missingRoot, { recursive: true, force: true });
+      rmSync(invalidRoot, { recursive: true, force: true });
     }
   });
 
