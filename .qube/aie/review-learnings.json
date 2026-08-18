@@ -14,6 +14,20 @@
       "prNumber": 486,
       "headSha": "4f10e861cbe14d4106f46c5fb8814632c4e0d99f",
       "recordedAt": "2026-08-13T10:04:45.935Z"
+    },
+    {
+      "id": "learning:16685090bbe6",
+      "disposition": "rejected",
+      "findingId": "IC-001",
+      "lane": "issue-compliance",
+      "message": "Violates acceptance criterion #9: on Linux, where the Cursor README says review lanes are supported, runModelReview calls watchModelReviewCheckout before resolving or launching the host. watchModelReviewCheckout unconditionally calls fs.watch(repoRoot, { recursive: true }); Node's recursive fs.watch support is not available on Linux, so this throws and the surrounding runModelReview catch returns model-route-unavailable instead of running the fresh Cursor lane. The concrete outcome is that every Linux routed review fails before Cursor invocation or provider publication.",
+      "guidance": "QUBE requires Node 24 or newer. Recursive fs.watch support on Linux was added in Node 19.1, and the ignored-directory monitor test exercises this path in Linux CI. Do not report Linux as unsupported unless the required Node engine is lowered or a current supported-runtime test fails.",
+      "paths": [
+        "products/aie/src/app/model_review_runner.ts"
+      ],
+      "prNumber": 617,
+      "headSha": "f13ba5edd5e7a01e1fb9eefc8e36bd83fd4cba2b",
+      "recordedAt": "2026-08-18T18:13:33.207Z"
     }
   ]
 }

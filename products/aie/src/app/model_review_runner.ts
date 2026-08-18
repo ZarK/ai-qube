@@ -799,6 +799,9 @@ export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutM
   const changedPaths = new Set<string>();
   const startedAt = Date.now();
   let watchError: string | null = null;
+  // QUBE requires Node 24 or newer. Recursive Linux watching has been
+  // supported since Node 19.1; unavailable filesystem backends still fail
+  // closed through the surrounding runModelReview error boundary.
   const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (_eventType, filename) => {
     const path = filename === null ? null : String(filename);
     if (path === null || isInternalReviewPath(path)) return;

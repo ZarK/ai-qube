@@ -21,8 +21,9 @@ export function detectInstalledRoutingHostsOnPath(
 export function detectInstalledReviewHostsOnPath(
   lookup: (command: string) => boolean = commandExistsOnPath,
   platform: string = process.platform,
+  installedRoutingHosts: readonly ModelRoutingHostId[] = detectInstalledRoutingHosts(lookup),
 ): readonly ReviewModelHostId[] {
-  const routingHosts = new Set(detectInstalledRoutingHosts(lookup));
+  const routingHosts = new Set(installedRoutingHosts);
   return REVIEW_MODEL_HOST_IDS.filter(host => {
     if (routingHosts.has(host as ModelRoutingHostId)) return true;
     if (!isRegisteredReviewHost(host)) return false;

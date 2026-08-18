@@ -84,7 +84,7 @@ export async function runModelRoutingDoctor(
     return { status: "missing", summary: "This Executor package does not export model routing.", resolution: null };
   }
   const installed = detectInstalledRoutingHostsOnPath(lookup);
-  const installedReviewHosts = detectInstalledReviewHostsOnPath(lookup, platform);
+  const installedReviewHosts = detectInstalledReviewHostsOnPath(lookup, platform, installed);
   const resolution = resolveModelRouting(routing, reviewModels, installed, installedReviewHosts);
   if (installed.length === 0) {
     return {

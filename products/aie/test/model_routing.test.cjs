@@ -189,4 +189,15 @@ describe('installed host detection', () => {
     assert.deepEqual(installed, ['cursor']);
     assert.deepEqual(detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'win32'), []);
   });
+
+  it('reuses an existing delegated-host scan while discovering review-only hosts', () => {
+    const lookups = [];
+    const installed = detectInstalledReviewHostsOnPath(command => {
+      lookups.push(command);
+      return command === 'cursor-agent';
+    }, 'linux', ['codex']);
+
+    assert.deepEqual(installed, ['codex', 'cursor']);
+    assert.equal(lookups.includes('codex'), false);
+  });
 });
