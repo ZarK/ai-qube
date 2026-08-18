@@ -1060,7 +1060,7 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "primary-host",
-      description: "Primary modelRouting host: codex, claude-code, opencode, grok-build, or cursor. Must be installed.",
+      description: "Primary modelRouting host: codex, claude-code, opencode, or grok-build. Must be installed.",
       type: "string"
     }),
     defineFlag({
@@ -4367,7 +4367,7 @@ function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): st
   const installed = detectInstalledRoutingHostsOnPath();
   if (primaryHost) {
     if (!isModelRoutingHost(primaryHost)) {
-      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok-build, cursor.`;
+      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok-build.`;
     }
     if (!installed.includes(primaryHost)) {
       return `Host CLI for ${primaryHost} is not installed. Install and authenticate that host, or choose an installed host.`;
@@ -4378,7 +4378,7 @@ function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): st
     if (!value) continue;
     const host = value.split(":")[0];
     if (!isModelRoutingHost(host)) {
-      return `--${flag} must be host:model using codex, claude-code, opencode, grok-build, or cursor.`;
+      return `--${flag} must be host:model using codex, claude-code, opencode, or grok-build.`;
     }
     if (!installed.includes(host)) {
       return `Host CLI for ${host} is not installed. Install and authenticate that host, or choose an installed host.`;

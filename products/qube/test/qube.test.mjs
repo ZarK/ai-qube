@@ -3687,6 +3687,39 @@ describe("qube init composer orchestrator", () => {
     ]);
   });
 
+  it("keeps Cursor review-only in the top-level modelRouting contract", () => {
+    const schema = runCli(["schema", "--json"]);
+    assert.equal(schema.status, 0);
+    const parsedSchema = JSON.parse(schema.stdout);
+    const init = parsedSchema.commands.find(command => command.name === "init");
+    const primaryHost = init.flags.find(flag => flag.name === "primary-host");
+    assert.doesNotMatch(primaryHost.description, /cursor/i);
+
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-init-"));
+    const result = runCli([
+      "init", ".",
+      "--host", "cursor",
+      "--yes",
+      "--json",
+      "--primary-host", "cursor",
+      "--primary-model", "default",
+    ], { cwd });
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.match(String(parsed.error ?? result.stderr), /Use one of: codex, claude-code, opencode, grok-build\./);
+
+    const routeResult = runCli([
+      "init", ".",
+      "--host", "cursor",
+      "--yes",
+      "--json",
+      "--route-mechanical-implementation", "cursor:gpt-5.6-luna-high",
+    ], { cwd });
+    assert.notEqual(routeResult.status, 0);
+    const parsedRoute = JSON.parse(routeResult.stdout);
+    assert.match(String(parsedRoute.error ?? routeResult.stderr), /using codex, claude-code, opencode, or grok-build\./);
+  });
+
   it("refuses an uninstalled modelRouting host during init", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-routing-init-"));
     const result = runCli([
