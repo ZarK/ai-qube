@@ -236,5 +236,6 @@ describe("release preparation", () => {
     assert.throws(() => parseChangedPaths("../escape\0"), { reasonCode: "unsafe-changed-path" });
     assert.equal(compareVersions("0.2.8-rc.1", "0.2.8"), -1);
     assert.equal(compareVersions("0.2.10", "0.2.9"), 1);
+    assert.equal(compareVersions("1.0.0-B", "1.0.0-a"), -1);
   });
 });

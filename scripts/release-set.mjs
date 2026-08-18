@@ -57,7 +57,7 @@ export function inspectReleaseCheckout(root, git = { run: runGit }) {
       reasonCode: "not-main",
     });
   }
-  const status = git.run(["status", "--porcelain", "--untracked-files=no"], root);
+  const status = git.run(["status", "--porcelain", "--untracked-files=normal"], root);
   if (status.length > 0) {
     throw Object.assign(new Error("Release requires a clean tracked working tree on main."), {
       reasonCode: "dirty-worktree",

@@ -155,7 +155,8 @@ function compareIdentifiers(left, right) {
   const rightNumber = /^\d+$/.test(right);
   if (leftNumber && rightNumber) return Number(left) - Number(right);
   if (leftNumber !== rightNumber) return leftNumber ? -1 : 1;
-  return left.localeCompare(right);
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 export function compareVersions(left, right) {

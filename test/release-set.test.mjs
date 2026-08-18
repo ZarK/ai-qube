@@ -66,6 +66,18 @@ describe("release set", () => {
       },
     };
     assert.throws(() => inspectReleaseCheckout(repoRoot, dirty), { reasonCode: "dirty-worktree" });
+
+    const untracked = {
+      run(args) {
+        if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return "main";
+        if (args[0] === "status") {
+          assert.ok(args.includes("--untracked-files=normal"));
+          return "?? scratch.txt";
+        }
+        return "abc";
+      },
+    };
+    assert.throws(() => inspectReleaseCheckout(repoRoot, untracked), { reasonCode: "dirty-worktree" });
   });
 
   it("pushes the annotated set tag only from a clean current main", async () => {
