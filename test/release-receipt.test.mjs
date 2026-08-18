@@ -200,6 +200,12 @@ describe("staged release receipts", () => {
     }, planned), { reasonCode: "invalid-receipt" });
     assert.throws(() => resumeReceipt(checkpoint, {
       repository: "ZarK/ai-qube",
+      tag: "publish-set-v0.2.7-retry.1",
+      headSha,
+      runId: "100",
+    }, planned.slice(1)), { reasonCode: "invalid-receipt" });
+    assert.throws(() => resumeReceipt(checkpoint, {
+      repository: "ZarK/ai-qube",
       tag: "publish-set-v0.2.7",
       headSha,
       runId: "99",
@@ -269,6 +275,47 @@ describe("staged release receipts", () => {
     });
     assert.deepEqual(prepared.approvals.map(entry => entry.action), ["approve", "approve"]);
     assert.equal(calls.some(call => call === `merge-base --is-ancestor ${headSha} origin/main`), true);
+  });
+
+  it("binds retry approval to both immutable tags", async () => {
+    const retryTag = "publish-set-v0.2.7-retry.1";
+    const retryReceipt = createReceipt({
+      repository: "ZarK/ai-qube",
+      tag: retryTag,
+      headSha,
+      runId: "100",
+      runAttempt: "1",
+    }, planned.slice(1), staged.slice(1), true);
+    const calls = [];
+    const commands = {
+      gh(args) {
+        if (args[0] === "repo") return JSON.stringify({ nameWithOwner: "ZarK/ai-qube" });
+        if (args[1] === "list") return JSON.stringify([{
+          databaseId: 100,
+          headSha,
+          headBranch: retryTag,
+          status: "completed",
+          conclusion: "success",
+          createdAt: "2026-08-18T11:00:00Z",
+        }]);
+        return `${RECEIPT_MARKER}${encodeReceipt(retryReceipt)}`;
+      },
+      git(args) {
+        calls.push(args.join(" "));
+        if (args[0] === "rev-parse" && args[1] === "publish-set-v0.2.7^{commit}") return "b".repeat(40);
+        if (args[0] === "rev-parse") return headSha;
+        if (args[0] === "merge-base") return "";
+        return JSON.stringify({ name: "@tjalve/qube", version: "0.2.7" });
+      },
+      npm() { return JSON.stringify(stages().slice(1)); },
+    };
+    await prepareApproval(retryTag, {
+      commands,
+      fetch: async () => ({ status: 404, ok: false }),
+    });
+    assert.equal(calls.includes(`rev-parse ${retryTag}^{commit}`), true);
+    assert.equal(calls.includes("rev-parse publish-set-v0.2.7^{commit}"), true);
+    assert.equal(calls.includes(`merge-base --is-ancestor ${"b".repeat(40)} ${headSha}`), true);
   });
 
   it("rejects a successful run from another commit before reading npm stages", async () => {

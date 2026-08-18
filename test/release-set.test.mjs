@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
-import { inspectReleaseCheckout, parseReleaseArgs, planRelease, runRelease } from "../scripts/release-set.mjs";
+import { inspectReleaseCheckout, parseReleaseArgs, planRelease, planRetryTag, runRelease } from "../scripts/release-set.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const prepared = Object.freeze({ needsWrite: false, baselineTag: "publish-set-v0.2.8" });
@@ -45,6 +45,67 @@ describe("release set", () => {
       () => planRelease({ repoRoot, publishedByName: publishedMapFromWorkspace([]), preparation: prepared }),
       { reasonCode: "nothing-to-publish" }
     );
+  });
+
+  it("reports a brand-new package before release tag creation", async () => {
+    await assert.rejects(
+      () => planRelease({
+        repoRoot,
+        publishedByName: publishedMapFromWorkspace(["qube", "@tjalve/qube-adapter-cursor"]),
+        missingPackageNames: ["@tjalve/qube-adapter-cursor"],
+        preparation: prepared,
+      }),
+      error => error?.reasonCode === "package-bootstrap"
+        && /qube-adapter-cursor/.test(error.message)
+        && /one-time direct bootstrap/.test(error.message)
+    );
+  });
+
+  it("selects a new immutable retry tag after the original set tag", () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const originalTag = `publish-set-v${version}`;
+    const git = {
+      run(args) {
+        if (args[0] === "ls-remote" && args.at(-1) === `refs/tags/${originalTag}^{}`) {
+          return `tag-object\trefs/tags/${originalTag}\nbase-sha\trefs/tags/${originalTag}^{}`;
+        }
+        if (args[0] === "tag" && args[2] === originalTag) return originalTag;
+        if (args[0] === "rev-parse") return "base-sha";
+        if (args[0] === "merge-base") return "";
+        if (args[0] === "tag") return `${originalTag}-retry.1`;
+        if (args[0] === "ls-remote") return `retry-object\trefs/tags/${originalTag}-retry.2`;
+        return "";
+      },
+    };
+    assert.deepEqual(planRetryTag(repoRoot, version, git), {
+      originalTag,
+      originalCommit: "base-sha",
+      retry: 3,
+      tag: `${originalTag}-retry.3`,
+    });
+  });
+
+  it("plans only unpublished versions for a partial set retry", async () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const originalTag = `publish-set-v${version}`;
+    const git = {
+      run(args) {
+        if (args[0] === "ls-remote" && args.at(-1) === `refs/tags/${originalTag}^{}`) {
+          return `base-sha\trefs/tags/${originalTag}`;
+        }
+        if (args[0] === "merge-base") return "";
+        return "";
+      },
+    };
+    const report = await planRelease({
+      repoRoot,
+      retry: true,
+      publishedByName: publishedMapFromWorkspace(["qube"]),
+      git,
+    });
+    assert.equal(report.tag, `${originalTag}-retry.1`);
+    assert.deepEqual(report.packages.map(entry => entry.packageName), ["@tjalve/qube"]);
+    assert.equal(report.skipped.length > 0, true);
   });
 
   it("refuses to push from a dirty or non-main checkout", () => {
@@ -138,10 +199,11 @@ describe("release set", () => {
   });
 
   it("parses dry-run and rejects unknown flags", () => {
-    assert.deepEqual(parseReleaseArgs(["--dry-run", "--json"]), {
+    assert.deepEqual(parseReleaseArgs(["--retry", "--dry-run", "--json"]), {
       help: false,
       json: true,
       dryRun: true,
+      retry: true,
       repoRoot: undefined,
     });
     assert.throws(() => parseReleaseArgs(["--explode"]), { reasonCode: "usage" });

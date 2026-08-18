@@ -68,6 +68,13 @@ checkout. It also refuses to move an existing immutable set tag. The workflow
 repeats the preparation check, so a manually pushed incomplete set tag cannot
 bypass this control.
 
+Before tag creation, the release command also verifies that every package name
+exists on npm. npm staged publishing cannot create a package name. If a name is
+new, the command stops and identifies the package path and target version. Use
+the separately reviewed first-publish procedure below, configure the stage-only
+trusted publisher, and wait for the name to be readable from the registry before
+retrying the set.
+
 The workflow prepares the set, checks manifests and composer pins, packs every
 current workspace package from the checkout, installs those tarballs into a
 prefix outside the checkout, and fails if `qube`, `aie`, `aib`, `aiu`, or `aiq`
@@ -110,6 +117,24 @@ If approval is interrupted, run the same command again. A package is skipped onl
 when its public registry shasum matches the release receipt. Remaining matching
 stages continue in dependency order. Missing, stale, duplicate, or mismatched
 evidence fails closed before an approval call.
+
+If part of a set is approved before a later stage fails, keep the original tag
+unchanged. After fixing the release pipeline on `main`, run:
+
+```sh
+pnpm release --retry --dry-run
+pnpm release --retry
+```
+
+The retry command requires the original set tag on `origin`, verifies that it is
+an ancestor of current `main`, verifies that publishable package inputs have not
+changed since that tag, and creates the next unused immutable
+`publish-set-v<qube-version>-retry.<number>` tag. It refuses a retry when no set
+version is public, every set version is public, a package name is still missing,
+or a tag conflicts. The retry workflow excludes public exact versions and
+creates a fresh receipt bound to the retry tag, commit, workflow run, attempt,
+and ordered remaining package plan. A checkpoint from the original tag or a
+different retry cannot be restored.
 
 To publish one package in an emergency, use a package-specific tag:
 

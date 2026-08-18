@@ -7,8 +7,11 @@ import { describe, it } from "node:test";
 import { collectVersionAuditFailures } from "../scripts/check-version-audit.mjs";
 import {
   finalizePublishPlan,
+  inspectRetryContents,
+  parseSetPublishTag,
   readPublishedVersions,
   readPublishedVersionsForPlan,
+  readRegistryPackage,
   registryPackageUrl,
   resolvePublishTag,
 } from "../scripts/publish-packages.mjs";
@@ -38,6 +41,35 @@ describe("publish set finalization", () => {
     assert.equal(plan.verifyPackages.some(entry => entry.packageKey === "aie"), true);
   });
 
+  it("resolves retry tags to the original set version", async () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const resolved = await resolvePublishTag(`publish-set-v${version}-retry.2`, repoRoot);
+    assert.equal(resolved.mode, "set");
+    assert.equal(resolved.setVersion, version);
+    assert.equal(resolved.retry, 2);
+  });
+
+  it("does not confuse a semver prerelease with a retry suffix", () => {
+    assert.deepEqual(parseSetPublishTag("publish-set-v1.2.3-retry.1", "1.2.3-retry.1"), {
+      setVersion: "1.2.3-retry.1",
+      retry: null,
+      originalTag: "publish-set-v1.2.3-retry.1",
+    });
+    assert.deepEqual(parseSetPublishTag("publish-set-v1.2.3-retry.1-retry.2", "1.2.3-retry.1"), {
+      setVersion: "1.2.3-retry.1",
+      retry: 2,
+      originalTag: "publish-set-v1.2.3-retry.1",
+    });
+  });
+
+  it("rejects publishable input changes on a retry", async () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const resolved = await resolvePublishTag(`publish-set-v${version}-retry.1`, repoRoot);
+    assert.throws(() => inspectRetryContents(resolved, "original-sha", repoRoot, {
+      run() { throw new Error("changed"); },
+    }), { reasonCode: "retry-content-drift" });
+  });
+
   it("fails when the set has nothing to publish", async () => {
     const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
     const resolved = await resolvePublishTag(`publish-set-v${version}`, repoRoot);
@@ -64,6 +96,10 @@ describe("publish set finalization", () => {
       fetch: async () => ({ status: 404, ok: false }),
     });
     assert.deepEqual(missing, []);
+    const missingPackage = await readRegistryPackage("@tjalve/missing-package", {
+      fetch: async () => ({ status: 404, ok: false }),
+    });
+    assert.equal(missingPackage.exists, false);
 
     await assert.rejects(
       () => readPublishedVersions("@tjalve/qube", {
@@ -167,6 +203,45 @@ describe("publish set finalization", () => {
         prepareRelease: async () => ({ needsWrite: true }),
       }),
       { reasonCode: "release-unprepared" }
+    );
+  });
+
+  it("creates a fresh partial plan for a valid retry tag", async () => {
+    const version = JSON.parse(readFileSync(path.join(repoRoot, "products/qube/package.json"), "utf8")).version;
+    const tag = `publish-set-v${version}-retry.1`;
+    const resolved = await resolvePublishTag(tag, repoRoot);
+    const publishedByName = new Map(resolved.packages.map(entry => [
+      entry.packageName,
+      entry.packageKey === "qube" ? [] : [entry.version],
+    ]));
+    let prepared = false;
+    const gitCalls = [];
+    const plan = await resolvePublishPlan(tag, {
+      root: repoRoot,
+      publishedByName,
+      prepareRelease: async () => { prepared = true; return { needsWrite: false }; },
+      git: {
+        run(args) {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "rev-parse") return "original-sha";
+          return "";
+        },
+      },
+    });
+    assert.equal(prepared, false);
+    assert.deepEqual(plan.packages.map(entry => entry.packageKey), ["qube"]);
+    assert.equal(plan.skipped.length, resolved.packages.length - 1);
+    assert.equal(gitCalls.some(call => call === `rev-parse publish-set-v${version}^{commit}`), true);
+    assert.equal(gitCalls.some(call => call === "merge-base --is-ancestor original-sha HEAD"), true);
+
+    const unpublished = new Map(resolved.packages.map(entry => [entry.packageName, []]));
+    await assert.rejects(
+      () => resolvePublishPlan(tag, {
+        root: repoRoot,
+        publishedByName: unpublished,
+        git: { run: args => args[0] === "rev-parse" ? "original-sha" : "" },
+      }),
+      { reasonCode: "retry-unnecessary" }
     );
   });
 });
