@@ -50,7 +50,7 @@ export async function runPrThreadResolveService(options: PrThreadResolveOptions)
           exec: options.exec,
           mint: true,
         });
-        publisherLogin = resolved.identity.login;
+        publisherLogin = resolved.identity.login ?? publisherLogin;
       } catch {
         // Retain the trusted configured login when live identity resolution is unavailable.
       }
