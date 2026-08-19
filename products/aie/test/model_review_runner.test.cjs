@@ -787,8 +787,8 @@ describe('model review runner', () => {
     };
     const secondAttestedProgress = {
       ...attestedProgress,
-      summary: 'Inspecting the requested delta and its performance-sensitive call paths.',
-      completeness: 'Security inspection is not complete.',
+      summary: 'Review continues; the delta is limited to a test and no performance finding has been established.',
+      completeness: 'Delta inspection is in progress; changed test and directly invoked production probe code have been read. Focused verification remains.',
     };
     const attestedProgressThenFinal = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
