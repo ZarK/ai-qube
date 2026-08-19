@@ -83,6 +83,8 @@ const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecisio
 const MAX_RECENT_PR_LIMIT = 50;
 const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
 const MAX_LANE_HISTORY_RECORDS = 100;
+const MAX_REVIEW_THREAD_RESOLUTIONS = 100;
+const REVIEW_THREAD_MUTATION_CONCURRENCY = 4;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
@@ -2995,10 +2997,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
             round: input.round,
             dispositions: input.dispositions ?? {},
           });
+          const cleanupActions = lifecycleActions.filter((action) =>
+            action.kind === 'resolve' || action.kind === 'minimize-outdated');
           lifecycleFailure = await this.applyThreadLifecycle(
             repositoryName,
             input.prNumber,
-            lifecycleActions,
+            cleanupActions,
             publisher.identity,
           );
         } catch (error: unknown) {
@@ -3371,9 +3375,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       };
     }
     let prThreads: RawThreadNode[];
+    let repositoryName: string;
     try {
       const repository = await this.getRepositoryIdentity();
-      prThreads = await this.getUnresolvedThreads(repository.nameWithOwner, input.prNumber);
+      repositoryName = repository.nameWithOwner;
+      prThreads = await this.getUnresolvedThreads(repositoryName, input.prNumber);
     } catch {
       return {
         status: 'failed',
@@ -3397,22 +3403,63 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         nextAction: `No selected GitHub review thread ids belong to unresolved viewer-resolvable threads on PR #${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
       };
     }
-    const resolvedThreadIds: string[] = [];
+    if (selectedThreadIds.length > MAX_REVIEW_THREAD_RESOLUTIONS) {
+      return {
+        status: 'failed',
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds,
+        failedThreadIds: selectedThreadIds,
+        nextAction: `Selected ${selectedThreadIds.length} GitHub review threads, exceeding the bounded mutation limit of ${MAX_REVIEW_THREAD_RESOLUTIONS}. Resolve a smaller explicit thread selection; no review thread was mutated.`,
+      };
+    }
+    const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
-    for (const threadId of selectedThreadIds) {
-      const result = await this.resolveReviewThread(threadId);
-      if (result) resolvedThreadIds.push(threadId);
+    const mutationResults = new Array<boolean>(selectedThreadIds.length);
+    let nextThreadIndex = 0;
+    const mutationWorkers = Array.from(
+      { length: Math.min(REVIEW_THREAD_MUTATION_CONCURRENCY, selectedThreadIds.length) },
+      async () => {
+        while (nextThreadIndex < selectedThreadIds.length) {
+          const threadIndex = nextThreadIndex;
+          nextThreadIndex += 1;
+          mutationResults[threadIndex] = await this.resolveReviewThread(selectedThreadIds[threadIndex]);
+        }
+      },
+    );
+    await Promise.all(mutationWorkers);
+    for (const [threadIndex, threadId] of selectedThreadIds.entries()) {
+      if (mutationResults[threadIndex]) mutatedThreadIds.push(threadId);
       else failedThreadIds.push(threadId);
     }
-    const status: ResolveReviewThreadResult['status'] = failedThreadIds.length > 0 ? (resolvedThreadIds.length > 0 ? 'failed' : 'failed') : 'resolved';
+    const resolvedThreadIds: string[] = [];
+    let reconciliationFailed = false;
+    if (mutatedThreadIds.length > 0) {
+      try {
+        const observedThreads = await this.getReviewThreadsByIds(mutatedThreadIds);
+        const observedById = new Map(observedThreads.map(thread => [thread.id, thread]));
+        for (const threadId of mutatedThreadIds) {
+          if (observedById.get(threadId)?.isResolved === true) resolvedThreadIds.push(threadId);
+          else failedThreadIds.push(threadId);
+        }
+        reconciliationFailed = resolvedThreadIds.length !== mutatedThreadIds.length;
+      } catch {
+        failedThreadIds.push(...mutatedThreadIds);
+        reconciliationFailed = true;
+      }
+    }
+    const uniqueFailedThreadIds = [...new Set(failedThreadIds)];
+    const status: ResolveReviewThreadResult['status'] = uniqueFailedThreadIds.length > 0 ? 'failed' : 'resolved';
     return {
       status,
       prNumber: input.prNumber,
       resolvedThreadIds,
       skippedThreadIds,
-      failedThreadIds,
-      nextAction: failedThreadIds.length > 0
-        ? `Some GitHub review threads could not be resolved. Verify permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+      failedThreadIds: uniqueFailedThreadIds,
+      nextAction: uniqueFailedThreadIds.length > 0
+        ? reconciliationFailed
+          ? `GitHub did not confirm every selected review thread as resolved in the bounded post-mutation read. Rerun \`aie pr view ${input.prNumber} --json\`, then retry \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+          : `Some GitHub review threads could not be resolved. Verify permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
         : `Resolved ${resolvedThreadIds.length} GitHub review thread${resolvedThreadIds.length === 1 ? '' : 's'}${skippedThreadIds.length > 0 ? ` and skipped ${skippedThreadIds.length} id${skippedThreadIds.length === 1 ? '' : 's'} not resolvable on PR #${input.prNumber}` : ''}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
     };
   }
@@ -3650,6 +3697,21 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       cursor = page.pageInfo.endCursor;
     }
     return nodes;
+  }
+
+  private async getReviewThreadsByIds(threadIds: readonly string[]): Promise<RawThreadNode[]> {
+    if (threadIds.length === 0) return [];
+    const query = 'query($threadIds: [ID!]!) { nodes(ids: $threadIds) { ... on PullRequestReviewThread { id isResolved } } }';
+    const args = ['api', 'graphql', '-f', `query=${query}`];
+    for (const threadId of threadIds) args.push('-F', `threadIds[]=${threadId}`);
+    const result = await runGh(args, this.options);
+    ensureGhSuccess('gh api graphql exact review thread reconciliation', result);
+    const parsed = parseGhJson<{ data?: { nodes?: Array<RawThreadNode | null> | null } }>(
+      result.stdout,
+      'gh api graphql exact review thread reconciliation',
+      isRecord,
+    );
+    return (parsed.data?.nodes ?? []).filter((thread): thread is RawThreadNode => thread !== null);
   }
 
   private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {

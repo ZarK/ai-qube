@@ -36,6 +36,23 @@ describe("grok-build adapter", () => {
     assert.deepEqual(catalog, ["grok-4.5", "grok-4.6"]);
   });
 
+  it("separates noisy JSONL progress from the final review payload", () => {
+    const progress = JSON.stringify({ status: "pending" });
+    const final = JSON.stringify({ status: "passed" });
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope([
+      "starting review",
+      JSON.stringify({ type: "progress", message: "reading" }),
+      JSON.stringify({ text: progress, sessionId: "grok-session" }),
+      JSON.stringify({ text: final, usage: { input_tokens: 10 } }),
+      JSON.stringify({ type: "telemetry" }),
+    ].join("\n"));
+
+    assert.equal(parsed.text, final);
+    assert.deepEqual(parsed.transientTexts, [progress]);
+    assert.equal(parsed.sessionId, "grok-session");
+    assert.equal(parsed.usage.inputTokens, 10);
+  });
+
   it("parses a Grok stop-hook payload and rejects Claude snake_case", () => {
     const parsed = adapter.parseGrokStopPayload({
       cwd: "/repo",

@@ -87,6 +87,10 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions`);
   }
 
+  async getMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion> {
+    return this.get(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}`);
+  }
+
   async resolveMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion> {
     return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}`, { resolved: "true" });
   }

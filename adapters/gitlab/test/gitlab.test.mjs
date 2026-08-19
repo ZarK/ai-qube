@@ -1026,6 +1026,7 @@ describe("GitLab review forge adapter", () => {
 
   it("resolves unresolved GitLab merge request discussions", async () => {
     const resolved = [];
+    let discussionResolved = false;
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
       client: {
@@ -1039,7 +1040,7 @@ describe("GitLab review forge adapter", () => {
           return [
             {
               id: "discussion-open",
-              notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }],
+              notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: discussionResolved }],
             },
             {
               id: "discussion-resolved",
@@ -1049,7 +1050,11 @@ describe("GitLab review forge adapter", () => {
         },
         async resolveMergeRequestDiscussion({ discussionId }) {
           resolved.push(discussionId);
+          discussionResolved = true;
           return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: true }] };
+        },
+        async getMergeRequestDiscussion({ discussionId }) {
+          return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: discussionResolved }] };
         },
         async createMergeRequestNote() {
           throw new Error("not used");
@@ -1073,15 +1078,142 @@ describe("GitLab review forge adapter", () => {
     assert.deepEqual(resolved, ["discussion-open"]);
   });
 
+  it("fails when GitLab does not confirm the exact discussion after mutation", async () => {
+    let discussionListReads = 0;
+    let exactDiscussionReads = 0;
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() { return makeGitLabMergeRequest({ reviewers: [] }); },
+        async listMergeRequestNotes() { return []; },
+        async listMergeRequestDiscussions() {
+          discussionListReads += 1;
+          return [{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }] }];
+        },
+        async getMergeRequestDiscussion({ discussionId }) {
+          exactDiscussionReads += 1;
+          return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }] };
+        },
+        async resolveMergeRequestDiscussion({ discussionId }) { return { id: discussionId, notes: [] }; },
+        async createMergeRequestNote() { throw new Error("not used"); },
+        async getCurrentUser() { return { username: "executor" }; },
+      },
+    });
+
+    const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open"], dryRun: false });
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ["discussion-open"]);
+    assert.match(result.nextAction, /bounded post-mutation read/);
+    assert.equal(discussionListReads, 1);
+    assert.equal(exactDiscussionReads, 1);
+  });
+
+  it("fails before mutation when an injected GitLab client cannot perform exact reconciliation", async () => {
+    let mutations = 0;
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() { return makeGitLabMergeRequest({ reviewers: [] }); },
+        async listMergeRequestNotes() { return []; },
+        async listMergeRequestDiscussions() {
+          return [{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }] }];
+        },
+        async resolveMergeRequestDiscussion() { mutations += 1; return { id: "discussion-open", notes: [] }; },
+        async createMergeRequestNote() { throw new Error("not used"); },
+      },
+    });
+
+    const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open"], dryRun: false });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.nextAction, /getMergeRequestDiscussion support/);
+    assert.match(result.nextAction, /No discussion was mutated/);
+    assert.equal(mutations, 0);
+  });
+
+  it("bounds GitLab exact reconciliation before mutating selected discussions", async () => {
+    let mutations = 0;
+    const discussions = ["discussion-1", "discussion-2"].map((id, index) => ({
+      id,
+      notes: [{ id: 20 + index, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }],
+    }));
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      maxReviewItems: 1,
+      client: {
+        async getMergeRequest() { return makeGitLabMergeRequest({ reviewers: [] }); },
+        async listMergeRequestNotes() { return []; },
+        async listMergeRequestDiscussions() { return discussions; },
+        async getMergeRequestDiscussion({ discussionId }) { return discussions.find(discussion => discussion.id === discussionId); },
+        async resolveMergeRequestDiscussion({ discussionId }) { mutations += 1; return discussions.find(discussion => discussion.id === discussionId); },
+        async createMergeRequestNote() { throw new Error("not used"); },
+      },
+    });
+
+    const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: discussions.map(discussion => discussion.id), dryRun: false });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.nextAction, /exceeding the bounded reconciliation limit of 1/);
+    assert.match(result.nextAction, /No discussion was mutated/);
+    assert.equal(mutations, 0);
+  });
+
+  it("runs GitLab mutations and exact reconciliation with fixed concurrency", async () => {
+    let activeMutations = 0;
+    let maxActiveMutations = 0;
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    const discussions = Array.from({ length: 6 }, (_, index) => ({
+      id: `discussion-${index + 1}`,
+      notes: [{ id: 30 + index, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }],
+    }));
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      maxReviewItems: 10,
+      client: {
+        async getMergeRequest() { return makeGitLabMergeRequest({ reviewers: [] }); },
+        async listMergeRequestNotes() { return []; },
+        async listMergeRequestDiscussions() { return discussions; },
+        async getMergeRequestDiscussion({ discussionId }) {
+          activeReads += 1;
+          maxActiveReads = Math.max(maxActiveReads, activeReads);
+          await new Promise(resolve => setTimeout(resolve, 10));
+          activeReads -= 1;
+          const discussion = discussions.find(item => item.id === discussionId);
+          return { ...discussion, notes: discussion.notes.map(note => ({ ...note, resolved: true })) };
+        },
+        async resolveMergeRequestDiscussion({ discussionId }) {
+          activeMutations += 1;
+          maxActiveMutations = Math.max(maxActiveMutations, activeMutations);
+          await new Promise(resolve => setTimeout(resolve, 10));
+          activeMutations -= 1;
+          return discussions.find(discussion => discussion.id === discussionId);
+        },
+        async createMergeRequestNote() { throw new Error("not used"); },
+      },
+    });
+
+    const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: discussions.map(discussion => discussion.id), dryRun: false });
+
+    assert.equal(result.status, "resolved");
+    assert.equal(result.resolvedThreadIds.length, discussions.length);
+    assert.equal(maxActiveMutations, 4);
+    assert.equal(maxActiveReads, 4);
+  });
+
   it("sends the GitLab discussion resolve mutation through the REST API", async () => {
     const originalFetch = globalThis.fetch;
     const requests = [];
     try {
       globalThis.fetch = async (url, options) => {
         requests.push({ url: String(url), method: options.method, body: options.body });
-        if (options.method === "GET") {
-          return new Response(JSON.stringify([{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved: false }] }]), { status: 200 });
+        if (options.method === "GET" && /\/discussions\?/.test(String(url))) {
+          const resolved = requests.some(request => request.method === "PUT");
+          return new Response(JSON.stringify([{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved }] }]), { status: 200 });
         }
+        if (options.method === "GET") return new Response(JSON.stringify({ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved: true }] }), { status: 200 });
         return new Response(JSON.stringify({ id: "discussion-open", notes: [] }), { status: 200 });
       };
       const provider = createGitLabReviewForgeProvider({
@@ -1093,12 +1225,14 @@ describe("GitLab review forge adapter", () => {
       const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open"], dryRun: false });
 
       assert.equal(result.status, "resolved");
-      assert.equal(requests.length, 2);
+      assert.equal(requests.length, 3);
       assert.equal(requests[0].method, "GET");
       assert.match(requests[0].url, /\/merge_requests\/12\/discussions\?/);
       assert.equal(requests[1].method, "PUT");
       assert.match(requests[1].url, /\/merge_requests\/12\/discussions\/discussion-open\?resolved=true$/);
       assert.equal(requests[1].body, undefined);
+      assert.equal(requests[2].method, "GET");
+      assert.match(requests[2].url, /\/merge_requests\/12\/discussions\/discussion-open$/);
     } finally {
       globalThis.fetch = originalFetch;
     }

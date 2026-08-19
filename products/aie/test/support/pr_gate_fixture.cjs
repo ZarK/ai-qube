@@ -86,18 +86,12 @@ function commitRoutedReviewHead(repo) {
   execFileSync('git', ['commit', '-m', 'configure routed review'], { cwd: repo, stdio: 'ignore' });
 }
 
-let routedReviewTemplate = null;
-// Every routed gate test applies the identical trusted-base and routed-config
-// commits to a pristine repository, so they are built once on a template and
-// cloned by filesystem copy instead of re-running the git ceremony per test.
 function applyRoutedReviewFixture(repo) {
-  if (!routedReviewTemplate) {
-    routedReviewTemplate = mkdtempSync(join(tmpdir(), 'aie-pr-routed-template-'));
-    cpSync(repo, routedReviewTemplate, { recursive: true, force: true });
-    trustReviewCommands(routedReviewTemplate);
-    commitRoutedReviewHead(routedReviewTemplate);
-  }
-  cpSync(routedReviewTemplate, repo, { recursive: true, force: true });
+  // Build each routed fixture in its own repository. Overlay-copying a shared
+  // .git directory is not atomic and can expose a partially replaced object
+  // store when Node runs gate tests concurrently on Linux.
+  trustReviewCommands(repo);
+  commitRoutedReviewHead(repo);
 }
 
 function writeWorkflow(repo, body) {
@@ -565,7 +559,15 @@ function makePrExec(options = {}) {
   const reviewPayloads = [];
   let currentPr = prViews[0];
   let nextCommentId = 900000;
-  const threads = options.threads || [];
+  const threads = [...(options.threads || [])];
+  const threadReadResults = [...(options.threadReadResults || [])];
+  const observeResolvedThread = (threadId) => {
+    if (options.resolveThreadVisible === false) return;
+    const index = threads.findIndex(thread => thread.id === threadId);
+    if (index === -1) return;
+    if (options.resolveThreadPostState === 'missing') threads.splice(index, 1);
+    else threads[index] = { ...threads[index], isResolved: true };
+  };
   const exec = async (args) => {
     calls.push(args);
     events.push(args.join(' '));
@@ -733,13 +735,33 @@ function makePrExec(options = {}) {
       }
       if (queryArg?.includes('resolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
+        const threadId = threadIdArg?.slice('threadId='.length) ?? 'thread-1';
         const queuedResult = resolveThreadResults.shift();
-        if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
-        return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
+        if (queuedResult) {
+          if ((queuedResult.exitCode ?? 1) === 0) observeResolvedThread(threadId);
+          return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
+        }
+        observeResolvedThread(threadId);
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadId, isResolved: true } } } }), stderr: '' };
+      }
+      if (queryArg?.includes('nodes(ids: $threadIds)')) {
+        const threadIds = args
+          .filter(arg => typeof arg === 'string' && arg.startsWith('threadIds[]='))
+          .map(arg => arg.slice('threadIds[]='.length));
+        const threadReadResult = threadReadResults.shift();
+        if (threadReadResult) return { args, exitCode: threadReadResult.exitCode ?? 1, stdout: threadReadResult.stdout ?? '', stderr: threadReadResult.stderr ?? '' };
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { nodes: threadIds.map(threadId => threads.find(thread => thread.id === threadId) ?? null) } }),
+          stderr: '',
+        };
       }
       if (queryArg?.includes('viewerMergeHeadlineText')) {
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: options.mergeUiState || {} } } }), stderr: '' };
       }
+      const threadReadResult = threadReadResults.shift();
+      if (threadReadResult) return { args, exitCode: threadReadResult.exitCode ?? 1, stdout: threadReadResult.stdout ?? '', stderr: threadReadResult.stderr ?? '' };
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
     }
     if (args[0] === 'review-fixture') {

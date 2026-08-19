@@ -266,6 +266,94 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.deepEqual(result.failedThreadIds, ['PRRT_resolve_fail']);
   });
 
+  it('fails before mutation when GitHub thread resolution exceeds its hard bound', async () => {
+    const threads = Array.from({ length: 101 }, (_, index) => ({
+      id: `PRRT_bounded_${index}`,
+      isResolved: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: `https://github.com/example/repo/pull/12#discussion_r${index}` }] },
+    }));
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.resolvedThreadIds.length, 0);
+    assert.equal(result.failedThreadIds.length, 101);
+    assert.match(result.nextAction, /bounded mutation limit of 100/);
+    assert.match(result.nextAction, /no review thread was mutated/i);
+    const mutations = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread')));
+    assert.equal(mutations.length, 0);
+  });
+
+  it('runs GitHub thread mutations with fixed concurrency and stable result order', async () => {
+    const threads = Array.from({ length: 10 }, (_, index) => ({
+      id: `PRRT_concurrent_${index}`,
+      isResolved: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: `https://github.com/example/repo/pull/12#discussion_c${index}` }] },
+    }));
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+    let activeMutations = 0;
+    let maxActiveMutations = 0;
+    const exec = async args => {
+      if (args[0] === 'api' && args[1] === 'graphql' && args.some(arg => String(arg).includes('mutation($threadId: ID!) { resolveReviewThread'))) {
+        activeMutations += 1;
+        maxActiveMutations = Math.max(maxActiveMutations, activeMutations);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        const result = await fixture.exec(args);
+        activeMutations -= 1;
+        return result;
+      }
+      return fixture.exec(args);
+    };
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec });
+
+    assert.equal(result.status, 'resolved');
+    assert.equal(maxActiveMutations, 4);
+    assert.deepEqual(result.resolvedThreadIds, threads.map(thread => thread.id));
+  });
+
+  it('fails when the bounded provider reload does not confirm the exact thread as resolved', async () => {
+    const threads = [
+      { id: 'PRRT_still_open', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r9' }] } },
+    ];
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })],
+      threads,
+      resolveThreadVisible: false,
+    });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: ['PRRT_still_open'], all: false, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ['PRRT_still_open']);
+    assert.match(result.nextAction, /bounded post-mutation read/);
+    const listReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('reviewThreads')));
+    const exactReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('nodes(ids: $threadIds)')));
+    assert.equal(listReads.length, 1, 'selection requires one pre-mutation thread read');
+    assert.equal(exactReads.length, 1, 'reconciliation requires one exact bounded post-mutation read');
+  });
+
+  it('fails when the exact resolved thread is missing from the bounded provider reload', async () => {
+    const threads = [
+      { id: 'PRRT_missing_after_mutation', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r10' }] } },
+    ];
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })],
+      threads,
+      resolveThreadPostState: 'missing',
+    });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: ['PRRT_missing_after_mutation'], all: false, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ['PRRT_missing_after_mutation']);
+  });
+
   it('parses comma-separated repeated review thread flags', () => {
     const threadIds = stringListFlag({ args: {}, flags: { thread: ['PRRT_one, PRRT_two', 'PRRT_three'] } }, 'thread');
 

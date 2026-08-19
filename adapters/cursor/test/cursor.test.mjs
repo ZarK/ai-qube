@@ -40,7 +40,9 @@ describe("Cursor isolated review adapter", () => {
   it("parses exactly one successful terminal result", () => {
     const valid = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "{\"status\":\"passed\"}", session_id: "fresh" });
     assert.deepEqual(cursor.parseCursorEnvelope(valid), { text: '{"status":"passed"}', sessionId: "fresh" });
+    assert.deepEqual(cursor.parseCursorEnvelope(`starting review\n${JSON.stringify({ type: "progress", message: "reading" })}\n${valid}\ntelemetry`), { text: '{"status":"passed"}', sessionId: "fresh" });
     assert.equal(cursor.parseCursorEnvelope(`${valid}\n${valid}`), null);
+    assert.equal(cursor.parseCursorEnvelope(`${JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "failed" })}\n${valid}`), null);
     assert.equal(cursor.parseCursorEnvelope(JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "failed" })), null);
     assert.equal(cursor.parseCursorEnvelope('{"type":"assistant"}'), null);
   });

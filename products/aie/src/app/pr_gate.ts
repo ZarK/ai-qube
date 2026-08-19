@@ -845,7 +845,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback, changedPaths, diffStats);
   const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
   const gateProfile = localShadow ? 'local-shadow' as const : localRequired && config.reviewProfile === 'remote-compatible' ? 'local-standard' as const : config.reviewProfile;
-  const providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
+  let providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
     ? readTrustedProviderLanes(finalSnapshot.item.trustedMetadata.trustedLaneReviews, {
         headSha: finalSnapshot.pr.headRefOid,
         prNumber: options.prNumber,
@@ -948,7 +948,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     routeProbe: options.routeProbe,
     providerLaneReuse,
   });
-  const localReview = readLocalReviewGate({
+  const readCurrentLocalReviewGate = (reuse: ProviderLaneReuse | undefined) => readLocalReviewGate({
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
     prNumber: options.prNumber,
@@ -962,8 +962,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
     carryForwardScope,
-    providerLaneReuse,
+    providerLaneReuse: reuse,
   });
+  let localReview = readCurrentLocalReviewGate(providerLaneReuse);
   for (const evidence of localReview.evidence) {
     for (const lane of evidence.lanes) {
       if (!activeFocuses.includes(lane.id)) continue;
@@ -1014,8 +1015,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // both, or a source could satisfy the contract while its findings never
   // reached the batch, or vice versa.
   const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
-  const providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
-  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
+  let providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
+  let fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   if (deferProviderMutation && sessionLockBlocksExecution) {
     // A gate that does not hold the review session lock never mutates the provider.
@@ -1174,6 +1175,19 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     } catch (error: unknown) {
       publishUnavailable.push(`Published review feedback could not be reloaded from the provider: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  if (roundSummary?.status === 'published') {
+    providerLaneReuse = readTrustedProviderLanes(finalSnapshot.item.trustedMetadata.trustedLaneReviews, {
+      headSha: finalSnapshot.pr.headRefOid,
+      prNumber: options.prNumber,
+      profile: gateProfile,
+      requiredLanes: activeFocuses,
+      issueNumbers: finalSnapshot.closingIssueNumbers,
+    });
+    const refreshedLocalReview = readCurrentLocalReviewGate(providerLaneReuse);
+    if (refreshedLocalReview.status === 'passed') localReview = refreshedLocalReview;
+    providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
+    fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
   }
   const publishedCarriedLanes: string[] = [];
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
