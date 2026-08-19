@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { approvePackages, prepareApproval, readPublishedShasums } from "../scripts/approve-staged-release.mjs";
+import {
+  approvePackages,
+  commandError,
+  npmStageCommand,
+  prepareApproval,
+  readPublishedShasums,
+} from "../scripts/approve-staged-release.mjs";
 import {
   CHECKPOINT_MARKER,
   RECEIPT_MARKER,
@@ -176,6 +182,41 @@ describe("staged release receipts", () => {
     const output = { write() {} };
     assert.equal(approvePackages(actions, args => calls.push(args), output), 1);
     assert.deepEqual(calls, [["stage", "approve", secondStage]]);
+  });
+
+  it("starts only allowlisted npm stage commands across platforms", () => {
+    assert.deepEqual(npmStageCommand(["stage", "list", "--json"], {
+      platform: "win32",
+      comspec: "C:\\Windows\\System32\\cmd.exe",
+    }), {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/s", "/c", "npm.cmd", "stage", "list", "--json"],
+    });
+    assert.deepEqual(npmStageCommand(["stage", "approve", firstStage], { platform: "linux" }), {
+      command: "npm",
+      args: ["stage", "approve", firstStage],
+    });
+    assert.deepEqual(npmStageCommand(["stage", "list", "--json"], { platform: "darwin" }), {
+      command: "npm",
+      args: ["stage", "list", "--json"],
+    });
+    assert.throws(() => npmStageCommand(["stage", "approve", "not-a-uuid"], { platform: "win32" }), {
+      reasonCode: "command",
+      message: "Unsupported npm stage command.",
+    });
+    assert.throws(() => npmStageCommand(["publish", "."], { platform: "win32" }), {
+      reasonCode: "command",
+      message: "Unsupported npm stage command.",
+    });
+  });
+
+  it("reports an operating-system command start failure", () => {
+    const error = commandError("npm.cmd", ["stage", "list", "--json"], {
+      stderr: "",
+      error: new Error("spawnSync npm.cmd EINVAL"),
+    });
+    assert.equal(error.reasonCode, "command");
+    assert.match(error.message, /spawnSync npm\.cmd EINVAL/);
   });
 
   it("resumes only an exact staged prefix from the same release run", () => {

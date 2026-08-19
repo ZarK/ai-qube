@@ -8,12 +8,26 @@ import { PUBLISH_PACKAGES, PUBLISH_SET_ORDER, parseSetPublishTag, registryPackag
 import { findCompleteReceipt, planApprovals, validateReceipt } from "./release-receipt.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
 const PACKAGE_TAG = /^publish-(.+)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
+const STAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function commandError(command, args, result) {
-  const detail = String(result.stderr ?? "").trim();
+export function commandError(command, args, result) {
+  const detail = String(result.stderr ?? "").trim()
+    || (result.error instanceof Error ? result.error.message : "");
   return Object.assign(new Error(detail || `${command} ${args.join(" ")} failed.`), { reasonCode: "command" });
+}
+
+export function npmStageCommand(args, options = {}) {
+  const stageList = args.length === 3 && args[0] === "stage" && args[1] === "list" && args[2] === "--json";
+  const stageApprove = args.length === 3 && args[0] === "stage" && args[1] === "approve" && STAGE_ID.test(args[2]);
+  if (!stageList && !stageApprove) {
+    throw Object.assign(new Error("Unsupported npm stage command."), { reasonCode: "command" });
+  }
+  if ((options.platform ?? process.platform) !== "win32") return { command: "npm", args };
+  return {
+    command: options.comspec ?? process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe",
+    args: ["/d", "/s", "/c", "npm.cmd", ...args],
+  };
 }
 
 function run(command, args, options = {}) {
@@ -26,6 +40,11 @@ function run(command, args, options = {}) {
   });
   if (result.status !== 0) throw commandError(command, args, result);
   return options.inherit ? "" : String(result.stdout ?? "").trim();
+}
+
+function runNpm(args, options = {}) {
+  const invocation = npmStageCommand(args);
+  return run(invocation.command, invocation.args, options);
 }
 
 function parseJson(output, label) {
@@ -129,7 +148,7 @@ export async function prepareApproval(tag, options = {}) {
   const commands = options.commands ?? {
     git: args => run("git", args),
     gh: args => run("gh", args),
-    npm: (args, commandOptions) => run(NPM, args, commandOptions),
+    npm: (args, commandOptions) => runNpm(args, commandOptions),
   };
   const repository = parseJson(commands.gh(["repo", "view", "--json", "nameWithOwner"]), "GitHub repository").nameWithOwner;
   const headSha = commands.git(["rev-parse", `${tag}^{commit}`]);
