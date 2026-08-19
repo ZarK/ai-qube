@@ -180,7 +180,12 @@ export function probeCursor(
   const windowsAcp = platform === "win32";
   const missing = windowsAcp ? [] : requiredHelpMissing(help);
   const askMissing = !/\bask\b/i.test(help);
-  const isolationMissing = windowsAcp ? !/\bacp\b/i.test(help) : !help.includes("--sandbox");
+  let acpHelp = "";
+  if (windowsAcp) {
+    try { acpHelp = runCommand(executable, [...prefixArgs, "acp", "--help"]); }
+    catch { acpHelp = ""; }
+  }
+  const isolationMissing = windowsAcp ? !/\bAgent Client Protocol\b|\bUsage:\s*\S+\s+acp\b/iu.test(acpHelp) : !help.includes("--sandbox");
   if (missing.length > 0 || askMissing || isolationMissing) {
     const capabilities = [...missing, ...(askMissing ? ["ask-mode"] : []), ...(isolationMissing ? [windowsAcp ? "acp" : "--sandbox"] : [])];
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI does not expose required isolated-review capabilities (${capabilities.join(", ")}). Update the official CLI before running routed review lanes.` };

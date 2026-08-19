@@ -84,6 +84,7 @@ describe("Cursor isolated review adapter", () => {
 
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {
     const output = (args) => {
+      if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nStart the Cursor Agent as an ACP (Agent Client Protocol) server";
       if (args.at(-1) === "--help") return "acp --print --output-format --mode ask --model --workspace --sandbox";
       if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
       if (args.at(-1) === "models") return "Available models\nmodel-a - Model A";
@@ -92,7 +93,8 @@ describe("Cursor isolated review adapter", () => {
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
     assert.equal(cursor.probeCursor(base, "linux").status, "ready");
     assert.equal(cursor.probeCursor(base, "win32").status, "ready");
-    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "acp ask" : output(args) }, "win32").status, "ready");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-2) === "acp" ? "Usage: agent acp" : args.at(-1) === "--help" ? "ask" : output(args) }, "win32").status, "ready");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-2) === "acp" ? "unknown command" : output(args) }, "win32").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "cursor-dev" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "2025.01.01-old" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");
