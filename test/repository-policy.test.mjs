@@ -22,6 +22,9 @@ describe("repository policy", () => {
     assert.equal(config.policy.branch.naming, "issue/<number>-<slug>");
     assert.equal(config.policy.instructions.namingRules, true);
     assert.equal(config.policy.instructions.supplyChainSafety, true);
+    assert.equal(config.policy.reviews.lanes.find(lane => lane.id === "code-quality")?.route?.host, "cursor");
+    assert.equal(config.policy.reviews.lanes.find(lane => lane.id === "security")?.route?.host, "cursor");
+    assert.deepEqual(config.policy.reviews.models.review.cursor, { model: "gpt-5.6-luna-medium", effort: null });
   });
 
   it("keeps active publishing workflow tokenless and branch guarded", () => {
@@ -30,8 +33,17 @@ describe("repository policy", () => {
 
     assert.match(workflow, /environment:\s*npm-publish/);
     assert.match(workflow, /id-token:\s*write/);
+    assert.match(workflow, /verify-source:[\s\S]*permissions:\s*\n\s+contents: read/);
+    assert.match(workflow, /node scripts\/verify-release-source\.mjs/);
+    assert.match(workflow, /publish:\s*\n\s+needs: verify-source/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
-    assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
+    const verifier = read("scripts/verify-release-source.mjs");
+    assert.match(verifier, /git\/ref\/tags/);
+    assert.match(verifier, /git\/tags/);
+    assert.match(verifier, /commits/);
+    assert.match(verifier, /verification/);
+    assert.match(verifier, /merge-base/);
+    assert.match(verifier, /origin\/main/);
     assert.match(workflow, /run-publish-plan\.mjs prepare publish-plan\.json/);
     assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
     assert.match(workflow, /verify-installed-commands\.mjs --plan publish-plan\.json --json/);

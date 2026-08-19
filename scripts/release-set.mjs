@@ -218,7 +218,7 @@ export async function runRelease(options = {}) {
   const planned = await planRelease({ ...options, repoRoot: root, git });
   const existing = git.run(["tag", "--list", planned.tag], root);
   if (!existing) {
-    git.run(["tag", "-a", planned.tag, "-m", `Publish set ${planned.setVersion}`], root);
+    git.run(["tag", "-s", planned.tag, "-m", `Publish set ${planned.setVersion}`], root);
   } else {
     const tagCommit = git.run(["rev-parse", `${planned.tag}^{}`], root);
     if (tagCommit !== checkout.head) {

@@ -118,6 +118,9 @@ describe('package publish surface safety', () => {
     assert.equal(pkg.publishConfig.provenance, true);
     assert.equal(pkg.scripts.verify, 'pnpm run lint && pnpm run test && pnpm run pack:check');
     assert.match(workflow, /^permissions:\n {2}contents: read$/m);
+    assert.match(workflow, /verify-source:[\s\S]*permissions:\n\s+contents: read/);
+    assert.match(workflow, /node scripts\/verify-release-source\.mjs/);
+    assert.match(workflow, /publish:\n\s+needs: verify-source/);
     assert.match(workflow, /permissions:\n\s+actions: read\n\s+contents: read\n\s+id-token: write/);
     assert.match(workflow, /environment: npm-publish/);
     assert.match(workflow, /runs-on: ubuntu-latest/);
@@ -125,7 +128,7 @@ describe('package publish surface safety', () => {
     assert.match(workflow, /package-manager-cache: false/);
     assert.match(workflow, /corepack prepare pnpm@11\.0\.4 --activate/);
     assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
-    assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
+    assert.match(readFileSync(join(__dirname, '..', '..', '..', 'scripts', 'verify-release-source.mjs'), 'utf8'), /merge-base/);
     assert.match(workflow, /id: plan/);
     assert.match(workflow, /console\.log\('verify=' \+ p\.verify\)/);
     assert.match(workflow, /run-publish-plan\.mjs verify publish-plan\.json/);
@@ -138,6 +141,6 @@ describe('package publish surface safety', () => {
     assert.doesNotMatch(workflow, /npm publish/);
     assert.doesNotMatch(publishScript, /\["publish", "\."/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
-    assert.deepEqual(actionPins.map(match => match[1]).sort(), ['actions/checkout', 'actions/setup-node']);
+    assert.deepEqual(actionPins.map(match => match[1]).sort(), ['actions/checkout', 'actions/checkout', 'actions/setup-node', 'actions/setup-node']);
   });
 });

@@ -1,6 +1,11 @@
+import { existsSync, readdirSync } from "node:fs";
+import { win32 as windowsPath } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type {
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
+  IsolatedReviewHostExecutable,
   IsolatedReviewHostInvocationContext,
   IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
@@ -99,27 +104,84 @@ function requiredHelpMissing(help: string): string[] {
     .filter(option => !help.includes(option));
 }
 
+function reviewPrompt(context: IsolatedReviewHostInvocationContext, windowsAcp = false): string {
+  return [
+    context.prompt,
+    ...(windowsAcp ? [
+      "",
+      "Cursor ACP review capability boundary: use only Cursor's built-in repository read and search tools. Do not request shell or terminal commands, test execution, Git commands, writes, MCP tools, web access, or any other permission. Use the supplied review bundle and direct file reads; record unavailable command execution only as a completeness condition, not as a defect.",
+    ] : []),
+    "",
+    "The following JSON Schema is the authoritative QUBE output contract. Return exactly one JSON object that validates against it. Preserve every required nested field, use only declared enum values, and do not add properties.",
+    context.schemaJson,
+  ].join("\n");
+}
+
 export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
-  _platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = process.platform,
 ): IsolatedReviewHostBuiltInvocation {
+  if (platform === "win32") {
+    const args = ["--acp-review"];
+    if (context.model) args.push("--model", context.model);
+    args.push("--workspace", context.repoRoot);
+    return {
+      args,
+      stdin: reviewPrompt(context, true),
+    };
+  }
   const args = ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"];
   if (context.model) args.push("--model", context.model);
   args.push("--workspace", context.repoRoot);
-  return { args, stdin: context.prompt };
+  return { args, stdin: reviewPrompt(context) };
+}
+
+export function resolveCursorWindowsShim(
+  shim: string,
+  fileExists: (path: string) => boolean = existsSync,
+  _systemRoot: string | undefined = process.env.SystemRoot,
+  listDirectory: (path: string) => string[] = path => readdirSync(path, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name),
+): IsolatedReviewHostExecutable | null {
+  const versions = windowsPath.join(windowsPath.dirname(shim), "versions");
+  let names: string[];
+  try { names = listDirectory(versions); }
+  catch { return null; }
+  const versionParts = (name: string): number[] => {
+    const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d{2})-(\d{2})-(\d{2}))?-[a-f0-9]+$/iu.exec(name);
+    return match ? match.slice(1, 7).map(value => Number(value ?? 0)) : [];
+  };
+  const selected = names
+    .filter(name => /^\d{4}\.\d{1,2}\.\d{1,2}(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/iu.test(name))
+    .sort((left, right) => {
+      const leftParts = versionParts(left);
+      const rightParts = versionParts(right);
+      for (let index = 0; index < leftParts.length; index += 1) {
+        if (leftParts[index] !== rightParts[index]) return rightParts[index] - leftParts[index];
+      }
+      return right.localeCompare(left);
+    })
+    .find(name => fileExists(windowsPath.join(versions, name, "node.exe"))
+      && fileExists(windowsPath.join(versions, name, "index.js")));
+  if (!selected) return null;
+  const cursorNode = windowsPath.join(versions, selected, "node.exe");
+  const cursorScript = windowsPath.join(versions, selected, "index.js");
+  return {
+    executable: process.execPath,
+    prefixArgs: [
+      fileURLToPath(new URL("./cursor-acp-runner.js", import.meta.url)),
+      "--cursor-executable", cursorNode,
+      "--cursor-prefix-json", JSON.stringify([cursorScript]),
+      "--",
+    ],
+  };
 }
 
 export function probeCursor(
   { model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext,
   platform: string = process.platform,
 ): IsolatedReviewHostProbeResult {
-  if (platform === "win32") {
-    return {
-      status: "blocked",
-      modelListed: null,
-      diagnostic: "Cursor review lanes require the Cursor sandbox, which is not available on native Windows. Run QUBE and the official Cursor CLI in WSL2, Linux, or macOS. QUBE will not weaken review isolation to use native Windows Ask mode.",
-    };
-  }
   const reportedDate = dateVersion(version);
   if (!reportedDate) {
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI reported an unsupported version (${sanitize(version) || "empty version"}). Install an official date-versioned Cursor CLI release before running routed review lanes.` };
@@ -133,9 +195,17 @@ export function probeCursor(
   } catch {
     return { status: "blocked", modelListed: null, diagnostic: "The Cursor CLI resolved but its capability help could not be read. Repair the official CLI before running routed review lanes." };
   }
-  const missing = requiredHelpMissing(help);
-  if (missing.length > 0 || !/\bask\b/i.test(help) || !help.includes("--sandbox")) {
-    const capabilities = [...missing, ...(!/\bask\b/i.test(help) ? ["ask-mode"] : []), ...(!help.includes("--sandbox") ? ["--sandbox"] : [])];
+  const windowsAcp = platform === "win32";
+  const missing = windowsAcp ? [] : requiredHelpMissing(help);
+  const askMissing = !/\bask\b/i.test(help);
+  let acpHelp = "";
+  if (windowsAcp) {
+    try { acpHelp = runCommand(executable, [...prefixArgs, "acp", "--help"]); }
+    catch { acpHelp = ""; }
+  }
+  const isolationMissing = windowsAcp ? !/\bAgent Client Protocol\b|\bUsage:\s*\S+\s+acp\b/iu.test(acpHelp) : !help.includes("--sandbox");
+  if (missing.length > 0 || askMissing || isolationMissing) {
+    const capabilities = [...missing, ...(askMissing ? ["ask-mode"] : []), ...(isolationMissing ? [windowsAcp ? "acp" : "--sandbox"] : [])];
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI does not expose required isolated-review capabilities (${capabilities.join(", ")}). Update the official CLI before running routed review lanes.` };
   }
   let authenticated: boolean | null;
@@ -170,12 +240,12 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   windowsExecutableNames: Object.freeze([]),
   requiresPromptFile: false,
   requiresSchemaFile: false,
-  unsupportedPlatformMessage: "Native Windows cannot provide the required Cursor sandbox. Run QUBE and the Cursor CLI inside WSL2.",
-  supportsPlatform(platform: string): boolean { return platform !== "win32"; },
+  supportsPlatform(): boolean { return true; },
+  resolveWindowsShim: resolveCursorWindowsShim,
   windowsNodeModulesScriptPath(): string | null { return null; },
   windowsFallbackExecutablePath(): string | null { return null; },
   buildInvocation(context: IsolatedReviewHostInvocationContext): IsolatedReviewHostBuiltInvocation {
-    return buildCursorInvocation(context);
+    return buildCursorInvocation(context, process.platform);
   },
   parseEnvelope: parseCursorEnvelope,
   probeAfterVersion(context: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {

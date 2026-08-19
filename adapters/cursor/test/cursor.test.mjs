@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import * as cursor from "../dist/index.js";
 
@@ -15,26 +16,54 @@ const context = {
 };
 
 describe("Cursor isolated review adapter", () => {
-  it("declares native Windows unsupported while allowing WSL and Unix hosts", () => {
-    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), false);
+  it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
-    assert.match(cursor.isolatedReviewHostAdapter.unsupportedPlatformMessage, /WSL2/);
-    assert.equal(cursor.isolatedReviewHostAdapter.resolveWindowsShim, undefined);
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("darwin"), true);
+    const versionRoot = "C:\\Tools\\versions\\2026.08.11-e8db854";
+    assert.deepEqual(
+      cursor.resolveCursorWindowsShim(
+        "C:\\Tools\\cursor-agent.cmd",
+        path => path === `${versionRoot}\\node.exe` || path === `${versionRoot}\\index.js`,
+        undefined,
+        () => ["2026.08.11-e8db854"],
+      ),
+      {
+        executable: process.execPath,
+        prefixArgs: [
+          fileURLToPath(new URL("../dist/cursor-acp-runner.js", import.meta.url)),
+          "--cursor-executable",
+          `${versionRoot}\\node.exe`,
+          "--cursor-prefix-json",
+          JSON.stringify([`${versionRoot}\\index.js`]),
+          "--",
+        ],
+      },
+    );
+    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, undefined, () => ["2026.08.11-e8db854"]), null);
+    const newest = cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => true, undefined, () => ["2026.9.30-a", "2026.10.1-b"]);
+    assert.match(newest.prefixArgs.join("\n"), /2026\.10\.1-b/);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
     const built = cursor.buildCursorInvocation(context, "linux");
     assert.deepEqual(built.args.slice(0, 7), ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"]);
-    assert.equal(built.stdin, "inspect");
+    assert.match(built.stdin, /^inspect\n\nThe following JSON Schema/);
+    assert.match(built.stdin, /\{\}$/);
     for (const forbidden of ["--force", "--yolo", "--resume", "--continue", "--approve-mcps", "--auto-review", "--trust", "--worktree", "--api-key"]) {
       assert.equal(built.args.includes(forbidden), false);
     }
   });
 
-  it("never builds an invocation that weakens sandbox isolation", () => {
+  it("routes Windows review through the permission-denying ACP client", () => {
     const built = cursor.buildCursorInvocation(context, "win32");
-    assert.ok(built.args.includes("ask"));
-    assert.deepEqual(built.args.slice(5, 7), ["--sandbox", "enabled"]);
+    assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
+    assert.match(built.stdin, /^inspect\n\nCursor ACP review capability boundary:/);
+    assert.match(built.stdin, /Do not request shell or terminal commands/);
+    assert.match(built.stdin, /\{\}$/);
+    assert.equal(built.args.includes("--sandbox"), false);
+    assert.equal(built.args.includes("disabled"), false);
+    assert.deepEqual(cursor.buildCursorInvocation({ ...context, model: null }, "win32").args, ["--acp-review", "--workspace", "/repo"]);
   });
 
   it("parses exactly one successful terminal result", () => {
@@ -59,15 +88,17 @@ describe("Cursor isolated review adapter", () => {
 
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {
     const output = (args) => {
-      if (args.at(-1) === "--help") return "--print --output-format --mode ask --model --workspace --sandbox";
+      if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nStart the Cursor Agent as an ACP (Agent Client Protocol) server";
+      if (args.at(-1) === "--help") return "acp --print --output-format --mode ask --model --workspace --sandbox";
       if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
       if (args.at(-1) === "models") return "Available models\nmodel-a - Model A";
       return "";
     };
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
     assert.equal(cursor.probeCursor(base, "linux").status, "ready");
-    assert.equal(cursor.probeCursor(base, "win32").status, "blocked");
-    assert.match(cursor.probeCursor(base, "win32").diagnostic, /WSL2/);
+    assert.equal(cursor.probeCursor(base, "win32").status, "ready");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-2) === "acp" ? "Usage: agent acp" : args.at(-1) === "--help" ? "ask" : output(args) }, "win32").status, "ready");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-2) === "acp" ? "unknown command" : output(args) }, "win32").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "cursor-dev" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "2025.01.01-old" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");

@@ -250,6 +250,8 @@ describe('model review runner', () => {
     assert.match(prompt, /passed maps to approve/);
     assert.match(prompt, /keep blockers empty and severity below high/);
     assert.match(prompt, /Do not emit JSON progress, pending envelopes, or interim verdicts/);
+    assert.match(prompt, /Every contextReviewed entry must contain exactly kind, source, trust, and freshness/);
+    assert.match(prompt, /Do not use path or summary fields/);
     assert.equal(invocation.args.includes(prompt), false);
     assert.deepEqual(invocation.args.slice(-2), ['--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
