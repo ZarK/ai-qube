@@ -157,6 +157,34 @@ describe('GitHub round summary publish', () => {
     assert.equal(reviewPost, undefined, 'a skip-matched republish must not create a new review');
   });
 
+  it('does not reopen a resolved current finding on an unchanged same-round republish', async () => {
+    const current = findingAnchor();
+    const commentBody = renderInlineCommentBody(current);
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [current.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }],
+    }), { diffIndex: { hasLine: () => true } });
+    const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({
+      prViews: [basePr({ reviews: [publishedReview], latestReviews: [publishedReview] })],
+      pullReviews: [publishedReview],
+      threads: [{
+        id: 'PRRT_resolved_current',
+        isResolved: true,
+        isOutdated: false,
+        viewerCanResolve: true,
+        viewerCanUnresolve: true,
+        comments: { nodes: [{ id: 'IC_resolved_current', databaseId: 78, author: { login: 'executor' }, body: commentBody }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'skipped');
+    assert.equal(fixture.events.some(event => event.includes('unresolveReviewThread')), false);
+    assert.equal(fixture.events.some(event => event.includes('/comments/78/replies')), false);
+  });
+
   it('updates a same-round review whose marker predates findingDigest instead of posting a duplicate', async () => {
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
     const legacyBody = render.body.replace(/,"findingDigest":"[^"]*"/, '');

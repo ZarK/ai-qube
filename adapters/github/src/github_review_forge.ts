@@ -2995,10 +2995,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
             round: input.round,
             dispositions: input.dispositions ?? {},
           });
+          const cleanupActions = lifecycleActions.filter((action) =>
+            action.kind === 'resolve' || action.kind === 'minimize-outdated');
           lifecycleFailure = await this.applyThreadLifecycle(
             repositoryName,
             input.prNumber,
-            lifecycleActions,
+            cleanupActions,
             publisher.identity,
           );
         } catch (error: unknown) {
