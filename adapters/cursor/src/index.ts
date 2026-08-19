@@ -104,6 +104,15 @@ function requiredHelpMissing(help: string): string[] {
     .filter(option => !help.includes(option));
 }
 
+function reviewPrompt(context: IsolatedReviewHostInvocationContext): string {
+  return [
+    context.prompt,
+    "",
+    "The following JSON Schema is the authoritative QUBE output contract. Return exactly one JSON object that validates against it. Preserve every required nested field, use only declared enum values, and do not add properties.",
+    context.schemaJson,
+  ].join("\n");
+}
+
 export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
   platform: NodeJS.Platform = process.platform,
@@ -111,18 +120,19 @@ export function buildCursorInvocation(
   if (platform === "win32") {
     return {
       args: ["--acp-review", "--model", context.model ?? "", "--workspace", context.repoRoot],
-      stdin: context.prompt,
+      stdin: reviewPrompt(context),
     };
   }
   const args = ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"];
   if (context.model) args.push("--model", context.model);
   args.push("--workspace", context.repoRoot);
-  return { args, stdin: context.prompt };
+  return { args, stdin: reviewPrompt(context) };
 }
 
 export function resolveCursorWindowsShim(
   shim: string,
   fileExists: (path: string) => boolean = existsSync,
+  _systemRoot: string | undefined = process.env.SystemRoot,
   listDirectory: (path: string) => string[] = path => readdirSync(path, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name),
@@ -152,7 +162,7 @@ export function resolveCursorWindowsShim(
 
 export function probeCursor(
   { model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext,
-  _platform: string = process.platform,
+  platform: string = process.platform,
 ): IsolatedReviewHostProbeResult {
   const reportedDate = dateVersion(version);
   if (!reportedDate) {
@@ -167,9 +177,12 @@ export function probeCursor(
   } catch {
     return { status: "blocked", modelListed: null, diagnostic: "The Cursor CLI resolved but its capability help could not be read. Repair the official CLI before running routed review lanes." };
   }
-  const missing = requiredHelpMissing(help);
-  if (missing.length > 0 || !/\bask\b/i.test(help) || !help.includes("--sandbox")) {
-    const capabilities = [...missing, ...(!/\bask\b/i.test(help) ? ["ask-mode"] : []), ...(!help.includes("--sandbox") ? ["--sandbox"] : [])];
+  const windowsAcp = platform === "win32";
+  const missing = windowsAcp ? [] : requiredHelpMissing(help);
+  const askMissing = !/\bask\b/i.test(help);
+  const isolationMissing = windowsAcp ? !/\bacp\b/i.test(help) : !help.includes("--sandbox");
+  if (missing.length > 0 || askMissing || isolationMissing) {
+    const capabilities = [...missing, ...(askMissing ? ["ask-mode"] : []), ...(isolationMissing ? [windowsAcp ? "acp" : "--sandbox"] : [])];
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI does not expose required isolated-review capabilities (${capabilities.join(", ")}). Update the official CLI before running routed review lanes.` };
   }
   let authenticated: boolean | null;

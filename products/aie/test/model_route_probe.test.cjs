@@ -69,7 +69,7 @@ describe('model route probe', () => {
     const check = probeModelRoute('cursor', 'gpt-5.6-luna-high', (_executable, args) => {
       commands.push(args);
       if (args.at(-1) === '--version') return '2026.08.11-build\n';
-      if (args.at(-1) === '--help') return '--print --output-format --mode ask --model --workspace --sandbox';
+      if (args.at(-1) === '--help') return 'acp --print --output-format --mode ask --model --workspace --sandbox';
       if (args.includes('status')) return JSON.stringify({ status: 'authenticated', isAuthenticated: true, userInfo: { email: 'private@example.test' } });
       if (args.at(-1) === 'models') return 'Available models\n\ngpt-5.6-luna-high - GPT';
       throw new Error(`unexpected probe command: ${args.join(' ')}`);
@@ -83,7 +83,7 @@ describe('model route probe', () => {
   it('blocks Cursor before a lane when browser login is missing', () => {
     const check = probeModelRoute('cursor', 'gpt-5.6-luna-high', (_executable, args) => {
       if (args.at(-1) === '--version') return '2026.08.11-build';
-      if (args.at(-1) === '--help') return '--print --output-format --mode ask --model --workspace --sandbox';
+      if (args.at(-1) === '--help') return 'acp --print --output-format --mode ask --model --workspace --sandbox';
       if (args.includes('status')) return JSON.stringify({ status: 'unauthenticated', isAuthenticated: false });
       return 'Available models\n\ngpt-5.6-luna-high - GPT';
     }, () => 'cursor-agent');

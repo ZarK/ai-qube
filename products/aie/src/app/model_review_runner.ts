@@ -257,7 +257,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Do not emit JSON progress, pending envelopes, or interim verdicts. Host progress is transient; emit exactly one JSON object only when the review is complete.',
     LANE_ARTIFACT_REQUIREMENT,
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". Set every artifact sha256 field to null; QUBE validates artifact paths and does not ask the model to transcribe file digests.',
-    'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
+    'Every contextReviewed entry must contain exactly kind, source, trust, and freshness. Example: {"kind":"diff","source":"git diff origin/main...HEAD","trust":"local-evidence","freshness":"current"}. Do not use path or summary fields. kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the JSON Schema enum values.',
     'The exact lane prompt may describe the complete persisted evidence object. For routed execution, this stricter outer contract is authoritative: return only the fields listed above, and QUBE injects profile, adapter, promptStack, runnerProvenance, and recordedAt.',
     'Do not include runnerProvenance or promptStack; QUBE records those from the trusted invocation.',
     'Do not write files, publish feedback, modify provider state, use subagents, use web tools, or reveal hidden reasoning.',

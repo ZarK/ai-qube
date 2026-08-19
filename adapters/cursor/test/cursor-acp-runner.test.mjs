@@ -15,12 +15,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 const config = JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR, "cli-config.json"), "utf8"));
-if (config.approvalMode !== "allowlist" || !config.permissions.deny.includes("Shell(*)") || !config.permissions.deny.includes("Write(**)")) process.exit(19);
+if (config.approvalMode !== "allowlist" || config.sandbox.networkAccess !== "disabled" || !config.permissions.deny.includes("Shell(*)") || !config.permissions.deny.includes("Write(**)") || !config.permissions.deny.includes("Read(.env*)") || !config.permissions.deny.includes("Read(**/.env*)")) process.exit(19);
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
 let promptId = null;
 createInterface({ input: process.stdin }).on("line", line => {
   const message = JSON.parse(line);
-  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  if (message.method === "initialize") {
+    if (process.env.FAKE_EXIT === "1") process.exit(23);
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  }
   else if (message.method === "authenticate") send({ jsonrpc: "2.0", id: message.id, result: {} });
   else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: {
     sessionId: "fresh-acp",
@@ -43,7 +46,7 @@ function finish() {
 `;
 }
 
-function invoke(permission = false) {
+function invoke(mode = "success") {
   const root = mkdtempSync(join(tmpdir(), "qube-cursor-acp-test-"));
   const server = join(root, "fake-acp.mjs");
   writeFileSync(server, fakeServerSource(), "utf8");
@@ -56,7 +59,11 @@ function invoke(permission = false) {
     ], {
       input: "review safely",
       encoding: "utf8",
-      env: { ...process.env, ...(permission ? { FAKE_PERMISSION: "1" } : {}) },
+      env: {
+        ...process.env,
+        ...(mode === "permission" ? { FAKE_PERMISSION: "1" } : {}),
+        ...(mode === "exit" ? { FAKE_EXIT: "1" } : {}),
+      },
       timeout: 10_000,
       windowsHide: true,
     });
@@ -86,9 +93,17 @@ describe("Cursor Windows ACP runner", () => {
   });
 
   it("cancels and rejects every requested capability", () => {
-    const result = invoke(true);
+    const result = invoke("permission");
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Blocked by policy/);
     assert.equal(result.stdout, "");
+  });
+
+  it("fails promptly when the ACP process exits with a request pending", () => {
+    const started = Date.now();
+    const result = invoke("exit");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ended before completing the review/);
+    assert.ok(Date.now() - started < 3_000);
   });
 });

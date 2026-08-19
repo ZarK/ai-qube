@@ -87,9 +87,28 @@ function strictConfig(): string {
     approvalMode: "allowlist",
     permissions: {
       allow: ["Read(**)"],
-      deny: ["Shell(*)", "Write(**)", "Mcp(*)", "WebFetch(*)"],
+      deny: [
+        "Shell(*)",
+        "Write(**)",
+        "Mcp(*)",
+        "WebFetch(*)",
+        "Read(.env*)",
+        "Read(**/.env*)",
+        "Read(.git/**)",
+        "Read(**/.git/**)",
+        "Read(.npmrc)",
+        "Read(**/.npmrc)",
+        "Read(.pypirc)",
+        "Read(**/.pypirc)",
+        "Read(.netrc)",
+        "Read(**/.netrc)",
+        "Read(**/*.key)",
+        "Read(**/*.pem)",
+        "Read(**/*credential*)",
+        "Read(**/*secret*)",
+      ],
     },
-    sandbox: { mode: "disabled", networkAccess: "enabled" },
+    sandbox: { mode: "disabled", networkAccess: "disabled" },
   }, null, 2)}\n`;
 }
 
@@ -135,6 +154,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     windowsHide: true,
     shell: false,
   });
+  const childExit = new Promise<void>(resolve => child.once("exit", () => resolve()));
   const pending = new Map<number, PendingRequest>();
   let nextId = 1;
   let agentText = "";
@@ -150,6 +170,17 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
   };
   const failProtocol = (message: string): void => { protocolFault ??= new Error(message); };
+  const rejectPending = (error: Error): void => {
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  };
+
+  child.once("error", error => rejectPending(new Error(`Cursor ACP process failed to start: ${error.message}`, { cause: error })));
+  child.once("exit", (code, signal) => {
+    if (pending.size === 0) return;
+    const outcome = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+    rejectPending(new Error(`Cursor ACP process ended before completing the review (${outcome}).`));
+  });
 
   createInterface({ input: child.stdout }).on("line", line => {
     let message: unknown;
@@ -217,16 +248,10 @@ async function runAcp(options: RunnerOptions): Promise<void> {
       session_id: session.sessionId,
     };
   } finally {
-    for (const waiter of pending.values()) waiter.reject(new Error("Cursor ACP process closed."));
-    pending.clear();
+    rejectPending(new Error("Cursor ACP process closed."));
     child.stdin.end();
-    const exited = child.exitCode !== null
-      ? Promise.resolve()
-      : new Promise<void>(resolve => {
-        child.once("exit", () => resolve());
-        child.kill();
-      });
-    await Promise.race([exited, new Promise<void>(resolve => setTimeout(resolve, 2_000))]);
+    if (child.exitCode === null) child.kill();
+    await Promise.race([childExit, new Promise<void>(resolve => setTimeout(resolve, 2_000))]);
     rmSync(configDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
   if (!finalEnvelope) throw new Error("Cursor ACP did not produce a final envelope.");

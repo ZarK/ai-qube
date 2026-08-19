@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import * as cursor from "../dist/index.js";
 
@@ -24,12 +25,13 @@ describe("Cursor isolated review adapter", () => {
       cursor.resolveCursorWindowsShim(
         "C:\\Tools\\cursor-agent.cmd",
         path => path === `${versionRoot}\\node.exe` || path === `${versionRoot}\\index.js`,
+        undefined,
         () => ["2026.08.11-e8db854"],
       ),
       {
         executable: process.execPath,
         prefixArgs: [
-          new URL("../dist/cursor-acp-runner.js", import.meta.url).pathname.replace(/^\/(?:([A-Za-z]:))/, "$1").replace(/\//g, "\\"),
+          fileURLToPath(new URL("../dist/cursor-acp-runner.js", import.meta.url)),
           "--cursor-executable",
           `${versionRoot}\\node.exe`,
           "--cursor-prefix-json",
@@ -38,13 +40,14 @@ describe("Cursor isolated review adapter", () => {
         ],
       },
     );
-    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, () => ["2026.08.11-e8db854"]), null);
+    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, undefined, () => ["2026.08.11-e8db854"]), null);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
     const built = cursor.buildCursorInvocation(context, "linux");
     assert.deepEqual(built.args.slice(0, 7), ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"]);
-    assert.equal(built.stdin, "inspect");
+    assert.match(built.stdin, /^inspect\n\nThe following JSON Schema/);
+    assert.match(built.stdin, /\{\}$/);
     for (const forbidden of ["--force", "--yolo", "--resume", "--continue", "--approve-mcps", "--auto-review", "--trust", "--worktree", "--api-key"]) {
       assert.equal(built.args.includes(forbidden), false);
     }
@@ -53,7 +56,8 @@ describe("Cursor isolated review adapter", () => {
   it("routes Windows review through the permission-denying ACP client", () => {
     const built = cursor.buildCursorInvocation(context, "win32");
     assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
-    assert.equal(built.stdin, "inspect");
+    assert.match(built.stdin, /^inspect\n\nThe following JSON Schema/);
+    assert.match(built.stdin, /\{\}$/);
     assert.equal(built.args.includes("--sandbox"), false);
     assert.equal(built.args.includes("disabled"), false);
   });
@@ -80,7 +84,7 @@ describe("Cursor isolated review adapter", () => {
 
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {
     const output = (args) => {
-      if (args.at(-1) === "--help") return "--print --output-format --mode ask --model --workspace --sandbox";
+      if (args.at(-1) === "--help") return "acp --print --output-format --mode ask --model --workspace --sandbox";
       if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
       if (args.at(-1) === "models") return "Available models\nmodel-a - Model A";
       return "";
@@ -88,6 +92,7 @@ describe("Cursor isolated review adapter", () => {
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
     assert.equal(cursor.probeCursor(base, "linux").status, "ready");
     assert.equal(cursor.probeCursor(base, "win32").status, "ready");
+    assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "acp ask" : output(args) }, "win32").status, "ready");
     assert.equal(cursor.probeCursor({ ...base, version: "cursor-dev" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "2025.01.01-old" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");
