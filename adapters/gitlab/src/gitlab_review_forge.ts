@@ -59,6 +59,7 @@ import type {
 } from "./gitlab_review_types.js";
 
 const DEFAULT_MAX_THREAD_RECONCILIATIONS = 1_000;
+const THREAD_RECONCILIATION_CONCURRENCY = 4;
 
 function mapMergeState(mr: GitLabMergeRequest): ReviewItem["state"] {
   if (mr.draft || mr.work_in_progress) return "draft";
@@ -629,7 +630,8 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         nextAction: "GitLab discussion resolution requires a review client with resolveMergeRequestDiscussion support.",
       };
     }
-    if (!this.client.getMergeRequestDiscussion) {
+    const getMergeRequestDiscussion = this.client.getMergeRequestDiscussion?.bind(this.client);
+    if (!getMergeRequestDiscussion) {
       return {
         status: "failed",
         prNumber: input.prNumber,
@@ -691,14 +693,23 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     let reconciliationFailed = false;
     if (mutatedThreadIds.length > 0) {
       try {
-        const observedDiscussions: GitLabDiscussion[] = [];
-        for (const discussionId of mutatedThreadIds) {
-          observedDiscussions.push(await this.client.getMergeRequestDiscussion({
-            projectId: this.projectId,
-            iid: String(input.prNumber),
-            discussionId,
-          }));
-        }
+        const observedDiscussions = new Array<GitLabDiscussion>(mutatedThreadIds.length);
+        let nextDiscussionIndex = 0;
+        const workers = Array.from(
+          { length: Math.min(THREAD_RECONCILIATION_CONCURRENCY, mutatedThreadIds.length) },
+          async () => {
+            while (nextDiscussionIndex < mutatedThreadIds.length) {
+              const discussionIndex = nextDiscussionIndex;
+              nextDiscussionIndex += 1;
+              observedDiscussions[discussionIndex] = await getMergeRequestDiscussion({
+                projectId: this.projectId,
+                iid: String(input.prNumber),
+                discussionId: mutatedThreadIds[discussionIndex],
+              });
+            }
+          },
+        );
+        await Promise.all(workers);
         const observedById = new Map(observedDiscussions.map(discussion => [discussion.id, discussion]));
         for (const threadId of mutatedThreadIds) {
           const discussion = observedById.get(threadId);
