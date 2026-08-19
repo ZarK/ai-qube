@@ -266,6 +266,43 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.deepEqual(result.failedThreadIds, ['PRRT_resolve_fail']);
   });
 
+  it('fails when the bounded provider reload does not confirm the exact thread as resolved', async () => {
+    const threads = [
+      { id: 'PRRT_still_open', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r9' }] } },
+    ];
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })],
+      threads,
+      resolveThreadVisible: false,
+    });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: ['PRRT_still_open'], all: false, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ['PRRT_still_open']);
+    assert.match(result.nextAction, /bounded post-mutation read/);
+    const threadReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('reviewThreads')));
+    assert.equal(threadReads.length, 2, 'one pre-mutation read and one bounded reconciliation read are required');
+  });
+
+  it('fails when the exact resolved thread is missing from the bounded provider reload', async () => {
+    const threads = [
+      { id: 'PRRT_missing_after_mutation', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r10' }] } },
+    ];
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })],
+      threads,
+      resolveThreadPostState: 'missing',
+    });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: ['PRRT_missing_after_mutation'], all: false, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ['PRRT_missing_after_mutation']);
+  });
+
   it('parses comma-separated repeated review thread flags', () => {
     const threadIds = stringListFlag({ args: {}, flags: { thread: ['PRRT_one, PRRT_two', 'PRRT_three'] } }, 'thread');
 

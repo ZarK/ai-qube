@@ -3371,9 +3371,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       };
     }
     let prThreads: RawThreadNode[];
+    let repositoryName: string;
     try {
       const repository = await this.getRepositoryIdentity();
-      prThreads = await this.getUnresolvedThreads(repository.nameWithOwner, input.prNumber);
+      repositoryName = repository.nameWithOwner;
+      prThreads = await this.getUnresolvedThreads(repositoryName, input.prNumber);
     } catch {
       return {
         status: 'failed',
@@ -3397,22 +3399,41 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         nextAction: `No selected GitHub review thread ids belong to unresolved viewer-resolvable threads on PR #${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
       };
     }
-    const resolvedThreadIds: string[] = [];
+    const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
     for (const threadId of selectedThreadIds) {
       const result = await this.resolveReviewThread(threadId);
-      if (result) resolvedThreadIds.push(threadId);
+      if (result) mutatedThreadIds.push(threadId);
       else failedThreadIds.push(threadId);
     }
-    const status: ResolveReviewThreadResult['status'] = failedThreadIds.length > 0 ? (resolvedThreadIds.length > 0 ? 'failed' : 'failed') : 'resolved';
+    const resolvedThreadIds: string[] = [];
+    let reconciliationFailed = false;
+    if (mutatedThreadIds.length > 0) {
+      try {
+        const observedThreads = await this.getReviewThreads(repositoryName, input.prNumber);
+        const observedById = new Map(observedThreads.map(thread => [thread.id, thread]));
+        for (const threadId of mutatedThreadIds) {
+          if (observedById.get(threadId)?.isResolved === true) resolvedThreadIds.push(threadId);
+          else failedThreadIds.push(threadId);
+        }
+        reconciliationFailed = resolvedThreadIds.length !== mutatedThreadIds.length;
+      } catch {
+        failedThreadIds.push(...mutatedThreadIds);
+        reconciliationFailed = true;
+      }
+    }
+    const uniqueFailedThreadIds = [...new Set(failedThreadIds)];
+    const status: ResolveReviewThreadResult['status'] = uniqueFailedThreadIds.length > 0 ? 'failed' : 'resolved';
     return {
       status,
       prNumber: input.prNumber,
       resolvedThreadIds,
       skippedThreadIds,
-      failedThreadIds,
-      nextAction: failedThreadIds.length > 0
-        ? `Some GitHub review threads could not be resolved. Verify permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+      failedThreadIds: uniqueFailedThreadIds,
+      nextAction: uniqueFailedThreadIds.length > 0
+        ? reconciliationFailed
+          ? `GitHub did not confirm every selected review thread as resolved in the bounded post-mutation read. Rerun \`aie pr view ${input.prNumber} --json\`, then retry \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+          : `Some GitHub review threads could not be resolved. Verify permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
         : `Resolved ${resolvedThreadIds.length} GitHub review thread${resolvedThreadIds.length === 1 ? '' : 's'}${skippedThreadIds.length > 0 ? ` and skipped ${skippedThreadIds.length} id${skippedThreadIds.length === 1 ? '' : 's'} not resolvable on PR #${input.prNumber}` : ''}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
     };
   }

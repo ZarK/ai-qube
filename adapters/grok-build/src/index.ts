@@ -195,23 +195,24 @@ function jsonObjectSequence(text: string): string[] | null {
   return objects.length > 0 ? objects : null;
 }
 
-function parseGrokEnvelopeRecord(stdout: string): Record<string, unknown> | null {
+function parseGrokEnvelopeRecords(stdout: string): Record<string, unknown>[] {
   try {
     const value: unknown = JSON.parse(stdout);
-    if (isRecord(value)) return value;
+    if (isRecord(value)) return [value];
   } catch {
     // Grok may emit JSONL.
   }
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
+  const records: Record<string, unknown>[] = [];
+  for (const line of lines) {
     try {
-      const value: unknown = JSON.parse(lines[index]);
-      if (isRecord(value)) return value;
+      const value: unknown = JSON.parse(line);
+      if (isRecord(value)) records.push(value);
     } catch {
-      // Keep scanning toward the final event.
+      // Host diagnostics and progress prose are not review evidence.
     }
   }
-  return null;
+  return records;
 }
 
 function readNonNegativeNumber(value: unknown): number | undefined {
@@ -240,20 +241,23 @@ function grokTextPayload(record: Record<string, unknown>): string | null {
 }
 
 function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
-  const record = parseGrokEnvelopeRecord(stdout.trim());
-  if (!record) return null;
-  const payload = grokTextPayload(record);
-  if (!payload) return null;
-  const objects = jsonObjectSequence(payload);
-  if (!objects) return null;
-  const sessionId = typeof record.sessionId === "string"
-    ? record.sessionId
-    : typeof record.session_id === "string"
-      ? record.session_id
-      : null;
-  const usage = readGrokUsage(record.usage)
-    ?? readGrokUsage(record.tokenUsage)
-    ?? readGrokUsage(record.tokens);
+  const records = parseGrokEnvelopeRecords(stdout.trim());
+  const objects: string[] = [];
+  let sessionId: string | null = null;
+  let usage: Record<string, unknown> | undefined;
+  for (const record of records) {
+    if (typeof record.sessionId === "string") sessionId = record.sessionId;
+    else if (typeof record.session_id === "string") sessionId = record.session_id;
+    usage = readGrokUsage(record.usage)
+      ?? readGrokUsage(record.tokenUsage)
+      ?? readGrokUsage(record.tokens)
+      ?? usage;
+    const payload = grokTextPayload(record);
+    if (!payload) continue;
+    const sequence = jsonObjectSequence(payload);
+    if (sequence) objects.push(...sequence);
+  }
+  if (objects.length === 0) return null;
   return {
     text: objects[objects.length - 1]!,
     transientTexts: objects.slice(0, -1),

@@ -34,6 +34,7 @@ import {
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
+import { buildShellCommandPlan } from "./process_launch.js";
 import {
   buildInstallQuestions,
   DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
@@ -2954,10 +2955,12 @@ const autoresearchEvidenceOutputLimit = 16_000;
 
 function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath: string): AutoresearchEvaluation {
   const started = Date.now();
-  const result = spawnSync(context.evaluator.command ?? "", [], {
+  const commandPlan = buildShellCommandPlan(context.evaluator.command ?? "");
+  const result = spawnSync(commandPlan.executable, commandPlan.args, {
     cwd: workspacePath,
-    shell: true,
+    shell: false,
     encoding: "utf8",
+    windowsVerbatimArguments: commandPlan.windowsVerbatimArguments,
     windowsHide: true,
     timeout: 120_000,
     env: { ...process.env, QUBE_AUTORESEARCH: "1" }

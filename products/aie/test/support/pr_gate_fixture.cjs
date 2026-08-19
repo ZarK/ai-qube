@@ -565,7 +565,15 @@ function makePrExec(options = {}) {
   const reviewPayloads = [];
   let currentPr = prViews[0];
   let nextCommentId = 900000;
-  const threads = options.threads || [];
+  const threads = [...(options.threads || [])];
+  const threadReadResults = [...(options.threadReadResults || [])];
+  const observeResolvedThread = (threadId) => {
+    if (options.resolveThreadVisible === false) return;
+    const index = threads.findIndex(thread => thread.id === threadId);
+    if (index === -1) return;
+    if (options.resolveThreadPostState === 'missing') threads.splice(index, 1);
+    else threads[index] = { ...threads[index], isResolved: true };
+  };
   const exec = async (args) => {
     calls.push(args);
     events.push(args.join(' '));
@@ -733,13 +741,20 @@ function makePrExec(options = {}) {
       }
       if (queryArg?.includes('resolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
+        const threadId = threadIdArg?.slice('threadId='.length) ?? 'thread-1';
         const queuedResult = resolveThreadResults.shift();
-        if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
-        return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
+        if (queuedResult) {
+          if ((queuedResult.exitCode ?? 1) === 0) observeResolvedThread(threadId);
+          return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
+        }
+        observeResolvedThread(threadId);
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadId, isResolved: true } } } }), stderr: '' };
       }
       if (queryArg?.includes('viewerMergeHeadlineText')) {
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: options.mergeUiState || {} } } }), stderr: '' };
       }
+      const threadReadResult = threadReadResults.shift();
+      if (threadReadResult) return { args, exitCode: threadReadResult.exitCode ?? 1, stdout: threadReadResult.stdout ?? '', stderr: threadReadResult.stderr ?? '' };
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
     }
     if (args[0] === 'review-fixture') {

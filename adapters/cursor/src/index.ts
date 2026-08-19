@@ -62,15 +62,24 @@ export function parseCursorModelCatalog(output: string): string[] | null {
 }
 
 export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnvelope | null {
-  let parsed: unknown;
+  const records: Record<string, unknown>[] = [];
   try {
-    parsed = JSON.parse(stdout.trim());
+    const parsed: unknown = JSON.parse(stdout.trim());
+    if (isRecord(parsed)) records.push(parsed);
   } catch {
-    return null;
+    for (const line of stdout.split(/\r?\n/)) {
+      try {
+        const parsed: unknown = JSON.parse(line.trim());
+        if (isRecord(parsed)) records.push(parsed);
+      } catch {
+        // Host diagnostics and progress prose are not review evidence.
+      }
+    }
   }
-  if (!isRecord(parsed)
-    || parsed.type !== "result"
-    || parsed.subtype !== "success"
+  const terminalResults = records.filter(parsed => parsed.type === "result");
+  if (terminalResults.length !== 1) return null;
+  const parsed = terminalResults[0];
+  if (parsed.subtype !== "success"
     || parsed.is_error !== false
     || typeof parsed.result !== "string"
     || parsed.result.trim() === "") return null;

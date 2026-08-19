@@ -925,7 +925,13 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewWaitMinutes = 0;
     config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
-    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({
+        mergeStateStatus: 'BLOCKED',
+        statusCheckRollup: [{ name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+      })],
+      checkRuns: [{ id: 200, name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+    });
     const order = [];
     let roundSummaryPublished = false;
     let snapshotReadsAfterSummary = 0;
@@ -968,6 +974,9 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.status, 'pending');
+    assert.match(result.nextAction, /Wait for the current-head CI run/);
+    assert.doesNotMatch(result.nextAction, /Refresh provider-visible local review feedback/);
     assert.equal(result.localReviewPublish.status, 'published');
     assert.deepEqual(result.roundSummary?.publishedRecord, { kind: 'pull-request-review', id: '123' });
     assert.equal(result.reviewSourceContract.allSatisfied, true, 'the provider-observed published round must satisfy the local-lane source in the same invocation');

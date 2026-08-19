@@ -651,24 +651,45 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `No selected GitLab discussion ids belong to unresolved discussions on MR !${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
       };
     }
-    const resolvedThreadIds: string[] = [];
+    const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
     for (const threadId of selectedThreadIds) {
       try {
         await this.client.resolveMergeRequestDiscussion({ projectId: this.projectId, iid: String(input.prNumber), discussionId: threadId });
-        resolvedThreadIds.push(threadId);
+        mutatedThreadIds.push(threadId);
       } catch {
         failedThreadIds.push(threadId);
       }
     }
+    const resolvedThreadIds: string[] = [];
+    let reconciliationFailed = false;
+    if (mutatedThreadIds.length > 0) {
+      try {
+        const observedDiscussions = await this.client.listMergeRequestDiscussions({ projectId: this.projectId, iid: String(input.prNumber) });
+        const observedById = new Map(observedDiscussions.map(discussion => [discussion.id, discussion]));
+        for (const threadId of mutatedThreadIds) {
+          const discussion = observedById.get(threadId);
+          const resolvableNotes = discussion?.notes?.filter(note => note.resolvable) ?? [];
+          if (resolvableNotes.length > 0 && resolvableNotes.every(note => note.resolved === true)) resolvedThreadIds.push(threadId);
+          else failedThreadIds.push(threadId);
+        }
+        reconciliationFailed = resolvedThreadIds.length !== mutatedThreadIds.length;
+      } catch {
+        failedThreadIds.push(...mutatedThreadIds);
+        reconciliationFailed = true;
+      }
+    }
+    const uniqueFailedThreadIds = [...new Set(failedThreadIds)];
     return {
-      status: failedThreadIds.length > 0 ? "failed" : "resolved",
+      status: uniqueFailedThreadIds.length > 0 ? "failed" : "resolved",
       prNumber: input.prNumber,
       resolvedThreadIds,
       skippedThreadIds,
-      failedThreadIds,
-      nextAction: failedThreadIds.length > 0
-        ? `Some GitLab discussions could not be resolved. Verify token permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+      failedThreadIds: uniqueFailedThreadIds,
+      nextAction: uniqueFailedThreadIds.length > 0
+        ? reconciliationFailed
+          ? `GitLab did not confirm every selected discussion as resolved in the bounded post-mutation read. Rerun \`aie pr view ${input.prNumber} --json\`, then retry \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+          : `Some GitLab discussions could not be resolved. Verify token permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
         : `Resolved ${resolvedThreadIds.length} GitLab discussion${resolvedThreadIds.length === 1 ? "" : "s"}${skippedThreadIds.length > 0 ? ` and skipped ${skippedThreadIds.length} id${skippedThreadIds.length === 1 ? "" : "s"} not unresolved on MR !${input.prNumber}` : ""}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
     };
   }
