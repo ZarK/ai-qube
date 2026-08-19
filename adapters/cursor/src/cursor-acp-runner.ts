@@ -163,7 +163,6 @@ async function runAcp(options: RunnerOptions): Promise<void> {
   const pending = new Map<number, PendingRequest>();
   let nextId = 1;
   let agentText = "";
-  let permissionRequests = 0;
   let protocolFault: Error | null = null;
   let stderr = "";
   let finalEnvelope: JsonObject | null = null;
@@ -201,7 +200,6 @@ async function runAcp(options: RunnerOptions): Promise<void> {
       return;
     }
     if (message.method === "session/request_permission" && "id" in message) {
-      permissionRequests += 1;
       send({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
       return;
     }
@@ -245,7 +243,6 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     }
     await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] });
     if (protocolFault) throw protocolFault;
-    if (permissionRequests > 0) throw new Error("Blocked by policy: Cursor requested a capability outside QUBE's read-only ACP client.");
     if (agentText.trim() === "") throw new Error("Cursor ACP returned no final agent message.");
     finalEnvelope = {
       type: "result",

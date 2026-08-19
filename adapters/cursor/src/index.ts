@@ -148,9 +148,20 @@ export function resolveCursorWindowsShim(
   let names: string[];
   try { names = listDirectory(versions); }
   catch { return null; }
+  const versionParts = (name: string): number[] => {
+    const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d{2})-(\d{2})-(\d{2}))?-[a-f0-9]+$/iu.exec(name);
+    return match ? match.slice(1, 7).map(value => Number(value ?? 0)) : [];
+  };
   const selected = names
     .filter(name => /^\d{4}\.\d{1,2}\.\d{1,2}(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/iu.test(name))
-    .sort((left, right) => right.localeCompare(left))
+    .sort((left, right) => {
+      const leftParts = versionParts(left);
+      const rightParts = versionParts(right);
+      for (let index = 0; index < leftParts.length; index += 1) {
+        if (leftParts[index] !== rightParts[index]) return rightParts[index] - leftParts[index];
+      }
+      return right.localeCompare(left);
+    })
     .find(name => fileExists(windowsPath.join(versions, name, "node.exe"))
       && fileExists(windowsPath.join(versions, name, "index.js")));
   if (!selected) return null;

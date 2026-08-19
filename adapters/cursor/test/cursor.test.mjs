@@ -41,6 +41,8 @@ describe("Cursor isolated review adapter", () => {
       },
     );
     assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, undefined, () => ["2026.08.11-e8db854"]), null);
+    const newest = cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => true, undefined, () => ["2026.9.30-a", "2026.10.1-b"]);
+    assert.match(newest.prefixArgs.join("\n"), /2026\.10\.1-b/);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {

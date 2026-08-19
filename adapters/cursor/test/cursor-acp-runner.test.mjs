@@ -105,11 +105,10 @@ describe("Cursor Windows ACP runner", () => {
     assert.equal(JSON.parse(result.stdout).result, '{"status":"passed"}');
   });
 
-  it("cancels and rejects every requested capability", () => {
+  it("cancels every requested capability without granting it", () => {
     const result = invoke("permission");
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Blocked by policy/);
-    assert.equal(result.stdout, "");
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).result, '{"status":"passed"}');
   });
 
   it("fails promptly when the ACP process exits with a request pending", () => {
