@@ -184,7 +184,7 @@ describe("staged release receipts", () => {
     assert.deepEqual(calls, [["stage", "approve", secondStage]]);
   });
 
-  it("starts only allowlisted npm stage commands across platforms", () => {
+  it("uses cmd on Windows and keeps POSIX npm invocation direct and unchanged", () => {
     assert.deepEqual(npmStageCommand(["stage", "list", "--json"], {
       platform: "win32",
       comspec: "C:\\Windows\\System32\\cmd.exe",
