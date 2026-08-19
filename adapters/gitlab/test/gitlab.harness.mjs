@@ -178,6 +178,11 @@ function createGitLabReviewClient(fixture) {
     },
     async listMergeRequestNotes() { return notes; },
     async listMergeRequestDiscussions() { return discussions; },
+    async getMergeRequestDiscussion(input) {
+      const discussion = discussions.find(item => item.id === input.discussionId);
+      if (!discussion) throw new Error(`missing discussion ${input.discussionId}`);
+      return discussion;
+    },
     async resolveMergeRequestDiscussion(input) {
       const discussion = discussions.find(item => item.id === input.discussionId);
       if (!discussion) throw new Error(`missing discussion ${input.discussionId}`);

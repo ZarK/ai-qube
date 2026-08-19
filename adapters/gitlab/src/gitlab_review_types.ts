@@ -106,7 +106,7 @@ export interface GitLabReviewRestClient {
   findMergeRequestForBranch?(input: { projectId: string; sourceBranch: string }): Promise<GitLabMergeRequest | null>;
   listMergeRequestNotes(input: { projectId: string; iid: string }): Promise<GitLabNote[]>;
   listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]>;
-  getMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
+  getMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   listMergeRequestDiffs?(input: { projectId: string; iid: string }): Promise<GitLabMergeRequestDiff[]>;
   resolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   unresolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;

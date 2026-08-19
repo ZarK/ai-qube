@@ -58,6 +58,8 @@ import type {
   GitLabReviewSnapshot,
 } from "./gitlab_review_types.js";
 
+const DEFAULT_MAX_THREAD_RECONCILIATIONS = 1_000;
+
 function mapMergeState(mr: GitLabMergeRequest): ReviewItem["state"] {
   if (mr.draft || mr.work_in_progress) return "draft";
   if (mr.state === "merged") return "merged";
@@ -341,10 +343,14 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   readonly id = "gitlab" as const;
   private readonly client: GitLabReviewRestClient;
   private readonly projectId: string;
+  private readonly maxThreadReconciliations: number;
 
   constructor(private readonly options: GitLabReviewProviderOptions = {}) {
     this.client = options.client ?? new FetchGitLabReviewRestClient(options);
     this.projectId = required(options.projectId ?? process.env.GITLAB_PROJECT_ID, "GITLAB_PROJECT_ID");
+    this.maxThreadReconciliations = Number.isSafeInteger(options.maxReviewItems) && Number(options.maxReviewItems) > 0
+      ? Number(options.maxReviewItems)
+      : DEFAULT_MAX_THREAD_RECONCILIATIONS;
   }
 
   capabilities(): ReviewForgeCapabilities {
@@ -623,6 +629,16 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         nextAction: "GitLab discussion resolution requires a review client with resolveMergeRequestDiscussion support.",
       };
     }
+    if (!this.client.getMergeRequestDiscussion) {
+      return {
+        status: "failed",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: threadIds,
+        nextAction: "Exact GitLab reconciliation requires a review client with getMergeRequestDiscussion support; update the injected client before retrying. No discussion was mutated.",
+      };
+    }
     let discussions: GitLabDiscussion[];
     try {
       discussions = await this.client.listMergeRequestDiscussions({ projectId: this.projectId, iid: String(input.prNumber) });
@@ -651,6 +667,16 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `No selected GitLab discussion ids belong to unresolved discussions on MR !${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
       };
     }
+    if (selectedThreadIds.length > this.maxThreadReconciliations) {
+      return {
+        status: "failed",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds,
+        failedThreadIds: selectedThreadIds,
+        nextAction: `Selected ${selectedThreadIds.length} GitLab discussions, exceeding the bounded reconciliation limit of ${this.maxThreadReconciliations}. Narrow the explicit thread selection or raise maxReviewItems after confirming the expected review history. No discussion was mutated.`,
+      };
+    }
     const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
     for (const threadId of selectedThreadIds) {
@@ -665,11 +691,14 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     let reconciliationFailed = false;
     if (mutatedThreadIds.length > 0) {
       try {
-        const observedDiscussions = await Promise.all(mutatedThreadIds.map(discussionId => this.client.getMergeRequestDiscussion({
-          projectId: this.projectId,
-          iid: String(input.prNumber),
-          discussionId,
-        })));
+        const observedDiscussions: GitLabDiscussion[] = [];
+        for (const discussionId of mutatedThreadIds) {
+          observedDiscussions.push(await this.client.getMergeRequestDiscussion({
+            projectId: this.projectId,
+            iid: String(input.prNumber),
+            discussionId,
+          }));
+        }
         const observedById = new Map(observedDiscussions.map(discussion => [discussion.id, discussion]));
         for (const threadId of mutatedThreadIds) {
           const discussion = observedById.get(threadId);
