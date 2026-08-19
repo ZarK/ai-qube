@@ -247,6 +247,9 @@ export function hostFailoverSubstitution(primaryHost: string, reasonCode: string
   if (reasonCode === 'model-route-policy-blocked') {
     return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
   }
+  if (reasonCode === 'model-route-probe-blocked') {
+    return `The configured ${primaryHost} route failed its readiness probe; the lane uses the configured second host.`;
+  }
   return 'This lane reached the configured host-fault threshold and executes through the fallback route.';
 }
 
@@ -261,6 +264,51 @@ export function withHostFailoverSubstitution(
   };
 }
 
+export interface PlannedReviewRouteChain {
+  lane: LocalReviewLaneId | null;
+  preferredRoute: ModelReviewRoutePlan;
+  fallbackRoute: ModelReviewRoutePlan | null;
+}
+
+function sameReviewRoute(left: ModelReviewRoutePlan, right: ModelReviewRoutePlan): boolean {
+  return left.host === right.host && left.model === right.model;
+}
+
+export function plannedReviewRouteChains(config: Config): PlannedReviewRouteChain[] {
+  if (reviewModeOf(config) !== 'isolated') return [];
+  const fallbackRoute = resolveFailoverReviewPlan(config);
+  const chains: PlannedReviewRouteChain[] = [];
+  for (const lane of config.reviewLanes) {
+    const preferredRoute = resolveModelReviewPlan(config, lane.id as LocalReviewLaneId);
+    if (!preferredRoute) continue;
+    chains.push({
+      lane: lane.id as LocalReviewLaneId,
+      preferredRoute,
+      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+    });
+  }
+  if (chains.length === 0 && config.reviewRoute) {
+    const route = config.reviewRoute;
+    const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host as ReviewModelHostId);
+    const preferredRoute: ModelReviewRoutePlan = {
+      host: route.host,
+      tier: route.tier,
+      model: binding.model,
+      effort: binding.effort as ModelReviewRoutePlan['effort'],
+      isolation: 'read-only',
+      timeoutSeconds: route.timeoutSeconds,
+      maxTurns: route.maxTurns,
+      substitution: binding.substitution,
+    };
+    chains.push({
+      lane: null,
+      preferredRoute,
+      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+    });
+  }
+  return chains;
+}
+
 export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedProbeHost; model: string | null }> {
   const targets = new Map<string, { host: RoutedProbeHost; model: string | null }>();
   const addRoute = (plan: ModelReviewRoutePlan | null): void => {
@@ -268,10 +316,9 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
     const key = `${plan.host}::${plan.model ?? ''}`;
     if (!targets.has(key)) targets.set(key, { host: plan.host, model: plan.model });
   };
-  for (const lane of config.reviewLanes) addRoute(resolveModelReviewPlan(config, lane.id as LocalReviewLaneId));
-  if (reviewModeOf(config) === 'isolated' && config.reviewRoute) {
-    const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host as ReviewModelHostId);
-    addRoute({ host: config.reviewRoute.host, tier: config.reviewRoute.tier, model: binding.model, effort: binding.effort as ModelReviewRoutePlan['effort'], isolation: 'read-only', timeoutSeconds: config.reviewRoute.timeoutSeconds, maxTurns: config.reviewRoute.maxTurns, substitution: binding.substitution });
+  for (const chain of plannedReviewRouteChains(config)) {
+    addRoute(chain.preferredRoute);
+    addRoute(chain.fallbackRoute);
   }
   addRoute(resolveFailoverReviewPlan(config));
   return [...targets.values()];

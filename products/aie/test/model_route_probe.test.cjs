@@ -210,4 +210,20 @@ describe('model route probe', () => {
       ['node-cli', 'codex.js', 'debug', 'models'],
     ]);
   });
+
+  it('keeps review probes shell-free on Windows, Linux, and macOS', () => {
+    for (const platform of ['win32', 'linux', 'darwin']) {
+      const commands = [];
+      const executable = platform === 'win32' ? 'node.exe' : 'node';
+      const check = probeModelRoute('codex', 'gpt-5.6-luna', (command, args) => {
+        commands.push([command, ...args]);
+        if (args.includes('--version')) return 'codex-cli 0.144.5\n';
+        if (args.includes('debug')) return JSON.stringify({ models: [{ slug: 'gpt-5.6-luna' }] });
+        throw new Error(`unexpected probe command: ${args.join(' ')}`);
+      }, () => ({ executable, prefixArgs: ['codex.js'] }), platform);
+      assert.equal(check.status, 'ready');
+      assert.ok(commands.every(command => command[0] === executable && command[1] === 'codex.js'));
+      assert.ok(commands.every(command => !command.includes('cmd.exe') && !command.includes('sh')));
+    }
+  });
 });

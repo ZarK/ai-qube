@@ -328,6 +328,15 @@ export interface GateReadinessDiagnostics {
           modelListed: boolean | null;
           nextAction: string | null;
         }>;
+        chains: Array<{
+          lane: string | null;
+          required: boolean;
+          readiness: 'ready' | 'blocked';
+          preferredRoute: { host: string; model: string | null };
+          fallbackRoute: { host: string; model: string | null } | null;
+          selectedRoute: { host: string; model: string | null } | null;
+          substitution: string | null;
+        }>;
         nextAction: string | null;
       };
     };

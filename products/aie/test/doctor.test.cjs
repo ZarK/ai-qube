@@ -12,6 +12,7 @@ const { getInstructionStatus } = require('../dist/repo/index.js');
 const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
 const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
+const { resolveFailoverReviewPlan } = require('../dist/app/local_review_runner.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
 
 function makeGitRepo() {
@@ -308,8 +309,10 @@ describe('doctor diagnostics', () => {
     assert.deepEqual(probed.sort(), ['codex:gpt-fallback-test', 'grok-build:grok-4.5']);
     assert.equal(ready.checks.routeProbes.routes.length, 2);
     assert.ok(ready.checks.routeProbes.routes.every(route => route.status === 'ready'));
+    assert.ok(ready.checks.routeProbes.chains.every(chain => chain.readiness === 'ready'));
+    assert.ok(ready.checks.routeProbes.chains.every(chain => chain.selectedRoute.host === 'grok-build'));
 
-    const blocked = buildReviewPreflightDiagnostics(config, {
+    const fallbackReady = buildReviewPreflightDiagnostics(config, {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
@@ -319,12 +322,31 @@ describe('doctor diagnostics', () => {
         : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null }),
     });
 
-    assert.equal(blocked.checks.routeProbes.readiness, 'needs-action');
-    assert.equal(blocked.readiness, 'needs-action');
-    const blockedRoute = blocked.checks.routeProbes.routes.find(route => route.host === 'grok-build');
+    assert.equal(fallbackReady.checks.routeProbes.readiness, 'ready');
+    assert.equal(fallbackReady.readiness, 'ready');
+    const blockedRoute = fallbackReady.checks.routeProbes.routes.find(route => route.host === 'grok-build');
     assert.match(blockedRoute.nextAction, /not in the grok catalog/);
-    assert.ok(blocked.nextActions.some(action => /blocked review route/.test(action)));
-    assert.ok(blocked.nextActions.some(action => /not in the grok catalog/.test(action)));
+    const fallbackPlan = resolveFailoverReviewPlan(config);
+    assert.ok(fallbackReady.checks.routeProbes.chains.every(chain => chain.selectedRoute.host === fallbackPlan.host));
+    assert.ok(fallbackReady.checks.routeProbes.chains.every(chain => /grok-build route failed its readiness probe/.test(chain.substitution)));
+    assert.equal(fallbackReady.checks.routeProbes.nextAction, null);
+    assert.equal(fallbackReady.nextActions.some(action => /blocked required review route chain/.test(action)), false);
+
+    const allBlocked = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      probeRoute: (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` }),
+    });
+
+    assert.equal(allBlocked.checks.routeProbes.readiness, 'needs-action');
+    assert.equal(allBlocked.readiness, 'needs-action');
+    assert.ok(allBlocked.checks.routeProbes.chains.every(chain => chain.readiness === 'blocked'));
+    assert.ok(allBlocked.checks.routeProbes.chains.every(chain => chain.selectedRoute === null));
+    assert.match(allBlocked.checks.routeProbes.nextAction, /blocked required review route chain/);
+    assert.ok(allBlocked.nextActions.some(action => /grok-build is unavailable/.test(action)));
+    assert.ok(allBlocked.nextActions.some(action => /codex is unavailable/.test(action)));
   });
 
   it('keeps route probes disabled when no routed review lanes are configured', () => {
@@ -346,7 +368,42 @@ describe('doctor diagnostics', () => {
     assert.equal(probeCalls, 0);
     assert.equal(diagnostics.checks.routeProbes.readiness, 'disabled');
     assert.deepEqual(diagnostics.checks.routeProbes.routes, []);
+    assert.deepEqual(diagnostics.checks.routeProbes.chains, []);
     assert.equal(diagnostics.readiness, 'ready');
+  });
+
+  it('does not block required review lanes on an unavailable optional route', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewMode = 'isolated';
+    config.reviewRoute = null;
+    config.reviewFailover = null;
+    config.reviewModels.review.codex = { model: 'gpt-required', effort: 'low' };
+    config.reviewModels.review['grok-build'] = { model: 'grok-optional', effort: null };
+    config.reviewLanes = [
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } },
+      { id: 'security', required: 'when-matched', match: ['**/*'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', route: { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } },
+    ];
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      requiredLanes: ['issue-compliance'],
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      probeRoute: (host, model) => host === 'codex'
+        ? { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: true, diagnostic: null }
+        : { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` },
+    });
+
+    assert.equal(diagnostics.checks.routeProbes.readiness, 'ready');
+    assert.equal(diagnostics.readiness, 'ready');
+    assert.equal(diagnostics.checks.routeProbes.chains.find(chain => chain.lane === 'issue-compliance').readiness, 'ready');
+    assert.equal(diagnostics.checks.routeProbes.chains.find(chain => chain.lane === 'security').readiness, 'blocked');
+    assert.equal(diagnostics.checks.routeProbes.chains.find(chain => chain.lane === 'security').required, false);
   });
 
   it('reports malformed loose git object output as unavailable', () => {
@@ -539,7 +596,7 @@ describe('doctor diagnostics', () => {
     assert.notEqual(workflow.review.state, 'fallback-only');
   });
 
-  it('does not report isolated review ready when a route probe is blocked', () => {
+  it('reports isolated review ready when the preferred route is blocked and fallback is ready', () => {
     const config = isolatedLocalHostConfig();
     const diagnostics = buildGateReadinessDiagnostics(config, {
       ghAuthenticated: true,
@@ -548,10 +605,23 @@ describe('doctor diagnostics', () => {
         : readyProbe(host, model)),
     });
 
-    assert.notEqual(diagnostics.reviewAgent.localRunner.readiness, 'ready');
-    assert.ok(diagnostics.reviewAgent.localRunner.readiness === 'needs-action' || diagnostics.reviewAgent.localRunner.readiness === 'missing');
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.equal(diagnostics.reviewPreflight.checks.routeProbes.readiness, 'ready');
+    assert.equal(diagnostics.reviewPreflight.checks.routeProbes.chains[0].selectedRoute.host, 'codex');
+    assert.match(diagnostics.reviewPreflight.checks.routeProbes.chains[0].substitution, /grok-build route failed its readiness probe/);
+  });
+
+  it('does not report isolated review ready when every route probe is blocked', () => {
+    const config = isolatedLocalHostConfig();
+    const diagnostics = buildGateReadinessDiagnostics(config, {
+      ghAuthenticated: true,
+      probeRoute: (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} route is blocked.` }),
+    });
+
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'needs-action');
+    assert.equal(diagnostics.reviewPreflight.checks.routeProbes.readiness, 'needs-action');
+    assert.equal(diagnostics.reviewPreflight.checks.routeProbes.chains[0].selectedRoute, null);
     assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /spawnPrompt/);
-    assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction ?? '', /paste/);
   });
 
   it('does not report isolated review ready when no route targets exist', () => {
@@ -1014,6 +1084,31 @@ describe('staged workflow readiness', () => {
     // Without a current PR head, evidence is not applicable instead of fabricated.
     const noHead = buildWorkflowReadiness(workflowInput(config, gateReadiness));
     assert.equal(noHead.review.evidence.state, 'not-applicable');
+  });
+
+  it('keeps publisher readiness independent from blocked review compute routes', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewMode = 'isolated';
+    config.reviewProfile = 'local-focused';
+    config.reviewLanes = [
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    config.providers.review.publisher = { mode: 'token' };
+    const gateReadiness = buildGateReadinessDiagnostics(config, {
+      ghAuthenticated: true,
+      probeRoute: (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` }),
+    });
+    const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness));
+
+    assert.equal(workflow.review.lanes.runnerReadiness, 'needs-action');
+    assert.equal(stagesById(workflow).review.status, 'needs-action');
+    assert.deepEqual(workflow.review.publisher, { configured: true, mode: 'token' });
+    assert.equal(stagesById(workflow).publication.status, 'ready');
   });
 
   it('reports readiness for each configured review source independently, dropping disabled sources', () => {
