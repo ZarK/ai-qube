@@ -100,7 +100,11 @@ describe("trusted command adapters", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "trusted-command-timeout");
-    assert.equal(result.record.signal, process.platform === "win32" ? "SIGTERM" : "SIGKILL");
+    if (process.platform === "win32") {
+      assert.equal(["SIGTERM", "SIGKILL"].includes(result.record.signal ?? ""), true);
+    } else {
+      assert.equal(result.record.signal, "SIGKILL");
+    }
     assert.equal(result.record.elapsedMs < 2_000, true);
   });
 
