@@ -83,6 +83,7 @@ const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecisio
 const MAX_RECENT_PR_LIMIT = 50;
 const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
 const MAX_LANE_HISTORY_RECORDS = 100;
+const MAX_REVIEW_THREAD_RESOLUTIONS = 100;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
@@ -3399,6 +3400,16 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         skippedThreadIds,
         failedThreadIds: [],
         nextAction: `No selected GitHub review thread ids belong to unresolved viewer-resolvable threads on PR #${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
+      };
+    }
+    if (selectedThreadIds.length > MAX_REVIEW_THREAD_RESOLUTIONS) {
+      return {
+        status: 'failed',
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds,
+        failedThreadIds: selectedThreadIds,
+        nextAction: `Selected ${selectedThreadIds.length} GitHub review threads, exceeding the bounded mutation limit of ${MAX_REVIEW_THREAD_RESOLUTIONS}. Resolve a smaller explicit thread selection; no review thread was mutated.`,
       };
     }
     const mutatedThreadIds: string[] = [];

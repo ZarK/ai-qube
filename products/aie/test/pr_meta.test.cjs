@@ -266,6 +266,26 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.deepEqual(result.failedThreadIds, ['PRRT_resolve_fail']);
   });
 
+  it('fails before mutation when GitHub thread resolution exceeds its hard bound', async () => {
+    const threads = Array.from({ length: 101 }, (_, index) => ({
+      id: `PRRT_bounded_${index}`,
+      isResolved: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: `https://github.com/example/repo/pull/12#discussion_r${index}` }] },
+    }));
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.resolvedThreadIds.length, 0);
+    assert.equal(result.failedThreadIds.length, 101);
+    assert.match(result.nextAction, /bounded mutation limit of 100/);
+    assert.match(result.nextAction, /no review thread was mutated/i);
+    const mutations = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread')));
+    assert.equal(mutations.length, 0);
+  });
+
   it('fails when the bounded provider reload does not confirm the exact thread as resolved', async () => {
     const threads = [
       { id: 'PRRT_still_open', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r9' }] } },
