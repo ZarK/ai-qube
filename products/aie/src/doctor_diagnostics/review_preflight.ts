@@ -2,7 +2,7 @@ import { execFileSync } from 'child_process';
 import { existsSync, statfsSync } from 'fs';
 import { join, relative } from 'path';
 import type { Config } from '../config/index.js';
-import { hostFailoverSubstitution, plannedReviewRouteChains, plannedReviewRouteTargets } from '../app/local_review_runner.js';
+import { plannedReviewRouteChains, plannedReviewRouteTargets, selectProbedReviewRoute } from '../app/local_review_runner.js';
 import type { LocalReviewLaneId } from '../local_review_evidence.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from '../app/model_route_probe.js';
 import type { DoctorReadinessStatus, GateReadinessDiagnostics } from './types.js';
@@ -199,12 +199,15 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
       const fallback = chain.fallbackRoute ? { host: chain.fallbackRoute.host, model: chain.fallbackRoute.model } : null;
       const preferredCheck = checksByRoute.get(`${preferred.host}::${preferred.model ?? ''}`);
       const fallbackCheck = fallback ? checksByRoute.get(`${fallback.host}::${fallback.model ?? ''}`) : null;
-      const usingFallback = preferredCheck?.status !== 'ready' && fallbackCheck?.status === 'ready';
-      const selectedRoute = preferredCheck?.status === 'ready'
-        ? preferred
-        : usingFallback
-          ? fallback
-          : null;
+      const selection = selectProbedReviewRoute(
+        chain.preferredRoute,
+        chain.fallbackRoute,
+        preferredCheck?.status === 'ready',
+        fallbackCheck?.status === 'ready',
+      );
+      const selectedRoute = selection.route
+        ? { host: selection.route.host, model: selection.route.model }
+        : null;
       return {
         lane: chain.lane,
         required: chain.lane === null || requiredLanes === null || requiredLanes.has(chain.lane),
@@ -212,9 +215,7 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
         preferredRoute: preferred,
         fallbackRoute: fallback,
         selectedRoute,
-        substitution: usingFallback
-          ? hostFailoverSubstitution(preferred.host, 'model-route-probe-blocked')
-          : null,
+        substitution: selection.source === 'fallback' ? selection.route?.substitution ?? null : null,
       };
     });
     const blockedChains = chains.filter(chain => chain.required && chain.readiness === 'blocked');
