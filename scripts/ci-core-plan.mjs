@@ -166,13 +166,13 @@ export function planCoreCi(changedPaths, root = suiteRoot) {
   let fullReason = null;
 
   for (const changedPath of normalizedPaths) {
-    if (isAiqPath(changedPath)) {
-      aiq = true;
-      continue;
-    }
     if (isFullPlanPath(changedPath)) {
       fullReason ??= `full-sensitive-path:${changedPath}`;
-      if (changedPath.startsWith('.github/workflows/') || fullPlanFiles.has(changedPath)) aiq = true;
+      if (isAiqPath(changedPath) || changedPath.startsWith('.github/workflows/') || fullPlanFiles.has(changedPath)) aiq = true;
+      continue;
+    }
+    if (isAiqPath(changedPath)) {
+      aiq = true;
       continue;
     }
     const owningPackage = byPath.find(entry => changedPath === entry.path || changedPath.startsWith(`${entry.path}/`));

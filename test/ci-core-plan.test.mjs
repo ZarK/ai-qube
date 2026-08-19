@@ -32,7 +32,7 @@ test('adapter-only changes select the adapter and shipped consumers', () => {
 });
 
 test('release and workflow paths select the complete core plan', () => {
-  for (const changedPath of ['products/aie/package.json', 'scripts/publish-packages.mjs', '.github/workflows/ci.yml', 'pnpm-lock.yaml']) {
+  for (const changedPath of ['products/aie/package.json', 'products/aiq/package.json', 'scripts/publish-packages.mjs', '.github/workflows/ci.yml', 'pnpm-lock.yaml']) {
     const plan = planCoreCi([changedPath]);
     assert.equal(plan.full, true, changedPath);
     assert.equal(plan.rootTests, true, changedPath);
@@ -41,6 +41,7 @@ test('release and workflow paths select the complete core plan', () => {
     assert.ok(plan.testTargets.includes('@tjalve/qube-adapter-jenkins'), changedPath);
     assert.ok(!plan.testTargets.includes('@tjalve/aiu'), changedPath);
     assert.ok(plan.packTargets.some(target => target.name === '@tjalve/aiu' && target.script === 'release:check'), changedPath);
+    if (changedPath === 'products/aiq/package.json') assert.equal(plan.aiq, true, changedPath);
   }
 });
 
