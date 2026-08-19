@@ -88,7 +88,7 @@ describe('model route probe', () => {
       return 'Available models\n\ngpt-5.6-luna-high - GPT';
     }, () => 'cursor-agent');
     assert.equal(check.status, 'blocked');
-    assert.match(check.diagnostic, process.platform === 'win32' ? /WSL2/ : /cursor-agent login/);
+    assert.match(check.diagnostic, /cursor-agent login/);
     assert.doesNotMatch(check.diagnostic, /private@example/);
   });
 

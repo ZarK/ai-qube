@@ -161,7 +161,7 @@ describe("release set", () => {
     });
     assert.equal(report.ok, true);
     assert.equal(report.pushed, true);
-    assert.equal(commands.some(line => line.startsWith("tag -a publish-set-v")), true);
+    assert.equal(commands.some(line => line.startsWith("tag -s publish-set-v")), true);
     assert.equal(commands.some(line => line.startsWith("push origin publish-set-v")), true);
   });
 

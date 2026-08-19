@@ -15,11 +15,18 @@ const context = {
 };
 
 describe("Cursor isolated review adapter", () => {
-  it("declares native Windows unsupported while allowing WSL and Unix hosts", () => {
-    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), false);
+  it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
-    assert.match(cursor.isolatedReviewHostAdapter.unsupportedPlatformMessage, /WSL2/);
-    assert.equal(cursor.isolatedReviewHostAdapter.resolveWindowsShim, undefined);
+    assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("darwin"), true);
+    assert.deepEqual(
+      cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", path => path === "C:\\Tools\\cursor-agent.ps1", "C:\\Windows"),
+      {
+        executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        prefixArgs: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Tools\\cursor-agent.ps1"],
+      },
+    );
+    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false), null);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
@@ -66,8 +73,7 @@ describe("Cursor isolated review adapter", () => {
     };
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
     assert.equal(cursor.probeCursor(base, "linux").status, "ready");
-    assert.equal(cursor.probeCursor(base, "win32").status, "blocked");
-    assert.match(cursor.probeCursor(base, "win32").diagnostic, /WSL2/);
+    assert.equal(cursor.probeCursor(base, "win32").status, "ready");
     assert.equal(cursor.probeCursor({ ...base, version: "cursor-dev" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, version: "2025.01.01-old" }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");

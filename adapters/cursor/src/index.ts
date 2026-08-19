@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs";
+import { win32 as windowsPath } from "node:path";
+
 import type {
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
+  IsolatedReviewHostExecutable,
   IsolatedReviewHostInvocationContext,
   IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
@@ -109,17 +113,26 @@ export function buildCursorInvocation(
   return { args, stdin: context.prompt };
 }
 
+export function resolveCursorWindowsShim(
+  shim: string,
+  fileExists: (path: string) => boolean = existsSync,
+  systemRoot: string | undefined = process.env.SystemRoot,
+): IsolatedReviewHostExecutable | null {
+  const script = windowsPath.join(windowsPath.dirname(shim), "cursor-agent.ps1");
+  if (!fileExists(script)) return null;
+  const executable = systemRoot
+    ? windowsPath.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "powershell.exe";
+  return {
+    executable,
+    prefixArgs: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+  };
+}
+
 export function probeCursor(
   { model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext,
-  platform: string = process.platform,
+  _platform: string = process.platform,
 ): IsolatedReviewHostProbeResult {
-  if (platform === "win32") {
-    return {
-      status: "blocked",
-      modelListed: null,
-      diagnostic: "Cursor review lanes require the Cursor sandbox, which is not available on native Windows. Run QUBE and the official Cursor CLI in WSL2, Linux, or macOS. QUBE will not weaken review isolation to use native Windows Ask mode.",
-    };
-  }
   const reportedDate = dateVersion(version);
   if (!reportedDate) {
     return { status: "blocked", modelListed: null, diagnostic: `The Cursor CLI reported an unsupported version (${sanitize(version) || "empty version"}). Install an official date-versioned Cursor CLI release before running routed review lanes.` };
@@ -170,8 +183,8 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   windowsExecutableNames: Object.freeze([]),
   requiresPromptFile: false,
   requiresSchemaFile: false,
-  unsupportedPlatformMessage: "Native Windows cannot provide the required Cursor sandbox. Run QUBE and the Cursor CLI inside WSL2.",
-  supportsPlatform(platform: string): boolean { return platform !== "win32"; },
+  supportsPlatform(): boolean { return true; },
+  resolveWindowsShim: resolveCursorWindowsShim,
   windowsNodeModulesScriptPath(): string | null { return null; },
   windowsFallbackExecutablePath(): string | null { return null; },
   buildInvocation(context: IsolatedReviewHostInvocationContext): IsolatedReviewHostBuiltInvocation {
