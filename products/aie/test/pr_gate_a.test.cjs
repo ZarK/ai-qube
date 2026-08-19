@@ -81,6 +81,45 @@ const {
   applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
 
+async function passingRoutedModelProcess(invocation) {
+  const prompt = invocation.stdin ?? readFileSync(invocation.promptPath, 'utf8');
+  const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+  const body = {
+    issueNumber: 93,
+    prNumber: 12,
+    headSha: 'abc123',
+    lane,
+    status: 'passed',
+    severity: 'none',
+    recommendation: 'approve',
+    summary: `${lane} routed review passed.`,
+    blockers: [],
+    findings: [],
+    artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+    commands: ['git diff --check'],
+    surfaces: ['PR diff'],
+    contextReviewed: requiredTaskContext(),
+    toolsUsed: ['git'],
+    completeness: `Inspected the complete ${lane} scope at the current head.`,
+    coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+    preconditions: [],
+  };
+  return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+}
+
+function isPullRequestSnapshotRead(args) {
+  return args[0] === 'pr'
+    && args[1] === 'view'
+    && args[2] === '12'
+    && args[args.indexOf('--json') + 1] !== 'comments';
+}
+
+function isRoundSummaryMutation(args) {
+  if (args[0] !== 'api' || args[1] !== 'repos/example/repo/pulls/12/reviews' || !args.includes('--input')) return false;
+  const payload = JSON.parse(readFileSync(args[args.indexOf('--input') + 1], 'utf8'));
+  return String(payload.body ?? '').includes('qube-pr-review-summary:');
+}
+
 describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('maps GitHub PR review state to provider-neutral review items with untrusted feedback', async () => {
     const pr = basePr({
@@ -825,12 +864,21 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let publicationRejected = false;
+    let snapshotReadsAfterFailure = 0;
     const exec = async args => {
       // Reject the formal complete-batch review mutation while leaving the
       // idempotent review-request marker deliverable.
       const isReviewPost = args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST';
       const isLaneComment = args[0] === 'pr' && args[1] === 'comment' && String(args[4] ?? '').includes('qube-pr-review:');
-      if (isReviewPost || isLaneComment) throw new Error('provider rejected the lane mutation');
+      if (isReviewPost || isLaneComment) {
+        if (isReviewPost && isRoundSummaryMutation(args)) {
+          publicationRejected = true;
+          snapshotReadsAfterFailure = 0;
+        }
+        throw new Error('provider rejected the lane mutation');
+      }
+      if (publicationRejected && isPullRequestSnapshotRead(args)) snapshotReadsAfterFailure += 1;
       return fixture.exec(args);
     };
     const modelRouteProcess = async invocation => {
@@ -865,6 +913,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReview.status, 'passed');
     assert.ok(result.localReviewPublish.status === 'failed' || result.roundSummary?.status === 'failed', 'a provider-rejected round publication must not report success');
     assert.ok(result.roundSummary, 'the round summary step must still run');
+    assert.equal(snapshotReadsAfterFailure, 0, 'failed publication must not trigger success reconciliation');
   });
 
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
@@ -878,9 +927,14 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const order = [];
+    let roundSummaryPublished = false;
+    let snapshotReadsAfterSummary = 0;
     const exec = async args => {
       if ((args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST')) order.push('provider-mutation');
-      return fixture.exec(args);
+      if (roundSummaryPublished && isPullRequestSnapshotRead(args)) snapshotReadsAfterSummary += 1;
+      const result = await fixture.exec(args);
+      if (isRoundSummaryMutation(args)) roundSummaryPublished = true;
+      return result;
     };
     const modelRouteProcess = async invocation => {
       order.push('model');
@@ -915,6 +969,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
+    assert.equal(result.reviewSourceContract.allSatisfied, true, 'the provider-observed published round must satisfy the local-lane source in the same invocation');
+    assert.equal(snapshotReadsAfterSummary, 1, 'a successful round adds exactly one bounded post-publication provider snapshot read');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok-build'));
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok-build'));
     const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
@@ -935,6 +991,63 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(publishRecord.status, 'published');
     assert.ok(publishRecord.lanes.length > 0);
     assert.ok(publishRecord.roundSummary);
+  });
+
+  it('keeps the gate pending when the bounded post-publication reload cannot see the review', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()], reviewVisible: false });
+    let roundSummaryPublished = false;
+    let snapshotReadsAfterSummary = 0;
+    const exec = async args => {
+      if (roundSummaryPublished && isPullRequestSnapshotRead(args)) snapshotReadsAfterSummary += 1;
+      const result = await fixture.exec(args);
+      if (isRoundSummaryMutation(args)) roundSummaryPublished = true;
+      return result;
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess: passingRoutedModelProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.equal(result.status, 'pending');
+    assert.equal(result.reviewSourceContract.allSatisfied, false);
+    assert.equal(snapshotReadsAfterSummary, 1, 'delayed visibility must not add polling reads');
+  });
+
+  it('rejects a different head observed by the bounded post-publication reload', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let roundSummaryPublished = false;
+    let snapshotReadsAfterSummary = 0;
+    const exec = async args => {
+      if (roundSummaryPublished && isPullRequestSnapshotRead(args)) {
+        snapshotReadsAfterSummary += 1;
+        return { args, exitCode: 0, stdout: JSON.stringify(cleanLocalPr({ headRefOid: 'def456' })), stderr: '' };
+      }
+      const result = await fixture.exec(args);
+      if (isRoundSummaryMutation(args)) roundSummaryPublished = true;
+      return result;
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess: passingRoutedModelProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(snapshotReadsAfterSummary, 1);
+    assert.equal(result.pr.headSha, 'def456');
+    assert.equal(result.shipReady.ready, false);
+    assert.equal(result.reviewSourceContract.allSatisfied, false);
   });
 
   it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {

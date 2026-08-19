@@ -1164,6 +1164,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       }
     }
   }
+  // A successful provider write is not review evidence. Reload exactly once
+  // after publication so the terminal decision can use only provider-observed
+  // current-head metadata. Delayed visibility remains pending on this read.
+  if (roundSummary?.status === 'published') {
+    try {
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+    } catch (error: unknown) {
+      publishUnavailable.push(`Published review feedback could not be reloaded from the provider: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const publishedCarriedLanes: string[] = [];
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const carriedForwardLanes = localReview.status === 'passed'
