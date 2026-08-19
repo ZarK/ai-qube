@@ -84,6 +84,7 @@ const MAX_RECENT_PR_LIMIT = 50;
 const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
 const MAX_LANE_HISTORY_RECORDS = 100;
 const MAX_REVIEW_THREAD_RESOLUTIONS = 100;
+const REVIEW_THREAD_MUTATION_CONCURRENCY = 4;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
@@ -3414,9 +3415,21 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     }
     const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
-    for (const threadId of selectedThreadIds) {
-      const result = await this.resolveReviewThread(threadId);
-      if (result) mutatedThreadIds.push(threadId);
+    const mutationResults = new Array<boolean>(selectedThreadIds.length);
+    let nextThreadIndex = 0;
+    const mutationWorkers = Array.from(
+      { length: Math.min(REVIEW_THREAD_MUTATION_CONCURRENCY, selectedThreadIds.length) },
+      async () => {
+        while (nextThreadIndex < selectedThreadIds.length) {
+          const threadIndex = nextThreadIndex;
+          nextThreadIndex += 1;
+          mutationResults[threadIndex] = await this.resolveReviewThread(selectedThreadIds[threadIndex]);
+        }
+      },
+    );
+    await Promise.all(mutationWorkers);
+    for (const [threadIndex, threadId] of selectedThreadIds.entries()) {
+      if (mutationResults[threadIndex]) mutatedThreadIds.push(threadId);
       else failedThreadIds.push(threadId);
     }
     const resolvedThreadIds: string[] = [];

@@ -59,7 +59,7 @@ import type {
 } from "./gitlab_review_types.js";
 
 const DEFAULT_MAX_THREAD_RECONCILIATIONS = 1_000;
-const THREAD_RECONCILIATION_CONCURRENCY = 4;
+const THREAD_PROVIDER_CONCURRENCY = 4;
 
 function mapMergeState(mr: GitLabMergeRequest): ReviewItem["state"] {
   if (mr.draft || mr.work_in_progress) return "draft";
@@ -620,7 +620,8 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `Rerun without --dry-run to resolve ${threadIds.length} GitLab discussion${threadIds.length === 1 ? "" : "s"}.`,
       };
     }
-    if (!this.client.resolveMergeRequestDiscussion) {
+    const resolveMergeRequestDiscussion = this.client.resolveMergeRequestDiscussion?.bind(this.client);
+    if (!resolveMergeRequestDiscussion) {
       return {
         status: "failed",
         prNumber: input.prNumber,
@@ -681,13 +682,27 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     }
     const mutatedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
-    for (const threadId of selectedThreadIds) {
-      try {
-        await this.client.resolveMergeRequestDiscussion({ projectId: this.projectId, iid: String(input.prNumber), discussionId: threadId });
-        mutatedThreadIds.push(threadId);
-      } catch {
-        failedThreadIds.push(threadId);
-      }
+    const mutationResults = new Array<boolean>(selectedThreadIds.length);
+    let nextMutationIndex = 0;
+    const mutationWorkers = Array.from(
+      { length: Math.min(THREAD_PROVIDER_CONCURRENCY, selectedThreadIds.length) },
+      async () => {
+        while (nextMutationIndex < selectedThreadIds.length) {
+          const mutationIndex = nextMutationIndex;
+          nextMutationIndex += 1;
+          try {
+            await resolveMergeRequestDiscussion({ projectId: this.projectId, iid: String(input.prNumber), discussionId: selectedThreadIds[mutationIndex] });
+            mutationResults[mutationIndex] = true;
+          } catch {
+            mutationResults[mutationIndex] = false;
+          }
+        }
+      },
+    );
+    await Promise.all(mutationWorkers);
+    for (const [threadIndex, threadId] of selectedThreadIds.entries()) {
+      if (mutationResults[threadIndex]) mutatedThreadIds.push(threadId);
+      else failedThreadIds.push(threadId);
     }
     const resolvedThreadIds: string[] = [];
     let reconciliationFailed = false;
@@ -696,7 +711,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
         const observedDiscussions = new Array<GitLabDiscussion>(mutatedThreadIds.length);
         let nextDiscussionIndex = 0;
         const workers = Array.from(
-          { length: Math.min(THREAD_RECONCILIATION_CONCURRENCY, mutatedThreadIds.length) },
+          { length: Math.min(THREAD_PROVIDER_CONCURRENCY, mutatedThreadIds.length) },
           async () => {
             while (nextDiscussionIndex < mutatedThreadIds.length) {
               const discussionIndex = nextDiscussionIndex;

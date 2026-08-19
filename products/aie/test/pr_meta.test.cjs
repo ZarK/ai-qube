@@ -286,6 +286,35 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.equal(mutations.length, 0);
   });
 
+  it('runs GitHub thread mutations with fixed concurrency and stable result order', async () => {
+    const threads = Array.from({ length: 10 }, (_, index) => ({
+      id: `PRRT_concurrent_${index}`,
+      isResolved: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: `https://github.com/example/repo/pull/12#discussion_c${index}` }] },
+    }));
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+    let activeMutations = 0;
+    let maxActiveMutations = 0;
+    const exec = async args => {
+      if (args[0] === 'api' && args[1] === 'graphql' && args.some(arg => String(arg).includes('mutation($threadId: ID!) { resolveReviewThread'))) {
+        activeMutations += 1;
+        maxActiveMutations = Math.max(maxActiveMutations, activeMutations);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        const result = await fixture.exec(args);
+        activeMutations -= 1;
+        return result;
+      }
+      return fixture.exec(args);
+    };
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, includeOtherAuthors: true, dryRun: false, exec });
+
+    assert.equal(result.status, 'resolved');
+    assert.equal(maxActiveMutations, 4);
+    assert.deepEqual(result.resolvedThreadIds, threads.map(thread => thread.id));
+  });
+
   it('fails when the bounded provider reload does not confirm the exact thread as resolved', async () => {
     const threads = [
       { id: 'PRRT_still_open', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r9' }] } },

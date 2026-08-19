@@ -1160,7 +1160,9 @@ describe("GitLab review forge adapter", () => {
     assert.equal(mutations, 0);
   });
 
-  it("runs GitLab exact reconciliation with fixed concurrency", async () => {
+  it("runs GitLab mutations and exact reconciliation with fixed concurrency", async () => {
+    let activeMutations = 0;
+    let maxActiveMutations = 0;
     let activeReads = 0;
     let maxActiveReads = 0;
     const discussions = Array.from({ length: 6 }, (_, index) => ({
@@ -1182,7 +1184,13 @@ describe("GitLab review forge adapter", () => {
           const discussion = discussions.find(item => item.id === discussionId);
           return { ...discussion, notes: discussion.notes.map(note => ({ ...note, resolved: true })) };
         },
-        async resolveMergeRequestDiscussion({ discussionId }) { return discussions.find(discussion => discussion.id === discussionId); },
+        async resolveMergeRequestDiscussion({ discussionId }) {
+          activeMutations += 1;
+          maxActiveMutations = Math.max(maxActiveMutations, activeMutations);
+          await new Promise(resolve => setTimeout(resolve, 10));
+          activeMutations -= 1;
+          return discussions.find(discussion => discussion.id === discussionId);
+        },
         async createMergeRequestNote() { throw new Error("not used"); },
       },
     });
@@ -1191,6 +1199,7 @@ describe("GitLab review forge adapter", () => {
 
     assert.equal(result.status, "resolved");
     assert.equal(result.resolvedThreadIds.length, discussions.length);
+    assert.equal(maxActiveMutations, 4);
     assert.equal(maxActiveReads, 4);
   });
 
