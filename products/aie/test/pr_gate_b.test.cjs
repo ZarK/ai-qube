@@ -127,7 +127,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.deepEqual([...executablesUsed], ['probe-resolved-grok'], 'execution must spawn exactly the probe-resolved executable');
   });
 
-  it('accumulates faults from repeatedly blocked primary probes and engages the fallback', async () => {
+  it('uses a ready fallback immediately when the preferred readiness probe is blocked', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     applyRoutedReviewFixture(repo);
@@ -176,15 +176,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const gateOptions = { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHead: async () => 'abc123' };
 
     const firstRun = await runPrGate(config, gateOptions);
-    assert.equal(codexLanes.length, 0, 'the first blocked probe stays under the threshold and must not execute any route');
-    assert.ok(firstRun.localReviewRunner.lanes.filter(lane => lane.route !== null).every(lane => lane.status === 'unavailable'));
-    const ledger = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8'));
-    assert.ok(Object.values(ledger.lanes).every(record => record.count === 1 && record.lastReasonCode === 'model-route-probe-blocked'));
-
-    const secondRun = await runPrGate(config, gateOptions);
-    const routedLanes = secondRun.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    const routedLanes = firstRun.localReviewRunner.lanes.filter(lane => lane.route !== null);
     assert.ok(routedLanes.length >= 3);
-    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'codex'), 'the threshold-reaching blocked probe must engage the fallback in the same run');
+    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'codex'), 'a blocked preferred readiness probe must use the ready fallback without waiting for the runtime-fault threshold');
     assert.ok(codexLanes.length >= 3);
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));

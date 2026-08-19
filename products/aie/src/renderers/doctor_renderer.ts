@@ -35,6 +35,10 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   for (const route of readiness.reviewPreflight.checks.routeProbes.routes) {
     lines.push(`Review route probe: host=${route.host}, model=${route.model ?? 'host-default'}, status=${route.status}${route.version ? `, version=${route.version}` : ''}${route.status === 'blocked' && route.nextAction ? `; ${route.nextAction}` : ''}`);
   }
+  for (const chain of readiness.reviewPreflight.checks.routeProbes.chains) {
+    const selected = chain.selectedRoute ? `${chain.selectedRoute.host}/${chain.selectedRoute.model ?? 'host-default'}` : 'none';
+    lines.push(`Review route chain: lane=${chain.lane ?? 'default'}, required=${chain.required ? 'yes' : 'no'}, status=${chain.readiness}, selected=${selected}${chain.substitution ? `; ${chain.substitution}` : ''}`);
+  }
   lines.push(`Quality Control gate: ${readiness.aiq.enabled ? readiness.aiq.readiness : 'disabled'}; aiq=${readiness.aiq.tool.state}`);
   lines.push(`Supply-chain gates: policy=${readiness.supplyChain.readiness}, sensitive=${readiness.supplyChain.supplyChainSensitiveGates.length}, lifecycle-scripts=${readiness.supplyChain.disableLifecycleScripts ? 'disabled' : 'not disabled'}`);
   lines.push(`External services: ${readiness.externalServices.length > 0 ? readiness.externalServices.join(', ') : 'none configured'}`);

@@ -247,7 +247,11 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
   const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
   const localEvidenceRoot = '.qube/aie/reviews';
-  const reviewPreflight = buildReviewPreflightDiagnostics(config, { repoRoot: options.evidenceRoot ?? process.cwd(), probeRoute: options.probeRoute });
+  const reviewPreflight = buildReviewPreflightDiagnostics(config, {
+    repoRoot: options.evidenceRoot ?? process.cwd(),
+    probeRoute: options.probeRoute,
+    requiredLanes: requiredLocalReviewLanes(effectiveReviewProfile),
+  });
   const lookup = { env: options.env, platform: options.platform, pathDelimiter: options.pathDelimiter };
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit, lookup);
   const fallbackBrowserAutomation = toolAvailability('playwright', false, lookup);
@@ -278,10 +282,10 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const isolatedRoutesReady = isolated
     && localHostNeedsAgent
     && isolatedProbes.readiness === 'ready'
-    && isolatedProbes.routes.length > 0
-    && isolatedProbes.routes.every(route => route.status === 'ready');
+    && isolatedProbes.chains.length > 0
+    && isolatedProbes.chains.filter(chain => chain.required).every(chain => chain.readiness === 'ready');
   const isolatedRoutesUnresolved = isolated && localHostNeedsAgent && !isolatedRoutesReady;
-  const isolatedRouteStatus: DoctorReadinessStatus = isolatedProbes.routes.some(route => route.status === 'blocked') || isolatedProbes.readiness === 'needs-action'
+  const isolatedRouteStatus: DoctorReadinessStatus = isolatedProbes.readiness === 'needs-action'
     ? 'needs-action'
     : 'missing';
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;

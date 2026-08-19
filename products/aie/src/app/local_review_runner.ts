@@ -247,6 +247,9 @@ export function hostFailoverSubstitution(primaryHost: string, reasonCode: string
   if (reasonCode === 'model-route-policy-blocked') {
     return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
   }
+  if (reasonCode === 'model-route-probe-blocked') {
+    return `The configured ${primaryHost} route failed its readiness probe; the lane uses the configured second host.`;
+  }
   return 'This lane reached the configured host-fault threshold and executes through the fallback route.';
 }
 
@@ -261,6 +264,72 @@ export function withHostFailoverSubstitution(
   };
 }
 
+export interface ProbedReviewRouteSelection {
+  route: ModelReviewRoutePlan | null;
+  source: 'configured' | 'fallback' | null;
+}
+
+export function selectProbedReviewRoute(
+  preferredRoute: ModelReviewRoutePlan,
+  fallbackRoute: ModelReviewRoutePlan | null,
+  preferredReady: boolean,
+  fallbackReady: boolean,
+): ProbedReviewRouteSelection {
+  if (preferredReady) return { route: preferredRoute, source: 'configured' };
+  if (fallbackRoute && fallbackReady) {
+    return {
+      route: withHostFailoverSubstitution(fallbackRoute, preferredRoute.host, 'model-route-probe-blocked'),
+      source: 'fallback',
+    };
+  }
+  return { route: null, source: null };
+}
+
+export interface PlannedReviewRouteChain {
+  lane: LocalReviewLaneId | null;
+  preferredRoute: ModelReviewRoutePlan;
+  fallbackRoute: ModelReviewRoutePlan | null;
+}
+
+function sameReviewRoute(left: ModelReviewRoutePlan, right: ModelReviewRoutePlan): boolean {
+  return left.host === right.host && left.model === right.model;
+}
+
+export function plannedReviewRouteChains(config: Config): PlannedReviewRouteChain[] {
+  if (reviewModeOf(config) !== 'isolated') return [];
+  const fallbackRoute = resolveFailoverReviewPlan(config);
+  const chains: PlannedReviewRouteChain[] = [];
+  for (const lane of config.reviewLanes) {
+    const preferredRoute = resolveModelReviewPlan(config, lane.id as LocalReviewLaneId);
+    if (!preferredRoute) continue;
+    chains.push({
+      lane: lane.id as LocalReviewLaneId,
+      preferredRoute,
+      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+    });
+  }
+  if (chains.length === 0 && config.reviewRoute) {
+    const route = config.reviewRoute;
+    const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host as ReviewModelHostId);
+    const preferredRoute: ModelReviewRoutePlan = {
+      host: route.host,
+      tier: route.tier,
+      model: binding.model,
+      effort: binding.effort as ModelReviewRoutePlan['effort'],
+      isolation: 'read-only',
+      timeoutSeconds: route.timeoutSeconds,
+      maxTurns: route.maxTurns,
+      substitution: binding.substitution,
+    };
+    chains.push({
+      lane: null,
+      preferredRoute,
+      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+    });
+  }
+  return chains;
+}
+
 export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedProbeHost; model: string | null }> {
   const targets = new Map<string, { host: RoutedProbeHost; model: string | null }>();
   const addRoute = (plan: ModelReviewRoutePlan | null): void => {
@@ -268,10 +337,9 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
     const key = `${plan.host}::${plan.model ?? ''}`;
     if (!targets.has(key)) targets.set(key, { host: plan.host, model: plan.model });
   };
-  for (const lane of config.reviewLanes) addRoute(resolveModelReviewPlan(config, lane.id as LocalReviewLaneId));
-  if (reviewModeOf(config) === 'isolated' && config.reviewRoute) {
-    const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host as ReviewModelHostId);
-    addRoute({ host: config.reviewRoute.host, tier: config.reviewRoute.tier, model: binding.model, effort: binding.effort as ModelReviewRoutePlan['effort'], isolation: 'read-only', timeoutSeconds: config.reviewRoute.timeoutSeconds, maxTurns: config.reviewRoute.maxTurns, substitution: binding.substitution });
+  for (const chain of plannedReviewRouteChains(config)) {
+    addRoute(chain.preferredRoute);
+    addRoute(chain.fallbackRoute);
   }
   addRoute(resolveFailoverReviewPlan(config));
   return [...targets.values()];
@@ -902,26 +970,28 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           continue;
         }
       }
-      // A blocked primary probe is itself a host fault: persistent breakage
-      // (dead auth, broken CLI, missing catalog) must accumulate toward the
-      // failover threshold and engage the fallback in the same run once met.
+      // Readiness probes are decisive for the current batch. Do not spend a
+      // configured runtime-fault allowance on a host that cannot start; use a
+      // ready fallback immediately. Runtime failures still use the persisted
+      // fault threshold that selected the route before probing.
       if (job.routeSource === 'configured') {
-        const faultCount = recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, 'model-route-probe-blocked', reviewRouteKey(job.primaryRoute ?? job.route));
-        if (config.reviewFailover && faultCount >= config.reviewFailover.faults) {
-          const fallbackPlan = resolveFailoverReviewPlan(config);
-          if (fallbackPlan) {
-            const fallbackCheck = probeFor(fallbackPlan);
-            if (fallbackCheck?.status === 'ready') {
-              const primaryHost = job.primaryRoute?.host ?? job.route.host;
-              job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, 'model-route-probe-blocked');
-              job.routeSource = 'fallback';
-              job.host = fallbackPlan.host;
-              job.probedExecutable = fallbackCheck.resolved ?? null;
-              runnableJobs.push(job);
-              continue;
-            }
-          }
+        const fallbackPlan = resolveFailoverReviewPlan(config);
+        const fallbackCheck = fallbackPlan ? probeFor(fallbackPlan) : null;
+        const selection = selectProbedReviewRoute(
+          job.primaryRoute ?? job.route,
+          fallbackPlan,
+          false,
+          fallbackCheck?.status === 'ready',
+        );
+        if (selection.route && selection.source === 'fallback') {
+          job.route = selection.route;
+          job.routeSource = selection.source;
+          job.host = selection.route.host;
+          job.probedExecutable = fallbackCheck?.resolved ?? null;
+          runnableJobs.push(job);
+          continue;
         }
+        recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, 'model-route-probe-blocked', reviewRouteKey(job.primaryRoute ?? job.route));
       }
       const summary = check?.diagnostic ?? `${job.route.host} route probe returned no result; the route is blocked before model execution.`;
       unavailable.push(`${job.lane}: ${summary}`);

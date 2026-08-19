@@ -778,6 +778,7 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
   ) return false;
   const progressOnly = [
     /\b(?:in progress|pending|incomplete|not (?:yet )?complet(?:e|ed)|not yet (?:been )?inspected|inspecting)\b/i,
+    /\b(?:review|inspection) continues\b/i,
     /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
     /^(?:review )?not started[.!]?$/i,
     /^not inspected[.!]?$/i,

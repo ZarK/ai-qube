@@ -2,7 +2,8 @@ import { execFileSync } from 'child_process';
 import { existsSync, statfsSync } from 'fs';
 import { join, relative } from 'path';
 import type { Config } from '../config/index.js';
-import { plannedReviewRouteTargets } from '../app/local_review_runner.js';
+import { plannedReviewRouteChains, plannedReviewRouteTargets, selectProbedReviewRoute } from '../app/local_review_runner.js';
+import type { LocalReviewLaneId } from '../local_review_evidence.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from '../app/model_route_probe.js';
 import type { DoctorReadinessStatus, GateReadinessDiagnostics } from './types.js';
 
@@ -21,6 +22,7 @@ export interface ReviewPreflightOptions {
   gitCountObjects?: (repoRoot: string) => string;
   ghAuthStatus?: (repoRoot: string) => string;
   probeRoute?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
+  requiredLanes?: readonly LocalReviewLaneId[];
 }
 
 function localReviewEnabled(config: Config): boolean {
@@ -36,7 +38,7 @@ function disabledPreflight(): ReviewPreflightDiagnostics {
       dist: { readiness: 'disabled', path: 'products/aie/dist/bin/run.js', present: false, nextAction: null },
       gitObjects: { readiness: 'disabled', looseCount: null, threshold: HIGH_LOOSE_OBJECT_THRESHOLD, nextAction: null },
       githubReviewAuth: { readiness: 'disabled', authenticated: false, scopes: null, nextAction: null },
-      routeProbes: { readiness: 'disabled', routes: [], nextAction: null },
+      routeProbes: { readiness: 'disabled', routes: [], chains: [], nextAction: null },
     },
     nextActions: [],
   };
@@ -163,7 +165,7 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
   let routeProbes: ReviewPreflightDiagnostics['checks']['routeProbes'];
   const routeTargets = plannedReviewRouteTargets(config);
   if (routeTargets.length === 0) {
-    routeProbes = { readiness: 'disabled', routes: [], nextAction: null };
+    routeProbes = { readiness: 'disabled', routes: [], chains: [], nextAction: null };
   } else {
     const probeRoute = options.probeRoute ?? probeModelRoute;
     const routes = routeTargets.map(target => {
@@ -190,17 +192,48 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
         };
       }
     });
-    const blocked = routes.filter(route => route.status === 'blocked');
-    const nextAction = blocked.length > 0
-      ? `Fix ${blocked.length} blocked review route(s) before running routed review lanes; each blocked route reports its own action.`
+    const checksByRoute = new Map(routes.map(route => [`${route.host}::${route.model ?? ''}`, route]));
+    const requiredLanes = options.requiredLanes ? new Set(options.requiredLanes) : null;
+    const chains = plannedReviewRouteChains(config).map(chain => {
+      const preferred = { host: chain.preferredRoute.host, model: chain.preferredRoute.model };
+      const fallback = chain.fallbackRoute ? { host: chain.fallbackRoute.host, model: chain.fallbackRoute.model } : null;
+      const preferredCheck = checksByRoute.get(`${preferred.host}::${preferred.model ?? ''}`);
+      const fallbackCheck = fallback ? checksByRoute.get(`${fallback.host}::${fallback.model ?? ''}`) : null;
+      const selection = selectProbedReviewRoute(
+        chain.preferredRoute,
+        chain.fallbackRoute,
+        preferredCheck?.status === 'ready',
+        fallbackCheck?.status === 'ready',
+      );
+      const selectedRoute = selection.route
+        ? { host: selection.route.host, model: selection.route.model }
+        : null;
+      return {
+        lane: chain.lane,
+        required: chain.lane === null || requiredLanes === null || requiredLanes.has(chain.lane),
+        readiness: selectedRoute ? 'ready' as const : 'blocked' as const,
+        preferredRoute: preferred,
+        fallbackRoute: fallback,
+        selectedRoute,
+        substitution: selection.source === 'fallback' ? selection.route?.substitution ?? null : null,
+      };
+    });
+    const blockedChains = chains.filter(chain => chain.required && chain.readiness === 'blocked');
+    const nextAction = blockedChains.length > 0
+      ? `Fix ${blockedChains.length} blocked required review route chain(s) before running routed review lanes; each unavailable route reports its own action.`
       : null;
     if (nextAction) nextActions.push(nextAction);
-    for (const route of blocked) {
-      if (route.nextAction) nextActions.push(route.nextAction);
+    for (const chain of blockedChains) {
+      for (const route of [chain.preferredRoute, chain.fallbackRoute]) {
+        if (!route) continue;
+        const action = checksByRoute.get(`${route.host}::${route.model ?? ''}`)?.nextAction;
+        if (action && !nextActions.includes(action)) nextActions.push(action);
+      }
     }
     routeProbes = {
-      readiness: blocked.length > 0 ? 'needs-action' : 'ready',
+      readiness: blockedChains.length > 0 ? 'needs-action' : 'ready',
       routes,
+      chains,
       nextAction,
     };
   }
