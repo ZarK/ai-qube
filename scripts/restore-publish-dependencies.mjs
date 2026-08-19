@@ -18,6 +18,7 @@ async function retryFileOperation(operation, options) {
       return await operation();
     } catch (error) {
       failure = error;
+      if (options.shouldRetry && !options.shouldRetry(error)) throw error;
       if (attempt < attempts) await (options.delay ?? delay)(delayMs);
     }
   }
@@ -27,17 +28,23 @@ async function retryFileOperation(operation, options) {
 export async function restorePublishDependencies(packageJsonPath, options = {}) {
   const resolvedPackageJsonPath = path.resolve(packageJsonPath);
   const backupPath = `${resolvedPackageJsonPath}.publish-backup`;
-  try {
-    await (options.access ?? access)(backupPath);
-  } catch {
-    return { ok: true, restored: false, packageJsonPath: resolvedPackageJsonPath };
-  }
-
   const retryOptions = {
     attempts: options.attempts,
     delayMs: options.delayMs,
     delay: options.delay,
   };
+  try {
+    await retryFileOperation(
+      () => (options.access ?? access)(backupPath),
+      { ...retryOptions, shouldRetry: error => error?.code !== "ENOENT" },
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { ok: true, restored: false, packageJsonPath: resolvedPackageJsonPath };
+    }
+    throw error;
+  }
+
   await retryFileOperation(
     () => (options.copyFile ?? copyFile)(backupPath, resolvedPackageJsonPath),
     retryOptions,

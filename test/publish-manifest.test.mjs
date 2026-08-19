@@ -20,10 +20,14 @@ function runScript(scriptName, packageJsonPath) {
 
 describe("publish manifest safety", () => {
   it("retries transient file-operation failures before reporting restore success", async () => {
+    let accessAttempts = 0;
     let copyAttempts = 0;
     let unlinkAttempts = 0;
     const report = await restorePublishDependencies("fixture/package.json", {
-      access: async () => {},
+      access: async () => {
+        accessAttempts += 1;
+        if (accessAttempts < 3) throw Object.assign(new Error("locked"), { code: "EPERM" });
+      },
       copyFile: async () => {
         copyAttempts += 1;
         if (copyAttempts < 3) throw Object.assign(new Error("locked"), { code: "EPERM" });
@@ -37,8 +41,24 @@ describe("publish manifest safety", () => {
       delay: async () => {},
     });
     assert.equal(report.restored, true);
+    assert.equal(accessAttempts, 3);
     assert.equal(copyAttempts, 3);
     assert.equal(unlinkAttempts, 2);
+  });
+
+  it("treats only a missing backup as a successful no-op", async () => {
+    let accessAttempts = 0;
+    const report = await restorePublishDependencies("fixture/package.json", {
+      access: async () => {
+        accessAttempts += 1;
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+      attempts: 4,
+      delayMs: 0,
+      delay: async () => {},
+    });
+    assert.equal(report.restored, false);
+    assert.equal(accessAttempts, 1);
   });
 
   for (const entry of audit.packages ?? []) {
