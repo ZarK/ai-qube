@@ -86,18 +86,12 @@ function commitRoutedReviewHead(repo) {
   execFileSync('git', ['commit', '-m', 'configure routed review'], { cwd: repo, stdio: 'ignore' });
 }
 
-let routedReviewTemplate = null;
-// Every routed gate test applies the identical trusted-base and routed-config
-// commits to a pristine repository, so they are built once on a template and
-// cloned by filesystem copy instead of re-running the git ceremony per test.
 function applyRoutedReviewFixture(repo) {
-  if (!routedReviewTemplate) {
-    routedReviewTemplate = mkdtempSync(join(tmpdir(), 'aie-pr-routed-template-'));
-    cpSync(repo, routedReviewTemplate, { recursive: true, force: true });
-    trustReviewCommands(routedReviewTemplate);
-    commitRoutedReviewHead(routedReviewTemplate);
-  }
-  cpSync(routedReviewTemplate, repo, { recursive: true, force: true });
+  // Build each routed fixture in its own repository. Overlay-copying a shared
+  // .git directory is not atomic and can expose a partially replaced object
+  // store when Node runs gate tests concurrently on Linux.
+  trustReviewCommands(repo);
+  commitRoutedReviewHead(repo);
 }
 
 function writeWorkflow(repo, body) {
