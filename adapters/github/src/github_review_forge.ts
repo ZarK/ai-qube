@@ -2118,6 +2118,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     let reviewComments: RawReviewComment[] = [];
     let unresolvedThreads: RawThreadNode[] = [];
     let mergeUiState: RawMergeUiState | null = null;
+    let laneReviews = laneMarkerReviews(rawPr);
     try {
       const repository = await this.getRepositoryIdentity();
       ciDiagnostics = await this.loadCiDiagnostics(repository.nameWithOwner, rawPr);
@@ -2141,13 +2142,21 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       } catch (error: unknown) {
         unavailable.push(`Review threads unavailable: ${error instanceof Error ? error.message : String(error)}`);
       }
+      try {
+        // The bounded REST review list sees freshly published formal reviews
+        // before GitHub's PR-view review fields consistently converge.
+        const restLaneReviews = await this.getPullRequestReviews(repository.nameWithOwner, prNumber);
+        if (restLaneReviews.length > 0 || laneReviews.length === 0) laneReviews = restLaneReviews;
+      } catch {
+        // Preserve the existing PR-view fallback when this optional freshness
+        // read is unavailable.
+      }
     } catch (error: unknown) {
       unavailable.push(`Repository identity unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
     const trustedAuthors = await this.trustedAuthorsForLoad();
     const comments = rawPr.comments ?? [];
     const latestReviews = rawPr.latestReviews ?? [];
-    const laneReviews = laneMarkerReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     const pr = normalizePr(rawPr, mergeUiState);
     return {

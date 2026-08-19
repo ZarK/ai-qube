@@ -1770,6 +1770,25 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(laneMetadata.map(item => item.lane).sort(), ['code-quality', 'performance']);
   });
 
+  it('prefers the bounded REST review list when PR view review fields lag publication', async () => {
+    const body = laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'fresh-rest-review', summary: 'fresh REST review passed', inline: 'review-api' }).body;
+    const provider = createGitHubReviewForgeProvider({
+      exec: makePrExec({
+        prViews: [cleanLocalPr({ reviews: [], latestReviews: [] })],
+        pullReviews: [
+          { id: 458, author: { login: 'executor' }, body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-458', commit: { oid: 'abc123' } },
+        ],
+      }).exec,
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const laneMetadata = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(laneMetadata.length, 1);
+    assert.equal(laneMetadata[0].recommendation, 'approve');
+    assert.equal(laneMetadata[0].summary, 'fresh REST review passed');
+  });
+
   it('satisfies host lanes from intentional issue-comment lane metadata when formal events are unavailable', async () => {
     const provider = createGitHubReviewForgeProvider({
       exec: makePrExec({

@@ -1048,6 +1048,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.pr.headSha, 'def456');
     assert.equal(result.shipReady.ready, false);
     assert.equal(result.reviewSourceContract.allSatisfied, false);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', '.review-lock.json')), false, 'head drift must release the lock acquired for the original head');
   });
 
   it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {
