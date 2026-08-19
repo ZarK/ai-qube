@@ -1053,6 +1053,9 @@ describe("GitLab review forge adapter", () => {
           discussionResolved = true;
           return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: true }] };
         },
+        async getMergeRequestDiscussion({ discussionId }) {
+          return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: discussionResolved }] };
+        },
         async createMergeRequestNote() {
           throw new Error("not used");
         },
@@ -1076,15 +1079,20 @@ describe("GitLab review forge adapter", () => {
   });
 
   it("fails when GitLab does not confirm the exact discussion after mutation", async () => {
-    let discussionReads = 0;
+    let discussionListReads = 0;
+    let exactDiscussionReads = 0;
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
       client: {
         async getMergeRequest() { return makeGitLabMergeRequest({ reviewers: [] }); },
         async listMergeRequestNotes() { return []; },
         async listMergeRequestDiscussions() {
-          discussionReads += 1;
+          discussionListReads += 1;
           return [{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }] }];
+        },
+        async getMergeRequestDiscussion({ discussionId }) {
+          exactDiscussionReads += 1;
+          return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }] };
         },
         async resolveMergeRequestDiscussion({ discussionId }) { return { id: discussionId, notes: [] }; },
         async createMergeRequestNote() { throw new Error("not used"); },
@@ -1098,7 +1106,8 @@ describe("GitLab review forge adapter", () => {
     assert.deepEqual(result.resolvedThreadIds, []);
     assert.deepEqual(result.failedThreadIds, ["discussion-open"]);
     assert.match(result.nextAction, /bounded post-mutation read/);
-    assert.equal(discussionReads, 2);
+    assert.equal(discussionListReads, 1);
+    assert.equal(exactDiscussionReads, 1);
   });
 
   it("sends the GitLab discussion resolve mutation through the REST API", async () => {
@@ -1107,10 +1116,11 @@ describe("GitLab review forge adapter", () => {
     try {
       globalThis.fetch = async (url, options) => {
         requests.push({ url: String(url), method: options.method, body: options.body });
-        if (options.method === "GET") {
+        if (options.method === "GET" && /\/discussions\?/.test(String(url))) {
           const resolved = requests.some(request => request.method === "PUT");
           return new Response(JSON.stringify([{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved }] }]), { status: 200 });
         }
+        if (options.method === "GET") return new Response(JSON.stringify({ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved: true }] }), { status: 200 });
         return new Response(JSON.stringify({ id: "discussion-open", notes: [] }), { status: 200 });
       };
       const provider = createGitLabReviewForgeProvider({
@@ -1129,6 +1139,7 @@ describe("GitLab review forge adapter", () => {
       assert.match(requests[1].url, /\/merge_requests\/12\/discussions\/discussion-open\?resolved=true$/);
       assert.equal(requests[1].body, undefined);
       assert.equal(requests[2].method, "GET");
+      assert.match(requests[2].url, /\/merge_requests\/12\/discussions\/discussion-open$/);
     } finally {
       globalThis.fetch = originalFetch;
     }

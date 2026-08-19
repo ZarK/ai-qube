@@ -665,7 +665,11 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     let reconciliationFailed = false;
     if (mutatedThreadIds.length > 0) {
       try {
-        const observedDiscussions = await this.client.listMergeRequestDiscussions({ projectId: this.projectId, iid: String(input.prNumber) });
+        const observedDiscussions = await Promise.all(mutatedThreadIds.map(discussionId => this.client.getMergeRequestDiscussion({
+          projectId: this.projectId,
+          iid: String(input.prNumber),
+          discussionId,
+        })));
         const observedById = new Map(observedDiscussions.map(discussion => [discussion.id, discussion]));
         for (const threadId of mutatedThreadIds) {
           const discussion = observedById.get(threadId);

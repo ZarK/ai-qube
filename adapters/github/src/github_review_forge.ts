@@ -3410,7 +3410,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     let reconciliationFailed = false;
     if (mutatedThreadIds.length > 0) {
       try {
-        const observedThreads = await this.getReviewThreads(repositoryName, input.prNumber);
+        const observedThreads = await this.getReviewThreadsByIds(mutatedThreadIds);
         const observedById = new Map(observedThreads.map(thread => [thread.id, thread]));
         for (const threadId of mutatedThreadIds) {
           if (observedById.get(threadId)?.isResolved === true) resolvedThreadIds.push(threadId);
@@ -3671,6 +3671,21 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       cursor = page.pageInfo.endCursor;
     }
     return nodes;
+  }
+
+  private async getReviewThreadsByIds(threadIds: readonly string[]): Promise<RawThreadNode[]> {
+    if (threadIds.length === 0) return [];
+    const query = 'query($threadIds: [ID!]!) { nodes(ids: $threadIds) { ... on PullRequestReviewThread { id isResolved } } }';
+    const args = ['api', 'graphql', '-f', `query=${query}`];
+    for (const threadId of threadIds) args.push('-F', `threadIds[]=${threadId}`);
+    const result = await runGh(args, this.options);
+    ensureGhSuccess('gh api graphql exact review thread reconciliation', result);
+    const parsed = parseGhJson<{ data?: { nodes?: Array<RawThreadNode | null> | null } }>(
+      result.stdout,
+      'gh api graphql exact review thread reconciliation',
+      isRecord,
+    );
+    return (parsed.data?.nodes ?? []).filter((thread): thread is RawThreadNode => thread !== null);
   }
 
   private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {

@@ -750,6 +750,19 @@ function makePrExec(options = {}) {
         observeResolvedThread(threadId);
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadId, isResolved: true } } } }), stderr: '' };
       }
+      if (queryArg?.includes('nodes(ids: $threadIds)')) {
+        const threadIds = args
+          .filter(arg => typeof arg === 'string' && arg.startsWith('threadIds[]='))
+          .map(arg => arg.slice('threadIds[]='.length));
+        const threadReadResult = threadReadResults.shift();
+        if (threadReadResult) return { args, exitCode: threadReadResult.exitCode ?? 1, stdout: threadReadResult.stdout ?? '', stderr: threadReadResult.stderr ?? '' };
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { nodes: threadIds.map(threadId => threads.find(thread => thread.id === threadId) ?? null) } }),
+          stderr: '',
+        };
+      }
       if (queryArg?.includes('viewerMergeHeadlineText')) {
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: options.mergeUiState || {} } } }), stderr: '' };
       }

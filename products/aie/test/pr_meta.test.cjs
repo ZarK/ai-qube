@@ -282,8 +282,10 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.deepEqual(result.resolvedThreadIds, []);
     assert.deepEqual(result.failedThreadIds, ['PRRT_still_open']);
     assert.match(result.nextAction, /bounded post-mutation read/);
-    const threadReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('reviewThreads')));
-    assert.equal(threadReads.length, 2, 'one pre-mutation read and one bounded reconciliation read are required');
+    const listReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('reviewThreads')));
+    const exactReads = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('nodes(ids: $threadIds)')));
+    assert.equal(listReads.length, 1, 'selection requires one pre-mutation thread read');
+    assert.equal(exactReads.length, 1, 'reconciliation requires one exact bounded post-mutation read');
   });
 
   it('fails when the exact resolved thread is missing from the bounded provider reload', async () => {
