@@ -1,4 +1,4 @@
-import type { ReviewDiffIndex, ReviewForgeCapabilities as CoreReviewForgeCapabilities, ReviewForgePolicy, ReviewRoundStatusPublishInput, ReviewRoundStatusPublishResult, ReviewRoundSummaryPublishInput, ReviewRoundSummaryPublishResult } from '@tjalve/qube-core';
+import type { ReviewDiffIndex, ReviewForgeCapabilities as CoreReviewForgeCapabilities, ReviewForgePolicy, ReviewRoundStatusPublishInput, ReviewRoundStatusPublishResult, ReviewRoundSummaryPublishInput } from '@tjalve/qube-core';
 import type { GhExec } from '@tjalve/qube-adapter-github';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
@@ -21,7 +21,9 @@ import {
   type ReviewForgePullRequest,
   type ReviewForgeRecentPullRequestOptions,
   type ReviewForgeReviewTarget,
+  type ReviewForgeRoundSummaryPublishResult,
   type ReviewForgeSnapshot,
+  type ReviewForgeSnapshotLoadOptions,
 } from './review_forge_provider.js';
 
 export interface ReviewForgeAdapterOptions {
@@ -177,7 +179,7 @@ interface LoadedReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
   loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
-  loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReview(prNumber: number, options?: ReviewForgeSnapshotLoadOptions): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
@@ -188,7 +190,7 @@ interface LoadedReviewForgeProvider {
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
   loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
   publishRoundReviewStatus?(input: ReviewRoundStatusPublishInput): Promise<ReviewRoundStatusPublishResult>;
-  publishRoundReviewSummary?(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult>;
+  publishRoundReviewSummary?(input: ReviewRoundSummaryPublishInput): Promise<ReviewForgeRoundSummaryPublishResult>;
 }
 
 function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
@@ -226,7 +228,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     loadLaneReviewHistory: provider.loadLaneReviewHistory
       ? (prNumber) => provider.loadLaneReviewHistory!(prNumber)
       : undefined,
-    loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
+    loadPullRequestReview: (prNumber, options) => provider.loadPullRequestReview(prNumber, options),
     loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
       ? (prNumber) => provider.loadPullRequestReviewTarget!(prNumber)
       : undefined,

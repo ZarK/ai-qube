@@ -1770,7 +1770,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(laneMetadata.map(item => item.lane).sort(), ['code-quality', 'performance']);
   });
 
-  it('prefers the bounded REST review list when PR view review fields lag publication', async () => {
+  it('loads the exact published review when PR view review fields lag publication', async () => {
     const body = laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'fresh-rest-review', summary: 'fresh REST review passed', inline: 'review-api' }).body;
     const provider = createGitHubReviewForgeProvider({
       exec: makePrExec({
@@ -1781,7 +1781,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       }).exec,
     });
 
-    const snapshot = await provider.loadPullRequestReview(12);
+    const snapshot = await provider.loadPullRequestReview(12, { publishedRecord: { kind: 'pull-request-review', id: '458' } });
     const laneMetadata = snapshot.item.trustedMetadata.trustedLaneReviews;
 
     assert.equal(laneMetadata.length, 1);

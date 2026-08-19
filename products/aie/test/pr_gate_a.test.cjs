@@ -969,6 +969,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
+    assert.deepEqual(result.roundSummary?.publishedRecord, { kind: 'pull-request-review', id: '123' });
     assert.equal(result.reviewSourceContract.allSatisfied, true, 'the provider-observed published round must satisfy the local-lane source in the same invocation');
     assert.equal(snapshotReadsAfterSummary, 1, 'a successful round adds exactly one bounded post-publication provider snapshot read');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok-build'));

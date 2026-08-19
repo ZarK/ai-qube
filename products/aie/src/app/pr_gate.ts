@@ -1170,7 +1170,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // current-head metadata. Delayed visibility remains pending on this read.
   if (roundSummary?.status === 'published') {
     try {
-      finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber, { publishedRecord: roundSummary.publishedRecord ?? null });
     } catch (error: unknown) {
       publishUnavailable.push(`Published review feedback could not be reloaded from the provider: ${error instanceof Error ? error.message : String(error)}`);
     }
