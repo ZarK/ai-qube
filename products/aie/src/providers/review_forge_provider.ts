@@ -111,6 +111,16 @@ export interface ReviewForgeRoundSummaryPublishInput extends CoreReviewRoundSumm
 
 export interface ReviewForgeRoundSummaryPublishResult extends CoreReviewRoundSummaryPublishResult {
   publisher?: ReviewForgePublisherIdentity;
+  publishedRecord?: ReviewForgePublishedRecord;
+}
+
+export interface ReviewForgePublishedRecord {
+  kind: 'pull-request-review' | 'issue-comment';
+  id: string;
+}
+
+export interface ReviewForgeSnapshotLoadOptions {
+  publishedRecord?: ReviewForgePublishedRecord | null;
 }
 
 export interface ReviewForgeRoundStatusPublishInput extends CoreReviewRoundStatusPublishInput {}
@@ -152,7 +162,7 @@ export interface ReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
   loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
-  loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReview(prNumber: number, options?: ReviewForgeSnapshotLoadOptions): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<ActionResult[]>;

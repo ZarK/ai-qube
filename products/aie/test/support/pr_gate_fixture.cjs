@@ -639,6 +639,13 @@ function makePrExec(options = {}) {
       }
       return { args, exitCode: 0, stdout: JSON.stringify({ id: 123, html_url: url }), stderr: '' };
     }
+    if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'GET') {
+      const reviewId = Number(args[1].split('/').at(-1));
+      const review = [...(options.pullReviews || []), ...(currentPr.reviews || [])].find(candidate => candidate.id === reviewId);
+      return review
+        ? { args, exitCode: 0, stdout: JSON.stringify(review), stderr: '' }
+        : { args, exitCode: 1, stdout: '', stderr: 'review not visible' };
+    }
     if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
       return { args, exitCode: 0, stdout: '', stderr: '' };
     }

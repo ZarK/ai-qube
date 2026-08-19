@@ -456,6 +456,7 @@ export interface GitHubRoundSummaryPublishResult {
   failure: string | null;
   nextAction: string;
   publisher?: import('./github_review_publisher.js').GitHubReviewPublisherIdentity;
+  publishedRecord?: { kind: 'pull-request-review' | 'issue-comment'; id: string };
 }
 
 export interface GitHubRoundStatusPublishResult extends ReviewRoundStatusPublishResult {
@@ -531,6 +532,7 @@ function roundSummaryPublishResult(input: Partial<GitHubRoundSummaryPublishResul
     ...(typeof input.supersededPriorSummaries === 'number' ? { supersededPriorSummaries: input.supersededPriorSummaries } : {}),
     ...(input.publisherDowngradeReason !== undefined ? { publisherDowngradeReason: input.publisherDowngradeReason } : {}),
     ...(input.publisher ? { publisher: publicPublisherIdentity(input.publisher) } : {}),
+    ...(input.publishedRecord ? { publishedRecord: input.publishedRecord } : {}),
     failure: input.failure ?? null,
     status: input.status,
     nextAction: input.nextAction,
@@ -1229,9 +1231,9 @@ function isCreatedPullReview(value: unknown): value is RawCreatedPullReview {
   return isRecord(value);
 }
 
-function publishedReviewId(result: GhRunResult): string | null {
+function publishedRecordId(result: GhRunResult): string | null {
   try {
-    const parsed = parseGhJson<RawCreatedPullReview>(result.stdout, 'gh api create pull request review', isCreatedPullReview);
+    const parsed = parseGhJson<RawCreatedPullReview>(result.stdout, 'gh api published record', isCreatedPullReview);
     if (parsed.id !== undefined && parsed.id !== null && String(parsed.id).trim() !== '') return String(parsed.id);
   } catch {
     // Fall through.
@@ -2111,13 +2113,14 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     };
   }
 
-  async loadPullRequestReview(prNumber: number): Promise<GitHubReviewSnapshot> {
+  async loadPullRequestReview(prNumber: number, options: { publishedRecord?: { kind: 'pull-request-review' | 'issue-comment'; id: string } | null } = {}): Promise<GitHubReviewSnapshot> {
     const rawPr = await this.getPullRequest(prNumber);
     const unavailable: string[] = [];
     let ciDiagnostics: GitHubCiDiagnostic[] = [];
     let reviewComments: RawReviewComment[] = [];
     let unresolvedThreads: RawThreadNode[] = [];
     let mergeUiState: RawMergeUiState | null = null;
+    let laneReviews = laneMarkerReviews(rawPr);
     try {
       const repository = await this.getRepositoryIdentity();
       ciDiagnostics = await this.loadCiDiagnostics(repository.nameWithOwner, rawPr);
@@ -2141,13 +2144,22 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       } catch (error: unknown) {
         unavailable.push(`Review threads unavailable: ${error instanceof Error ? error.message : String(error)}`);
       }
+      if (options.publishedRecord?.kind === 'pull-request-review') {
+        try {
+          const publishedReview = await this.getPullRequestReview(repository.nameWithOwner, prNumber, options.publishedRecord.id);
+          laneReviews = [...laneReviews.filter(review => String(review.id ?? '') !== options.publishedRecord?.id), publishedReview];
+        } catch {
+          // Preserve the ordinary snapshot when the exact provider record is
+          // not visible yet. The gate remains pending instead of trusting the
+          // earlier write response.
+        }
+      }
     } catch (error: unknown) {
       unavailable.push(`Repository identity unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
     const trustedAuthors = await this.trustedAuthorsForLoad();
     const comments = rawPr.comments ?? [];
     const latestReviews = rawPr.latestReviews ?? [];
-    const laneReviews = laneMarkerReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     const pr = normalizePr(rawPr, mergeUiState);
     return {
@@ -3030,6 +3042,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
           url,
           summaryUrl: url,
           publishKind: sameRoundRecord.kind === 'review' ? 'pull-request-review' : 'issue-comment',
+          publishedRecord: { kind: sameRoundRecord.kind === 'review' ? 'pull-request-review' : 'issue-comment', id: sameRoundRecord.id },
           inlineCommentCount: sameRoundRecord.kind === 'review' ? input.inlineFindings.length : 0,
           unanchoredFindingCount: sameRoundRecord.kind === 'review' ? input.unanchoredFindingCount : input.unanchoredFindingCount + input.inlineFindings.length,
           publisherDowngradeReason,
@@ -3073,6 +3086,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
           });
         }
         const url = publishedCommentUrl(commentResult);
+        const commentId = publishedRecordId(commentResult);
         return roundSummaryPublishResult({
           status: 'published',
           marker: input.marker,
@@ -3080,6 +3094,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
           url,
           summaryUrl: url,
           publishKind: 'issue-comment',
+          ...(commentId ? { publishedRecord: { kind: 'issue-comment' as const, id: commentId } } : {}),
           inlineCommentCount: 0,
           unanchoredFindingCount: input.unanchoredFindingCount + input.inlineFindings.length,
           publisherDowngradeReason,
@@ -3166,6 +3181,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     };
     const publishedResult = async (publishResult: GhRunResult, inlineCommentCount: number, nextAction: string): Promise<GitHubRoundSummaryPublishResult> => {
       const url = publishedReviewUrl(publishResult);
+      const reviewId = publishedRecordId(publishResult);
       const lifecycleFailure = await this.applyThreadLifecycle(
         repositoryName,
         input.prNumber,
@@ -3179,6 +3195,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         url,
         summaryUrl: url,
         publishKind: 'pull-request-review',
+        ...(reviewId ? { publishedRecord: { kind: 'pull-request-review' as const, id: reviewId } } : {}),
         inlineCommentCount,
         unanchoredFindingCount: input.unanchoredFindingCount + (input.inlineFindings.length - inlineCommentCount),
         publisherDowngradeReason,
@@ -3246,7 +3263,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     for (const chunk of extraCommentChunks) {
       const chunkResult = await submitReview({ commit_id: input.headSha, body: '', event: 'COMMENT', comments: chunk });
       if (chunkResult.exitCode !== 0) {
-        const createdReviewId = publishedReviewId(result);
+        const createdReviewId = publishedRecordId(result);
         if (createdReviewId !== null) {
           const tombstonedBody = input.body.replace(
             /<!--\s*qube-pr-review-summary:(\{[\s\S]*?\})\s*-->/,
@@ -3596,6 +3613,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       url: review.url ?? review.html_url,
       commit: review.commit ?? (typeof review.commit_id === 'string' ? { oid: review.commit_id } : null),
     }));
+  }
+
+  private async getPullRequestReview(repoName: string, prNumber: number, reviewId: string): Promise<RawReview> {
+    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews/${reviewId}`, '--method', 'GET'], this.options);
+    ensureGhSuccess(`gh api pull review ${reviewId} for PR ${prNumber}`, result);
+    const review = parseGhJson<RawReview>(result.stdout, `gh api pull review ${reviewId} for PR ${prNumber}`, isRecord);
+    return {
+      ...review,
+      author: review.author ?? review.user ?? null,
+      url: review.url ?? review.html_url,
+      commit: review.commit ?? (typeof review.commit_id === 'string' ? { oid: review.commit_id } : null),
+    };
   }
 
   private async getPullRequestDiff(prNumber: number): Promise<string> {

@@ -862,6 +862,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const sessionLockAcquisition = dryRun
     ? { held: false, activeLock: null }
     : acquireReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  const gateSessionLockHeadSha = finalSnapshot.pr.headRefOid;
   const activeSessionLock = sessionLockAcquisition.activeLock ?? undefined;
   let gateSessionLockHeld = sessionLockAcquisition.held;
   // Fail closed: lanes execute only while this gate provably holds the lock.
@@ -1164,6 +1165,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       }
     }
   }
+  // A successful provider write is not review evidence. Reload exactly once
+  // after publication so the terminal decision can use only provider-observed
+  // current-head metadata. Delayed visibility remains pending on this read.
+  if (roundSummary?.status === 'published') {
+    try {
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber, { publishedRecord: roundSummary.publishedRecord ?? null });
+    } catch (error: unknown) {
+      publishUnavailable.push(`Published review feedback could not be reloaded from the provider: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const publishedCarriedLanes: string[] = [];
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const carriedForwardLanes = localReview.status === 'passed'
@@ -1256,7 +1267,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     });
   }
   if (gateSessionLockHeld) {
-    clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+    clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, gateSessionLockHeadSha);
     gateSessionLockHeld = false;
   }
   return {
@@ -1300,7 +1311,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     nextAction: shipReady.nextAction,
   };
   } finally {
-    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, gateSessionLockHeadSha);
   }
 }
 
