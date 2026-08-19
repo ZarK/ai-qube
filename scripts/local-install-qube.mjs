@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeExecutable } from "../packages/qube-core/dist/index.js";
+import { buildArgvCommandPlan } from "./process-launch.mjs";
 
 export const COMPONENT_LINKS = Object.freeze([
   { id: "qube", command: "qube", packageDir: "products/qube", bin: "bin/run" },
@@ -102,10 +103,12 @@ export function assertSourcePathSafe(root, candidate, label) {
 export function defaultInstallPrefix(env = process.env) {
   const configured = env.QUBE_LOCAL_INSTALL_PREFIX?.trim();
   if (configured) return path.resolve(configured);
-  const npmPrefix = spawnSync("npm", ["prefix", "-g"], {
+  const invocation = buildArgvCommandPlan("npm", ["prefix", "-g"]);
+  const npmPrefix = spawnSync(invocation.command, invocation.args, {
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 15_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   if (npmPrefix.status === 0 && npmPrefix.stdout.trim()) {
     return path.resolve(npmPrefix.stdout.trim());
@@ -380,10 +383,12 @@ function resolveRepoRoot(requested) {
 }
 
 function runBuild(repoRoot) {
-  const result = spawnSync("pnpm", ["run", "build"], {
+  const invocation = buildArgvCommandPlan("pnpm", ["run", "build"]);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: repoRoot,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: false,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   if (result.status !== 0) {
     throw Object.assign(new Error("Workspace build failed before local install."), { reasonCode: "build-failed" });
@@ -531,12 +536,20 @@ function verifyFreshShell(prefix, repoRoot, qubeScriptPath, commands) {
       { reasonCode: "verify-failed" }
     );
   }
-  const doctor = spawnSync("qube", ["doctor", "--json"], {
+  const doctorPath = prefixCommandPath(binDir, "qube");
+  if (!doctorPath) {
+    throw Object.assign(new Error("Installed qube is missing before doctor verification."), {
+      reasonCode: "verify-failed",
+    });
+  }
+  const doctorInvocation = buildArgvCommandPlan(doctorPath, ["doctor", "--json"]);
+  const doctor = spawnSync(doctorInvocation.command, doctorInvocation.args, {
     cwd,
     env: { ...process.env, PATH: childPath },
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 60_000,
+    windowsVerbatimArguments: doctorInvocation.windowsVerbatimArguments,
     windowsHide: true,
   });
   if (doctor.status !== 0) {

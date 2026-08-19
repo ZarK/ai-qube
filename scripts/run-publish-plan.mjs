@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PUBLISH_PACKAGES, SET_PREPARE, SET_VERIFY } from "./publish-packages.mjs";
+import { buildShellCommandPlan } from "./process-launch.mjs";
 import { createReceipt, parseStageOutput, resumeReceipt, saveReceipt, writeStageIntent } from "./release-receipt.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,11 +16,13 @@ function fail(message, code = 1) {
 }
 
 function runAllowlisted(command, cwd = ROOT) {
-  const result = spawnSync(command, {
+  const invocation = buildShellCommandPlan(command);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd,
     encoding: "utf8",
-    shell: true,
+    shell: false,
     stdio: "inherit",
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
   if (result.status !== 0) {

@@ -409,7 +409,7 @@ importers:
         version: link:../../packages/qube-cli
     devDependencies:
       '@tjalve/qube-adapter-grok-build':
-        specifier: 0.1.6
+        specifier: 0.1.7
         version: link:../../adapters/grok-build
       '@types/node':
         specifier: 25.5.0
@@ -421,16 +421,16 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../aie
       '@tjalve/aiq':
         specifier: 0.2.5
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
-        specifier: 0.0.8
+        specifier: 0.0.9
         version: link:../aiu
       '@tjalve/qube-cli':
         specifier: 0.2.1

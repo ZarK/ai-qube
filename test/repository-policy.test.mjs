@@ -76,6 +76,7 @@ describe("repository policy", () => {
     assert.match(rootPackage.scripts["version:audit"], /suite-pins\.mjs/);
     assert.match(rootPackage.scripts.release, /release-set\.mjs/);
     assert.equal(rootPackage.scripts["release:approve"], "node scripts/approve-staged-release.mjs");
+    assert.match(rootPackage.scripts["publish:entrypoints"], /verify-installed-commands\.mjs --release-set --json/);
     const ciRunner = read("scripts/run-ci-core-stage.mjs");
     assert.match(ciRunner, /readdirSync\(testDirectory\)/);
     assert.match(ciRunner, /name\.endsWith\('\.test\.mjs'\)/);

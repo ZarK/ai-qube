@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
+import { restorePublishDependencies } from "../scripts/restore-publish-dependencies.mjs";
+
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const audit = JSON.parse(await readFile(path.join(repoRoot, "docs/release/version-audit.json"), "utf8"));
 
@@ -17,6 +19,48 @@ function runScript(scriptName, packageJsonPath) {
 }
 
 describe("publish manifest safety", () => {
+  it("retries transient file-operation failures before reporting restore success", async () => {
+    let accessAttempts = 0;
+    let copyAttempts = 0;
+    let unlinkAttempts = 0;
+    const report = await restorePublishDependencies("fixture/package.json", {
+      access: async () => {
+        accessAttempts += 1;
+        if (accessAttempts < 3) throw Object.assign(new Error("locked"), { code: "EPERM" });
+      },
+      copyFile: async () => {
+        copyAttempts += 1;
+        if (copyAttempts < 3) throw Object.assign(new Error("locked"), { code: "EPERM" });
+      },
+      unlink: async () => {
+        unlinkAttempts += 1;
+        if (unlinkAttempts < 2) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      },
+      attempts: 4,
+      delayMs: 0,
+      delay: async () => {},
+    });
+    assert.equal(report.restored, true);
+    assert.equal(accessAttempts, 3);
+    assert.equal(copyAttempts, 3);
+    assert.equal(unlinkAttempts, 2);
+  });
+
+  it("treats only a missing backup as a successful no-op", async () => {
+    let accessAttempts = 0;
+    const report = await restorePublishDependencies("fixture/package.json", {
+      access: async () => {
+        accessAttempts += 1;
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+      attempts: 4,
+      delayMs: 0,
+      delay: async () => {},
+    });
+    assert.equal(report.restored, false);
+    assert.equal(accessAttempts, 1);
+  });
+
   for (const entry of audit.packages ?? []) {
     it(`resolves workspace dependencies for ${entry.name}`, async () => {
       const sourcePath = path.join(repoRoot, entry.packageJson);

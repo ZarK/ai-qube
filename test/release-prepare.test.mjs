@@ -128,7 +128,10 @@ describe("release preparation", () => {
       const reports = new Map(plan.reports.map(report => [report.packageKey, report]));
       assert.equal(reports.get("qube-core").toVersion, bumpPatch(reports.get("qube-core").fromVersion));
       assert.equal(reports.get("qube-adapter-codex").propagated, true);
-      assert.equal(reports.get("qube-adapter-cursor").toVersion, "0.1.0");
+      assert.equal(
+        reports.get("qube-adapter-cursor").toVersion,
+        reports.get("qube-adapter-cursor").fromVersion,
+      );
       assert.equal(reports.get("aie").propagated, true);
       assert.equal(reports.get("aib").propagated, true);
       assert.equal(reports.get("qube").propagated, true);
@@ -155,8 +158,7 @@ describe("release preparation", () => {
       const cursor = planFixture(fixture, ["adapters/cursor/src/index.ts"]);
       const cursorReport = cursor.reports.find(report => report.packageKey === "qube-adapter-cursor");
       assert.equal(cursorReport.direct, true);
-      assert.equal(cursorReport.fromVersion, "0.1.0");
-      assert.equal(cursorReport.toVersion, "0.1.0");
+      assert.equal(cursorReport.toVersion, cursorReport.fromVersion);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }

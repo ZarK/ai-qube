@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +8,15 @@ import { describe, it } from "node:test";
 import {
   assertNoSourceCheckoutRunner,
   assertPackDirOutsideCheckout,
+  installedBinDir,
   parseVerifyInstalledArgs,
   probeInstalledCommand,
   resolveInstalledCommand,
   runInstalledCommandVerification,
+  selectPreparedReleasePackages,
 } from "../scripts/verify-installed-commands.mjs";
 import { assertPrefixOutsideCheckout } from "../scripts/local-install-qube.mjs";
+import { buildArgvCommandPlan } from "../scripts/process-launch.mjs";
 import { resolvePublishTag } from "../scripts/publish-packages.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -22,7 +25,7 @@ function writeShim(prefix, command, body, exitCode = 0) {
   const binDir = path.join(prefix, "bin");
   mkdirSync(binDir, { recursive: true });
   const unix = path.join(binDir, command);
-  const windows = path.join(binDir, `${command}.cmd`);
+  const windows = path.join(process.platform === "win32" ? prefix : binDir, `${command}.cmd`);
   writeFileSync(unix, `#!/bin/sh\n${body}\nexit ${exitCode}\n`);
   try {
     chmodSync(unix, 0o755);
@@ -37,6 +40,7 @@ describe("installed command verification", () => {
     assert.deepEqual(parseVerifyInstalledArgs(["--json", "--plan", "publish-plan.json", "--skip-pack"]), {
       json: true,
       help: false,
+      releaseSet: false,
       plan: "publish-plan.json",
       prefix: undefined,
       repoRoot: undefined,
@@ -44,6 +48,93 @@ describe("installed command verification", () => {
       skipPack: true,
       commands: undefined,
     });
+  });
+
+  it("parses the prepared release set and rejects ambiguous selection", () => {
+    assert.equal(parseVerifyInstalledArgs(["--release-set", "--json"]).releaseSet, true);
+    assert.throws(
+      () => parseVerifyInstalledArgs(["--release-set", "--plan", "publish-plan.json"]),
+      { reasonCode: "usage" },
+    );
+    assert.throws(
+      () => parseVerifyInstalledArgs(["--release-set", "--command", "qube"]),
+      { reasonCode: "usage" },
+    );
+  });
+
+  it("uses direct process execution on POSIX and cmd.exe for Windows shims", () => {
+    assert.deepEqual(buildArgvCommandPlan("npm", ["pack"], { platform: "linux" }), {
+      command: "npm",
+      args: ["pack"],
+      windowsVerbatimArguments: false,
+    });
+    assert.deepEqual(buildArgvCommandPlan("C:\\Program Files\\nodejs\\npm.cmd", ["pack"], { platform: "win32", comspec: "C:\\Windows\\System32\\cmd.exe" }), {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/s", "/c", "C:\\Program Files\\nodejs\\npm.cmd", "pack"],
+      windowsVerbatimArguments: false,
+    });
+    assert.deepEqual(buildArgvCommandPlan("C:\\Program Files\\nodejs\\node.exe", ["script.mjs"], { platform: "win32" }), {
+      command: "C:\\Program Files\\nodejs\\node.exe",
+      args: ["script.mjs"],
+      windowsVerbatimArguments: false,
+    });
+  });
+
+  it("resolves the platform-specific global executable directory", () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-bin-layout-"));
+    try {
+      mkdirSync(path.join(prefix, "bin"));
+      assert.equal(installedBinDir(prefix, "win32"), prefix);
+      assert.equal(installedBinDir(prefix, "linux"), path.join(prefix, "bin"));
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it("removes verifier-owned temporary directories", async () => {
+    let ownedPrefix;
+    const report = await runInstalledCommandVerification({
+      repoRoot,
+      releaseSet: true,
+      skipPack: true,
+      resolveReleasePackages: async () => ({ tag: "publish-set-v0.2.11", packages: [], commands: [] }),
+    });
+    ownedPrefix = report.prefix;
+    assert.equal(report.ok, false);
+    assert.equal(report.reasonCode, "usage");
+    assert.equal(existsSync(ownedPrefix), false);
+  });
+
+  it("selects every package and command from the resolved prepared set", () => {
+    const resolved = {
+      packages: [
+        { packageKey: "qube-core", packageName: "@tjalve/qube-core", version: "0.2.5", command: null },
+        { packageKey: "aie", packageName: "@tjalve/aie", version: "0.2.8", command: "aie" },
+        { packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.11", command: "qube" },
+      ],
+    };
+    const selected = selectPreparedReleasePackages({
+      tag: "publish-set-v0.2.11",
+      packages: [{ packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.11" }],
+    }, resolved);
+    assert.equal(selected.tag, "publish-set-v0.2.11");
+    assert.deepEqual(selected.packages, resolved.packages);
+    assert.deepEqual(selected.commands, ["aie", "qube"]);
+  });
+
+  it("rejects empty and mismatched prepared release sets", () => {
+    assert.throws(
+      () => selectPreparedReleasePackages({ packages: [] }, { packages: [{}] }),
+      { reasonCode: "empty-release-set" },
+    );
+    assert.throws(
+      () => selectPreparedReleasePackages({
+        packages: [{ packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.11" }],
+      }, {
+        packages: [{ packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.10", command: "qube" }],
+      }),
+      { reasonCode: "release-set-mismatch" },
+    );
   });
 
   it("rejects prefix, pack dir, parent, and absolute escapes", () => {

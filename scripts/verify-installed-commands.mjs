@@ -15,12 +15,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { commandPackages } from "./publish-packages.mjs";
+import { commandPackages, resolvePublishTag } from "./publish-packages.mjs";
+import { planRelease } from "./release-set.mjs";
 import {
   assertPrefixOutsideCheckout,
   assertSourcePathSafe,
   prefixBinDir,
 } from "./local-install-qube.mjs";
+import { buildArgvCommandPlan } from "./process-launch.mjs";
 
 const SOURCE_RUNNER = "node products/aie/bin/run";
 const ISSUE_COMMANDS = Object.freeze(["schema --json", "doctor --json", "init --dry-run --json"]);
@@ -29,6 +31,7 @@ export function parseVerifyInstalledArgs(argv) {
   const options = {
     json: false,
     help: false,
+    releaseSet: false,
     plan: undefined,
     prefix: undefined,
     repoRoot: undefined,
@@ -40,6 +43,7 @@ export function parseVerifyInstalledArgs(argv) {
     const token = argv[index];
     if (token === "--json") options.json = true;
     else if (token === "--help" || token === "-h") options.help = true;
+    else if (token === "--release-set") options.releaseSet = true;
     else if (token === "--skip-pack") options.skipPack = true;
     else if (token === "--plan") options.plan = requireValue(argv, index += 1, "--plan");
     else if (token === "--prefix") options.prefix = requireValue(argv, index += 1, "--prefix");
@@ -52,7 +56,45 @@ export function parseVerifyInstalledArgs(argv) {
       throw Object.assign(new Error(`Unknown argument: ${token}`), { reasonCode: "usage" });
     }
   }
+  if (options.releaseSet && (options.plan || options.commands)) {
+    throw Object.assign(new Error("--release-set cannot be combined with --plan or --command."), {
+      reasonCode: "usage",
+    });
+  }
   return options;
+}
+
+export function selectPreparedReleasePackages(release, resolved) {
+  if (!release || !Array.isArray(release.packages) || release.packages.length === 0) {
+    throw Object.assign(new Error("Prepared release has no unpublished packages."), {
+      reasonCode: "empty-release-set",
+    });
+  }
+  if (!resolved || !Array.isArray(resolved.packages) || resolved.packages.length === 0) {
+    throw Object.assign(new Error("Resolved release set has no packages."), {
+      reasonCode: "empty-release-set",
+    });
+  }
+  const resolvedByKey = new Map(resolved.packages.map(entry => [entry.packageKey, entry]));
+  for (const planned of release.packages) {
+    const entry = resolvedByKey.get(planned.packageKey);
+    if (!entry || entry.packageName !== planned.packageName || entry.version !== planned.version) {
+      throw Object.assign(new Error(`Prepared package ${planned.packageKey} does not match the resolved release set.`), {
+        reasonCode: "release-set-mismatch",
+      });
+    }
+  }
+  return Object.freeze({
+    tag: release.tag,
+    packages: Object.freeze([...resolved.packages]),
+    commands: Object.freeze(commandPackages(resolved).map(entry => entry.command)),
+  });
+}
+
+export async function resolvePreparedReleasePackages(repoRoot) {
+  const release = await planRelease({ repoRoot });
+  const resolved = await resolvePublishTag(release.tag, repoRoot);
+  return selectPreparedReleasePackages(release, resolved);
 }
 
 function requireValue(argv, index, flag) {
@@ -90,7 +132,8 @@ export function assertPackDirOutsideCheckout(repoRoot, packDir) {
   }
 }
 
-export function installedBinDir(prefix) {
+export function installedBinDir(prefix, platform = process.platform) {
+  if (platform === "win32" && existsSync(prefix) && lstatSync(prefix).isDirectory()) return prefix;
   const unix = path.join(prefix, "bin");
   if (existsSync(unix) && lstatSync(unix).isDirectory()) return unix;
   const nested = path.join(prefix, "node_modules", ".bin");
@@ -162,12 +205,14 @@ export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = 
     });
   }
   const childPath = filteredPath(path.dirname(resolvedPath));
-  const result = spawnSync(command, args, {
+  const invocation = buildArgvCommandPlan(resolvedPath, args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd,
     env: { ...process.env, PATH: childPath },
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 60_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
   if (result.status !== 0) {
@@ -187,11 +232,13 @@ export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = 
 }
 
 function runArgv(command, args, cwd) {
-  const result = spawnSync(command, args, {
+  const invocation = buildArgvCommandPlan(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd,
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 600_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
   if (result.status !== 0) {
@@ -230,11 +277,13 @@ export function installPackedPackages(prefix, tarballs, repoRoot) {
   assertPrefixOutsideCheckout(repoRoot, prefix);
   mkdirSync(prefix, { recursive: true });
   const args = ["install", "-g", "--ignore-scripts", "--prefix", prefix, ...tarballs];
-  const result = spawnSync("npm", args, {
+  const invocation = buildArgvCommandPlan("npm", args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: os.tmpdir(),
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 600_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
   if (result.status !== 0) {
@@ -310,7 +359,9 @@ export function runInstalledIssueCommands(prefix) {
 
 export async function runInstalledCommandVerification(input = {}) {
   const repoRoot = resolveRepoRoot(input.repoRoot);
+  const ownsPrefix = !input.prefix;
   const prefix = path.resolve(input.prefix ?? mkdtempSync(path.join(os.tmpdir(), "qube-installed-prefix-")));
+  let ownedPackDir = null;
   assertPrefixOutsideCheckout(repoRoot, prefix);
   const report = {
     ok: false,
@@ -323,6 +374,12 @@ export async function runInstalledCommandVerification(input = {}) {
   try {
     let packages = input.packages;
     let planCommands = [];
+    if (input.releaseSet) {
+      const prepared = await (input.resolveReleasePackages ?? resolvePreparedReleasePackages)(repoRoot);
+      packages = prepared.packages;
+      planCommands = prepared.commands;
+      report.releaseTag = prepared.tag;
+    }
     if (!packages && input.planPath) {
       const plan = loadPlan(input.planPath, repoRoot);
       packages = plan.verifyPackages ?? plan.packages;
@@ -340,6 +397,7 @@ export async function runInstalledCommandVerification(input = {}) {
     }
     if (!input.skipPack) {
       const packDir = path.resolve(input.packDir ?? mkdtempSync(path.join(os.tmpdir(), "qube-pack-")));
+      if (!input.packDir) ownedPackDir = packDir;
       assertPackDirOutsideCheckout(repoRoot, packDir);
       const tarballs = packPublishPackages(repoRoot, packages, packDir);
       installPackedPackages(prefix, tarballs, repoRoot);
@@ -356,11 +414,14 @@ export async function runInstalledCommandVerification(input = {}) {
     report.reasonCode = error?.reasonCode ?? "failed";
     report.error = error instanceof Error ? error.message : String(error);
     return report;
+  } finally {
+    if (ownedPackDir) rmSync(ownedPackDir, { recursive: true, force: true });
+    if (ownsPrefix) rmSync(prefix, { recursive: true, force: true });
   }
 }
 
 function printHelp() {
-  process.stdout.write(`Usage: node scripts/verify-installed-commands.mjs [--plan <file>] [--prefix <dir>] [--json]
+  process.stdout.write(`Usage: node scripts/verify-installed-commands.mjs [--release-set | --plan <file>] [--prefix <dir>] [--json]
 
 Pack the selected publish set, install it into a prefix outside the checkout, and
 check that qube, aie, aib, aiu, and aiq start.
@@ -383,6 +444,7 @@ export async function main(argv = process.argv.slice(2)) {
   const report = await runInstalledCommandVerification({
     repoRoot: parsed.repoRoot,
     prefix: parsed.prefix,
+    releaseSet: parsed.releaseSet,
     planPath: parsed.plan,
     packDir: parsed.packDir,
     skipPack: parsed.skipPack,
