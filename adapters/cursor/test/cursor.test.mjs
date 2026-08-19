@@ -19,14 +19,26 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("darwin"), true);
+    const versionRoot = "C:\\Tools\\versions\\2026.08.11-e8db854";
     assert.deepEqual(
-      cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", path => path === "C:\\Tools\\cursor-agent.ps1", "C:\\Windows"),
+      cursor.resolveCursorWindowsShim(
+        "C:\\Tools\\cursor-agent.cmd",
+        path => path === `${versionRoot}\\node.exe` || path === `${versionRoot}\\index.js`,
+        () => ["2026.08.11-e8db854"],
+      ),
       {
-        executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-        prefixArgs: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Tools\\cursor-agent.ps1"],
+        executable: process.execPath,
+        prefixArgs: [
+          new URL("../dist/cursor-acp-runner.js", import.meta.url).pathname.replace(/^\/(?:([A-Za-z]:))/, "$1").replace(/\//g, "\\"),
+          "--cursor-executable",
+          `${versionRoot}\\node.exe`,
+          "--cursor-prefix-json",
+          JSON.stringify([`${versionRoot}\\index.js`]),
+          "--",
+        ],
       },
     );
-    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false), null);
+    assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, () => ["2026.08.11-e8db854"]), null);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {
@@ -38,10 +50,12 @@ describe("Cursor isolated review adapter", () => {
     }
   });
 
-  it("never builds an invocation that weakens sandbox isolation", () => {
+  it("routes Windows review through the permission-denying ACP client", () => {
     const built = cursor.buildCursorInvocation(context, "win32");
-    assert.ok(built.args.includes("ask"));
-    assert.deepEqual(built.args.slice(5, 7), ["--sandbox", "enabled"]);
+    assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
+    assert.equal(built.stdin, "inspect");
+    assert.equal(built.args.includes("--sandbox"), false);
+    assert.equal(built.args.includes("disabled"), false);
   });
 
   it("parses exactly one successful terminal result", () => {

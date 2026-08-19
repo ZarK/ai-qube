@@ -244,7 +244,7 @@
             "effort": null
           },
           "cursor": {
-            "model": "gpt-5.6-luna-high",
+            "model": "gpt-5.6-luna-medium",
             "effort": null
           }
         },

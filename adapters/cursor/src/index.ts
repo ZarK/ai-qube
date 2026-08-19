@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { win32 as windowsPath } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type {
   IsolatedReviewHostAdapter,
@@ -105,8 +106,14 @@ function requiredHelpMissing(help: string): string[] {
 
 export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
-  _platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = process.platform,
 ): IsolatedReviewHostBuiltInvocation {
+  if (platform === "win32") {
+    return {
+      args: ["--acp-review", "--model", context.model ?? "", "--workspace", context.repoRoot],
+      stdin: context.prompt,
+    };
+  }
   const args = ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"];
   if (context.model) args.push("--model", context.model);
   args.push("--workspace", context.repoRoot);
@@ -116,16 +123,30 @@ export function buildCursorInvocation(
 export function resolveCursorWindowsShim(
   shim: string,
   fileExists: (path: string) => boolean = existsSync,
-  systemRoot: string | undefined = process.env.SystemRoot,
+  listDirectory: (path: string) => string[] = path => readdirSync(path, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name),
 ): IsolatedReviewHostExecutable | null {
-  const script = windowsPath.join(windowsPath.dirname(shim), "cursor-agent.ps1");
-  if (!fileExists(script)) return null;
-  const executable = systemRoot
-    ? windowsPath.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    : "powershell.exe";
+  const versions = windowsPath.join(windowsPath.dirname(shim), "versions");
+  let names: string[];
+  try { names = listDirectory(versions); }
+  catch { return null; }
+  const selected = names
+    .filter(name => /^\d{4}\.\d{1,2}\.\d{1,2}(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/iu.test(name))
+    .sort((left, right) => right.localeCompare(left))
+    .find(name => fileExists(windowsPath.join(versions, name, "node.exe"))
+      && fileExists(windowsPath.join(versions, name, "index.js")));
+  if (!selected) return null;
+  const cursorNode = windowsPath.join(versions, selected, "node.exe");
+  const cursorScript = windowsPath.join(versions, selected, "index.js");
   return {
-    executable,
-    prefixArgs: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+    executable: process.execPath,
+    prefixArgs: [
+      fileURLToPath(new URL("./cursor-acp-runner.js", import.meta.url)),
+      "--cursor-executable", cursorNode,
+      "--cursor-prefix-json", JSON.stringify([cursorScript]),
+      "--",
+    ],
   };
 }
 
@@ -188,7 +209,7 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   windowsNodeModulesScriptPath(): string | null { return null; },
   windowsFallbackExecutablePath(): string | null { return null; },
   buildInvocation(context: IsolatedReviewHostInvocationContext): IsolatedReviewHostBuiltInvocation {
-    return buildCursorInvocation(context);
+    return buildCursorInvocation(context, process.platform);
   },
   parseEnvelope: parseCursorEnvelope,
   probeAfterVersion(context: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {

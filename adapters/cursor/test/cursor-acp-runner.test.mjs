@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { describe, it } from "node:test";
+
+import { parseRunnerOptions, selectCursorAcpModel } from "../dist/cursor-acp-runner.js";
+
+const runner = new URL("../dist/cursor-acp-runner.js", import.meta.url);
+
+function fakeServerSource() {
+  return `
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+const config = JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR, "cli-config.json"), "utf8"));
+if (config.approvalMode !== "allowlist" || !config.permissions.deny.includes("Shell(*)") || !config.permissions.deny.includes("Write(**)")) process.exit(19);
+const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+let promptId = null;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "authenticate") send({ jsonrpc: "2.0", id: message.id, result: {} });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: {
+    sessionId: "fresh-acp",
+    configOptions: [
+      { id: "mode", currentValue: "agent", options: [{ value: "ask", name: "Ask" }] },
+      { id: "model", currentValue: "auto", options: [{ value: "gpt-5.6-luna[reasoning=high]", name: "GPT 5.6 Luna High" }] }
+    ]
+  } });
+  else if (message.method === "session/set_config_option") send({ jsonrpc: "2.0", id: message.id, result: { configOptions: [{ id: message.params.configId, currentValue: message.params.value }] } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id;
+    if (process.env.FAKE_PERMISSION === "1") send({ jsonrpc: "2.0", id: 91, method: "session/request_permission", params: { sessionId: "fresh-acp", toolCall: { toolCallId: "write-1" }, options: [] } });
+    else finish();
+  } else if (message.id === 91 && message.result?.outcome?.outcome === "cancelled") finish();
+});
+function finish() {
+  send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fresh-acp", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "{\\\"status\\\":\\\"passed\\\"}" } } } });
+  send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+}
+`;
+}
+
+function invoke(permission = false) {
+  const root = mkdtempSync(join(tmpdir(), "qube-cursor-acp-test-"));
+  const server = join(root, "fake-acp.mjs");
+  writeFileSync(server, fakeServerSource(), "utf8");
+  try {
+    return spawnSync(process.execPath, [
+      runner.pathname.replace(/^\/(?:([A-Za-z]:))/, "$1"),
+      "--cursor-executable", process.execPath,
+      "--cursor-prefix-json", JSON.stringify([server]),
+      "--", "--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", root,
+    ], {
+      input: "review safely",
+      encoding: "utf8",
+      env: { ...process.env, ...(permission ? { FAKE_PERMISSION: "1" } : {}) },
+      timeout: 10_000,
+      windowsHide: true,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("Cursor Windows ACP runner", () => {
+  it("parses bounded runner arguments and selects an unambiguous model option", () => {
+    assert.deepEqual(parseRunnerOptions(["--cursor-executable", "cursor", "--cursor-prefix-json", "[]", "--", "--version"]), {
+      cursorExecutable: "cursor",
+      cursorPrefix: [],
+      forwarded: ["--version"],
+    });
+    assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "gpt-5.6-luna[reasoning=high]", name: "GPT 5.6 Luna High" }] }] }, "gpt-5.6-luna-high"), "gpt-5.6-luna[reasoning=high]");
+    assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "one" }, { value: "two" }] }] }, "missing"), null);
+  });
+
+  it("runs a fresh ACP session with a strict isolated config and returns one envelope", () => {
+    const result = invoke();
+    assert.equal(result.status, 0, result.stderr);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.type, "result");
+    assert.equal(envelope.session_id, "fresh-acp");
+    assert.equal(envelope.result, '{"status":"passed"}');
+  });
+
+  it("cancels and rejects every requested capability", () => {
+    const result = invoke(true);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Blocked by policy/);
+    assert.equal(result.stdout, "");
+  });
+});
