@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/index.js';
 import { readCurrentHeadLaneEvidence, readLocalReviewGate, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { resolveReviewSources } from '../review_source.js';
 import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { redact } from '../redact.js';
+import { resolveModelReviewHead } from './model_review_runner.js';
 import { changedReviewPaths } from './pr_gate.js';
 
 export interface PrTriageAdvisory {
@@ -90,12 +91,16 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   // Approved-head verification uses the same changed-path-activated lane set as
   // the gate; a single passed lane file must never authorize a triage report
   // while another active required lane is absent.
+  const localHeadSha = await resolveModelReviewHead(repoRoot);
+  if (localHeadSha !== pr.headSha) {
+    throw new Error(`Local checkout HEAD ${redact(localHeadSha)} does not match PR #${pr.number} head ${redact(pr.headSha)}. Check out the exact PR head before running advisory triage.`);
+  }
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const requiredLaneIds = activeLocalReviewFocusesForConfig(config, changedPaths);
   const passedLanesByIssue = new Map<number, Set<LocalReviewLaneId>>();
-  // Enumerate every known lane id: triage reads whatever terminal current-head
-  // evidence exists, and configured lane subsets simply have no files to read.
-  const laneIds = Object.keys(LANE_HEURISTIC_DIGESTS) as LocalReviewLaneId[];
+  // Inactive conditional lanes do not participate in the gate and must not
+  // contribute blocking verdicts or advisories to its triage report.
+  const laneIds = requiredLaneIds;
   const advisories: PrTriageAdvisory[] = [];
   const seenKeys = new Set<string>();
   const lanesInspected: string[] = [];
@@ -141,7 +146,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   // findings join the same triage report with source attribution.
   const reviewProvider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const reviewSnapshot = await reviewProvider.loadPullRequestReview(pr.number);
-  const reviewSources = resolveReviewSources(config);
+  const reviewSources = resolveReviewSources(config, { activeLaneIds: requiredLaneIds });
   const providerFindings = reviewSnapshot.pr.headRefOid === pr.headSha ? ingestProviderReviewFindings(reviewSnapshot.item, reviewSources) : [];
   const blockingProviderSources = [...new Set(providerFindings.filter(finding => finding.severity === 'blocking').map(finding => finding.sourceId))];
   for (const finding of providerFindings.filter(entry => entry.severity === 'advisory')) {
