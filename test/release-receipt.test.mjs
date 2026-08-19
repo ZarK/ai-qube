@@ -200,6 +200,9 @@ describe("staged release receipts", () => {
       command: "npm",
       args: ["stage", "list", "--json"],
     });
+  });
+
+  it("rejects unexpected npm arguments before a command shell starts", () => {
     assert.throws(() => npmStageCommand(["stage", "approve", "not-a-uuid"], { platform: "win32" }), {
       reasonCode: "command",
       message: "Unsupported npm stage command.",
