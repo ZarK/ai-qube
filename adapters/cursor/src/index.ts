@@ -104,9 +104,13 @@ function requiredHelpMissing(help: string): string[] {
     .filter(option => !help.includes(option));
 }
 
-function reviewPrompt(context: IsolatedReviewHostInvocationContext): string {
+function reviewPrompt(context: IsolatedReviewHostInvocationContext, windowsAcp = false): string {
   return [
     context.prompt,
+    ...(windowsAcp ? [
+      "",
+      "Cursor ACP review capability boundary: use only Cursor's built-in repository read and search tools. Do not request shell or terminal commands, test execution, Git commands, writes, MCP tools, web access, or any other permission. Use the supplied review bundle and direct file reads; record unavailable command execution only as a completeness condition, not as a defect.",
+    ] : []),
     "",
     "The following JSON Schema is the authoritative QUBE output contract. Return exactly one JSON object that validates against it. Preserve every required nested field, use only declared enum values, and do not add properties.",
     context.schemaJson,
@@ -118,9 +122,12 @@ export function buildCursorInvocation(
   platform: NodeJS.Platform = process.platform,
 ): IsolatedReviewHostBuiltInvocation {
   if (platform === "win32") {
+    const args = ["--acp-review"];
+    if (context.model) args.push("--model", context.model);
+    args.push("--workspace", context.repoRoot);
     return {
-      args: ["--acp-review", "--model", context.model ?? "", "--workspace", context.repoRoot],
-      stdin: reviewPrompt(context),
+      args,
+      stdin: reviewPrompt(context, true),
     };
   }
   const args = ["--print", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled"];

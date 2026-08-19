@@ -32,7 +32,10 @@ createInterface({ input: process.stdin }).on("line", line => {
       { id: "model", currentValue: "auto", options: [{ value: "gpt-5.6-luna[reasoning=high]", name: "GPT 5.6 Luna High" }] }
     ]
   } });
-  else if (message.method === "session/set_config_option") send({ jsonrpc: "2.0", id: message.id, result: { configOptions: [{ id: message.params.configId, currentValue: message.params.value }] } });
+  else if (message.method === "session/set_config_option") {
+    if (process.env.FAKE_FORBID_MODEL === "1" && message.params.configId === "model") process.exit(24);
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: [{ id: message.params.configId, currentValue: message.params.value }] } });
+  }
   else if (message.method === "session/prompt") {
     promptId = message.id;
     if (process.env.FAKE_PERMISSION === "1") send({ jsonrpc: "2.0", id: 91, method: "session/request_permission", params: { sessionId: "fresh-acp", toolCall: { toolCallId: "write-1" }, options: [] } });
@@ -46,16 +49,19 @@ function finish() {
 `;
 }
 
-function invoke(mode = "success") {
+function invoke(mode = "success", model = "gpt-5.6-luna-high") {
   const root = mkdtempSync(join(tmpdir(), "qube-cursor-acp-test-"));
   const server = join(root, "fake-acp.mjs");
   writeFileSync(server, fakeServerSource(), "utf8");
   try {
+    const forwarded = ["--acp-review"];
+    if (model) forwarded.push("--model", model);
+    forwarded.push("--workspace", root);
     return spawnSync(process.execPath, [
       runner.pathname.replace(/^\/(?:([A-Za-z]:))/, "$1"),
       "--cursor-executable", process.execPath,
       "--cursor-prefix-json", JSON.stringify([server]),
-      "--", "--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", root,
+      "--", ...forwarded,
     ], {
       input: "review safely",
       encoding: "utf8",
@@ -63,6 +69,7 @@ function invoke(mode = "success") {
         ...process.env,
         ...(mode === "permission" ? { FAKE_PERMISSION: "1" } : {}),
         ...(mode === "exit" ? { FAKE_EXIT: "1" } : {}),
+        ...(model === null ? { FAKE_FORBID_MODEL: "1" } : {}),
       },
       timeout: 10_000,
       windowsHide: true,
@@ -90,6 +97,12 @@ describe("Cursor Windows ACP runner", () => {
     assert.equal(envelope.type, "result");
     assert.equal(envelope.session_id, "fresh-acp");
     assert.equal(envelope.result, '{"status":"passed"}');
+  });
+
+  it("preserves the nullable model contract by keeping the ACP session default", () => {
+    const result = invoke("success", null);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).result, '{"status":"passed"}');
   });
 
   it("cancels and rejects every requested capability", () => {

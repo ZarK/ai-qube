@@ -29,6 +29,11 @@ function requiredValue(args: string[], name: string): string {
   return value;
 }
 
+function optionalValue(args: string[], name: string): string | null {
+  if (!args.includes(name)) return null;
+  return requiredValue(args, name);
+}
+
 export function parseRunnerOptions(args: string[]): RunnerOptions {
   const separator = args.indexOf("--");
   if (separator === -1) throw new Error("Cursor runner arguments require -- before forwarded arguments.");
@@ -137,7 +142,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
   const forwarded = [...options.forwarded];
   if (forwarded.shift() !== "--acp-review") throw new Error("Missing --acp-review marker.");
   const workspace = requiredValue(forwarded, "--workspace");
-  const requestedModel = requiredValue(forwarded, "--model");
+  const requestedModel = optionalValue(forwarded, "--model");
   const prompt = await readStdin();
   if (prompt.trim() === "") throw new Error("Cursor ACP review requires a prompt on stdin.");
 
@@ -228,14 +233,16 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     if (typeof session.sessionId !== "string" || session.sessionId === "") throw new Error("Cursor ACP did not create a session.");
     const modeResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "mode", value: "ask" });
     if (currentConfigValue(modeResult, "mode") !== "ask") throw new Error("Cursor ACP did not enter Ask mode.");
-    const modelValue = selectCursorAcpModel(session, requestedModel) ?? requestedModel;
-    let modelResult: JsonObject;
-    try {
-      modelResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "model", value: modelValue });
-    } catch (error) {
-      throw new Error(`Cursor ACP rejected model ${requestedModel}. Available ACP values: ${configuredModelValues(session).join(", ") || "none"}.`, { cause: error });
+    if (requestedModel) {
+      const modelValue = selectCursorAcpModel(session, requestedModel) ?? requestedModel;
+      let modelResult: JsonObject;
+      try {
+        modelResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "model", value: modelValue });
+      } catch (error) {
+        throw new Error(`Cursor ACP rejected model ${requestedModel}. Available ACP values: ${configuredModelValues(session).join(", ") || "none"}.`, { cause: error });
+      }
+      if (currentConfigValue(modelResult, "model") !== modelValue) throw new Error("Cursor ACP did not confirm the requested model.");
     }
-    if (currentConfigValue(modelResult, "model") !== modelValue) throw new Error("Cursor ACP did not confirm the requested model.");
     await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] });
     if (protocolFault) throw protocolFault;
     if (permissionRequests > 0) throw new Error("Blocked by policy: Cursor requested a capability outside QUBE's read-only ACP client.");

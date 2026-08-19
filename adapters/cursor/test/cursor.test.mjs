@@ -56,10 +56,12 @@ describe("Cursor isolated review adapter", () => {
   it("routes Windows review through the permission-denying ACP client", () => {
     const built = cursor.buildCursorInvocation(context, "win32");
     assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
-    assert.match(built.stdin, /^inspect\n\nThe following JSON Schema/);
+    assert.match(built.stdin, /^inspect\n\nCursor ACP review capability boundary:/);
+    assert.match(built.stdin, /Do not request shell or terminal commands/);
     assert.match(built.stdin, /\{\}$/);
     assert.equal(built.args.includes("--sandbox"), false);
     assert.equal(built.args.includes("disabled"), false);
+    assert.deepEqual(cursor.buildCursorInvocation({ ...context, model: null }, "win32").args, ["--acp-review", "--workspace", "/repo"]);
   });
 
   it("parses exactly one successful terminal result", () => {
