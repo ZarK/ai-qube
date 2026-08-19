@@ -77,6 +77,30 @@ describe('pr triage', () => {
     assert.match(result.nextAction, /Required lane coverage is incomplete/);
   });
 
+  it('uses the gate changed-path lane set when conditional lanes are inactive', async () => {
+    const repo = makeRepo();
+    writeValidLaneEvidence(repo, 'issue-compliance', []);
+    writeValidLaneEvidence(repo, 'code-quality', [advisoryFinding('cq-1', 'Keep the focused advisory visible.')]);
+    const gh = fakeGh();
+    const defaults = getDefaults();
+    const config = {
+      ...defaults,
+      reviewProfile: 'local-focused',
+      reviewLanes: [
+        { id: 'issue-compliance', required: 'always', match: [] },
+        { id: 'code-quality', required: 'always', match: [] },
+        { id: 'performance', required: 'when-matched', match: ['src/performance/**'] },
+      ],
+    };
+
+    const result = await runPrTriageService(config, { prNumber: 12, repoRoot: repo, exec: gh.exec });
+
+    assert.equal(result.approvedHead, true);
+    assert.deepEqual(result.missingRequiredLanes, []);
+    assert.equal(result.advisories[0].disposition, 'reported');
+    assertNoMutations(gh);
+  });
+
   it('blocks advisory disposition when the head carries blocking lane verdicts', async () => {
     const repo = makeRepo();
     writeApprovedHead(repo, [], { except: ['code-quality'] });

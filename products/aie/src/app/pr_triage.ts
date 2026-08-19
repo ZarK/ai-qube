@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/index.js';
-import { readCurrentHeadLaneEvidence, readLocalReviewGate, requiredLocalReviewLanes, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
-import { LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
+import { readCurrentHeadLaneEvidence, readLocalReviewGate, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { resolveReviewSources } from '../review_source.js';
 import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { redact } from '../redact.js';
+import { changedReviewPaths } from './pr_gate.js';
 
 export interface PrTriageAdvisory {
   lane: string;
@@ -86,11 +87,11 @@ function terminalLane(lane: LocalReviewLane | null): lane is LocalReviewLane {
 export async function runPrTriageService(config: Config, options: PrTriageOptions): Promise<PrTriageResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const pr = await triagePrContext(options.prNumber, repoRoot, options.exec);
-  // Approved-head verification requires the configured profile's full required
-  // lane set to hold passed evidence per linked issue; a single passed lane file
-  // must never authorize a triage report while other required lanes are absent.
-  const effectiveProfile = config.reviewProfile === 'remote-compatible' ? 'local-standard' : config.reviewProfile;
-  const requiredLaneIds = requiredLocalReviewLanes(effectiveProfile);
+  // Approved-head verification uses the same changed-path-activated lane set as
+  // the gate; a single passed lane file must never authorize a triage report
+  // while another active required lane is absent.
+  const changedPaths = await changedReviewPaths(config, repoRoot);
+  const requiredLaneIds = activeLocalReviewFocusesForConfig(config, changedPaths);
   const passedLanesByIssue = new Map<number, Set<LocalReviewLaneId>>();
   // Enumerate every known lane id: triage reads whatever terminal current-head
   // evidence exists, and configured lane subsets simply have no files to read.
@@ -180,6 +181,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     required: true,
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
+    activeFocuses: requiredLaneIds,
   });
   const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0 && localReview.status === 'passed' && blockingProviderSources.length === 0;
   if (!approvedHead) {
