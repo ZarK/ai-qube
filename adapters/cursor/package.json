@@ -1,8 +1,14 @@
 {
   "name": "@tjalve/qube-adapter-cursor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cursor CLI adapter for QUBE isolated review and model routing.",
-  "keywords": ["cli", "agent", "automation", "cursor", "adapter"],
+  "keywords": [
+    "cli",
+    "agent",
+    "automation",
+    "cursor",
+    "adapter"
+  ],
   "type": "module",
   "license": "MIT",
   "author": "tjalve",
@@ -11,10 +17,14 @@
     "url": "git+https://github.com/ZarK/ai-qube.git",
     "directory": "adapters/cursor"
   },
-  "bugs": { "url": "https://github.com/ZarK/ai-qube/issues" },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-qube/issues"
+  },
   "homepage": "https://github.com/ZarK/ai-qube/tree/main/adapters/cursor#readme",
   "packageManager": "pnpm@11.0.4",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/",
@@ -30,7 +40,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
@@ -40,7 +53,9 @@
     "postpack": "node ../../scripts/restore-publish-dependencies.mjs",
     "verify": "pnpm run typecheck && pnpm test"
   },
-  "dependencies": { "@tjalve/qube-core": "workspace:*" },
+  "dependencies": {
+    "@tjalve/qube-core": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
