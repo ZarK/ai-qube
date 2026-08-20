@@ -93,8 +93,30 @@ export const aiuCli = createCli({
     createCommand(statusCommand, async (context) => {
       const configPath = typeof context.flags.config === "string" ? context.flags.config : undefined;
       const report = await runAiuStatus(configPath ? { configPath } : {});
+      const human = formatAiuStatusReport(report);
+      if (!report.config.valid) {
+        const firstError = report.errors[0];
+        const error = createCliError({
+          command: "status",
+          kind: firstError.code,
+          operation: "read Umpire status",
+          likelyCause: firstError.message,
+          suggestedNextAction: firstError.code === "status-config-invalid"
+            ? "Fix the reported Umpire config error. Then run aiu status again."
+            : "Fix the reported trusted command error. Then run aiu status again.",
+          category: firstError.code === "status-config-invalid" ? "validation" : "unexpected",
+        });
+        return {
+          exitCode: error.exitCode,
+          human,
+          jsonStdout: renderJsonLine({
+            ...createJsonErrorEnvelope(error),
+            status: redactStructuredValue(report as unknown as Readonly<Record<string, unknown>>),
+          }),
+        };
+      }
       return {
-        human: formatAiuStatusReport(report),
+        human,
         json: {
           status: report,
         },

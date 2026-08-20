@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -126,6 +126,49 @@ describe("status reporting", () => {
       assert.match(parsed.status.paths.continuationState, /continuation\.json$/);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an external config before running its trusted commands", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "aiu-status-repo-"));
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "aiu-status-external-"));
+    const sentinelPath = path.join(outsideDir, "command-ran.txt");
+    const outsideConfigPath = path.join(outsideDir, "config.json");
+    try {
+      await mkdir(path.join(dir, ".git"));
+      await writeFile(outsideConfigPath, JSON.stringify({
+        version: 1,
+        trustedStateCommands: {
+          work: {
+            argv: [
+              process.execPath,
+              "-e",
+              `require('node:fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'ran')`,
+            ],
+          },
+        },
+      }), "utf8");
+
+      const result = await runCli(["status", "--config", outsideConfigPath, "--json"], dir);
+      const parsed = JSON.parse(result.stdout) as {
+        readonly ok: boolean;
+        readonly error?: { readonly kind?: string; readonly likelyCause?: string };
+        readonly status?: { readonly errors?: readonly { readonly code?: string; readonly path?: string }[] };
+      };
+
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.kind, "status-config-invalid");
+      assert.match(parsed.error?.likelyCause ?? "", /inside the repository/u);
+      assert.deepEqual(parsed.status?.errors, [{
+        code: "status-config-invalid",
+        message: "The Umpire config path must resolve to a file inside the repository.",
+        path: "$.configPath",
+      }]);
+      await assert.rejects(access(sentinelPath), { code: "ENOENT" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
     }
   });
 

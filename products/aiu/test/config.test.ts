@@ -301,6 +301,57 @@ describe("config foundation", () => {
     assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.message.includes("Could not parse .qube/aiu/config.json")));
   });
 
+  it("rejects config paths outside the repository without loading trusted commands", async () => {
+    const repoRoot = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-config-external-"));
+    tempRoots.push(outsideRoot);
+    const outsideConfigPath = path.join(outsideRoot, "config.json");
+    await writeFile(outsideConfigPath, JSON.stringify({
+      version: 1,
+      trustedStateCommands: {
+        work: { argv: ["outside-command", "--json"] },
+      },
+    }), "utf8");
+
+    for (const configPath of [outsideConfigPath, path.relative(repoRoot, outsideConfigPath)]) {
+      const result = loadAiuConfig({ cwd: repoRoot, configPath });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.found, false);
+      assert.deepEqual(result.config.trustedStateCommands, {});
+      assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-config-path" && diagnostic.path === "$.configPath"));
+    }
+  });
+
+  it("rejects config paths through linked repository directories", async (t) => {
+    const repoRoot = await createRepoRoot();
+    const outsideQubeRoot = await mkdtemp(path.join(tmpdir(), "aiu-config-linked-"));
+    tempRoots.push(outsideQubeRoot);
+    await mkdir(path.join(outsideQubeRoot, "aiu"), { recursive: true });
+    await writeFile(path.join(outsideQubeRoot, "aiu", "config.json"), JSON.stringify({
+      version: 1,
+      trustedStateCommands: {
+        work: { argv: ["outside-command", "--json"] },
+      },
+    }), "utf8");
+    try {
+      await symlink(outsideQubeRoot, path.join(repoRoot, ".qube"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.found, false);
+    assert.deepEqual(result.config.trustedStateCommands, {});
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "linked-config-path" && diagnostic.path === "$.configPath"));
+  });
+
   it("rejects absolute and parent-relative Umpire state paths", async () => {
     const repoRoot = await createRepoRoot();
     const cases = [

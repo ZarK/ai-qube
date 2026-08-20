@@ -238,6 +238,38 @@ describe("trusted command adapters", () => {
     assert.equal(stale.error.code, "trusted-command-stale-state");
   });
 
+  it("rejects explicitly malformed trust and freshness metadata", async () => {
+    const { parseAiuTrustedStateJson, toAiuTrustedStateCommandRef } = await loadTrustedAdapter();
+    const command = toAiuTrustedStateCommandRef("repository", { argv: ["fixture"] });
+    const invalidTrust = parseAiuTrustedStateJson({
+      sourceId: "repository",
+      command,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        observedAt,
+        trustLevel: "verified",
+        value: repositoryState("pass"),
+      }),
+      observedAt,
+    });
+    const invalidFreshness = parseAiuTrustedStateJson({
+      sourceId: "repository",
+      command,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        observedAt,
+        freshness: { kind: "current", observedAt },
+        value: repositoryState("pass"),
+      }),
+      observedAt,
+    });
+
+    assert.equal(invalidTrust.ok, false);
+    assert.equal(invalidTrust.error.code, "trusted-command-invalid-state");
+    assert.equal(invalidFreshness.ok, false);
+    assert.equal(invalidFreshness.error.code, "trusted-command-invalid-state");
+  });
+
   it("normalizes generic core-state JSON shapes into envelopes", async () => {
     const { parseAiuTrustedStateJson, toAiuTrustedStateCommandRef } = await loadTrustedAdapter();
     const command = toAiuTrustedStateCommandRef("repository", { argv: ["fixture"] });

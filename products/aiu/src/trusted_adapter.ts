@@ -336,6 +336,12 @@ function normalizeTrustedStateEntry(
   if (!isRecord(value) || !isTrustedStateKind(value.kind) || !isStateValueKind(value.status)) {
     return parseFailure(input, "trusted-command-invalid-state", "Trusted state value must include a supported kind and status.", `${path}.value`);
   }
+  if (envelopeInput.trustLevel !== undefined && !isTrustLevel(envelopeInput.trustLevel)) {
+    return parseFailure(input, "trusted-command-invalid-state", "Trusted state trustLevel must be trusted, advisory, or untrusted.", `${path}.trustLevel`);
+  }
+  if (envelopeInput.freshness !== undefined && (!isRecord(envelopeInput.freshness) || !isFreshnessKind(envelopeInput.freshness.kind))) {
+    return parseFailure(input, "trusted-command-invalid-state", "Trusted state freshness must include a supported kind.", `${path}.freshness`);
+  }
   const normalizedValue = normalizeTrustedStateValue(value);
   const capabilities = normalizeCapabilities(envelopeInput.capabilities);
   if (Object.values(capabilities).some((support) => support === "unsupported")) {
@@ -791,7 +797,7 @@ function readNonNegativeInteger(value: unknown): number | undefined {
 }
 
 function readTrustLevel(value: unknown): AiuTrustLevel {
-  return AIU_TRUST_LEVELS.some((item) => item === value) ? value as AiuTrustLevel : "trusted";
+  return isTrustLevel(value) ? value : "trusted";
 }
 
 function isTrustedStateKind(value: unknown): boolean {
@@ -804,6 +810,10 @@ function isStateValueKind(value: unknown): value is AiuStateValueKind {
 
 function isFreshnessKind(value: unknown): value is AiuStateFreshnessKind {
   return AIU_STATE_FRESHNESS_KINDS.some((item) => item === value);
+}
+
+function isTrustLevel(value: unknown): value is AiuTrustLevel {
+  return AIU_TRUST_LEVELS.some((item) => item === value);
 }
 
 function isCapabilitySupport(value: unknown): value is AiuStateCapabilitySupport {

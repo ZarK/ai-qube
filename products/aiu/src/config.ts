@@ -189,11 +189,12 @@ export function getDefaultAiuConfig(): AiuConfig {
 
 export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoadResult {
   const repoRoot = findRepositoryRoot(path.resolve(options.cwd ?? process.cwd()));
+  const diagnostics: AiuConfigDiagnostic[] = [];
   const selectedPath = options.configPath
     ? path.resolve(repoRoot, options.configPath)
     : path.join(repoRoot, AIU_CONFIG_FILENAME);
-  const found = existsSync(selectedPath);
-  const diagnostics: AiuConfigDiagnostic[] = [];
+  const configPathSafe = validateRepositoryConfigPath(repoRoot, selectedPath, diagnostics);
+  const found = configPathSafe && existsSync(selectedPath);
   let rawConfig: unknown = {};
 
   if (found) {
@@ -298,6 +299,62 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
     }),
     diagnostics: Object.freeze(diagnostics),
   };
+}
+
+function validateRepositoryConfigPath(repoRoot: string, selectedPath: string, diagnostics: AiuConfigDiagnostic[]): boolean {
+  const relativePath = path.relative(repoRoot, selectedPath);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    diagnostics.push(diagnostic(
+      "invalid-config-path",
+      "$.configPath",
+      "The Umpire config path must resolve to a file inside the repository.",
+      "Use a config file inside the current repository.",
+    ));
+    return false;
+  }
+
+  let currentPath = repoRoot;
+  const segments = relativePath.split(path.sep).filter((segment) => segment.length > 0);
+  for (const [index, segment] of segments.entries()) {
+    currentPath = path.join(currentPath, segment);
+    let status: ReturnType<typeof lstatSync>;
+    try {
+      status = lstatSync(currentPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return true;
+      }
+      diagnostics.push(diagnostic(
+        "invalid-config-path",
+        "$.configPath",
+        `The Umpire config path could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+        "Use a readable repository-owned config path.",
+      ));
+      return false;
+    }
+    if (status.isSymbolicLink()) {
+      diagnostics.push(diagnostic(
+        "linked-config-path",
+        "$.configPath",
+        "The Umpire config path must not traverse symbolic links or directory junctions.",
+        "Use a repository-owned config file whose existing path segments are not links.",
+      ));
+      return false;
+    }
+    const isConfigFile = index === segments.length - 1;
+    if (isConfigFile ? !status.isFile() : !status.isDirectory()) {
+      diagnostics.push(diagnostic(
+        "invalid-config-path",
+        "$.configPath",
+        isConfigFile
+          ? "The Umpire config path must resolve to a regular file."
+          : "Every existing Umpire config parent path must be a directory.",
+        "Use a regular config file under repository-owned directories.",
+      ));
+      return false;
+    }
+  }
+  return true;
 }
 
 function normalizePostIssueScope(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuPostIssueScope {
