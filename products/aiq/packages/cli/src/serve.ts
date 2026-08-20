@@ -173,7 +173,7 @@ async function createServeRunRequest(
     ...(stageOverrides === undefined
       ? progress === undefined
         ? {}
-        : { stageOverrides: resolveAiqProgressStageIds(progress.progress.current_stage) }
+        : { stageOverrides: resolveAiqProgressStageIds(progress.progress) }
       : { stageOverrides }),
     ...(profileOverride === undefined ? {} : { profileOverride }),
   });

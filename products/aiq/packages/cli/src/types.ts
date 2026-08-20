@@ -55,6 +55,7 @@ export interface ParsedArgs {
   command: CommandName;
   configPrint: boolean;
   configSetStage?: AiqProgressStageIndex;
+  configStages?: StageId[];
   debounceMs: number;
   diffOnly: boolean;
   dryRun: boolean;
@@ -93,7 +94,7 @@ Usage:
   aiq run <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq bench [--corpus-root <path>] [--scenario <id>] [--tag <tag>] [--kind <cold|warm|diff-only>]
   aiq check <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
-  aiq config [--print-config | --set-stage <0-9>]
+  aiq config [--print-config | --set-stage <0-9> | --stages <stage,...>] [--dry-run]
   aiq doctor [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq evidence [--format json]
   aiq status [--format <json|text>]
@@ -106,7 +107,7 @@ Usage:
   aiq watch <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq serve [--host <host>] [--port <port>]
 
-The bare aiq command is the configured project gate. It looks for a supported project in the current directory and runs cumulative stages up to the current stage when it is safe to infer one.
+The bare aiq command is the configured project gate. It looks for a supported project in the current directory and runs the stages selected by AIQ progress state when it is safe to infer one.
 When layout inspect or affected JSON is present, aiq uses that layout-proven affected scope. It does not detect repository layout itself.
 If layout JSON reports uncertainty, aiq warns and does not run a repository-root gate.
 Run is the explicit target command for files and subtrees. A leading file path is treated as aiq run.
@@ -137,6 +138,7 @@ Options:
   --scenario <id>
   --set-stage <0-9>
   --stage <stage>
+  --stages <stage,...>
   --tag <tag>
   --up-to <0-9>
   --verbose
@@ -156,8 +158,8 @@ Stage ladder:
   0=e2e 1=lint 2=format 3=typecheck 4=unit 5=sloc 6=complexity 7=maintainability 8=coverage 9=security
 
 Stage selection:
-  By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .qube/aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
-  Set the current stage once with aiq config --set-stage N, then run aiq for the normal cumulative project workflow.
+  By default aiq, aiq run, and aiq plan use .qube/aiq/progress.json current_stage, order, and disabled fields when present. Otherwise, they use the configured CLI profile stages.
+  Use aiq config --set-stage N to restore the cumulative stages from 0 through N.
   Use aiq run <paths...> for explicit file and subtree checks.
   --only N runs one stage from the ladder.
   --up-to N runs every ladder stage from 0 through N.
@@ -174,7 +176,7 @@ Operational checks:
   aiq setup gives agent-facing setup steps for the same selected stages and detected technologies. AIQ reports setup needs; it does not install tools or mutate the host environment.
   AIQ uses repository-native tool configs by default, including Biome, tsconfig, Vitest/Jest, Playwright, Ruff/Radon-compatible Python config, and metrics config files when those tools expose them.
   aiq evidence emits structured AIQ quality evidence that AIE can record and AIU can parse as trusted quality state.
-  aiq status shows the current stage, default cumulative run range, latest artifact paths, last run status, and next suggested command.
+  aiq status shows the current stage, default stage selection, latest artifact paths, last run status, and next suggested command.
   hook install, ci setup, and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
 
 Metric remediation:
@@ -190,7 +192,9 @@ Package surface:
   @tjalve/aiq/schema and aiq schema --format json expose QUBE-compatible command metadata.
 
 Config state:
-  aiq config initializes .qube/aiq/config.json and .qube/aiq/progress.json.
+  aiq config plans and applies .qube/aiq/config.json and .qube/aiq/progress.json.
+  aiq config --stages <stage,...> uses cumulative stages for one selection and the exact set for multiple selections.
+  aiq config --dry-run --format json reports the setup plan without writing files.
   aiq config --print-config prints effective config plus progress/current-stage state.
-  aiq config --set-stage N persists .qube/aiq/progress.json current_stage.
+  aiq config --set-stage N restores cumulative stages 0 through N.
 `;

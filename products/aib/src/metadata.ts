@@ -97,6 +97,11 @@ export const initCommand = defineCommand({
       kind: "init-write-failed",
       description: "The bootstrap state file could not be written.",
       exitCode: 3
+    },
+    {
+      kind: "init-conflict",
+      description: "An existing Bootstrap session or instruction path conflicts with the init plan.",
+      exitCode: 3
     }
   ],
   exitCodes: [

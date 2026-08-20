@@ -34,7 +34,7 @@ export async function runStatusCommand(parsed: ParsedArgs, io: CliIo): Promise<n
         artifactPaths,
         currentStage,
         ...(currentStageSatisfied === undefined ? {} : { currentStageSatisfied }),
-        defaultRun: createDefaultRunOutput(loadedProgress.progress.current_stage),
+        defaultRun: createDefaultRunOutput(loadedProgress.progress),
         lastRun,
         nextCommand: resolveNextCommand(
           currentStage,

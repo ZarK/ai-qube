@@ -464,6 +464,11 @@ async function createFakeComponentTarball(component, root, packDir) {
         "export function getAgentHostProfileSync(id) { const value = profiles[id]; if (!value) throw new Error('Unknown host: ' + id); return value; }",
         "export async function getAgentHostProfile(id) { return getAgentHostProfileSync(id); }",
         "export async function getAgentHostProfiles(ids) { return ids.map(getAgentHostProfileSync); }",
+        "export async function listInitExternalReviewers() { return [",
+        "  { id: 'copilot', aliases: [], displayName: 'GitHub Copilot', summary: 'GitHub Copilot review service.', externalService: true },",
+        "  { id: 'coderabbit', aliases: ['coderabbitai'], displayName: 'CodeRabbit', summary: 'CodeRabbit review service.', externalService: true },",
+        "  { id: 'cubic', aliases: ['cubic-dev-ai'], displayName: 'Cubic', summary: 'Cubic review service.', externalService: true },",
+        "]; }",
         "",
       ].join("\n")
     );

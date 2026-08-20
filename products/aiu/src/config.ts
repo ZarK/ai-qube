@@ -9,15 +9,18 @@ export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as c
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
 export const AIU_CONTINUATION_MODES = ["continue", "repair", "wait", "stop"] as const;
 export const AIU_PROMPT_SECTION_KINDS = ["work", "planning", "quality", "whip"] as const;
+export const AIU_POST_ISSUE_SCOPES = ["ready", "standard", "custom"] as const;
 
 export type AiuHost = (typeof AIU_HOSTS)[number];
 export type AiuHostCapabilityName = (typeof AIU_HOST_CAPABILITY_NAMES)[number];
 export type AiuContinuationMode = (typeof AIU_CONTINUATION_MODES)[number];
 export type AiuPromptSectionKind = (typeof AIU_PROMPT_SECTION_KINDS)[number];
+export type AiuPostIssueScope = (typeof AIU_POST_ISSUE_SCOPES)[number];
 export type AiuDiagnosticSeverity = "error" | "warning";
 
 export interface AiuConfig {
   readonly version: typeof AIU_CONFIG_SCHEMA_VERSION;
+  readonly postIssueScope: AiuPostIssueScope;
   readonly hosts: AiuHostsConfig;
   readonly trustedStateCommands: Readonly<Record<string, AiuTrustedStateCommandDescriptor>>;
   readonly continuation: AiuContinuationPolicy;
@@ -131,6 +134,7 @@ export interface AiuConfigLoadResult {
 
 const DEFAULT_CONFIG: AiuConfig = Object.freeze({
   version: AIU_CONFIG_SCHEMA_VERSION,
+  postIssueScope: "ready",
   hosts: Object.freeze({
     enabled: Object.freeze([]),
     capabilities: Object.freeze({}),
@@ -166,14 +170,14 @@ const DEFAULT_CONFIG: AiuConfig = Object.freeze({
     sections: Object.freeze({}),
   }),
   planning: Object.freeze({
-    enabled: true,
+    enabled: false,
   }),
   quality: Object.freeze({
-    enabled: true,
+    enabled: false,
   }),
   whip: Object.freeze({
-    enabled: true,
-    usePackageDefaults: true,
+    enabled: false,
+    usePackageDefaults: false,
     tasks: Object.freeze([]),
     statePath: ".qube/aiu/whip.json",
   }),
@@ -241,6 +245,7 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   }
 
   const version = normalizeVersion(raw.version, diagnostics);
+  const postIssueScope = normalizePostIssueScope(raw.postIssueScope, diagnostics);
   const hosts = normalizeHosts(raw.hosts, diagnostics);
   const trustedStateCommands = normalizeTrustedStateCommands(raw.trustedStateCommands, diagnostics);
   const continuation = normalizeContinuation(raw.continuation, diagnostics);
@@ -249,9 +254,10 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   const pathsConfig = normalizePaths(raw.paths, diagnostics);
   const supplyChain = normalizeSupplyChain(raw.supplyChain, diagnostics);
   const prompts = normalizePrompts(raw.prompts, diagnostics);
-  const planning = normalizePlanning(raw.planning, diagnostics);
-  const quality = normalizeQuality(raw.quality, diagnostics);
-  const whip = normalizeWhip(raw.whip, diagnostics);
+  const configuredPlanning = normalizePlanning(raw.planning, diagnostics);
+  const configuredQuality = normalizeQuality(raw.quality, diagnostics);
+  const configuredWhip = normalizeWhip(raw.whip, diagnostics);
+  const { planning, quality, whip } = applyPostIssueScope(postIssueScope, configuredPlanning, configuredQuality, configuredWhip);
 
   validateNoLegacyFallback(raw, "$", diagnostics);
   if (isRecord(raw.continuation)) {
@@ -265,10 +271,19 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   if (whip.enabled) {
     validateWritableFilePath("whip.statePath", whip.statePath, repoRoot, "$.whip.statePath", diagnostics);
   }
+  if (postIssueScope === "custom" && whip.tasks.length === 0) {
+    diagnostics.push(diagnostic(
+      "custom-post-issue-tasks-required",
+      "$.whip.tasks",
+      "Custom post-issue work requires at least one Umpire task.",
+      "Add one or more concrete tasks under whip.tasks, or select ready or standard post-issue scope.",
+    ));
+  }
 
   return {
     config: Object.freeze({
       version,
+      postIssueScope,
       hosts,
       trustedStateCommands,
       continuation,
@@ -282,6 +297,49 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
       whip,
     }),
     diagnostics: Object.freeze(diagnostics),
+  };
+}
+
+function normalizePostIssueScope(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuPostIssueScope {
+  if (value === undefined) {
+    return DEFAULT_CONFIG.postIssueScope;
+  }
+  if (typeof value !== "string" || !(AIU_POST_ISSUE_SCOPES as readonly string[]).includes(value)) {
+    diagnostics.push(diagnostic(
+      "invalid-post-issue-scope",
+      "$.postIssueScope",
+      "postIssueScope must be ready, standard, or custom.",
+      "Select ready to stop after Ready work, standard for repository quality and measured performance work, or custom for configured Umpire tasks.",
+    ));
+    return DEFAULT_CONFIG.postIssueScope;
+  }
+  return value as AiuPostIssueScope;
+}
+
+function applyPostIssueScope(
+  scope: AiuPostIssueScope,
+  planning: AiuPlanningPolicy,
+  quality: AiuQualityPolicy,
+  whip: AiuWhipPolicy,
+): { readonly planning: AiuPlanningPolicy; readonly quality: AiuQualityPolicy; readonly whip: AiuWhipPolicy } {
+  if (scope === "ready") {
+    return {
+      planning: Object.freeze({ ...planning, enabled: false }),
+      quality: Object.freeze({ ...quality, enabled: false }),
+      whip: Object.freeze({ ...whip, enabled: false, usePackageDefaults: false }),
+    };
+  }
+  if (scope === "standard") {
+    return {
+      planning: Object.freeze({ ...planning, enabled: false }),
+      quality: Object.freeze({ ...quality, enabled: true }),
+      whip: Object.freeze({ ...whip, enabled: true, usePackageDefaults: true }),
+    };
+  }
+  return {
+    planning: Object.freeze({ ...planning, enabled: false }),
+    quality: Object.freeze({ ...quality, enabled: false }),
+    whip: Object.freeze({ ...whip, enabled: true, usePackageDefaults: false }),
   };
 }
 
@@ -949,6 +1007,7 @@ function isPromptSectionKind(value: string): value is AiuPromptSectionKind {
 function cloneConfig(config: AiuConfig): AiuConfig {
   return Object.freeze({
     version: config.version,
+    postIssueScope: config.postIssueScope,
     hosts: Object.freeze({
       enabled: Object.freeze([...config.hosts.enabled]),
       capabilities: Object.freeze({ ...config.hosts.capabilities }),

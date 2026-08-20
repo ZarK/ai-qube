@@ -189,7 +189,7 @@ describe("continuation decision engine", () => {
     );
   });
 
-  it("continues active review and active work before ready work", () => {
+  it("continues active review and active work before Ready and post-issue work", () => {
     const activeReview = decideAiuContinuation({
       states: [env(review("changes-requested", { targetId: "60" })), env(workQueue({ readyItems: [workItem("47", "ready")] }))],
     });
@@ -202,9 +202,18 @@ describe("continuation decision engine", () => {
     });
     assertDecision(activeWork, "continue", "continue-active-work");
     assert.equal(activeWork.selectedItem?.id, "46");
+
+    const activeBeforeUnavailablePostIssueState = decideAiuContinuation({
+      states: [
+        env(workQueue({ activeItems: [workItem("46", "active")] })),
+        env(planning({ needsPlanning: "unknown", humanInputRequired: "unknown" })),
+        env(quality({ status: "pass" }), { trustLevel: "untrusted" }),
+      ],
+    });
+    assertDecision(activeBeforeUnavailablePostIssueState, "continue", "continue-active-work");
   });
 
-  it("applies integrated planning, ready work, quality, and whip priority", () => {
+  it("applies active, Ready, planning, quality, and whip priority", () => {
     const allIdleModes = [
       env(planning({
         needsPlanning: true,
@@ -215,10 +224,17 @@ describe("continuation decision engine", () => {
     ];
     const whipTask = readyWhipTask("whip-next");
 
-    const planningFirst = decideAiuContinuation({ states: allIdleModes, whipTask });
-    assertDecision(planningFirst, "continue", "continue-planning");
-    assert.equal(planningFirst.promptKind, "planning");
-    assert.equal(planningFirst.selectedItem?.id, "plan-next");
+    const readyFirst = decideAiuContinuation({ states: allIdleModes, whipTask });
+    assertDecision(readyFirst, "continue", "continue-ready-work");
+    assert.equal(readyFirst.promptKind, "work");
+    assert.equal(readyFirst.selectedItem?.id, "ready");
+
+    const planningBeforeQualityAndWhip = decideAiuContinuation({
+      states: [env(planning({ needsPlanning: true, nextAction: planningAction("plan-next") })), env(qualityFailure("quality-next"))],
+      whipTask,
+    });
+    assertDecision(planningBeforeQualityAndWhip, "continue", "continue-planning");
+    assert.equal(planningBeforeQualityAndWhip.promptKind, "planning");
 
     const readyBeforeQualityAndWhip = decideAiuContinuation({
       states: [
@@ -254,8 +270,8 @@ describe("continuation decision engine", () => {
     );
     assertDecision(
       decideAiuContinuation({ states: allIdleModes, whipTask, whipStateError: { kind: "whip", status: "malformed" } }),
-      "stop",
-      "stop-malformed-input",
+      "continue",
+      "continue-ready-work",
     );
     assertDecision(
       decideAiuContinuation({ states: [env(repository({ dirty: "fail" })), ...allIdleModes], whipTask }),
@@ -344,8 +360,8 @@ describe("continuation decision engine", () => {
       decideAiuContinuation({
         states: [env(planning({ needsPlanning: "unknown", humanInputRequired: "unknown" })), env(workQueue({ readyItems: [workItem("47", "ready")] }))],
       }),
-      "stop",
-      "stop-unknown-input",
+      "continue",
+      "continue-ready-work",
     );
 
     assertDecision(
@@ -376,6 +392,18 @@ describe("continuation decision engine", () => {
           },
         }))],
         policy: { planningEnabled: false },
+      }),
+      "stop",
+      "stop-clean",
+    );
+
+    assertDecision(
+      decideAiuContinuation({
+        states: [
+          env(planning({ status: "unsupported", needsPlanning: "unsupported" })),
+          env(quality({ status: "pass" }), { trustLevel: "untrusted" }),
+        ],
+        policy: { planningEnabled: false, qualityEnabled: false },
       }),
       "stop",
       "stop-clean",

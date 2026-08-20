@@ -1,12 +1,13 @@
 import { createCliError } from "@tjalve/qube-cli/errors";
 import { createDryRunPlanFields, renderDryRunPlan } from "@tjalve/qube-cli/mutation";
+import { createJsonErrorEnvelope, renderJsonLine } from "@tjalve/qube-cli/output";
+import { redactStructuredValue } from "@tjalve/qube-cli/redaction";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/qube-cli/runtime";
 import { basename, dirname } from "node:path";
 
-import { writeAgentAssetFiles } from "./agent_assets.js";
 import { synthesizeAutoresearchArena } from "./arena.js";
 import { loadAibConfig } from "./config.js";
-import { createInitPlan } from "./init.js";
+import { applyInitPlan, createInitPlan, type InitPlan } from "./init.js";
 import {
   answerCommand,
   arenaSynthesizeCommand,
@@ -87,46 +88,59 @@ export const aibCli = createCli({
       });
 
       try {
-        if (flags["dry-run"] !== true) {
-          const writtenAgentAssets = writeAgentAssetFiles(plan.target, plan.agentAssets);
-          const written = writeBootstrapState(plan.sessionPath, plan.state);
-          const nextAction = computeNextAction(written.state);
+        const result = flags["dry-run"] === true
+          ? { ...plan, mutated: false, written: [] as const }
+          : applyInitPlan(plan);
+        if (!result.ok) {
+          const error = initConflictError(result);
           return {
-            json: {
-              mutated: true,
-              statePath: written.statePath,
-              agentAssets: writtenAgentAssets,
-              state: written.state,
-              phase: written.state.phase,
-              nextAction,
-              nextCommand: "aib next --json"
-            },
-            human: `Initialized bootstrap state at ${written.statePath}.\nNext action: ${nextAction.summary}\n`
+            exitCode: error.exitCode,
+            human: `Bootstrap init found conflicts.\n${result.conflicts.map((conflict) => `- ${conflict.path}: ${conflict.reason}`).join("\n")}\n`,
+            jsonStdout: renderJsonLine({
+              ...createJsonErrorEnvelope(error),
+              init: redactStructuredValue(result as unknown as Readonly<Record<string, unknown>>),
+            }),
           };
         }
-
-        return {
-          json: {
-            ...createDryRunPlanFields(plan.dryRunPlan),
-            mutated: false,
-            target: plan.target,
-            configPath: plan.configPath,
-            config: plan.config,
-            sessionPath: plan.sessionPath,
-            plannedDocuments: plan.plannedDocuments,
-            plannedAgentFiles: plan.agentAssets.map((file) => ({
-              id: file.id,
-              host: file.host,
-              path: `${plan.target}/${file.path}`,
-              kind: file.kind
-            })),
-            session: plan.session,
-            state: plan.state,
-            nextAction: computeNextAction(plan.state)
-          },
-          human: `${renderDryRunPlan(plan.dryRunPlan)}State file not changed.\nAgent next action: ${plan.session.nextAction.prompt}\n`
+        const nextAction = computeNextAction(result.state);
+        const json = {
+          ...(flags["dry-run"] === true ? createDryRunPlanFields(result.dryRunPlan) : {}),
+          mutated: result.mutated,
+          dryRun: flags["dry-run"] === true,
+          target: result.target,
+          configPath: result.configPath,
+          config: result.config,
+          statePath: result.sessionPath,
+          sessionPath: result.sessionPath,
+          actions: result.actions,
+          conflicts: result.conflicts,
+          written: result.written,
+          plannedAgentFiles: result.agentActions.map((action) => ({
+            id: action.id,
+            host: action.host,
+            path: action.absolutePath,
+            kind: action.kind,
+            operation: action.operation,
+          })),
+          agentAssets: result.agentActions.map((action) => ({ path: action.absolutePath, operation: action.operation })),
+          state: result.state,
+          phase: result.state.phase,
+          nextAction,
+          nextCommand: "aib next --json"
         };
+        return flags["dry-run"] === true
+          ? {
+              json,
+              human: `${renderDryRunPlan(result.dryRunPlan)}No files changed.\nAgent next action: ${nextAction.summary}\n`
+            }
+          : {
+              json,
+              human: result.mutated
+                ? `Initialized Bootstrap state and instructions.\nNext action: ${nextAction.summary}\n`
+                : `Bootstrap state and instructions already match. No files changed.\nNext action: ${nextAction.summary}\n`
+            };
       } catch (error) {
+        if (isCliSpecError(error)) throw error;
         throw createCliError({
           command: "init",
           kind: "init-write-failed",
@@ -999,6 +1013,19 @@ function specValidationError(validation: {
     operation: "accept spec section",
     likelyCause: `Missing sections: ${validation.missingRequiredSections.join(", ") || "none"}. Placeholder sections: ${validation.placeholderSections.join(", ") || "none"}.`,
     suggestedNextAction: "Revise docs/spec.md, run aib spec validate --json, then accept reviewed sections.",
+    category: "validation",
+    exitCode: 3
+  });
+}
+
+function initConflictError(plan: InitPlan): ReturnType<typeof createCliError> {
+  const conflict = plan.conflicts[0];
+  return createCliError({
+    command: "init",
+    kind: "init-conflict",
+    operation: conflict ? `prepare ${conflict.kind} at ${conflict.path}` : "prepare Bootstrap files",
+    likelyCause: conflict?.reason ?? "Bootstrap init found a conflicting path.",
+    suggestedNextAction: conflict?.suggestedNextAction ?? "Fix the reported path, then run aib init again.",
     category: "validation",
     exitCode: 3
   });

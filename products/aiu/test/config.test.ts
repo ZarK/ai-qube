@@ -23,6 +23,7 @@ describe("config foundation", () => {
     assert.equal(result.defaultsUsed, true);
     assert.equal(result.selectedPath, path.join(repoRoot, ".qube", "aiu", "config.json"));
     assert.equal(result.config.version, 1);
+    assert.equal(result.config.postIssueScope, "ready");
     assert.deepEqual(result.config.paths, {
       stateDir: ".qube/aiu/state",
       lockDir: ".qube/aiu/locks",
@@ -35,10 +36,10 @@ describe("config foundation", () => {
     assert.equal(result.config.continuation.trustUnstructuredProse, false);
     assert.equal(result.config.supplyChain.stopOnApprovalRequired, true);
     assert.deepEqual(result.config.prompts.sections, {});
-    assert.equal(result.config.planning.enabled, true);
-    assert.equal(result.config.quality.enabled, true);
-    assert.equal(result.config.whip.enabled, true);
-    assert.equal(result.config.whip.usePackageDefaults, true);
+    assert.equal(result.config.planning.enabled, false);
+    assert.equal(result.config.quality.enabled, false);
+    assert.equal(result.config.whip.enabled, false);
+    assert.equal(result.config.whip.usePackageDefaults, false);
     assert.deepEqual(result.config.whip.tasks, []);
     assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
@@ -47,6 +48,7 @@ describe("config foundation", () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "ready",
       hosts: {
         enabled: ["opencode", "codex"],
         capabilities: {
@@ -136,6 +138,64 @@ describe("config foundation", () => {
     assert.equal(result.config.whip.usePackageDefaults, false);
     assert.equal(result.config.whip.statePath, ".umpire/custom-whip.json");
     assert.deepEqual(result.config.whip.tasks.map((task) => task.id), ["repo-docs"]);
+  });
+
+  it("derives post-issue continuation policies from the selected scope", async () => {
+    const standardRoot = await createRepoRoot();
+    await writeConfig(standardRoot, {
+      version: 1,
+      postIssueScope: "standard",
+      planning: { enabled: true },
+      quality: { enabled: false },
+      whip: {
+        enabled: false,
+        usePackageDefaults: false,
+        tasks: [{ id: "saved-custom", title: "Saved custom task", prompt: "Run the saved custom task.", priority: 10 }],
+      },
+    });
+    const standard = loadAiuConfig({ cwd: standardRoot });
+
+    assert.equal(standard.ok, true);
+    assert.equal(standard.config.planning.enabled, false);
+    assert.equal(standard.config.quality.enabled, true);
+    assert.equal(standard.config.whip.enabled, true);
+    assert.equal(standard.config.whip.usePackageDefaults, true);
+    assert.deepEqual(standard.config.whip.tasks.map((task) => task.id), ["saved-custom"]);
+
+    const customRoot = await createRepoRoot();
+    await writeConfig(customRoot, {
+      version: 1,
+      postIssueScope: "custom",
+      planning: { enabled: true },
+      quality: { enabled: true },
+      whip: {
+        enabled: false,
+        usePackageDefaults: true,
+        tasks: [{ id: "research", title: "Research", prompt: "Run the configured research task.", priority: 10 }],
+      },
+    });
+    const custom = loadAiuConfig({ cwd: customRoot });
+
+    assert.equal(custom.ok, true);
+    assert.equal(custom.config.planning.enabled, false);
+    assert.equal(custom.config.quality.enabled, false);
+    assert.equal(custom.config.whip.enabled, true);
+    assert.equal(custom.config.whip.usePackageDefaults, false);
+    assert.deepEqual(custom.config.whip.tasks.map((task) => task.id), ["research"]);
+  });
+
+  it("rejects a custom post-issue scope without configured Umpire tasks", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      postIssueScope: "custom",
+      whip: { tasks: [] },
+    });
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "custom-post-issue-tasks-required"));
   });
 
   it("returns stable validation diagnostics for unsafe config", async () => {
@@ -280,6 +340,7 @@ describe("config foundation", () => {
     await writeFile(path.join(repoRoot, "state-parent-file"), "not a directory\n", "utf8");
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       whip: {
         statePath: "whip-state-dir",
       },
@@ -291,6 +352,7 @@ describe("config foundation", () => {
 
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       whip: {
         statePath: "state-parent-file/whip.json",
       },

@@ -160,7 +160,7 @@ describe("init planner", () => {
     const target = await createRepoRoot();
     await runCli(target, ["init", "--tool", "all", "--json"]);
 
-    const result = await runCli(target, ["init", "--tool", "codex,grok-build", "--force", "--json"]);
+    const result = await runCli(target, ["init", "--tool", "codex,grok-build", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
       hosts: { enabled: string[] };
@@ -171,6 +171,95 @@ describe("init planner", () => {
     assert.deepEqual(parsed.init.tools, ["codex", "grok-build"]);
     assert.deepEqual(parsed.init.config.hosts, ["codex", "grok-build"]);
     assert.deepEqual(config.hosts.enabled, ["codex", "grok-build"]);
+  });
+
+  it("configures Ready-only and standard post-issue scopes without host assets", async () => {
+    const cases = [
+      { scope: "ready", quality: false, whip: false, packageDefaults: false },
+      { scope: "standard", quality: true, whip: true, packageDefaults: true },
+    ] as const;
+
+    for (const expected of cases) {
+      const target = await createRepoRoot();
+      const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", expected.scope, "--json"]);
+      const parsed = JSON.parse(result.stdout) as InitEnvelope;
+      const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+        postIssueScope: string;
+        hosts: { enabled: string[] };
+        planning: { enabled: boolean };
+        quality: { enabled: boolean };
+        whip: { enabled: boolean; usePackageDefaults: boolean };
+      };
+
+      assert.equal(result.exitCode, 0, expected.scope);
+      assert.equal(parsed.init.postIssueScope, expected.scope);
+      assert.deepEqual(parsed.init.tools, []);
+      assert.deepEqual(parsed.init.files, []);
+      assert.equal(parsed.init.hostProfiles.length, 0);
+      assert.deepEqual(config.hosts.enabled, []);
+      assert.equal(config.postIssueScope, expected.scope);
+      assert.equal(config.planning.enabled, false);
+      assert.equal(config.quality.enabled, expected.quality);
+      assert.equal(config.whip.enabled, expected.whip);
+      assert.equal(config.whip.usePackageDefaults, expected.packageDefaults);
+      assert.equal(existsSync(path.join(target, ".opencode")), false);
+      assert.equal(existsSync(path.join(target, ".claude")), false);
+      assert.equal(existsSync(path.join(target, ".grok")), false);
+      assert.equal(existsSync(path.join(target, ".agents")), false);
+    }
+  });
+
+  it("uses only configured Umpire tasks for custom post-issue scope", async () => {
+    const target = await createRepoRoot();
+    const configPath = path.join(target, ".qube", "aiu", "config.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      version: 1,
+      postIssueScope: "ready",
+      teamSetting: "preserve",
+      whip: {
+        tasks: [{
+          id: "research-cycle",
+          title: "Run the research cycle",
+          prompt: "Run the repository research cycle and preserve measured evidence.",
+          priority: 10,
+        }],
+      },
+    }), "utf8");
+
+    const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", "custom", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      postIssueScope: string;
+      teamSetting: string;
+      planning: { enabled: boolean };
+      quality: { enabled: boolean };
+      whip: { enabled: boolean; usePackageDefaults: boolean; tasks: Array<{ id: string }> };
+    };
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(parsed.init.postIssueScope, "custom");
+    assert.equal(parsed.init.config.operation, "update");
+    assert.equal(config.teamSetting, "preserve");
+    assert.equal(config.postIssueScope, "custom");
+    assert.equal(config.planning.enabled, false);
+    assert.equal(config.quality.enabled, false);
+    assert.equal(config.whip.enabled, true);
+    assert.equal(config.whip.usePackageDefaults, false);
+    assert.deepEqual(config.whip.tasks.map((task) => task.id), ["research-cycle"]);
+  });
+
+  it("fails custom post-issue scope before writes when no tasks are configured", async () => {
+    const target = await createRepoRoot();
+    const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", "custom", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+
+    assert.equal(result.exitCode, 3);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.init.ok, false);
+    assert.equal(parsed.init.postIssueScope, "custom");
+    assert.match(parsed.init.conflicts[0]?.reason ?? "", /at least one configured Umpire task/);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
   it("rejects Cursor because Umpire continuation is unavailable", async () => {
@@ -508,10 +597,12 @@ interface InitEnvelope {
   readonly init: {
     readonly ok: boolean;
     readonly dryRun: boolean;
+    readonly postIssueScope: string;
     readonly tools: string[];
     readonly hostProfiles: Array<{ tool: string; supportLevel: string }>;
     readonly files: Array<{ relativePath: string; operation: string; reason?: string }>;
     readonly config: { operation: string; hosts: string[]; trustedStateCommands: string[] };
+    readonly conflicts: Array<{ relativePath: string; reason: string }>;
     readonly recommendedNextCommand: string;
   };
 }

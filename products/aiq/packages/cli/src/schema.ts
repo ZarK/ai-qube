@@ -402,7 +402,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "status",
-    description: "Show current AIQ stage, default run range, last run status, and next command.",
+    description: "Show the current AIQ stage selection, last run status, and next command.",
     flags: outputFlags,
     examples: [
       {
@@ -418,9 +418,14 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "config",
-    description: "Print effective AIQ configuration or persist the current quality stage.",
+    description: "Plan or apply repository AIQ configuration and print the effective state.",
     flags: [
       ...outputFlags,
+      {
+        name: "dry-run",
+        description: "Report the config plan without writing files.",
+        type: "boolean",
+      },
       {
         name: "print-config",
         description: "Print effective config and progress state.",
@@ -428,14 +433,24 @@ export const aiqCommandMetadata = [
       },
       {
         name: "set-stage",
-        description: "Persist the current AIQ stage index.",
+        description: "Restore cumulative stages through the provided index.",
         type: "integer",
+      },
+      {
+        name: "stages",
+        description:
+          "Select cumulative quality stages with one name or an exact set with comma-separated names.",
+        type: "string",
       },
     ],
     examples: [
       {
         command: "aiq config --print-config --format json",
         description: "Render machine-readable effective config.",
+      },
+      {
+        command: "aiq config --stages e2e,lint,typecheck --dry-run --format json",
+        description: "Render a machine-readable exact-stage setup plan.",
       },
       {
         command: "aiq config --set-stage 3",

@@ -120,8 +120,32 @@ export async function loadAiqProgress(cwd: string): Promise<LoadedAiqProgress> {
   };
 }
 
-export function resolveAiqProgressStageIds(currentStage: AiqProgressStageIndex): AiqStageId[] {
-  return [...aiqStageLadderIds.slice(0, currentStage + 1)];
+export function resolveAiqProgressStageIds(
+  progress: AiqProgressStageIndex | AiqProgressState,
+): AiqStageId[] {
+  if (typeof progress === "number") {
+    return [...aiqStageLadderIds.slice(0, progress + 1)];
+  }
+
+  const disabled = new Set(progress.disabled);
+  const selected = new Set<AiqProgressStageIndex>();
+  const stages: AiqStageId[] = [];
+  for (const stageIndex of progress.order) {
+    if (
+      stageIndex > progress.current_stage ||
+      disabled.has(stageIndex) ||
+      selected.has(stageIndex)
+    ) {
+      continue;
+    }
+
+    const stageId = aiqStageLadderIds[stageIndex];
+    if (stageId !== undefined) {
+      selected.add(stageIndex);
+      stages.push(stageId);
+    }
+  }
+  return stages;
 }
 
 export function resolveAiqProgressStageIndex(stageId: AiqStageId): number {
@@ -153,12 +177,17 @@ export function createAiqProgressRunSelection(
   selectedStages: readonly AiqStageId[],
 ): AiqProgressRunSelection {
   const currentStage = toAiqWorkflowStage(loadedProgress.progress.current_stage);
+  const defaultStageIds = resolveAiqProgressStageIds(loadedProgress.progress);
+  const cumulativeStageIds = resolveAiqProgressStageIds(loadedProgress.progress.current_stage);
+  const range = arraysEqual(defaultStageIds, cumulativeStageIds)
+    ? `0..${loadedProgress.progress.current_stage}`
+    : defaultStageIds.map(resolveAiqProgressStageIndex).join(",");
   return {
     currentStage,
     defaultRun: {
-      range: `0..${loadedProgress.progress.current_stage}`,
-      stages: resolveAiqProgressStageIds(loadedProgress.progress.current_stage).map(
-        (_stageId, index) => toAiqWorkflowStage(index),
+      range,
+      stages: defaultStageIds.map((stageId) =>
+        toAiqWorkflowStage(resolveAiqProgressStageIndex(stageId)),
       ),
     },
     progressPath: loadedProgress.path,
@@ -183,6 +212,8 @@ export async function setAiqProgressStage(
   const progress: AiqProgressState = {
     ...loaded.progress,
     current_stage: stageIndex,
+    disabled: [],
+    order: [...aiqProgressStageIndexes],
   };
   await saveAiqProgress(loaded.path, progress);
   return {
@@ -220,6 +251,10 @@ export async function initializeAiqProjectConfig(
     progressCreated: existingProgressPath === undefined,
     progressPath,
   };
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function cloneProgressState(progress: AiqProgressState): AiqProgressState {

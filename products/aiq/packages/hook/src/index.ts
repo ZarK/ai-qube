@@ -182,7 +182,7 @@ export class AiqHookAdapter {
       ...(this.stages === undefined
         ? progress === undefined
           ? {}
-          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+          : { stages: resolveAiqProgressStageIds(progress.progress) }
         : { stages: [...this.stages] }),
       ...(this.profile === undefined ? {} : { profile: this.profile }),
       surface: "hook",

@@ -291,7 +291,7 @@ async function resolveProgressStageOverrides(
     return undefined;
   }
 
-  return resolveAiqProgressStageIds(progress.progress.current_stage);
+  return resolveAiqProgressStageIds(progress.progress);
 }
 
 function resolveManifestSource(

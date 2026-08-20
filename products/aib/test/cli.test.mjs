@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -240,7 +240,7 @@ test("init dry-run returns agent-facing next action without mutating", () => {
   assert.ok(result.plannedAgentFiles[0].path.endsWith("AGENTS.md"));
   assert.match(result.nextAction.summary, /human/i);
   assert.ok(result.sessionPath.endsWith("/.qube/aib/session.json") || result.sessionPath.endsWith("\\.qube\\aib\\session.json"));
-  assert.equal(result.session.project.intent, "Local photo archive");
+  assert.equal(result.state.project.intent, "Local photo archive");
 });
 
 test("init with opencode writes profile-derived planning instructions only", async () => {
@@ -254,6 +254,85 @@ test("init with opencode writes profile-derived planning instructions only", asy
   assert.match(instructions, /agent-operated planning engine/);
   assert.match(instructions, /`aib` state machine/);
   assert.match(instructions, /qube autoresearch --help/);
+});
+
+test("init applies once and an identical rerun writes nothing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-idempotent-"));
+  const args = ["init", dir, "--agent", "codex", "--surfaces", "codex,opencode", "--json", "--idea", "Plan a repository"];
+  const first = parseJsonStdout(runAib(args));
+  const statePath = first.statePath;
+  const instructionPath = join(dir, "AGENTS.md");
+  const fixedTime = new Date("2020-01-01T00:00:00.000Z");
+  await utimes(statePath, fixedTime, fixedTime);
+  await utimes(instructionPath, fixedTime, fixedTime);
+  const stateContent = await readFile(statePath, "utf8");
+  const instructionContent = await readFile(instructionPath, "utf8");
+  const stateTime = (await stat(statePath)).mtimeMs;
+  const instructionTime = (await stat(instructionPath)).mtimeMs;
+
+  const second = parseJsonStdout(runAib(args));
+
+  assert.equal(first.mutated, true);
+  assert.equal(second.mutated, false);
+  assert.ok(second.actions.every((action) => action.operation === "skip"));
+  assert.deepEqual(second.written, []);
+  assert.equal(await readFile(statePath, "utf8"), stateContent);
+  assert.equal(await readFile(instructionPath, "utf8"), instructionContent);
+  assert.equal((await stat(statePath)).mtimeMs, stateTime);
+  assert.equal((await stat(instructionPath)).mtimeMs, instructionTime);
+});
+
+test("init preserves valid progressed and custom Bootstrap state verbatim", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-preserve-state-"));
+  const first = parseJsonStdout(runAib(["init", dir, "--agent", "codex", "--json", "--idea", "Original intent"]));
+  const state = JSON.parse(await readFile(first.statePath, "utf8"));
+  state.project.audience = "Maintainers";
+  state.customPolicy = { keep: true };
+  const customContent = `${JSON.stringify(state, null, 4)}\n`;
+  await writeFile(first.statePath, customContent, "utf8");
+
+  const second = parseJsonStdout(runAib(["init", dir, "--agent", "codex", "--json", "--idea", "Replacement intent"]));
+
+  assert.equal(second.mutated, false);
+  assert.equal(second.state.project.intent, "Original intent");
+  assert.equal(second.state.project.audience, "Maintainers");
+  assert.equal(second.actions.find((action) => action.kind === "session").operation, "skip");
+  assert.equal(await readFile(first.statePath, "utf8"), customContent);
+});
+
+test("init reports malformed existing state as a conflict and writes no instruction files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-conflict-state-"));
+  const statePath = join(dir, ".qube", "aib", "session.json");
+  await mkdir(join(dir, ".qube", "aib"), { recursive: true });
+  await writeFile(statePath, "{not-json\n", "utf8");
+
+  const result = runAib(["init", dir, "--agent", "codex", "--json"]);
+  const body = JSON.parse(result.stdout);
+
+  assert.equal(result.status, 3);
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "init-conflict");
+  assert.equal(body.init.conflicts[0]?.operation, "conflict");
+  assert.match(body.error.likelyCause, /invalid or unreadable/i);
+  assert.match(body.error.suggestedNextAction, /Fix or remove/);
+  assert.equal(await readFile(statePath, "utf8"), "{not-json\n");
+  await assert.rejects(readFile(join(dir, "AGENTS.md"), "utf8"));
+});
+
+test("init rejects a session directory symlink before writing any files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-session-symlink-"));
+  const outside = await mkdtemp(join(tmpdir(), "aib-session-outside-"));
+  await symlink(outside, join(dir, ".qube"), "junction");
+
+  const result = runAib(["init", dir, "--agent", "codex", "--json"]);
+  const body = JSON.parse(result.stdout);
+
+  assert.equal(result.status, 3);
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "init-conflict");
+  assert.match(body.init.conflicts[0]?.reason ?? body.error.likelyCause, /symbolic link/i);
+  await assert.rejects(readFile(join(outside, "aib", "session.json"), "utf8"));
+  await assert.rejects(readFile(join(dir, "AGENTS.md"), "utf8"));
 });
 
 test("init rejects agent harnesses outside the canonical profile registry", () => {
@@ -323,8 +402,8 @@ test("valid config shapes providers paths surfaces and safety policy", async () 
   assert.deepEqual(body.config.discovery.referencePaths, ["../reference-docs", "../reference-repo"]);
   assert.equal(body.config.discovery.inspectDocs, true);
   assert.deepEqual(body.state.discovery.referencePaths, ["../reference-docs", "../reference-repo"]);
-  assert.equal(body.session.safety.allowNetwork, false);
-  assert.ok(body.plannedDocuments.some((item) => item.endsWith("/planning/spec.md") || item.endsWith("\\planning\\spec.md")));
+  assert.equal(body.config.safety.allowNetwork, false);
+  assert.equal(body.actions.some((action) => action.path.endsWith("/planning/spec.md") || action.path.endsWith("\\planning\\spec.md")), false);
 });
 
 test("init writes resumable state and next returns a small question batch", async () => {

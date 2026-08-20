@@ -118,6 +118,11 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       continue;
     }
 
+    if (argument === "--stages") {
+      parsed.configStages = parseConfigStagesFlag(argument, args[++index]);
+      continue;
+    }
+
     if (argument === "--corpus-root") {
       parsed.benchmarkCorpusRoot = requireValue(argument, args[++index]);
       continue;
@@ -218,14 +223,14 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     parsed.command !== "run" &&
     parsed.command !== "check" &&
     (parsed.diffOnly ||
-      (parsed.dryRun && parsed.command !== "first-run") ||
+      (parsed.dryRun && parsed.command !== "first-run" && parsed.command !== "config") ||
       (parsed.verbose &&
         parsed.command !== "doctor" &&
         parsed.command !== "first-run" &&
         parsed.command !== "setup"))
   ) {
     throw new Error(
-      "--diff-only is only supported by run/check; --dry-run is supported by aiq and run/check; --verbose is supported by aiq, run/check, doctor, and setup.",
+      "--diff-only is only supported by run/check; --dry-run is supported by aiq, run/check, and config; --verbose is supported by aiq, run/check, doctor, and setup.",
     );
   }
 
@@ -283,15 +288,24 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.layoutAffected !== undefined
     ) {
       throw new Error(
-        "The config command only accepts --print-config, --set-stage, and --format options.",
+        "The config command only accepts --print-config, --set-stage, --stages, --dry-run, and --format options.",
       );
     }
 
-    if (parsed.configPrint && parsed.configSetStage !== undefined) {
-      throw new Error("Use either --print-config or --set-stage, not both.");
+    const configActions = [
+      parsed.configPrint,
+      parsed.configSetStage !== undefined,
+      parsed.configStages !== undefined,
+    ].filter(Boolean);
+    if (configActions.length > 1) {
+      throw new Error("Use only one of --print-config, --set-stage, or --stages.");
     }
-  } else if (parsed.configPrint || parsed.configSetStage !== undefined) {
-    throw new Error("--print-config and --set-stage are only supported by the config command.");
+  } else if (
+    parsed.configPrint ||
+    parsed.configSetStage !== undefined ||
+    parsed.configStages !== undefined
+  ) {
+    throw new Error("--print-config, --set-stage, and --stages are only supported by config.");
   }
 
   if (parsed.command === "doctor") {
@@ -478,6 +492,23 @@ function hasSetupGuidanceUnsupportedOptions(parsed: ParsedArgs): boolean {
 
 function hasNonJsonOnlyFormat(args: string[]): boolean {
   return args.some((argument, index) => argument === "--format" && args[index + 1] !== "json");
+}
+
+function parseConfigStagesFlag(flag: string, value: string | undefined): StageId[] {
+  const rawStages = requireValue(flag, value)
+    .split(",")
+    .map((stage) => stage.trim())
+    .filter((stage) => stage.length > 0);
+  if (rawStages.length === 0) {
+    throw new Error(`${flag} requires one or more comma-separated stage names.`);
+  }
+
+  return rawStages.map((stage) => {
+    if (!stageIds.includes(stage as StageId)) {
+      throw new Error(`Unsupported stage: ${stage}`);
+    }
+    return stage as StageId;
+  });
 }
 
 function parseCommand(command?: string): CommandName {

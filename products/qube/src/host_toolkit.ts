@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import path from "node:path";
 
-import { getAgentHostProfiles } from "@tjalve/aie";
+import { getAgentHostProfileSync, getAgentHostProfiles } from "@tjalve/aie";
 import {
   AGENT_HOST_IDS,
   defineAgentHostProfile,
@@ -13,6 +14,20 @@ import {
   type AgentHostProfile,
   type AgentHostTrustAction,
 } from "@tjalve/qube-core";
+import {
+  mergeQubeInitConfigs,
+  parseQubeInitConfig,
+  readQubeInitConfig,
+  repoQubeConfigPath,
+  resolveQubeInitConfig,
+  userQubeConfigPath,
+  writeQubeInitConfig,
+  type QubeInitConfig,
+  type RequiredQubeInitConfig,
+  type QubeReviewMode,
+  type QubeReviewPublisher,
+  type QubeUmpireScope,
+} from "./init_config.js";
 
 export const QUBE_INIT_RECORD_PATH = ".qube/init.json";
 
@@ -30,6 +45,21 @@ export type ToolkitHostId = AgentHostId;
 export type ToolkitAssetKind = "instruction" | "subagent" | "command" | "skill" | "hook" | "cli-dependency";
 export type ToolkitHostStatus = "complete" | "missing" | "partial" | "unknown";
 export type ToolkitCliStatus = "pass" | "missing" | "unauthenticated" | "unverified" | "not-required";
+
+export function defaultReviewSelection(hosts: readonly string[]): {
+  readonly mode: QubeReviewMode;
+  readonly harness?: string;
+} {
+  const primary = hosts[0];
+  const isolatedHarness = hosts.find(host => (
+    host !== primary && isToolkitHostId(host) && getAgentHostProfileSync(host).review.isolated.support !== "unsupported"
+  ));
+  if (isolatedHarness) return Object.freeze({ mode: "isolated", harness: isolatedHarness });
+  if (primary && isToolkitHostId(primary) && getAgentHostProfileSync(primary).review.local.support !== "unsupported") {
+    return Object.freeze({ mode: "host", harness: primary });
+  }
+  return Object.freeze({ mode: "external" });
+}
 
 export interface ToolkitAsset {
   readonly id: string;
@@ -105,11 +135,21 @@ export interface ToolkitMcpState {
   readonly caveat: string;
 }
 
-export interface QubeInitRecord {
+export interface QubeInitRecord extends QubeInitConfig {
   readonly version: 1;
   readonly hosts: readonly string[];
   readonly workProviders: readonly string[];
   readonly ciProviders: readonly string[];
+  readonly continuousShipping: boolean;
+  readonly umpire: { readonly scope: QubeUmpireScope };
+  readonly quality: { readonly stages: readonly string[] };
+  readonly review: {
+    readonly mode: QubeReviewMode;
+    readonly harness?: string;
+    readonly externalReviewers?: readonly string[];
+    readonly publisher: QubeReviewPublisher;
+    readonly models?: readonly string[];
+  };
   readonly mcp: { readonly optIn: boolean };
 }
 
@@ -303,29 +343,12 @@ export async function composeHostToolkitManifests(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function readStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return null;
-  return value.map((item) => item.trim()).filter((item) => item.length > 0);
-}
-
 export function parseInitRecord(value: unknown): QubeInitRecord | null {
-  if (!isRecord(value) || value.version !== 1) return null;
-  const hosts = readStringArray(value.hosts);
-  const workProviders = readStringArray(value.workProviders);
-  const ciProviders = readStringArray(value.ciProviders);
-  const mcp = isRecord(value.mcp) ? value.mcp : null;
-  if (!hosts || !workProviders || !ciProviders || !mcp || typeof mcp.optIn !== "boolean") return null;
-  return Object.freeze({
-    version: 1,
-    hosts: Object.freeze(hosts),
-    workProviders: Object.freeze(workProviders),
-    ciProviders: Object.freeze(ciProviders),
-    mcp: Object.freeze({ optIn: mcp.optIn }),
-  });
+  try {
+    return completeInitRecord(parseQubeInitConfig(value));
+  } catch {
+    return null;
+  }
 }
 
 export function createInitRecord(input: {
@@ -333,40 +356,130 @@ export function createInitRecord(input: {
   readonly workProviders: readonly string[];
   readonly ciProviders: readonly string[];
   readonly mcpOptIn: boolean;
+  readonly continuousShipping?: boolean;
+  readonly umpireScope?: QubeUmpireScope;
+  readonly qualityStages?: readonly string[];
+  readonly reviewMode?: QubeReviewMode;
+  readonly reviewHarness?: string;
+  readonly externalReviewers?: readonly string[];
+  readonly reviewPublisher?: QubeReviewPublisher;
+  readonly reviewModels?: readonly string[];
 }): QubeInitRecord {
-  return Object.freeze({
+  if (input.hosts.length === 0) throw new TypeError("QUBE init record requires at least one agent harness.");
+  const defaultReview = defaultReviewSelection(input.hosts);
+  const reviewMode = input.reviewMode ?? defaultReview.mode;
+  const reviewHarness = input.reviewHarness
+    ?? (reviewMode === "host" ? input.hosts[0] : reviewMode === "isolated" ? defaultReview.harness : undefined);
+  const record = completeInitRecord(Object.freeze({
     version: 1,
     hosts: Object.freeze([...input.hosts]),
     workProviders: Object.freeze([...input.workProviders]),
     ciProviders: Object.freeze([...input.ciProviders]),
+    continuousShipping: input.continuousShipping ?? true,
+    umpire: Object.freeze({ scope: input.umpireScope ?? "ready" }),
+    quality: Object.freeze({ stages: Object.freeze([...(input.qualityStages ?? ["unit"])]) }),
+    review: Object.freeze({
+      mode: reviewMode,
+      ...(reviewHarness ? { harness: reviewHarness } : {}),
+      ...(input.externalReviewers && input.externalReviewers.length > 0
+        ? { externalReviewers: Object.freeze([...input.externalReviewers]) }
+        : {}),
+      publisher: input.reviewPublisher ?? "user",
+      ...(input.reviewModels && input.reviewModels.length > 0
+        ? { models: Object.freeze([...input.reviewModels]) }
+        : {}),
+    }),
     mcp: Object.freeze({ optIn: input.mcpOptIn }),
-  });
+  }));
+  if (!record) throw new TypeError("QUBE init record is incomplete.");
+  return record;
 }
 
 export function initRecordPath(cwd: string): string {
-  return path.join(cwd, ...QUBE_INIT_RECORD_PATH.split("/"));
+  return path.join(resolveRepositoryRoot(cwd), ...QUBE_INIT_RECORD_PATH.split("/"));
 }
 
-export function readInitRecord(cwd: string): QubeInitRecord | null {
-  const filePath = initRecordPath(cwd);
-  try {
-    if (!existsSync(filePath) || !statSync(filePath).isFile()) return null;
-    return parseInitRecord(JSON.parse(readFileSync(filePath, "utf8")));
-  } catch {
-    return null;
-  }
+export function readInitRecord(cwd: string, env: NodeJS.ProcessEnv = process.env): QubeInitRecord | null {
+  const repoRoot = resolveRepositoryRoot(cwd);
+  const repo = readQubeInitConfig(repoQubeConfigPath(repoRoot));
+  if (repo.status === "invalid") return null;
+  const homeDirectory = env.USERPROFILE ?? env.HOME ?? homedir();
+  const global = readQubeInitConfig(userQubeConfigPath(homeDirectory));
+  if (global.status === "invalid") return null;
+  if (repo.status === "missing" && global.status === "missing") return null;
+  const merged = mergeQubeInitConfigs(global.config, repo.config);
+  const hosts = merged.hosts && merged.hosts.length > 0 ? merged.hosts : Object.freeze(["codex"]);
+  const review = defaultReviewSelection(hosts);
+  const defaults: RequiredQubeInitConfig = Object.freeze({
+    version: 1,
+    hosts,
+    workProviders: Object.freeze(["github"]),
+    ciProviders: Object.freeze(["github"]),
+    continuousShipping: true,
+    umpire: Object.freeze({ scope: "ready" }),
+    quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
+    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user" }),
+    mcp: Object.freeze({ optIn: false }),
+  });
+  const resolved = resolveQubeInitConfig({
+    globalConfig: global.config,
+    repoConfig: repo.config,
+    defaults,
+  });
+  return completeInitRecord(resolved.config);
 }
 
 export function writeInitRecord(cwd: string, record: QubeInitRecord): string {
   const filePath = initRecordPath(cwd);
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  writeQubeInitConfig(filePath, record);
   return filePath;
 }
 
+function completeInitRecord(config: QubeInitConfig): QubeInitRecord | null {
+  if (
+    !config.hosts ||
+    config.hosts.length === 0 ||
+    !config.workProviders ||
+    !config.ciProviders ||
+    config.continuousShipping === undefined ||
+    !config.umpire?.scope ||
+    !config.quality?.stages ||
+    !config.review?.mode ||
+    !config.review.publisher ||
+    config.mcp?.optIn === undefined
+  ) return null;
+  const primary = config.hosts[0];
+  const reviewHarness = config.review.harness;
+  if (config.review.mode === "host" && (!primary || reviewHarness !== primary)) return null;
+  if (config.review.mode === "isolated" && (!reviewHarness || reviewHarness === primary || !config.hosts.includes(reviewHarness))) return null;
+  if (config.review.mode === "external" && reviewHarness) return null;
+  return Object.freeze({
+    version: 1,
+    hosts: Object.freeze([...config.hosts]),
+    workProviders: Object.freeze([...config.workProviders]),
+    ciProviders: Object.freeze([...config.ciProviders]),
+    continuousShipping: config.continuousShipping,
+    umpire: Object.freeze({ scope: config.umpire.scope }),
+    quality: Object.freeze({ stages: Object.freeze([...config.quality.stages]) }),
+    review: Object.freeze({
+      mode: config.review.mode,
+      ...(config.review.harness ? { harness: config.review.harness } : {}),
+      ...(config.review.externalReviewers ? { externalReviewers: Object.freeze([...config.review.externalReviewers]) } : {}),
+      publisher: config.review.publisher,
+      ...(config.review.models ? { models: Object.freeze([...config.review.models]) } : {}),
+    }),
+    mcp: Object.freeze({ optIn: config.mcp.optIn }),
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export function providerMcpConfigPresent(cwd: string): boolean {
+  const repoRoot = resolveRepositoryRoot(cwd);
   return PROVIDER_MCP_CONFIG_PATHS.some((relativePath) => {
-    const filePath = path.join(cwd, ...relativePath.split("/"));
+    const filePath = path.join(repoRoot, ...relativePath.split("/"));
     try {
       return existsSync(filePath) && statSync(filePath).isFile();
     } catch {
@@ -503,8 +616,9 @@ function probeUnknownHost(host: string): HostToolkitProbe {
 }
 
 export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promise<HostToolkitReport> {
-  const record = options.record === undefined ? readInitRecord(options.cwd) : options.record;
-  const mcpConfigured = providerMcpConfigPresent(options.cwd);
+  const repoRoot = resolveRepositoryRoot(options.cwd);
+  const record = options.record === undefined ? readInitRecord(repoRoot, options.env) : options.record;
+  const mcpConfigured = providerMcpConfigPresent(repoRoot);
   if (!record) {
     return Object.freeze({
       status: "unknown",
@@ -529,7 +643,7 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
   const hosts = Object.freeze(record.hosts.map((host) => {
     if (!isToolkitHostId(host)) return probeUnknownHost(host);
     const manifest = manifestsByHost.get(host);
-    return manifest ? probeManifest(options.cwd, manifest) : probeUnknownHost(host);
+    return manifest ? probeManifest(repoRoot, manifest) : probeUnknownHost(host);
   }));
   const githubSelected = usesGithub(record.workProviders, record.ciProviders);
   const cliDependencies = Object.freeze([
@@ -562,6 +676,16 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
     }),
     recommendations: Object.freeze(recommendations),
   });
+}
+
+function resolveRepositoryRoot(cwd: string): string {
+  const resolved = path.resolve(cwd);
+  const probe = spawnSync("git", ["-C", resolved, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const topLevel = probe.status === 0 ? probe.stdout.trim() : "";
+  return topLevel === "" ? resolved : path.resolve(topLevel);
 }
 
 export function formatHostToolkits(report: HostToolkitReport): string {

@@ -224,7 +224,7 @@ export class AiqGitHubActionAdapter {
       ...(options.stages === undefined
         ? progress === undefined
           ? {}
-          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+          : { stages: resolveAiqProgressStageIds(progress.progress) }
         : { stages: [...options.stages] }),
       ...(options.profile === undefined ? {} : { profile: options.profile }),
       surface: "github",

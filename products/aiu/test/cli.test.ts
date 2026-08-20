@@ -146,6 +146,7 @@ describe("metadata-backed CLI", () => {
         config?: {
           schemaVersion?: number;
           defaultPath?: string;
+          postIssueScopes?: string[];
           hostNames?: string[];
           hostCapabilityNames?: string[];
           hostSupportLevels?: string[];
@@ -313,12 +314,13 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.status?.outputShape?.includes("whip"));
     assert.ok(parsed.sections?.status?.errorCodes?.includes("trusted-command-malformed-json"));
     assert.ok(parsed.sections?.status?.errorCodes?.includes("status-config-invalid"));
-    assert.equal(parsed.sections?.planning?.enabledDefault, true);
+    assert.deepEqual(parsed.sections?.config?.postIssueScopes, ["ready", "standard", "custom"]);
+    assert.equal(parsed.sections?.planning?.enabledDefault, false);
     assert.ok(parsed.sections?.planning?.stateFields?.includes("nextAction"));
     assert.ok(parsed.sections?.planning?.questionFields?.includes("requiresHuman"));
     assert.ok(parsed.sections?.planning?.actionFields?.includes("artifactChecks"));
     assert.ok(parsed.sections?.planning?.stopReasons?.includes("stop-human-input-required"));
-    assert.equal(parsed.sections?.quality?.enabledDefault, true);
+    assert.equal(parsed.sections?.quality?.enabledDefault, false);
     assert.deepEqual(parsed.sections?.quality?.targetKinds, ["stage", "finding"]);
     assert.ok(parsed.sections?.quality?.stateFields?.includes("selectedTarget"));
     assert.ok(parsed.sections?.quality?.stateFields?.includes("supplyChainApprovalRequired"));
@@ -476,6 +478,8 @@ describe("metadata-backed CLI", () => {
 
   it("emits clean JSON for whip status and dry-run mutations", async () => {
     const target = await createRepoRoot();
+    const initialized = await runCli(["init", "--tool", "none", "--post-issue-scope", "standard", "--json"], target);
+    assert.equal(initialized.exitCode, 0);
     const status = await runCli(["whip", "status", "--json"], target);
     const statusJson = JSON.parse(status.stdout) as {
       ok: boolean;

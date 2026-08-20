@@ -44,6 +44,20 @@ export interface InitSetupSummary {
   tools: InitTool[];
 }
 
+export interface InitPostAction {
+  id: 'github-app-publisher-setup';
+  command: 'qube review setup github-app';
+  reason: string;
+}
+
+export interface InitProviderAction {
+  id: 'labels-setup';
+  provider: 'github';
+  command: 'qube aie labels setup';
+  labels: Array<{ name: string; color: string; description: string }>;
+  reason: string;
+}
+
 export interface InitFromReport {
   source: string;
   kind: 'path' | 'repo';
@@ -74,6 +88,8 @@ export interface InitResult {
   setupSummary: InitSetupSummary | null;
   from: InitFromReport | null;
   awaitingAnswers: boolean;
+  postInitActions: InitPostAction[];
+  providerActions: InitProviderAction[];
 }
 
 export interface InitPolicySummary {
@@ -114,7 +130,17 @@ export interface InitPolicyOptions {
   reviewRoute?: ReviewRoutePolicy | null;
   reviewFailover?: ReviewFailoverPolicy | null;
   localReviewAgents?: string[];
+  /** Normal-setup adapter ids. Init resolves these through the active provider adapter registry. */
+  reviewAgentSelections?: string[];
+  /** Normal-setup harness ids. Init validates native review support before writing config. */
+  localReviewAgentSelections?: string[];
+  /** Selected harness for isolated review. Init validates the selected host profile before writing config. */
+  isolatedReviewAgent?: string;
+  /** Normal-setup host:model values. Init writes only values found in a live host catalog. */
+  reviewModelSelections?: string[];
   publisher?: GitHubReviewPublisherConfig;
+  /** Publisher choice that can require a separate credential setup command. */
+  publisherIntent?: 'user' | 'github-app';
   manualUiAudit?: boolean;
   uiAuditAppLaunch?: string;
   uiAuditTarget?: string;
@@ -123,6 +149,8 @@ export interface InitPolicyOptions {
   qualityControl?: boolean;
   instructions?: Partial<InstructionConfig>;
   supplyChain?: Partial<SupplyChainConfig>;
+  /** Selected primary harness for a fresh unpinned model-routing entry. */
+  primaryHost?: InitTool;
   modelRouting?: ModelRoutingPolicy;
 }
 

@@ -2,17 +2,31 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { getDesiredLabels, computeLabelPlan, applyLabelPlan, parseGhLabelList } = require('../dist/labels.js');
 const { getDefaults } = require('../dist/config/index.js');
+const { handleLabelsSetup } = require('../dist/runtime_labels_setup.js');
 
 describe('labels service', () => {
-  it('getDesiredLabels produces specs for defaults and errors on cross-family duplicates', () => {
+  it('getDesiredLabels produces the eight default labels and preserves explicit component labels', () => {
     const config = getDefaults();
     const desired = getDesiredLabels(config);
+    assert.equal(desired.length, 8);
     assert.ok(desired.some(l => l.name === 'P1-Critical' && l.color === 'b60205'));
     assert.ok(desired.some(l => l.name === 'S-Ready'));
-    assert.ok(desired.some(l => l.name === 'C-Tooling'));
+    assert.equal(desired.some(l => l.name.startsWith('C-')), false);
+
+    const custom = getDesiredLabels({ ...config, componentLabels: ['C-Tooling'] });
+    assert.equal(custom.length, 9);
+    assert.ok(custom.some(l => l.name === 'C-Tooling'));
 
     const bad = { ...config, priorityLabels: ['P1-Critical'], statusLabels: [], componentLabels: ['P1-Critical'] };
     assert.throws(() => getDesiredLabels(bad), /Duplicate label name 'P1-Critical'/);
+  });
+
+  it('reuses all eight matching default labels without provider mutations', () => {
+    const desired = getDesiredLabels(getDefaults());
+    const plan = computeLabelPlan(desired.map(label => ({ ...label })), desired);
+    assert.equal(plan.created.length, 0);
+    assert.equal(plan.updated.length, 0);
+    assert.equal(plan.unchanged.length, 8);
   });
 
   it('computeLabelPlan detects created, updated (drift), unchanged, skipped', () => {
@@ -84,6 +98,26 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
       () => parseGhLabelList(JSON.stringify([{ name: 'S-Ready', description: 'missing color' }])),
       /Failed to parse gh label list/
     );
+  });
+
+  it('returns label authentication recovery in the JSON failure envelope', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true, 'dry-run': true } },
+        {
+          loadConfig: async () => getDefaults(),
+          runGh: async () => { throw new Error('GitHub API returned 403'); },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.command, 'labels setup');
+      assert.match(parsed.error, /403/);
+      assert.equal(parsed.nextAction, 'Verify GitHub authentication and label permissions, then rerun `aie labels setup --dry-run --json`.');
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it('doctor ok is false when queue health reports drift, multiple active issues, or queue errors', () => {

@@ -4,23 +4,40 @@ import { runGh } from './providers/github_adapter_exports.js';
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, parseGhLabelList, type LabelSpec } from './labels.js';
 import { commandFailure, readBooleanFlag, outputJson } from './runtime_result.js';
 
-export async function handleLabelsSetup(context: RuntimeCommandContext): Promise<RuntimeCommandResult> {
+interface LabelsSetupDependencies {
+  runGh: typeof runGh;
+  applyLabelPlan: typeof applyLabelPlan;
+  loadConfig: typeof loadConfig;
+}
+
+const DEFAULT_DEPENDENCIES: LabelsSetupDependencies = { runGh, applyLabelPlan, loadConfig };
+
+export async function handleLabelsSetup(
+  context: RuntimeCommandContext,
+  dependencies: Partial<LabelsSetupDependencies> = {},
+): Promise<RuntimeCommandResult> {
+  const runtime = { ...DEFAULT_DEPENDENCIES, ...dependencies };
   const dryRun = readBooleanFlag(context, 'dry-run');
   try {
-    const config = (await loadConfig()) || getDefaults();
-    const listResult = await runGh(['label', 'list', '--json', 'name,color,description', '--limit', '1000']);
+    const config = (await runtime.loadConfig()) || getDefaults();
+    const listResult = await runtime.runGh(['label', 'list', '--json', 'name,color,description', '--limit', '1000']);
     const plan = computeLabelPlan(parseGhLabelList(listResult.stdout), getDesiredLabels(config));
     const hadChanges = plan.created.length > 0 || plan.updated.length > 0;
     if (readBooleanFlag(context, 'json')) {
       const applied = !dryRun && hadChanges;
-      if (applied) await applyLabelPlan(plan);
+      if (applied) await runtime.applyLabelPlan(plan);
       return { jsonStdout: outputJson({ ok: true, command: 'labels setup', dryRun, applied, created: plan.created, updated: plan.updated, unchanged: plan.unchanged, skipped: plan.skipped }) };
     }
-    if (!dryRun && hadChanges) await applyLabelPlan(plan);
+    if (!dryRun && hadChanges) await runtime.applyLabelPlan(plan);
     return { stdout: formatLabelsSetup(plan, dryRun, hadChanges) };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return commandFailure(context, { ok: false, command: 'labels setup', dryRun, error: message }, `Failed to run \`aie labels setup\`. Likely cause: ${message}. Next action: verify GitHub authentication, label permissions, and the selected Executor config, then rerun \`aie labels setup --dry-run\`.`);
+    const nextAction = 'Verify GitHub authentication and label permissions, then rerun `aie labels setup --dry-run --json`.';
+    return commandFailure(
+      context,
+      { ok: false, command: 'labels setup', dryRun, error: message, nextAction },
+      `Failed to run \`aie labels setup\`. Likely cause: ${message}. Next action: ${nextAction}`,
+    );
   }
 }
 

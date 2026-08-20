@@ -8,7 +8,7 @@ inputs:
     description: Path to a newline-separated file list, relative to the GitHub workspace.
     required: false
   stages:
-    description: Newline-separated AIQ stages to run. Defaults to cumulative stages through `.qube/aiq/progress.json` current_stage when present, otherwise the GitHub surface profile.
+    description: Newline-separated AIQ stages to run. Defaults to the selection in `.qube/aiq/progress.json` when present, otherwise the GitHub surface profile.
     required: false
   profile:
     description: AIQ profile override. When set, this overrides current-stage selection.

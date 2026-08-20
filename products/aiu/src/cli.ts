@@ -11,10 +11,12 @@ import {
   AIU_CONFIG_SCHEMA_VERSION,
   AIU_HOST_CAPABILITY_NAMES,
   AIU_HOSTS,
+  AIU_POST_ISSUE_SCOPES,
   AIU_PROMPT_SECTION_KINDS,
   formatConfigDiagnostics,
   getDefaultAiuConfig,
   loadAiuConfig,
+  type AiuPostIssueScope,
 } from "./config.js";
 import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, whipCommand } from "./command_registry.js";
 import { AIU_DECISION_MODES, AIU_DECISION_PROMPT_KINDS } from "./decision.js";
@@ -100,9 +102,12 @@ export const aiuCli = createCli({
     }),
     createCommand(initCommand, (context) => {
       const tool = typeof context.flags.tool === "string" ? (context.flags.tool as AiuInitTool) : undefined;
+      const postIssueScope = typeof context.flags["post-issue-scope"] === "string"
+        ? (context.flags["post-issue-scope"] as AiuPostIssueScope)
+        : undefined;
       const dryRun = context.flags["dry-run"] === true;
       const force = context.flags.force === true;
-      const plan = applyAiuInitPlan(planAiuInit({ tool, dryRun, force }));
+      const plan = applyAiuInitPlan(planAiuInit({ tool, postIssueScope, dryRun, force }));
       const human = formatInitPlan(plan);
       if (!plan.ok) {
         const error = createCliError({
@@ -208,12 +213,13 @@ export const aiuCli = createCli({
           schemaVersion: AIU_CONFIG_SCHEMA_VERSION,
           defaultPath: AIU_CONFIG_FILENAME,
           defaultConfig: getDefaultAiuConfig(),
+          postIssueScopes: AIU_POST_ISSUE_SCOPES,
           hostNames: AIU_HOSTS,
           hostCapabilityNames: AIU_HOST_CAPABILITY_NAMES,
           hostSupportLevels: AIU_HOST_SUPPORT_LEVELS,
           hostCapabilitySupport: AIU_HOST_CAPABILITY_SUPPORT,
           hostProfiles: getAllAiuHostCapabilityProfiles(),
-          policyFields: ["hosts.enabled", "hosts.capabilities", "hosts.modes", "hosts.stopHookBlocking", "continuation.modes", "planning.enabled", "quality.enabled", "whip.enabled", "cooldowns.promptMs", "paths.stateDir", "paths.lockDir", "paths.logDir"],
+          policyFields: ["postIssueScope", "hosts.enabled", "hosts.capabilities", "hosts.modes", "hosts.stopHookBlocking", "continuation.modes", "planning.enabled", "quality.enabled", "whip.enabled", "cooldowns.promptMs", "paths.stateDir", "paths.lockDir", "paths.logDir"],
           promptSectionKinds: AIU_PROMPT_SECTION_KINDS,
           promptCustomizationFields: ["prompts.sections.work.prepend", "prompts.sections.work.append", "prompts.sections.work.replacement", "prompts.sections.planning", "prompts.sections.quality", "prompts.sections.whip"],
         },

@@ -25,8 +25,8 @@ export interface QubeDiscoveryOption {
   readonly id: string;
   readonly support: QubeOptionSupport;
   readonly packageName: string | null;
-  readonly surface: QubeIntegrationSurface | "local";
-  readonly source: "adapter-contract" | "agent-host-profile" | "local-option";
+  readonly surface: QubeIntegrationSurface;
+  readonly source: "adapter-contract" | "agent-host-profile";
   readonly default: boolean;
   readonly summary: string;
   readonly capabilities: readonly QubeDiscoveryCapability[];
@@ -92,33 +92,6 @@ function adapterOption(
   });
 }
 
-function hostOption(input: {
-  readonly id: string;
-  readonly support: QubeOptionSupport;
-  readonly surface: QubeIntegrationSurface | "local";
-  readonly packageName: string | null;
-  readonly summary: string;
-  readonly default?: boolean;
-  readonly capabilities: readonly { readonly id: string; readonly support: QubeDiscoveryCapabilitySupport | string; readonly owner: string; readonly summary: string }[];
-}): QubeDiscoveryOption {
-  return Object.freeze({
-    id: input.id,
-    support: input.support,
-    packageName: input.packageName,
-    surface: input.surface,
-    source: input.surface === "local" ? "local-option" : "agent-host-profile",
-    default: input.default ?? false,
-    summary: input.summary,
-    capabilities: Object.freeze(input.capabilities.map(capability => Object.freeze({
-      id: capability.id,
-      support: normalizeCapabilitySupport(capability.support),
-      owner: capability.owner,
-      summary: capability.summary,
-    }))),
-    connection: null,
-  });
-}
-
 function normalizeCapabilitySupport(support: string): QubeDiscoveryCapabilitySupport {
   if (support === "unsupported" || support === "experimental" || support === "standalone" || support === "host-provided") return support;
   return "supported";
@@ -173,42 +146,12 @@ export const executorWorkProviders: readonly QubeDiscoveryOption[] = Object.free
   adapterOption(gitLabAdapterContract, "optional", "GitLab issue queues and issue draft rendering use the GitLab adapter contract while lifecycle mutations remain unsupported."),
   adapterOption(linearAdapterContract, "optional", "Linear issue queues and issue draft rendering use the Linear adapter contract while lifecycle mutations remain unsupported."),
   adapterOption(jiraAdapterContract, "optional", "Jira issue queues, workflow schema mapping, and issue draft rendering use the Jira adapter contract while lifecycle mutations remain unsupported."),
-  hostOption({
-    id: "local",
-    support: "unsupported",
-    surface: "local",
-    packageName: null,
-    summary: "Local-only setup does not provide forge-backed work queues, pull request review, or provider mutations.",
-    capabilities: [
-      {
-        id: "work-item-queue",
-        support: "unsupported",
-        owner: "@tjalve/qube",
-        summary: "No provider-backed work queue is configured for local-only setup.",
-      },
-    ],
-  }),
 ]);
 
 export const executorCiProviders: readonly QubeDiscoveryOption[] = Object.freeze([
   adapterOption(githubAdapterContract, "installed", "GitHub status checks, check runs, merge blockers, and review conversations use the GitHub adapter contract.", true),
   adapterOption(gitLabAdapterContract, "optional", "GitLab merge request pipelines use the GitLab adapter contract without triggering or rerunning pipelines."),
   adapterOption(jenkinsAdapterContract, "optional", "Jenkins classic and folder job build state uses the Jenkins adapter contract without triggering or rerunning jobs."),
-  hostOption({
-    id: "local",
-    support: "unsupported",
-    surface: "local",
-    packageName: null,
-    summary: "Local-only setup does not configure provider-backed CI evidence.",
-    capabilities: [
-      {
-        id: "read-ci-status",
-        support: "unsupported",
-        owner: "@tjalve/qube",
-        summary: "No provider-backed CI status reader is configured for local-only setup.",
-      },
-    ],
-  }),
 ]);
 
 export const qubeComponents: readonly QubeComponent[] = Object.freeze([
@@ -219,7 +162,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     packageVersion: dependencyVersion("@tjalve/aib"),
     summary: "Plan projects, specs, milestones, and work-item drafts.",
     initCapability: {
-      participatesByDefault: false,
+      participatesByDefault: true,
       command: ["init"],
       supportsToolSelection: false,
       alreadyInitializedHint: "aib init reports its own file actions (create/update/skip) for the planning state directory."
@@ -264,10 +207,10 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     packageVersion: dependencyVersion("@tjalve/aiq"),
     summary: "Run staged quality gates and produce agent-readable evidence.",
     initCapability: {
-      participatesByDefault: false,
-      command: ["setup"],
+      participatesByDefault: true,
+      command: ["config"],
       supportsToolSelection: false,
-      alreadyInitializedHint: "aiq has no separate init state; aiq setup renders current quality-gate setup guidance."
+      alreadyInitializedHint: "aiq config reports create, update, skip, or conflict for Quality configuration and progress state."
     }
   },
   {

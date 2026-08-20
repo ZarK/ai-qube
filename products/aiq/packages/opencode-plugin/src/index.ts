@@ -227,7 +227,7 @@ export class AiqOpenCodeAdapter {
       ...(adapterStages === undefined
         ? progress === undefined
           ? {}
-          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+          : { stages: resolveAiqProgressStageIds(progress.progress) }
         : { stages: adapterStages }),
       ...(adapterProfile === undefined ? {} : { profile: adapterProfile }),
       ...(optionStages === undefined ? {} : { stages: optionStages }),

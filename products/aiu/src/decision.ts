@@ -145,9 +145,56 @@ export function decideAiuContinuation(input: AiuContinuationDecisionInput): AiuC
     return decision(policy, "stop", "stop-supply-chain-approval", summaries, "stop", undefined, "Stop: supply-chain policy requires human approval before continuing.");
   }
 
-  const hardStop = findHardInputStop(indexed, policy);
-  if (hardStop) {
-    return decision(policy, "stop", hardStop.reasonCode, summaries, "stop", hardStop.selectedItem, hardStop.nextAction);
+  const workflowHardStop = findHardInputStop(indexed.filter((item) => !isPostIssueState(item)), policy);
+  if (workflowHardStop) {
+    return decision(policy, "stop", workflowHardStop.reasonCode, summaries, "stop", workflowHardStop.selectedItem, workflowHardStop.nextAction);
+  }
+
+  const contradiction = findContradiction(indexed);
+  if (contradiction) {
+    return decision(policy, "stop", "stop-contradictory-state", summaries, "stop", contradiction, "Stop: refresh trusted state because sources report contradictory workflow state.");
+  }
+
+  const activeWork = collectActiveWork(indexed);
+  if (activeWork.length > 1 && !policy.allowParallelWork) {
+    return decision(policy, "stop", "stop-active-work-conflict", summaries, "stop", selectWorkItem(activeWork[0]), "Stop: reconcile multiple active work items before continuing.");
+  }
+
+  const activeReviews = collectActiveReviews(indexed);
+  if (activeReviews.length > 1 && !policy.allowParallelReview) {
+    return decision(policy, "stop", "stop-active-review-conflict", summaries, "stop", selectReview(activeReviews[0]), "Stop: reconcile multiple active review items before continuing.");
+  }
+
+  const repair = findRepair(indexed);
+  if (repair) {
+    return decision(policy, "repair", repair.reasonCode, summaries, "repair", repair.selectedItem, repair.nextAction);
+  }
+
+  if (policy.cooldownActive) {
+    return decision(policy, "wait", "wait-cooldown-active", summaries, "wait", undefined, "Wait: a configured continuation cooldown is still active.");
+  }
+
+  const busyHost = findBusyHost(indexed);
+  if (busyHost) {
+    return decision(policy, "wait", "wait-host-session-busy", summaries, "wait", busyHost, "Wait: the host session is busy or cannot receive a prompt.");
+  }
+
+  if (activeReviews.length >= 1) {
+    return decision(policy, "continue", "continue-active-review", summaries, "review", selectReview(activeReviews[0]), "Continue: handle the active review item before starting new work.");
+  }
+
+  if (activeWork.length >= 1) {
+    return decision(policy, "continue", "continue-active-work", summaries, "work", selectWorkItem(activeWork[0]), "Continue: resume the active work item before starting new work.");
+  }
+
+  const readyWork = collectReadyWork(indexed)[0];
+  if (readyWork) {
+    return decision(policy, "continue", "continue-ready-work", summaries, "work", selectWorkItem(readyWork), "Continue: start the highest-priority ready work item.");
+  }
+
+  const postIssueHardStop = findHardInputStop(indexed.filter((item) => isEnabledPostIssueState(item, policy)), policy);
+  if (postIssueHardStop) {
+    return decision(policy, "stop", postIssueHardStop.reasonCode, summaries, "stop", postIssueHardStop.selectedItem, postIssueHardStop.nextAction);
   }
 
   if (policy.qualityEnabled) {
@@ -194,43 +241,6 @@ export function decideAiuContinuation(input: AiuContinuationDecisionInput): AiuC
     }
   }
 
-  const contradiction = findContradiction(indexed);
-  if (contradiction) {
-    return decision(policy, "stop", "stop-contradictory-state", summaries, "stop", contradiction, "Stop: refresh trusted state because sources report contradictory workflow state.");
-  }
-
-  const activeWork = collectActiveWork(indexed);
-  if (activeWork.length > 1 && !policy.allowParallelWork) {
-    return decision(policy, "stop", "stop-active-work-conflict", summaries, "stop", selectWorkItem(activeWork[0]), "Stop: reconcile multiple active work items before continuing.");
-  }
-
-  const activeReviews = collectActiveReviews(indexed);
-  if (activeReviews.length > 1 && !policy.allowParallelReview) {
-    return decision(policy, "stop", "stop-active-review-conflict", summaries, "stop", selectReview(activeReviews[0]), "Stop: reconcile multiple active review items before continuing.");
-  }
-
-  const repair = findRepair(indexed);
-  if (repair) {
-    return decision(policy, "repair", repair.reasonCode, summaries, "repair", repair.selectedItem, repair.nextAction);
-  }
-
-  if (policy.cooldownActive) {
-    return decision(policy, "wait", "wait-cooldown-active", summaries, "wait", undefined, "Wait: a configured continuation cooldown is still active.");
-  }
-
-  const busyHost = findBusyHost(indexed);
-  if (busyHost) {
-    return decision(policy, "wait", "wait-host-session-busy", summaries, "wait", busyHost, "Wait: the host session is busy or cannot receive a prompt.");
-  }
-
-  if (activeReviews.length >= 1) {
-    return decision(policy, "continue", "continue-active-review", summaries, "review", selectReview(activeReviews[0]), "Continue: handle the active review item before starting new work.");
-  }
-
-  if (activeWork.length >= 1) {
-    return decision(policy, "continue", "continue-active-work", summaries, "work", selectWorkItem(activeWork[0]), "Continue: resume the active work item before starting new work.");
-  }
-
   if (input.whipStateError) {
     return decision(policy, "stop", "stop-malformed-input", summaries, "stop", input.whipStateError, "Stop: fix malformed whip task state before continuing idle work.");
   }
@@ -238,11 +248,6 @@ export function decideAiuContinuation(input: AiuContinuationDecisionInput): AiuC
   const planning = findPlanningContinuation(indexed, policy);
   if (planning) {
     return decision(policy, "continue", "continue-planning", summaries, "planning", planning, "Continue: run the next planning action from trusted planning state.");
-  }
-
-  const readyWork = collectReadyWork(indexed)[0];
-  if (readyWork) {
-    return decision(policy, "continue", "continue-ready-work", summaries, "work", selectWorkItem(readyWork), "Continue: start the highest-priority ready work item.");
   }
 
   const quality = findQualityContinuation(indexed, policy);
@@ -303,6 +308,15 @@ function normalizeBoolean(
   if (configured !== undefined) return configured;
   if (typeof stateValue === "boolean") return stateValue;
   return fallback;
+}
+
+function isPostIssueState(item: IndexedState): boolean {
+  return item.value.kind === "planning" || item.value.kind === "quality";
+}
+
+function isEnabledPostIssueState(item: IndexedState, policy: DecisionPolicy): boolean {
+  return (item.value.kind === "planning" && policy.planningEnabled)
+    || (item.value.kind === "quality" && policy.qualityEnabled);
 }
 
 function findHardInputStop(indexed: readonly IndexedState[], policy: DecisionPolicy): { readonly reasonCode: AiuReasonCode; readonly selectedItem?: AiuDecisionSelectedItem; readonly nextAction: string } | undefined {

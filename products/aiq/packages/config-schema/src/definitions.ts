@@ -52,6 +52,93 @@ export const aiqStageLadderIds = [
   "security",
 ] as const satisfies readonly AiqStageId[];
 
+export const aiqRefactorStageWarning =
+  "This stage can require refactoring. Use it when robust end-to-end tests protect existing behavior.";
+
+export interface AiqStageWarning {
+  code: "robust-e2e-tests-recommended";
+  message: string;
+}
+
+export interface AiqStageMetadata {
+  description: string;
+  id: AiqStageId;
+  index: AiqProgressStageIndex;
+  refactorDriving: boolean;
+  warning?: AiqStageWarning;
+}
+
+const refactorStageWarning: AiqStageWarning = {
+  code: "robust-e2e-tests-recommended",
+  message: aiqRefactorStageWarning,
+};
+
+export const aiqStageMetadata = [
+  {
+    description: "Run end-to-end tests.",
+    id: "e2e",
+    index: 0,
+    refactorDriving: false,
+  },
+  {
+    description: "Find code problems with configured linters.",
+    id: "lint",
+    index: 1,
+    refactorDriving: false,
+  },
+  {
+    description: "Check source formatting.",
+    id: "format",
+    index: 2,
+    refactorDriving: false,
+  },
+  {
+    description: "Check static types.",
+    id: "typecheck",
+    index: 3,
+    refactorDriving: false,
+  },
+  {
+    description: "Run unit tests.",
+    id: "unit",
+    index: 4,
+    refactorDriving: false,
+  },
+  {
+    description: "Limit source file size.",
+    id: "sloc",
+    index: 5,
+    refactorDriving: true,
+    warning: refactorStageWarning,
+  },
+  {
+    description: "Limit branching complexity.",
+    id: "complexity",
+    index: 6,
+    refactorDriving: true,
+    warning: refactorStageWarning,
+  },
+  {
+    description: "Check maintainability, including readability.",
+    id: "maintainability",
+    index: 7,
+    refactorDriving: true,
+    warning: refactorStageWarning,
+  },
+  {
+    description: "Check test coverage.",
+    id: "coverage",
+    index: 8,
+    refactorDriving: false,
+  },
+  {
+    description: "Check for security problems.",
+    id: "security",
+    index: 9,
+    refactorDriving: false,
+  },
+] as const satisfies readonly AiqStageMetadata[];
+
 export const aiqToolIds = [
   "bash",
   "biome",

@@ -6,6 +6,7 @@ import {
   AIU_HOSTS,
   type AiuConfig,
   type AiuHost,
+  type AiuPostIssueScope,
   getDefaultAiuConfig,
   loadAiuConfig,
 } from "./config.js";
@@ -19,6 +20,7 @@ import {
 } from "./host_policy.js";
 
 export const AIU_INIT_TOOLS = [
+  "none",
   "opencode",
   "codex",
   "claude-code",
@@ -43,6 +45,7 @@ export type AiuInitFileOperation = "create" | "update" | "skip" | "conflict";
 export interface AiuInitOptions {
   readonly cwd?: string;
   readonly tool?: AiuInitTool;
+  readonly postIssueScope?: AiuPostIssueScope;
   readonly dryRun?: boolean;
   readonly force?: boolean;
 }
@@ -55,6 +58,7 @@ export interface AiuInitPlan {
   readonly force: boolean;
   readonly repoRoot: string;
   readonly configPath: string;
+  readonly postIssueScope: AiuPostIssueScope;
   readonly tools: readonly AiuHost[];
   readonly hostProfiles: readonly AiuHostCapabilityProfile[];
   readonly files: readonly AiuInitFileAction[];
@@ -95,11 +99,16 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
   const repoRoot = configLoad.repoRoot;
   const tool = options.tool ?? "all";
   const tools = expandInitTools(tool);
+  const postIssueScope = options.postIssueScope ?? configLoad.config.postIssueScope;
   const dryRun = options.dryRun === true;
   const force = options.force === true;
   const hostProfiles = getAiuHostCapabilityProfiles(tools);
   const files = hostProfiles.flatMap((profile) => profile.managedFiles.map((file) => planFile(repoRoot, file, force)));
-  const config = planConfig(repoRoot, configLoad.selectedPath, configLoad.config, tools, force);
+  const config = planConfig(repoRoot, configLoad.selectedPath, configLoad.config, tools, postIssueScope);
+  const configError = configLoad.found && !configLoad.ok
+    ? configLoad.diagnostics.find((diagnostic) => diagnostic.severity === "error")
+    : undefined;
+  const customScopeMissingTasks = postIssueScope === "custom" && configLoad.config.whip.tasks.length === 0;
   const conflicts = [
     ...files.filter((file) => file.operation === "conflict").map((file) => ({
       relativePath: file.relativePath,
@@ -113,9 +122,23 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
           {
             relativePath: config.relativePath,
             reason: config.reason,
-            suggestedNextAction: `Fix ${AIU_CONFIG_FILENAME} or rerun with --force to replace it with package defaults.`,
+            suggestedNextAction: `Fix ${AIU_CONFIG_FILENAME}, then run aiu init again. QUBE does not replace malformed config.`,
           },
         ]
+      : []),
+    ...(configError
+      ? [{
+          relativePath: config.relativePath,
+          reason: configError.message,
+          suggestedNextAction: configError.suggestedNextAction,
+        }]
+      : []),
+    ...(customScopeMissingTasks && configError?.kind !== "custom-post-issue-tasks-required"
+      ? [{
+          relativePath: config.relativePath,
+          reason: "Custom post-issue scope requires at least one configured Umpire task.",
+          suggestedNextAction: `Add one or more tasks under whip.tasks in ${AIU_CONFIG_FILENAME}, or select ready or standard scope.`,
+        }]
       : []),
   ];
 
@@ -125,6 +148,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
     force,
     repoRoot,
     configPath: configLoad.selectedPath,
+    postIssueScope,
     tools: Object.freeze(tools),
     hostProfiles: Object.freeze(hostProfiles),
     files: Object.freeze(files),
@@ -143,6 +167,7 @@ export function applyAiuInitPlan(plan: AiuInitPlan): AiuInitPlan {
   const refreshed = planAiuInit({
     cwd: plan.repoRoot,
     tool: toolForPlan(plan.tools),
+    postIssueScope: plan.postIssueScope,
     force: plan.force,
   });
   if (!refreshed.ok) {
@@ -163,7 +188,8 @@ export function formatInitPlan(plan: AiuInitPlan): string {
   const sections = [
     `repoRoot: ${plan.repoRoot}`,
     `mode: ${plan.dryRun ? "dry-run" : "apply"}`,
-    `tools: ${plan.tools.join(", ")}`,
+    `tools: ${plan.tools.join(", ") || "none"}`,
+    `postIssueScope: ${plan.postIssueScope}`,
     "",
     formatFileGroup("Created", plan, "create"),
     formatFileGroup("Updated", plan, "update"),
@@ -182,12 +208,14 @@ export function formatInitPlan(plan: AiuInitPlan): string {
 }
 
 function expandInitTools(tool: AiuInitTool): readonly AiuHost[] {
+  if (tool === "none") return Object.freeze([]);
   if (tool === "all") return AIU_HOSTS;
   const selected = new Set<AiuHost>(tool.split(",") as AiuHost[]);
   return Object.freeze(AIU_HOSTS.filter((host) => selected.has(host)));
 }
 
 function toolForPlan(tools: readonly AiuHost[]): AiuInitTool {
+  if (tools.length === 0) return "none";
   return (tools.length === AIU_HOSTS.length ? "all" : tools.join(",")) as AiuInitTool;
 }
 
@@ -208,13 +236,19 @@ function planFile(repoRoot: string, file: AiuManagedHostFile, force: boolean): A
   });
 }
 
-function planConfig(repoRoot: string, configPath: string, loadedConfig: AiuConfig, tools: readonly AiuHost[], force: boolean): AiuInitConfigAction {
+function planConfig(
+  repoRoot: string,
+  configPath: string,
+  loadedConfig: AiuConfig,
+  tools: readonly AiuHost[],
+  postIssueScope: AiuPostIssueScope,
+): AiuInitConfigAction {
   const relativePath = path.relative(repoRoot, configPath) || AIU_CONFIG_FILENAME;
   const existing = readExistingText(configPath);
   const existingRaw = existing.exists && existing.content !== undefined ? parseJsonObject(existing.content) : { ok: true, value: {} };
-  const mergedConfig = mergeConfig(loadedConfig, existingRaw.ok ? existingRaw.value : {}, tools);
+  const mergedConfig = mergeConfig(loadedConfig, existingRaw.ok ? existingRaw.value : {}, tools, postIssueScope);
   const content = stableJson(mergedConfig);
-  const planned = classifyConfigWrite(existing, existingRaw, content, force);
+  const planned = classifyConfigWrite(existing, existingRaw, content);
 
   return Object.freeze({
     relativePath,
@@ -227,7 +261,12 @@ function planConfig(repoRoot: string, configPath: string, loadedConfig: AiuConfi
   });
 }
 
-function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: readonly AiuHost[]): Record<string, unknown> {
+function mergeConfig(
+  config: AiuConfig,
+  raw: Record<string, unknown>,
+  tools: readonly AiuHost[],
+  postIssueScope: AiuPostIssueScope,
+): Record<string, unknown> {
   const defaults = getDefaultAiuConfig();
   const enabled = [...tools];
   const capabilities = {
@@ -258,6 +297,7 @@ function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: rea
   return {
     ...raw,
     version: 1,
+    postIssueScope,
     hosts: {
       ...(isRecord(raw.hosts) ? raw.hosts : {}),
       enabled,
@@ -289,6 +329,21 @@ function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: rea
     supplyChain: {
       ...config.supplyChain,
       stopOnApprovalRequired: true,
+    },
+    planning: {
+      ...(isRecord(raw.planning) ? raw.planning : {}),
+      enabled: false,
+    },
+    quality: {
+      ...(isRecord(raw.quality) ? raw.quality : {}),
+      enabled: postIssueScope === "standard",
+    },
+    whip: {
+      ...(isRecord(raw.whip) ? raw.whip : {}),
+      enabled: postIssueScope !== "ready",
+      usePackageDefaults: postIssueScope === "standard",
+      tasks: config.whip.tasks,
+      statePath: config.whip.statePath,
     },
   };
 }
@@ -497,7 +552,6 @@ function classifyConfigWrite(
   existing: ExistingText,
   existingRaw: ReturnType<typeof parseJsonObject>,
   desired: string,
-  force: boolean,
 ): { readonly operation: AiuInitFileOperation; readonly reason: string } {
   if (!existing.exists) {
     return { operation: "create", reason: reasonForOperation("create") };
@@ -506,14 +560,12 @@ function classifyConfigWrite(
     return { operation: "conflict", reason: `Existing config could not be read: ${existing.error}` };
   }
   if (!existingRaw.ok) {
-    const operation = force ? "update" : "conflict";
-    return { operation, reason: operation === "update" ? "Existing config is invalid JSON and --force was provided." : "Existing config is not valid JSON." };
+    return { operation: "conflict", reason: "Existing config is not valid JSON." };
   }
   if (stableJson(existingRaw.value) === desired) {
     return { operation: "skip", reason: reasonForOperation("skip") };
   }
-  const operation = force ? "update" : "conflict";
-  return { operation, reason: reasonForOperation(operation) };
+  return { operation: "update", reason: "Managed config fields will be updated; unrelated settings will be preserved." };
 }
 
 function reasonForOperation(operation: AiuInitFileOperation): string {

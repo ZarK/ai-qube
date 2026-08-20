@@ -321,7 +321,7 @@ async function createWatchPreparedRun(
   const resolvedConfig = await resolveCliConfig(parsed, io, {
     ...(progress === undefined
       ? {}
-      : { stageOverrides: resolveAiqProgressStageIds(progress.progress.current_stage) }),
+      : { stageOverrides: resolveAiqProgressStageIds(progress.progress) }),
     surface: "watch",
   });
   const baseRequest: RunRequest = {

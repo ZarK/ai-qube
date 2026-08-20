@@ -22,8 +22,9 @@ describe("whip policy", () => {
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  it("selects package default tasks when enabled by default", async () => {
+  it("selects general package tasks in standard post-issue scope", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const decision = decideAiuWhipContinuation({ config });
     const firstDefault = AIU_DEFAULT_WHIP_TASKS[0];
@@ -43,6 +44,7 @@ describe("whip policy", () => {
     assert.ok(firstDefault);
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       whip: {
         enabled: true,
         usePackageDefaults: true,
@@ -96,25 +98,11 @@ describe("whip policy", () => {
     assert.deepEqual(decision.reasonCodes, ["whip-disabled"]);
   });
 
-  it("allows repositories to replace package defaults with explicit empty or custom task lists", async () => {
-    const emptyRepo = await createRepoRoot();
-    await writeConfig(emptyRepo, {
-      version: 1,
-      whip: {
-        enabled: true,
-        usePackageDefaults: false,
-        tasks: [],
-      },
-    });
-    const emptyDecision = decideAiuWhipContinuation({ config: loadAiuConfig({ cwd: emptyRepo }).config });
-
-    assert.equal(emptyDecision.outcome, "idle-no-work");
-    assert.equal(emptyDecision.enqueuesPrompt, false);
-    assert.deepEqual(emptyDecision.reasonCodes, ["whip-no-ready-task"]);
-
+  it("uses configured tasks without package defaults in custom post-issue scope", async () => {
     const customRepo = await createRepoRoot();
     await writeConfig(customRepo, {
       version: 1,
+      postIssueScope: "custom",
       whip: {
         enabled: true,
         usePackageDefaults: false,
@@ -156,6 +144,7 @@ describe("whip policy", () => {
 
   it("does not treat prompted state as task completion", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const firstDefault = AIU_DEFAULT_WHIP_TASKS[0];
     assert.ok(firstDefault);
@@ -173,6 +162,7 @@ describe("whip policy", () => {
 
   it("skips completed and cancelled state tasks", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const firstDefault = AIU_DEFAULT_WHIP_TASKS[0];
     const secondDefault = AIU_DEFAULT_WHIP_TASKS[1];
@@ -196,6 +186,7 @@ describe("whip policy", () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "custom",
       whip: {
         enabled: true,
         usePackageDefaults: false,
@@ -240,6 +231,7 @@ describe("whip policy", () => {
 
   it("adds repo-owned tasks with dry-run support and stable persisted state", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const dryRun = runAiuWhipCommand({
       action: "add",
@@ -303,6 +295,7 @@ describe("whip policy", () => {
 
   it("cancels and completes tasks only through explicit state transitions", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const firstDefault = AIU_DEFAULT_WHIP_TASKS[0];
     const secondDefault = AIU_DEFAULT_WHIP_TASKS[1];
@@ -344,6 +337,7 @@ describe("whip policy", () => {
 
   it("reports malformed state, invalid commands, invalid transitions, unknown ids, and stale ownership", async () => {
     const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, postIssueScope: "standard" });
     const config = loadAiuConfig({ cwd: repoRoot }).config;
     const statePath = resolveAiuWhipStatePath(repoRoot, config);
     await mkdir(path.dirname(statePath), { recursive: true });

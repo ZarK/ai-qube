@@ -4,6 +4,34 @@ export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor
 export { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
 export {
+  QUBE_REPO_CONFIG_PATH,
+  QUBE_REVIEW_MODES,
+  QUBE_REVIEW_PUBLISHERS,
+  QUBE_UMPIRE_SCOPES,
+  QUBE_USER_CONFIG_PATH,
+  configForQubeScope,
+  mergeQubeInitConfigs,
+  parseQubeInitConfig,
+  readQubeInitConfig,
+  repoQubeConfigPath,
+  resolveQubeInitConfig,
+  userQubeConfigPath,
+  writeQubeInitConfig,
+} from "./init_config.js";
+export type {
+  QubeExternalReviewer,
+  QubeInitConfig,
+  QubeInitConfigReadResult,
+  QubeInitConfigWriteOperation,
+  QubeInitField,
+  QubeInitFieldSource,
+  QubeResolvedInitConfig,
+  QubeReviewMode,
+  QubeReviewPublisher,
+  QubeUmpireScope,
+  RequiredQubeInitConfig,
+} from "./init_config.js";
+export {
   applyUmpireHostProbes,
   composeHostToolkitManifest,
   composeHostToolkitManifests,

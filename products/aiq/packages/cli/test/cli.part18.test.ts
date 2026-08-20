@@ -34,7 +34,7 @@ describe("CLI foundation", () => {
       expect(exitCode).toBe(2);
       expect(stdout.value).toBe("");
       expect(stderr.value).toContain(
-        "The config command only accepts --print-config, --set-stage, and --format options.",
+        "The config command only accepts --print-config, --set-stage, --stages, --dry-run, and --format options.",
       );
     }
   });

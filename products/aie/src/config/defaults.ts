@@ -27,18 +27,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
     labels: {
       priorities: ['P1-Critical', 'P2-High', 'P3-Medium', 'P4-Low'],
       statuses: ['S-Ready', 'S-InProgress', 'S-Blocked', 'S-Blocking'],
-      components: [
-        'C-Architecture',
-        'C-Backend',
-        'C-Frontend',
-        'C-Testing',
-        'C-Tooling',
-        'C-Docs',
-        'C-DevEx',
-        'C-CI',
-        'C-Security',
-        'C-Data',
-      ],
+      components: [],
     },
     milestoneOrdering: {
       enabled: false,
