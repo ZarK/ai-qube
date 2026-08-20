@@ -31,6 +31,17 @@ test('adapter-only changes select the adapter and shipped consumers', () => {
   assert.ok(!plan.testTargets.includes('@tjalve/qube-adapter-gitlab'));
 });
 
+test('QUBE changes build the public Quality Control dependency before the composer', () => {
+  const plan = planCoreCi(['products/qube/src/runtime.ts']);
+  assert.equal(plan.aiq, false);
+  assert.deepEqual(plan.changedPackages, ['@tjalve/qube']);
+  assert.ok(plan.buildTargets.indexOf('@tjalve/aiq') >= 0);
+  assert.ok(plan.buildTargets.indexOf('@tjalve/aiq') < plan.buildTargets.indexOf('@tjalve/qube'));
+  assert.ok(!plan.typecheckTargets.includes('@tjalve/aiq'));
+  assert.ok(!plan.testTargets.includes('@tjalve/aiq'));
+  assert.ok(!plan.packTargets.some(target => target.name === '@tjalve/aiq'));
+});
+
 test('release and workflow paths select the complete core plan', () => {
   for (const changedPath of ['products/aie/package.json', 'products/aiq/package.json', 'scripts/publish-packages.mjs', '.github/workflows/ci.yml', 'pnpm-lock.yaml']) {
     const plan = planCoreCi([changedPath]);
@@ -83,6 +94,12 @@ test('CI product scripts reuse the dedicated build stage without weakening stand
     assert.doesNotMatch(manifest.scripts['ci:test'], /build/, packagePath);
     assert.equal(manifest.scripts['ci:pack'], 'node ../../scripts/check-ci-pack.mjs', packagePath);
   }
+  const rootManifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(
+    rootManifest.scripts.build.indexOf('pnpm --filter @tjalve/aiq-workspace run build')
+      < rootManifest.scripts.build.indexOf('pnpm --filter @tjalve/qube run build'),
+    'The clean root build must assemble Quality Control before compiling QUBE',
+  );
   const packHelper = readFileSync(new URL('../scripts/check-ci-pack.mjs', import.meta.url), 'utf8');
   assert.match(packHelper, /check-publish-manifest\.mjs/);
   assert.match(packHelper, /--config\.ignore-scripts=true/);
