@@ -114,6 +114,9 @@ describe("repository policy", () => {
   it("keeps CI off the full AIQ suite while it is not publish-ready", () => {
     const workflow = read(".github/workflows/ci.yml");
 
+    for (const adapter of ["codex", "claude-code", "opencode", "grok-build", "cursor"]) {
+      assert.match(workflow, new RegExp(`pnpm --filter @tjalve/qube-adapter-${adapter} run build`));
+    }
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run build/);
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run typecheck/);
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run test:publish-readiness/);

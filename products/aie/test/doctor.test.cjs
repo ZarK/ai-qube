@@ -781,7 +781,7 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.hooks, true);
     assert.deepEqual(diagnostics.reviewAgent.localRunner.hosts.opencode.missingCapabilities, []);
     assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, []);
-    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /fresh OpenCode review subagent/);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /fresh read-only OpenCode review subagent/);
     assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.evidenceWriting, false);
   });
 

@@ -48,7 +48,7 @@ function localCommandCapability(hints: HostRunnerProbeHints): HostReviewCapabili
   });
 }
 
-function profileCapability(profile: AgentHostProfile, hints: HostRunnerProbeHints): HostReviewCapability {
+export function resolveHostReviewCapability(profile: AgentHostProfile, hints: HostRunnerProbeHints): HostReviewCapability {
   const selected = hints.hostProvided === true || commandConfigured(hints);
   const local = profile.review.local;
   const hooks = profile.umpire.continuation.support !== 'unsupported';
@@ -74,6 +74,22 @@ function profileCapability(profile: AgentHostProfile, hints: HostRunnerProbeHint
       evidenceWriting: false,
       missingCapabilities: Object.freeze([`${profile.id}-local-review-unsupported`]),
       nextAction: local.nextAction,
+    });
+  }
+  const missingSafetyCapabilities = [
+    ...(!local.freshContext ? [`${profile.id}-local-review-not-fresh-context`] : []),
+    ...(!local.readOnly ? [`${profile.id}-local-review-not-read-only`] : []),
+  ];
+  if (missingSafetyCapabilities.length > 0) {
+    return Object.freeze({
+      host: profile.id,
+      independentReviewer: false,
+      freshContext: false,
+      promptOnly: true,
+      hooks,
+      evidenceWriting: false,
+      missingCapabilities: Object.freeze(missingSafetyCapabilities),
+      nextAction: `${profile.displayName} native review is disabled because its local review profile does not guarantee a fresh read-only subagent.`,
     });
   }
   return Object.freeze({
@@ -103,10 +119,10 @@ export function listHostRunnerAdapters(): readonly { readonly id: HostRunnerId; 
 
 export async function probeHostReviewRunner(id: HostRunnerId, hints: HostRunnerProbeHints = {}): Promise<HostReviewCapability> {
   if (id === 'local-command') return localCommandCapability(hints);
-  return profileCapability(await getAgentHostProfile(id), hints);
+  return resolveHostReviewCapability(await getAgentHostProfile(id), hints);
 }
 
 export function probeHostReviewRunnerSync(id: HostRunnerId, hints: HostRunnerProbeHints = {}): HostReviewCapability {
   if (id === 'local-command') return localCommandCapability(hints);
-  return profileCapability(getAgentHostProfileSync(id), hints);
+  return resolveHostReviewCapability(getAgentHostProfileSync(id), hints);
 }

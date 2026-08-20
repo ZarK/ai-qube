@@ -1159,8 +1159,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
     const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
-    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd());
     assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
+    assert.doesNotMatch(contextLines.join('\n'), /pr review publish/);
   });
 
   it('forbids citing non-repository reference paths as artifacts in the contract text', () => {
@@ -1189,7 +1190,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('advertises the economy delegation catalog in the lane spawn prompt', () => {
     const { ECONOMY_REVIEW_CATALOG } = require('../dist/review_catalog.js');
-    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd());
     const catalogLine = contextLines.find(line => line.startsWith('Economy delegation catalog'));
     assert.ok(catalogLine, 'the lane spawn prompt must advertise the economy delegation catalog');
     for (const agent of ECONOMY_REVIEW_CATALOG) {

@@ -1,9 +1,12 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
+import { getAgentHostProfileSync } from "@tjalve/aie";
+import { AGENT_HOST_IDS, type AgentHostProfile } from "@tjalve/qube-core";
+
 import type { AgentHostKind } from "./contracts.js";
 
-export type AgentAssetKind = "instruction" | "command";
+export type AgentAssetKind = "instruction";
 
 export interface AgentAssetFile {
   readonly id: string;
@@ -20,20 +23,23 @@ export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKi
   const selected = typeof hosts === "string" ? [hosts] : [...(hosts ?? [])];
   if (selected.length === 0) return [];
 
-  const files: AgentAssetFile[] = [];
-  const agentsHosts = selected.filter((host) => host === "codex" || host === "opencode" || host === "grok-build" || host === "cursor" || host === "other");
-  if (agentsHosts.length > 0) {
-    files.push(instruction(agentsHosts[0], "AGENTS.md", sharedBody(agentsHosts.map(displayName).join(", "))));
+  const selectedIds = new Set(selected);
+  const profiles = AGENT_HOST_IDS
+    .filter((host) => selectedIds.has(host))
+    .map((host) => getAgentHostProfileSync(host));
+  const profilesByPath = new Map<string, AgentHostProfile[]>();
+  for (const profile of profiles) {
+    const grouped = profilesByPath.get(profile.instructionTarget.path) ?? [];
+    grouped.push(profile);
+    profilesByPath.set(profile.instructionTarget.path, grouped);
   }
-  if (selected.includes("claude-code")) {
-    files.push(instruction("claude-code", "CLAUDE.md", sharedBody("Claude Code")));
-  }
-  if (selected.includes("gemini")) {
-    files.push(instruction("gemini", "GEMINI.md", sharedBody("Gemini CLI")));
-  }
-  if (selected.includes("opencode")) {
-    files.push(command("opencode", ".opencode/commands/aib-bootstrap.md", opencodeCommandBody()));
-  }
+  const files = [...profilesByPath.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, grouped]) => instruction(
+      grouped[0]!.id,
+      path,
+      sharedBody(grouped.map((profile) => profile.displayName).join(", "))
+    ));
   return Object.freeze(files);
 }
 
@@ -46,7 +52,7 @@ export function writeAgentAssetFiles(target: string, files: readonly AgentAssetF
     const path = safeAssetPath(realBaseDir, file.path);
     mkdirSync(dirname(path), { recursive: true });
     const current = existsSync(path) ? readAssetFile(path) : "";
-    const next = file.kind === "instruction" ? mergeManagedInstruction(current, file.body) : file.body;
+    const next = mergeManagedInstruction(current, file.body);
     if (current !== next) writeFileSync(path, next);
     written.push({ path });
   }
@@ -116,16 +122,6 @@ function instruction(host: AgentHostKind, path: string, body: string): AgentAsse
   };
 }
 
-function command(host: AgentHostKind, path: string, body: string): AgentAssetFile {
-  return {
-    id: `${host}:aib-bootstrap-command`,
-    host,
-    path,
-    kind: "command",
-    body
-  };
-}
-
 function sharedBody(hostName: string): string {
   return `# AIB Bootstrap Workflow
 
@@ -145,33 +141,5 @@ This repository uses \`aib\` as an agent-operated planning engine. The human tal
 ## ${hostName}
 
 Use this file as the local host instruction surface. Host-specific todo or command tools are convenience surfaces; the durable workflow is the \`aib\` state machine.
-`;
-}
-
-function displayName(host: AgentHostKind): string {
-  if (host === "claude-code") return "Claude Code";
-  if (host === "grok-build") return "Grok Build";
-  if (host === "opencode") return "OpenCode";
-  if (host === "codex") return "Codex";
-  if (host === "cursor") return "Cursor";
-  if (host === "gemini") return "Gemini CLI";
-  return "Other agent harness";
-}
-
-function opencodeCommandBody(): string {
-  return `---
-description: Start or resume an aib bootstrap planning session.
----
-
-Use \`aib\` as the planning state machine for this repository.
-
-1. Run \`aib status --json\`; if state is missing, run \`aib init --agent opencode --json\`.
-2. Run \`aib next --json\`.
-3. Perform exactly the returned action: ask the human, inspect context, draft or validate specs, generate milestones, generate work-item drafts, render provider outputs, or stop.
-4. Record human answers with \`aib answer --field <field> --value <answer> --json\`.
-5. Keep implementation work out of Bootstrap planning until accepted work items exist.
-6. For autoresearch requests, run \`qube autoresearch --help\`, translate natural language to \`<target>\` plus \`<goal>\`, and synthesize the arena before edits.
-
-Do not install global commands or mutate providers unless the relevant \`aib\` command reports that mutation is planned and allowed.
 `;
 }

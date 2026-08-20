@@ -167,15 +167,25 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
     return { args, stdin: context.prompt };
   },
   parseEnvelope: parseCodexOutput,
-  probeAfterVersion({ model, executable, prefixArgs, runCommand }: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {
+  probeAfterVersion({ model, executable, prefixArgs, runCommand, version }: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult {
     if (!model) return { status: "ready", modelListed: null, diagnostic: null };
     let catalog: string[] | null;
     try {
       catalog = parseCodexModelCatalog(runCommand(executable, [...prefixArgs, "debug", "models"]));
     } catch {
-      return { status: "ready", modelListed: null, diagnostic: null };
+      return {
+        status: "blocked",
+        modelListed: null,
+        diagnostic: `The Codex CLI resolved (${version}) but its model catalog could not be read. Run \`codex debug models\` manually and fix authentication or CLI state before running routed review lanes.`,
+      };
     }
-    if (!catalog) return { status: "ready", modelListed: null, diagnostic: null };
+    if (!catalog) {
+      return {
+        status: "blocked",
+        modelListed: null,
+        diagnostic: `The Codex CLI resolved (${version}) but its model catalog output was unrecognized. Run \`codex debug models\` manually and update the trusted review route configuration.`,
+      };
+    }
     if (!catalog.includes(model)) {
       return {
         status: "blocked",

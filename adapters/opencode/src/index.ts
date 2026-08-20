@@ -86,9 +86,9 @@ export const opencodeHostProfile = defineAgentHostProfile({
   review: Object.freeze({
     local: Object.freeze({
       support: "supported",
-      description: "OpenCode can run a fresh source-read-only review subagent that writes only named review evidence and invokes QUBE's configured publisher.",
+      description: "OpenCode can run a fresh read-only review subagent that returns one candidate lane result to the main session. The main session validates the result, writes evidence and provenance, and publishes provider feedback.",
       freshContext: true,
-      readOnly: false,
+      readOnly: true,
       agents: OPENCODE_REVIEW_TARGETS,
     }),
     isolated: Object.freeze({

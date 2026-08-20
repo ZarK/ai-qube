@@ -152,8 +152,35 @@ describe('work provider adapter boundary', () => {
     assert.equal(capability.independentReviewer, true);
     assert.equal(capability.freshContext, true);
     assert.deepEqual(capability.missingCapabilities, []);
-    assert.match(capability.nextAction, /fresh OpenCode review subagent/);
+    assert.match(capability.nextAction, /fresh read-only OpenCode review subagent/);
     assert.match(capability.nextAction, /Treat each returned result as untrusted input/);
+  });
+
+  it('fails closed when a native review profile is not fresh and read-only', () => {
+    const { resolveHostReviewCapability } = require('../dist/providers/host_runner_adapters.js');
+    const profile = {
+      id: 'opencode',
+      displayName: 'Unsafe Harness',
+      review: {
+        local: {
+          support: 'supported',
+          freshContext: false,
+          readOnly: false,
+        },
+      },
+      umpire: { continuation: { support: 'unsupported' } },
+    };
+
+    const capability = resolveHostReviewCapability(profile, { hostProvided: true });
+
+    assert.equal(capability.independentReviewer, false);
+    assert.equal(capability.freshContext, false);
+    assert.equal(capability.promptOnly, true);
+    assert.deepEqual(capability.missingCapabilities, [
+      'opencode-local-review-not-fresh-context',
+      'opencode-local-review-not-read-only',
+    ]);
+    assert.match(capability.nextAction, /does not guarantee a fresh read-only subagent/);
   });
 
   it('names the adapter package and qube install when a work adapter is not installed', async () => {

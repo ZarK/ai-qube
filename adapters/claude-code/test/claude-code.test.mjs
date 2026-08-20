@@ -19,7 +19,9 @@ describe("claude-code adapter", () => {
     assert.equal("hooks" in claudeCodeHostProfile, false);
     assert.equal("supportsProjectCommands" in claudeCodeHostProfile, false);
     assert.equal(claudeCodeHostProfile.review.local.support, "supported");
-    assert.equal(claudeCodeHostProfile.review.local.readOnly, false);
+    assert.equal(claudeCodeHostProfile.review.local.readOnly, true);
+    assert.match(claudeCodeHostProfile.review.local.description, /returns one candidate lane result to the main session/);
+    assert.doesNotMatch(claudeCodeHostProfile.review.local.description, /writes only named review evidence|invokes QUBE's configured publisher/);
     assert.deepEqual(claudeCodeHostProfile.review.local.agents.map((target) => target.renderer), [
       "claude-review-focus-agent",
       "claude-review-explorer-agent",

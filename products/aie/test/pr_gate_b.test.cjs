@@ -292,7 +292,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Do not read external prompt files/);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.agentType, 'qube-review-focus');
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.forkContext, false);
-    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal('publishCommand' in result.localReviewRunner.lanes[0].spawnContract, false);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, new RegExp(`Prompt stack hash for runnerProvenance\\.promptStackHash: ${result.localReviewRunner.lanes[0].promptStackHash}\\.`));
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
@@ -318,6 +318,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.localReviewRunner.lanes[0].promptText, /evidenceSha256 is the canonical SHA-256 digest/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Do not write the requested evidence or host-provenance files/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /The main session creates host provenance/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].spawnPrompt, /pr review publish/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /pr review publish/);
+    assert.match(result.localReviewRunner.lanes[0].summary, /then publish the lane with `qube aie pr review publish 12 --lane/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /QUBE context commands/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Issue #93 checklist:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Check ci:/);
@@ -504,7 +507,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(pendingResult.localReviewRunner.lanes[0].promptStackHash, passedResult.localReviewRunner.lanes[0].promptStackHash);
   });
 
-  it('uses installed qube aie in Codex spawn publish commands even when a workspace runner exists', async () => {
+  it('keeps the publish command in the main-session action and out of the subagent prompt', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'bin'), { recursive: true });
     writeFileSync(join(repo, 'products', 'aie', 'bin', 'run'), '');
@@ -513,12 +516,15 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
-    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal('publishCommand' in result.localReviewRunner.lanes[0].spawnContract, false);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, return exactly one candidate lane evidence JSON object/);
-    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /The main session validates the returned result, writes its evidence and provenance, and then publishes provider-visible feedback with: qube aie pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /The main session validates the returned result, writes its evidence and provenance, and then publishes provider-visible feedback\./);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].spawnPrompt, /pr review publish/);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Prompt stack hash for runnerProvenance\.promptStackHash: [a-f0-9]{64}\./);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /After validation and persistence, the main session publishes provider-visible feedback with `qube aie pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /After validation and persistence, the main session publishes provider-visible feedback\./);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /pr review publish/);
+    assert.match(result.localReviewRunner.lanes[0].summary, /then publish the lane with `qube aie pr review publish 12 --lane/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Do not write the requested evidence or host-provenance files/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /products\/aie\/bin\/run/);
   });

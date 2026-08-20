@@ -20,7 +20,9 @@ describe("opencode adapter", () => {
     assert.deepEqual(opencodeHostProfile.taskList.tools, ["todowrite", "todoread"]);
     assert.equal(opencodeHostProfile.subagents.support, "supported");
     assert.equal(opencodeHostProfile.review.local.support, "supported");
-    assert.equal(opencodeHostProfile.review.local.readOnly, false);
+    assert.equal(opencodeHostProfile.review.local.readOnly, true);
+    assert.match(opencodeHostProfile.review.local.description, /returns one candidate lane result to the main session/);
+    assert.doesNotMatch(opencodeHostProfile.review.local.description, /writes only named review evidence|invokes QUBE's configured publisher/);
     assert.deepEqual(opencodeHostProfile.review.local.agents.map((target) => target.renderer), [
       "opencode-review-focus-agent",
       "opencode-review-explorer-agent",

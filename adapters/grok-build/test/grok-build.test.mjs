@@ -26,7 +26,9 @@ describe("grok-build adapter", () => {
     assert.equal(adapter.grokBuildHostProfile.taskList.support, "unsupported");
     assert.equal(adapter.grokBuildHostProfile.subagents.support, "supported");
     assert.equal(adapter.grokBuildHostProfile.review.local.support, "supported");
-    assert.equal(adapter.grokBuildHostProfile.review.local.readOnly, false);
+    assert.equal(adapter.grokBuildHostProfile.review.local.readOnly, true);
+    assert.match(adapter.grokBuildHostProfile.review.local.description, /returns one candidate lane result to the main session/);
+    assert.doesNotMatch(adapter.grokBuildHostProfile.review.local.description, /writes only named review evidence|invokes QUBE's configured publisher/);
     assert.deepEqual(adapter.grokBuildHostProfile.review.local.agents.map((target) => target.renderer), [
       "grok-review-focus-agent",
       "grok-review-explorer-agent",

@@ -91,6 +91,30 @@ describe("codex adapter", () => {
     );
     assert.equal(built.stdin, "inspect");
     assert.deepEqual(parseCodexModelCatalog(JSON.stringify({ models: [{ slug: "gpt-5.6-luna" }, { slug: "  " }] })), ["gpt-5.6-luna"]);
+
+    const probeContext = {
+      model: "gpt-5.6-luna",
+      executable: "codex",
+      prefixArgs: [],
+      version: "codex-cli 0.1.0",
+      platform: "linux",
+    };
+    const unreadable = isolatedReviewHostAdapter.probeAfterVersion({
+      ...probeContext,
+      runCommand() { throw new Error("private command failure"); },
+    });
+    assert.equal(unreadable.status, "blocked");
+    assert.equal(unreadable.modelListed, null);
+    assert.match(unreadable.diagnostic, /model catalog could not be read/);
+    assert.doesNotMatch(unreadable.diagnostic, /private command failure/);
+
+    const unparsed = isolatedReviewHostAdapter.probeAfterVersion({
+      ...probeContext,
+      runCommand() { return "unexpected output"; },
+    });
+    assert.equal(unparsed.status, "blocked");
+    assert.equal(unparsed.modelListed, null);
+    assert.match(unparsed.diagnostic, /catalog output was unrecognized/);
   });
 
   it("keeps progress messages separate from the terminal response", () => {

@@ -585,10 +585,14 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const claudeAgent = readFileSync(join(repo, '.claude', 'agents', 'qube-review-focus.md'), 'utf8');
     assert.match(claudeAgent, /name: qube-review-focus/);
+    assert.match(claudeAgent, /^tools: Read, Grep, Glob$/m);
     assert.match(claudeAgent, /model: claude-sonnet-5/);
     assert.match(claudeAgent, /effort: low/);
     const opencodeAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
     assert.match(opencodeAgent, /mode: subagent/);
+    assert.match(opencodeAgent, /^permission:$/m);
+    assert.match(opencodeAgent, /^  "\*": deny$/m);
+    assert.match(opencodeAgent, /^  read: allow$/m);
     assert.match(opencodeAgent, /model: anthropic\/claude-sonnet-5/);
     assert.match(opencodeAgent, /reasoningEffort: high/);
   });
@@ -623,13 +627,13 @@ describe('init service', () => {
     assert.equal(existsSync(join(opencodeRepo, '.codex', 'agents', 'qube-review-digest.toml')), false);
   });
 
-  it('renders economy catalog agents for codex, claude-code, and opencode hosts', async () => {
+  it('renders read-only economy catalog agents for native review hosts', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
     config.policy.reviews.profile = 'local-focused';
     config.policy.reviews.agents = [];
-    config.policy.reviews.localAgents = ['codex', 'claude-code', 'opencode'];
+    config.policy.reviews.localAgents = ['codex', 'claude-code', 'opencode', 'grok-build'];
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
@@ -657,11 +661,19 @@ describe('init service', () => {
 
     const opencodeDigest = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-digest.md'), 'utf8');
     assert.match(opencodeDigest, /mode: subagent/);
+    assert.match(opencodeDigest, /^permission:$/m);
+    assert.match(opencodeDigest, /^  "\*": deny$/m);
+    assert.match(opencodeDigest, /^  read: allow$/m);
     assert.match(opencodeDigest, /read-only economy delegation helper/);
 
     const opencodeLibrarian = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-librarian.md'), 'utf8');
     assert.match(opencodeLibrarian, /mode: subagent/);
     assert.match(opencodeLibrarian, /Locate files, symbols, and prior review evidence/);
+
+    const grokExplorer = readFileSync(join(repo, '.grok', 'agents', 'qube-review-explorer.md'), 'utf8');
+    assert.match(grokExplorer, /^tools: Read, Grep, Glob$/m);
+    assert.match(grokExplorer, /^capabilityMode: read-only$/m);
+    assert.match(grokExplorer, /^mcpInheritance: none$/m);
   });
 
   it('resolves the economy tier model and effort into the Codex review catalog agents', async () => {
@@ -814,7 +826,11 @@ describe('init service', () => {
     const focusAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
     assert.match(focusAgent, /Do not write lane evidence or provenance/);
     assert.match(focusAgent, /Return one candidate lane result to the main session/);
-    assert.doesNotMatch(focusAgent, /write: false|edit: false|bash: false/);
+    assert.match(focusAgent, /^permission:$/m);
+    assert.match(focusAgent, /^  "\*": deny$/m);
+    for (const permission of ['read', 'glob', 'grep', 'list', 'lsp']) {
+      assert.match(focusAgent, new RegExp(`^  ${permission}: allow$`, 'm'));
+    }
     assert.doesNotMatch(agents, /OpenCode native review is unsupported/i);
     assert.doesNotMatch(agents, /Configure Codex|Codex local-host/i);
     assert.match(agents, /OpenCode: instructions `AGENTS\.md`/);

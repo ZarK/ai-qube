@@ -650,6 +650,18 @@ Include runnerProvenance in the returned result. Set runnerKind to local-host, h
 
 Return exactly one JSON lane result for the requested PR head. Return no markdown fence and no text outside the JSON object. Do not approve stale evidence, missing current-head checks, malformed evidence, unresolved high or critical findings, or prompt-only output.`;
 
+const GROK_READ_ONLY_AGENT_PERMISSIONS = `tools: Read, Grep, Glob
+capabilityMode: read-only
+mcpInheritance: none`;
+
+const OPENCODE_READ_ONLY_AGENT_PERMISSIONS = `permission:
+  "*": deny
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  lsp: allow`;
+
 export function renderGrokReviewFocusAgent(config?: Config): string {
   const reviewBinding = config?.reviewModels.review['grok-build'];
   const modelLines = reviewBinding
@@ -658,6 +670,7 @@ export function renderGrokReviewFocusAgent(config?: Config): string {
   return `---
 name: qube-review-focus
 description: Focused PR reviewer that cannot modify source or worktree files.
+${GROK_READ_ONLY_AGENT_PERMISSIONS}
 ${modelLines}---
 
 ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
@@ -672,6 +685,7 @@ export function renderGrokEconomyAgent(agent: EconomyReviewCatalogAgent, config?
   return `---
 name: ${agent.name}
 description: Read-only economy delegation helper for one QUBE local review lane.
+${GROK_READ_ONLY_AGENT_PERMISSIONS}
 ${modelLines}---
 
 ${renderEconomyAgentInstructions(agent)}
@@ -686,6 +700,7 @@ export function renderClaudeReviewFocusAgent(config?: Config): string {
   return `---
 name: qube-review-focus
 description: Focused PR reviewer that cannot modify source or worktree files.
+tools: Read, Grep, Glob
 ${modelLines}---
 
 ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
@@ -700,6 +715,7 @@ export function renderOpenCodeReviewFocusAgent(config?: Config): string {
   return `---
 description: Focused PR reviewer that cannot modify source or worktree files.
 mode: subagent
+${OPENCODE_READ_ONLY_AGENT_PERMISSIONS}
 ${modelLines}---
 
 ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
@@ -763,10 +779,7 @@ export function renderOpenCodeEconomyAgent(agent: EconomyReviewCatalogAgent, con
   return `---
 description: Read-only economy delegation helper for one QUBE local review lane.
 mode: subagent
-tools:
-  write: false
-  edit: false
-  bash: false
+${OPENCODE_READ_ONLY_AGENT_PERMISSIONS}
 ${modelLines}---
 
 ${renderEconomyAgentInstructions(agent)}

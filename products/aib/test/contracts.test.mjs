@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { getAllAgentHostProfiles } from "@tjalve/aie";
+
 import {
   capability,
   createAgentAssetPlan,
@@ -65,22 +67,24 @@ test("capability reports represent policy-blocked operations", () => {
   });
 });
 
-test("agent asset plans cover supported host instruction surfaces", () => {
-  const codex = createAgentAssetPlan("codex");
-  assert.deepEqual(codex.map((file) => file.path), ["AGENTS.md"]);
-  assert.match(codex[0].body, /aib next --json/);
-  assert.match(codex[0].body, /qube autoresearch --help/);
+test("agent asset plans use canonical harness instruction targets", async () => {
+  const profiles = await getAllAgentHostProfiles();
+  for (const profile of profiles) {
+    const files = createAgentAssetPlan(profile.id);
+    assert.deepEqual(files.map((file) => file.path), [profile.instructionTarget.path], profile.id);
+    assert.deepEqual(files.map((file) => file.kind), ["instruction"], profile.id);
+    assert.match(files[0].body, new RegExp(profile.displayName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")), profile.id);
+    assert.match(files[0].body, /aib next --json/, profile.id);
+    assert.match(files[0].body, /qube autoresearch --help/, profile.id);
+    assert.equal(files.some((file) => file.path === profile.makeItSo.path), false, profile.id);
+  }
 
-  const opencode = createAgentAssetPlan("opencode");
-  assert.deepEqual(opencode.map((file) => file.path), ["AGENTS.md", ".opencode/commands/aib-bootstrap.md"]);
-  assert.match(opencode[1].body, /aib init --agent opencode --json/);
-  assert.match(opencode[1].body, /synthesize the arena before edits/);
-
-  const claude = createAgentAssetPlan("claude-code");
-  assert.deepEqual(claude.map((file) => file.path), ["CLAUDE.md"]);
-
-  const gemini = createAgentAssetPlan("gemini");
-  assert.deepEqual(gemini.map((file) => file.path), ["GEMINI.md"]);
+  const shared = createAgentAssetPlan(["cursor", "grok-build", "claude-code"]);
+  assert.deepEqual(shared.map((file) => file.path), ["AGENTS.md", "CLAUDE.md"]);
+  const agents = shared.find((file) => file.path === "AGENTS.md");
+  assert.ok(agents);
+  assert.match(agents.body, /Grok Build/);
+  assert.match(agents.body, /Cursor/);
 });
 
 test("agent asset writes reject paths outside the target", () => {

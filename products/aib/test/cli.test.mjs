@@ -90,6 +90,8 @@ test("schema exposes dry-run and mutation metadata", () => {
   assert.deepEqual(init.mutation.categories, ["local-config", "local-files"]);
   assert.equal(init.supplyChain.sensitive, false);
   assert.ok(init.errors.some((error) => error.kind === "init-write-failed"));
+  const agent = init.flags.find((flag) => flag.name === "agent");
+  assert.deepEqual(agent.options, ["claude-code", "codex", "cursor", "grok-build", "opencode"]);
 
   const render = schema.commands.find((command) => command.name === "work-items render");
   assert.ok(render);
@@ -241,23 +243,27 @@ test("init dry-run returns agent-facing next action without mutating", () => {
   assert.equal(result.session.project.intent, "Local photo archive");
 });
 
-test("init with opencode writes local command assets without global installs", async () => {
+test("init with opencode writes profile-derived planning instructions only", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-opencode-"));
   const result = parseJsonStdout(runAib(["init", dir, "--agent", "opencode", "--json", "--idea", "Plan a CLI package"]));
   assert.equal(result.mutated, true);
-  assert.equal(result.agentAssets.length, 2);
+  assert.equal(result.agentAssets.length, 1);
   assert.ok(result.agentAssets.some((asset) => asset.path.endsWith("AGENTS.md")));
-  assert.ok(result.agentAssets.some((asset) => asset.path.endsWith(join(".opencode", "commands", "aib-bootstrap.md"))));
-
-  const command = await readFile(join(dir, ".opencode", "commands", "aib-bootstrap.md"), "utf8");
-  assert.match(command, /aib next --json/);
-  assert.match(command, /aib answer --field <field> --value <answer> --json/);
-  assert.match(command, /Do not install global commands/);
 
   const instructions = await readFile(join(dir, "AGENTS.md"), "utf8");
   assert.match(instructions, /agent-operated planning engine/);
   assert.match(instructions, /`aib` state machine/);
   assert.match(instructions, /qube autoresearch --help/);
+});
+
+test("init rejects agent harnesses outside the canonical profile registry", () => {
+  for (const agent of ["gemini", "other"]) {
+    const result = runAib(["init", ".", "--agent", agent, "--dry-run", "--json"]);
+    assert.notEqual(result.status, 0, agent);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.ok, false, agent);
+    assert.match(body.error.likelyCause, /Expected --agent=/, agent);
+  }
 });
 
 test("init dry-run does not write state", async () => {

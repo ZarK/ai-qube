@@ -269,10 +269,9 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
   }, null, 2)}\n`);
 }
 
-function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123', options = {}) {
+function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123') {
   const evidencePath = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headSha, `${id}.json`);
-  const publishCommand = options.publishCommand ?? `qube aie pr review publish ${prNumber} --lane ${id} --issue ${issueNumber}`;
-  return promptTextHashFromLines(promptStack('codex', id, laneContextLines('codex', id, [issueNumber], prNumber, headSha, [evidencePath], [], repo, publishCommand)).text);
+  return promptTextHashFromLines(promptStack('codex', id, laneContextLines('codex', id, [issueNumber], prNumber, headSha, [evidencePath], [], repo)).text);
 }
 
 async function alignLocalEvidencePromptHashes(repo, config, exec, { issueNumber = 93, prNumber = 12, headSha = 'abc123' } = {}) {
@@ -351,7 +350,7 @@ function writeLocalEvidence(repo, evidence, options = {}) {
     const { id: laneId, ...laneRecord } = lane;
     const promptStackHash = options.rewritePromptHashes === false
       ? lane.runnerProvenance?.promptStackHash
-      : expectedPromptHashForLane(repo, lane.id, issueNumber, prNumber, headSha, options);
+      : expectedPromptHashForLane(repo, lane.id, issueNumber, prNumber, headSha);
     const runnerProvenance = lane.runnerProvenance
       ? { ...lane.runnerProvenance, promptStackHash }
       : lane.runnerProvenance;
