@@ -30,30 +30,38 @@ QUBE uses a command asset where the harness supports project commands. Codex use
 
 Host-local review uses fresh subagents inside the selected harness and can use the same subscription as the main agent. Isolated review starts a separate supported CLI harness in a read-only review session. External review services are configured through Executor and are not agent harness capabilities.
 
-OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Umpire reports these integrations as unverified until it observes a valid event. Cursor has no Umpire asset, so Cursor-only init does not run Umpire setup.
+OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Umpire reports these integrations as unverified until it observes a valid event. Cursor has no Umpire continuation asset, so Umpire setup records no continuation delivery for Cursor and does not claim support.
 
 ## Current init flow
 
-Use one or more harness ids with `--host`:
+Run the guided setup in the repository:
 
 ```sh
-qube init . --host codex --yes
-qube init . --host opencode,codex,claude-code,grok-build,cursor --yes --json
+qube init
 ```
 
-`qube init` does the following work:
+The guide asks only the questions that apply. It covers agent harnesses, the
+issue tracker, automated checks, Continuous Shipping, Umpire, Quality checks,
+and Review. See the [guided init guide](./qube-init.md) for every choice and
+recommendation.
 
-1. It runs Executor init once with every selected harness and the selected issue tracker, review provider, and automated-checks provider.
-2. It uses the first selected harness as the primary model-routing host unless you select another installed primary host.
-3. It runs Umpire init once for each selected harness that has an Umpire surface: OpenCode, Codex, Claude Code, or Grok Build.
-4. It writes the instruction file and the single canonical Make It So asset for each selected harness.
-5. It reports create, update, skip, or conflict actions. A repeated run reuses the current configuration and reports only the remaining work.
+All four QUBE products participate in one init run:
 
-Executor (`@tjalve/aie`) and Umpire (`@tjalve/aiu`) participate by default. Add Bootstrap (`@tjalve/aib`) or Quality (`@tjalve/aiq`) with `--with aib`, `--with aiq`, or `--with aib,aiq`.
+1. Bootstrap prepares repository planning for the selected harnesses.
+2. Executor prepares issue work, automated checks, review, and shipping policy.
+3. Quality Control prepares the selected quality stages.
+4. Umpire prepares the selected continuation scope.
 
-Use `--dry-run --json` to inspect the plan without writing files. Use `--defaults --json` when an agent needs a non-interactive init with the repository defaults. After init completes, start a new agent session so the harness loads the new instructions and Make It So asset.
+QUBE writes the instructions and the canonical Make It So entry point for each
+selected harness. It uses each harness capability profile to include only
+supported behavior.
 
-The selected harness profile also supplies its trust steps. Executor instructions include attribution hygiene by default so public git and GitHub writes use the human project identity. Use `--no-credit-warning` only when you intentionally do not want those rules.
+Use `--dry-run --json` to inspect the resolved answers without changing the
+repository. Use `--yes` or `--defaults` for noninteractive setup. A rerun keeps
+valid current values. If all values match, it makes no changes.
+
+After init completes, start a new agent session. The harness then loads the new
+instructions and Make It So entry point.
 
 ## Runtime boundary
 

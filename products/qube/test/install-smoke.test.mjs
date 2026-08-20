@@ -121,11 +121,15 @@ describe("packed QUBE install smoke", () => {
     const packDir = path.join(root, "pack");
     const installer = path.join(root, "installer");
     const target = path.join(root, "blank");
+    const initTarget = path.join(root, "init-target");
+    const testHome = path.join(root, "home");
     const tools = path.join(root, "tools");
     const packageRootDir = path.join(root, "qube-root");
     await mkdir(packDir);
     await mkdir(installer);
     await mkdir(target);
+    await mkdir(initTarget);
+    await mkdir(testHome);
     await mkdir(tools);
 
     const qubeTarball = await packPackage(packageRoot, packDir);
@@ -218,10 +222,12 @@ describe("packed QUBE install smoke", () => {
     ];
     const env = {
       ...process.env,
+      HOME: testHome,
       PATH: `${tools}${path.delimiter}${process.env.PATH ?? ""}`,
       QUBE_TEST_PACKAGE_ROOT: packageRootDir,
       QUBE_TEST_PM_LOG: pmLog,
-      QUBE_TEST_INSTALL_PACKAGES: registryPath
+      QUBE_TEST_INSTALL_PACKAGES: registryPath,
+      USERPROFILE: testHome,
     };
     const qubeBin = path.join(installer, "node_modules", qubePackageName, "dist", "bin", "qube.js");
     const first = await runPackedQube(qubeBin, applyArgs, { cwd: target, env });
@@ -257,8 +263,91 @@ describe("packed QUBE install smoke", () => {
     assert.equal(secondParsed.ok, true, `${second.stdout}\n${second.stderr}`);
     assert.deepEqual(secondParsed.apply.executed, []);
     assert.equal((await readFile(pmLog, "utf8")).trim().split(/\r?\n/).length, 1);
+
+    const initArgs = [
+      "init",
+      ".",
+      "--yes",
+      "--json",
+      "--config-scope",
+      "repo",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--continuous-shipping",
+      "--umpire-scope",
+      "ready",
+      "--quality-stage",
+      "unit",
+      "--review-mode",
+      "external",
+      "--external-reviewer",
+      "coderabbit",
+      "--review-publisher",
+      "user",
+    ];
+    const expectedAnswerIds = [
+      "agent-harnesses",
+      "issue-tracker",
+      "automated-checks",
+      "continuous-shipping",
+      "umpire-scope",
+      "quality-checks",
+      "review-source",
+      "external-reviewer",
+      "review-publisher",
+    ];
+    const firstInit = await runPackedQube(qubeBin, initArgs, { cwd: initTarget, env });
+    const firstInitParsed = JSON.parse(firstInit.stdout);
+    assert.equal(firstInitParsed.ok, true, `${firstInit.stdout}\n${firstInit.stderr}`);
+    assert.equal(firstInitParsed.command, "init");
+    assert.equal(firstInitParsed.mode, "apply");
+    assert.equal(firstInitParsed.apply.changed, true);
+    assertPublicInitAnswers(firstInitParsed.answers, expectedAnswerIds);
+    const firstInitArtifacts = await readInitArtifacts(initTarget);
+
+    const secondInit = await runPackedQube(qubeBin, initArgs, { cwd: initTarget, env });
+    const secondInitParsed = JSON.parse(secondInit.stdout);
+    assert.equal(secondInitParsed.ok, true, `${secondInit.stdout}\n${secondInit.stderr}`);
+    assert.equal(secondInitParsed.command, "init");
+    assert.equal(secondInitParsed.mode, "apply");
+    assert.equal(secondInitParsed.apply.changed, false);
+    assertPublicInitAnswers(secondInitParsed.answers, expectedAnswerIds);
+    assert.deepEqual(await readInitArtifacts(initTarget), firstInitArtifacts);
+    assert.equal(existsSync(path.join(initTarget, "package.json")), false);
+    assert.deepEqual(JSON.parse(await readFile(path.join(target, "package.json"), "utf8")), manifest);
   });
 });
+
+function assertPublicInitAnswers(answers, expectedIds) {
+  assert.ok(Array.isArray(answers));
+  assert.deepEqual(answers.map(answer => answer.id), expectedIds);
+  for (const answer of answers) {
+    assert.deepEqual(Object.keys(answer).sort(), ["id", "label", "reason", "value"]);
+    assert.equal(typeof answer.label, "string");
+    assert.notEqual(answer.label.trim(), "");
+    assert.equal(typeof answer.value, "string");
+    assert.notEqual(answer.value.trim(), "");
+    assert.equal(typeof answer.reason, "string");
+    assert.notEqual(answer.reason.trim(), "");
+  }
+}
+
+async function readInitArtifacts(root) {
+  const artifactPaths = [
+    ".qube/init.json",
+    ".qube/aie/config.json",
+    "AGENTS.md",
+    ".agents/skills/make-it-so/SKILL.md",
+  ];
+  return Object.fromEntries(await Promise.all(artifactPaths.map(async artifactPath => [
+    artifactPath,
+    await readFile(path.join(root, ...artifactPath.split("/")), "utf8"),
+  ])));
+}
 
 async function writeApplyComponentStubs(packageRootDir) {
   const binDir = path.join(packageRootDir, "node_modules", ".bin");
@@ -271,11 +360,16 @@ async function writeApplyComponentStubs(packageRootDir) {
       repository: { kind: "local-git" },
       ci: { kind: "github" },
       layout: { kind: "local" }
-    }
+    },
+    policy: {
+      reviews: { mode: "host" },
+      audit: { evidenceRoot: "~/.qube/verification" },
+      instructions: { noCreditWarning: true },
+    },
   };
   await writeNodeShim(binDir, "aie", `
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 const writeManaged = (file, body) => {
   const normalized = body.trimEnd() + "\\n";
@@ -290,13 +384,27 @@ const writeManaged = (file, body) => {
     ""
   ].join("\\n"));
 };
-const args = process.argv.slice(2).join(" ");
+const argv = process.argv.slice(2);
+const args = argv.join(" ");
 if (args.includes("init")) {
-  mkdirSync(path.join(process.cwd(), ".qube", "aie"), { recursive: true });
-  writeFileSync(path.join(process.cwd(), ".qube", "aie", "config.json"), ${JSON.stringify(`${JSON.stringify(initConfig, null, 2)}\n`)});
-  writeManaged(path.join(process.cwd(), "AGENTS.md"), "Team rules.");
-  writeManaged(path.join(process.cwd(), ".agents", "skills", "make-it-so", "SKILL.md"), "Run QUBE Make It So.");
-  process.stdout.write(JSON.stringify({ ok: true, command: "init" }) + "\\n");
+  const configPath = path.join(process.cwd(), ".qube", "aie", "config.json");
+  const instructionsPath = path.join(process.cwd(), "AGENTS.md");
+  const makeItSoPath = path.join(process.cwd(), ".agents", "skills", "make-it-so", "SKILL.md");
+  const changed = !existsSync(configPath) || !existsSync(instructionsPath) || !existsSync(makeItSoPath);
+  const dryRun = argv.includes("--dry-run");
+  if (changed && !dryRun) {
+    const configured = ${JSON.stringify(initConfig)};
+    const reviewModeIndex = argv.indexOf("--review-mode");
+    if (reviewModeIndex >= 0 && argv[reviewModeIndex + 1]) configured.policy.reviews.mode = argv[reviewModeIndex + 1];
+    const evidenceRootIndex = argv.indexOf("--ui-audit-evidence-root");
+    if (evidenceRootIndex >= 0 && argv[evidenceRootIndex + 1]) configured.policy.audit.evidenceRoot = argv[evidenceRootIndex + 1];
+    configured.policy.instructions.noCreditWarning = !argv.includes("--no-credit-warning");
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify(configured, null, 2) + "\\n");
+    writeManaged(instructionsPath, "Team rules.");
+    writeManaged(makeItSoPath, "Run QUBE Make It So.");
+  }
+  process.stdout.write(JSON.stringify({ ok: true, command: "init", changed: changed && !dryRun }) + "\\n");
   process.exit(0);
 }
 if (args.includes("labels")) {
@@ -435,6 +543,7 @@ async function createFakeComponentTarball(component, root, packDir) {
       [
         "export function validateConfig(config) { return { ok: true, errors: [], config }; }",
         "export function detectInstalledReviewHostsOnPath() { return []; }",
+        "export function listHostModels(host) { return { host, status: 'ready', models: host === 'codex' ? ['smoke-review-model'] : [], diagnostic: null }; }",
         "const cap = (support, description) => ({ support, description, ...(support === 'supported' ? {} : { nextAction: 'Select a supported harness capability.' }) });",
         "const profile = (id, displayName, instructionPath, makeItSoPath, makeItSoKind, invocation, support) => ({",
         "  id, displayName,",
@@ -465,10 +574,30 @@ async function createFakeComponentTarball(component, root, packDir) {
         "export async function getAgentHostProfile(id) { return getAgentHostProfileSync(id); }",
         "export async function getAgentHostProfiles(ids) { return ids.map(getAgentHostProfileSync); }",
         "export async function listInitExternalReviewers() { return [",
-        "  { id: 'copilot', aliases: [], displayName: 'GitHub Copilot', summary: 'GitHub Copilot review service.', externalService: true },",
-        "  { id: 'coderabbit', aliases: ['coderabbitai'], displayName: 'CodeRabbit', summary: 'CodeRabbit review service.', externalService: true },",
-        "  { id: 'cubic', aliases: ['cubic-dev-ai'], displayName: 'Cubic', summary: 'Cubic review service.', externalService: true },",
+        "  { id: 'copilot', aliases: [], label: 'GitHub Copilot' },",
+        "  { id: 'coderabbit', aliases: ['coderabbitai'], label: 'CodeRabbit' },",
+        "  { id: 'cubic', aliases: ['cubic-dev-ai'], label: 'Cubic' },",
         "]; }",
+        "",
+      ].join("\n")
+    );
+  }
+  if (component.name === "@tjalve/aiq") {
+    await writeFile(
+      path.join(componentRoot, "config.js"),
+      [
+        "export const aiqStageMetadata = Object.freeze([",
+        "  Object.freeze({ description: 'Run unit tests.', id: 'unit', index: 4, refactorDriving: false }),",
+        "]);",
+        "",
+      ].join("\n")
+    );
+  }
+  if (component.name === "@tjalve/aiu") {
+    await writeFile(
+      path.join(componentRoot, "index.js"),
+      [
+        "export const AIU_POST_ISSUE_SCOPES = Object.freeze(['ready', 'standard', 'custom']);",
         "",
       ].join("\n")
     );
@@ -480,10 +609,15 @@ async function createFakeComponentTarball(component, root, packDir) {
         name: component.name,
         version: component.version,
         type: "module",
-        ...(["@tjalve/aib", "@tjalve/aie"].includes(component.name) ? {
+        ...(["@tjalve/aib", "@tjalve/aie", "@tjalve/aiu"].includes(component.name) ? {
           main: "index.js",
           exports: {
             ".": "./index.js"
+          }
+        } : {}),
+        ...(component.name === "@tjalve/aiq" ? {
+          exports: {
+            "./config": "./config.js"
           }
         } : {}),
         bin: {

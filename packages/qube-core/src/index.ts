@@ -318,6 +318,7 @@ export type QubePathClassification =
 
 export interface QubeProductContract {
   readonly id: QubeProductId;
+  readonly displayName: string;
   readonly packageName: string;
   readonly commandName: string;
   readonly role: string;
@@ -683,6 +684,7 @@ export interface QubeRepoArtifactContract {
 export const qubeProductContracts = [
   {
     id: "bootstrap",
+    displayName: "Bootstrap",
     packageName: "@tjalve/aib",
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
@@ -691,6 +693,7 @@ export const qubeProductContracts = [
   },
   {
     id: "executor",
+    displayName: "Executor",
     packageName: "@tjalve/aie",
     commandName: "aie",
     role: "Execute issue-driven work through repository and review gates.",
@@ -699,6 +702,7 @@ export const qubeProductContracts = [
   },
   {
     id: "quality",
+    displayName: "Quality Control",
     packageName: "@tjalve/aiq",
     commandName: "aiq",
     role: "Evaluate code quality and package readiness across languages.",
@@ -707,6 +711,7 @@ export const qubeProductContracts = [
   },
   {
     id: "umpire",
+    displayName: "Umpire",
     packageName: "@tjalve/aiu",
     commandName: "aiu",
     role: "Coordinate safe agent continuation and host stop hooks.",

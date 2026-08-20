@@ -141,7 +141,7 @@ export function parseQubeInitConfig(value: unknown): QubeInitConfig {
         ...(review.harness === undefined ? {} : { harness: readNonEmptyString(review.harness, "QUBE config review.harness") }),
         ...(review.externalReviewers === undefined ? {} : { externalReviewers: readStringList(review.externalReviewers, "QUBE config review.externalReviewers") }),
         ...(review.publisher === undefined ? {} : { publisher: readChoice(review.publisher, QUBE_REVIEW_PUBLISHERS, "QUBE config review.publisher") }),
-        ...(review.models === undefined ? {} : { models: readStringList(review.models, "QUBE config review.models") }),
+        ...(review.models === undefined ? {} : { models: readStringList(review.models, "QUBE config review.models", true) }),
       }),
     }),
     ...(mcp?.optIn === undefined ? {} : { mcp: Object.freeze({ optIn: readBoolean(mcp.optIn, "QUBE config mcp.optIn") }) }),
@@ -255,7 +255,9 @@ export function resolveQubeInitConfig(input: {
         ? { externalReviewers: Object.freeze([...externalReviewers.value]) }
         : {}),
       publisher: reviewPublisher.value,
-      ...(reviewModels.value.length > 0 ? { models: Object.freeze([...reviewModels.value]) } : {}),
+      ...(reviewModels.value.length > 0 || reviewModels.source !== "default"
+        ? { models: Object.freeze([...reviewModels.value]) }
+        : {}),
     }),
     mcp: Object.freeze({ optIn: mcpOptIn.value }),
   });
@@ -482,9 +484,9 @@ function rejectUnknownKeys(record: Record<string, unknown>, allowed: readonly st
   if (unknown.length > 0) throw new TypeError(`${name} contains unsupported field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`);
 }
 
-function readStringList(value: unknown, name: string): readonly string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== "string" || item.trim() === "")) {
-    throw new TypeError(`${name} must be a non-empty string array.`);
+function readStringList(value: unknown, name: string, allowEmpty = false): readonly string[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new TypeError(`${name} must be ${allowEmpty ? "a" : "a non-empty"} string array.`);
   }
   return Object.freeze([...new Set(value.map((item) => (item as string).trim()))]);
 }

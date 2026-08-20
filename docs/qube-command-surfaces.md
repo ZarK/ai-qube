@@ -10,7 +10,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
 | `qube install` | Build a guided, supply-chain-safe QUBE install plan and optionally apply it. |
-| `qube init` | Initialize QUBE workspace setup by composing each installed component's init through its init capability contract. |
+| `qube init` | Guide repository setup, apply the complete QUBE system, and show how to start work. |
 | `qube doctor` | Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits. |
 | `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |
