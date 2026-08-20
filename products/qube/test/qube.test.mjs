@@ -3248,6 +3248,34 @@ describe("qube init orchestrator", () => {
     return index < 0 ? undefined : args[index + 1];
   }
 
+  it("fails closed when synchronous planning receives component-spanning init selections", () => {
+    const cases = [
+      ["--host", "codex,grok-build", "--work-provider", "gitlab", "--ci-provider", "jenkins"],
+      ["--quality-stage", "security", "--umpire-scope", "custom"],
+      ["--review-mode", "isolated", "--review-harness", "grok-build", "--review-publisher", "github-app", "--config-scope", "global"],
+    ];
+
+    for (const selections of cases) {
+      const planned = planQubeCli(["init", ".", ...selections, "--yes", "--dry-run"]);
+      assert.equal(planned.exitCode, 2);
+      assert.equal(planned.dispatch, undefined);
+      assert.equal(planned.stdout, "");
+      assert.match(planned.stderr, /synchronous planning API cannot resolve QUBE init across all components/);
+    }
+  });
+
+  it("does not infer init defaults or accept an ambiguous synchronous target", () => {
+    const defaultPlan = planQubeCli(["init", ".", "--yes", "--dry-run"]);
+    assert.equal(defaultPlan.exitCode, 2);
+    assert.equal(defaultPlan.dispatch, undefined);
+    assert.match(defaultPlan.stderr, /Use runQubeCli\(\) or the qube executable/);
+
+    const ambiguousTarget = planQubeCli(["init", "first", "second", "--yes", "--dry-run"]);
+    assert.equal(ambiguousTarget.exitCode, 2);
+    assert.equal(ambiguousTarget.dispatch, undefined);
+    assert.equal(ambiguousTarget.stderr, "QUBE init accepts at most one target directory.\n");
+  });
+
   it("publishes the focused init surface without optional components or free-text routing", () => {
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0, schema.stderr);

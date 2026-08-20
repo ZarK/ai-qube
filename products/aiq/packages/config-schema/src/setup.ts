@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -68,10 +68,14 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
     findAiqConfigFile(cwd),
     findAiqProgressFile(cwd),
   ]);
+  const configPath = existingConfigPath ?? path.join(repoRoot, aiqConfigFileNames[0]);
+  const progressPath = existingProgressPath ?? path.join(repoRoot, aiqProgressFileName);
+  await assertSafeSetupFiles(repoRoot, [configPath, progressPath]);
   const [loadedConfig, loadedProgress] = await Promise.all([
     loadAiqConfig(cwd),
     loadAiqProgress(cwd),
   ]);
+  await assertSafeSetupFiles(repoRoot, [configPath, progressPath]);
   const requestedStages = normalizeRequestedStages(options.stages ?? []);
   const desiredProgress =
     requestedStages.length === 0
@@ -84,8 +88,6 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
       : isCumulativeSelection(desiredProgress, resolvedStages)
         ? "cumulative"
         : "exact";
-  const configPath = existingConfigPath ?? path.join(repoRoot, aiqConfigFileNames[0]);
-  const progressPath = existingProgressPath ?? path.join(repoRoot, aiqProgressFileName);
   const configCustom =
     loadedConfig.config !== undefined &&
     Object.keys(loadedConfig.config).some((key) => key !== "version");
@@ -142,11 +144,14 @@ export async function applyAiqSetupPlan(plan: AiqSetupPlan): Promise<AiqSetupPla
       ? {}
       : { stages: plan.selection.requestedStages }),
   });
+  await assertSafeSetupFiles(refreshed.repoRoot, [refreshed.config.path, refreshed.progress.path]);
   if (refreshed.config.operation === "create") {
     await mkdir(path.dirname(refreshed.config.path), { recursive: true });
+    await assertSafeSetupFile(refreshed.repoRoot, refreshed.config.path);
     await writeFile(refreshed.config.path, `${JSON.stringify({ version: 1 }, null, 2)}\n`, "utf8");
   }
   if (refreshed.progress.operation !== "skip") {
+    await assertSafeSetupFile(refreshed.repoRoot, refreshed.progress.path);
     await saveAiqProgress(refreshed.progress.path, refreshed.progress.value);
   }
   return refreshed;
@@ -219,4 +224,66 @@ function cloneProgress(progress: AiqProgressState): AiqProgressState {
     order: [...progress.order],
     last_run: progress.last_run,
   };
+}
+
+async function assertSafeSetupFiles(repoRoot: string, filePaths: readonly string[]): Promise<void> {
+  await Promise.all(filePaths.map((filePath) => assertSafeSetupFile(repoRoot, filePath)));
+}
+
+async function assertSafeSetupFile(repoRoot: string, filePath: string): Promise<void> {
+  const relativePath = path.relative(repoRoot, filePath);
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(`Refusing to use an AIQ setup file outside the repository: ${filePath}.`);
+  }
+
+  const rootStatus = await readSetupPathStatus(repoRoot);
+  if (rootStatus === undefined || rootStatus.isSymbolicLink() || !rootStatus.isDirectory()) {
+    throw new Error(`Refusing to use an unsafe AIQ setup repository path: ${repoRoot}.`);
+  }
+
+  const segments = relativePath.split(path.sep).filter((segment) => segment.length > 0);
+  let currentPath = repoRoot;
+  for (const [index, segment] of segments.entries()) {
+    currentPath = path.join(currentPath, segment);
+    const status = await readSetupPathStatus(currentPath);
+    if (status === undefined) {
+      continue;
+    }
+    if (status.isSymbolicLink()) {
+      throw new Error(`Refusing to use an AIQ setup path through a symbolic link: ${currentPath}.`);
+    }
+
+    const isFile = index === segments.length - 1;
+    if (isFile ? !status.isFile() : !status.isDirectory()) {
+      throw new Error(
+        isFile
+          ? `Refusing to use a non-file AIQ setup path: ${currentPath}.`
+          : `Refusing to use a non-directory AIQ setup parent: ${currentPath}.`,
+      );
+    }
+  }
+}
+
+async function readSetupPathStatus(
+  filePath: string,
+): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw new Error(
+      `Failed to inspect AIQ setup path ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }

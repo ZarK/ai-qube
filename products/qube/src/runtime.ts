@@ -5594,7 +5594,7 @@ function planQubeInstall(args: readonly string[]): CliExecution {
   };
 }
 
-/** Minimal plan-only forward for non-async callers; the real multi-component orchestration runs only through the async qube init handler (dispatchInitChild), mirroring how the plan-only doctor branch forwards to a single component. */
+/** The synchronous API validates init syntax, then fails closed because only the async runtime can resolve and plan every component. */
 function planQubeInit(args: readonly string[], environment: CliEnvironment): CliExecution {
   const flags: Record<string, unknown> = {};
   const positional: string[] = [];
@@ -5660,19 +5660,16 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
     return validationError;
   }
 
-  const target = positional[0] ?? ".";
-  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
-  const toolTargets = resolveAieInitToolTargets(hosts);
-  const dispatchArgs = buildAieInitArgs(target, toolTargets[0], {
-    dryRun: flags["dry-run"] === true,
-    force: flags.force === true,
-    yes: flags.yes === true,
-    defaults: flags.defaults === true,
-    reviewMode: readOption<string>(flags, "review-mode"),
-    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
-    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined
-  });
-  return planQubeDispatch("aie", dispatchArgs, environment);
+  if (positional.length > 1) {
+    return { exitCode: 2, stdout: "", stderr: "QUBE init accepts at most one target directory.\n" };
+  }
+
+  void environment;
+  return {
+    exitCode: 2,
+    stdout: "",
+    stderr: "The synchronous planning API cannot resolve QUBE init across all components. Use runQubeCli() or the qube executable.\n"
+  };
 }
 
 function parseInitOptionToken(
