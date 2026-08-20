@@ -181,7 +181,9 @@ export async function runCli(
     try {
       parseArgs(["node", "aiq", ...normalizedHelpInput], io.cwd);
     } catch (error) {
-      io.stderr.write(`${formatError(error)}\n`);
+      const message = formatError(error);
+      if (isConfigJsonInput(normalizedHelpInput)) io.stdout.write(configJsonFailure(message));
+      else io.stderr.write(`${message}\n`);
       return 2;
     }
   }
@@ -228,7 +230,9 @@ async function runAiqRuntimeCommand(
   try {
     parsed = createParsedArgs(command, context);
   } catch (error) {
-    return { stderr: `${formatError(error)}\n`, exitCode: 2 };
+    const message = formatError(error);
+    if (command === "config" && context.flags.format === "json") return { stdout: configJsonFailure(message), exitCode: 2 };
+    return { stderr: `${message}\n`, exitCode: 2 };
   }
   if (streamsCommandOutput(parsed.command)) {
     const exitCode = await dispatchParsedCommand(parsed, io, options);
@@ -315,6 +319,7 @@ function createParsedArgs(
     typeof context.flags["set-stage"] === "number"
       ? readStageIndex(context.flags["set-stage"])
       : undefined;
+  const configStages = readConfigStages(context.flags.stages);
   const filesFrom = readOptionalString(context.flags["files-from"]);
   const layoutAffected = readOptionalString(context.flags["layout-affected"]);
   const layoutInspect = readOptionalString(context.flags["layout-inspect"]);
@@ -342,6 +347,7 @@ function createParsedArgs(
   };
   if (benchmarkCorpusRoot !== undefined) parsed.benchmarkCorpusRoot = benchmarkCorpusRoot;
   if (configSetStage !== undefined) parsed.configSetStage = configSetStage;
+  if (configStages !== undefined) parsed.configStages = configStages;
   if (filesFrom !== undefined) parsed.filesFrom = filesFrom;
   if (layoutAffected !== undefined) parsed.layoutAffected = layoutAffected;
   if (layoutInspect !== undefined) parsed.layoutInspect = layoutInspect;
@@ -371,6 +377,39 @@ function readSelectedStages(context: RuntimeCommandContext): StageId[] {
     stages.push(stage as StageId);
   }
   return stages;
+}
+
+function isConfigJsonInput(input: readonly string[]): boolean {
+  const formatIndex = input.indexOf("--format");
+  return input[0] === "config" && formatIndex >= 0 && input[formatIndex + 1] === "json";
+}
+
+function configJsonFailure(message: string): string {
+  return `${JSON.stringify({
+    ok: false,
+    command: "config",
+    error: message,
+    nextAction: "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
+  })}\n`;
+}
+
+function readConfigStages(value: unknown): StageId[] | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const stages = value
+    .split(",")
+    .map((stage) => stage.trim())
+    .filter((stage) => stage.length > 0);
+  if (stages.length === 0) {
+    throw new Error("--stages requires one or more comma-separated stage names.");
+  }
+  return stages.map((stage) => {
+    if (!stageIds.includes(stage as StageId)) {
+      throw new Error(`Unsupported stage: ${stage}`);
+    }
+    return stage as StageId;
+  });
 }
 
 function cliStageIds(): readonly StageId[] {
@@ -577,6 +616,7 @@ function flagConsumesNextValue(flag: string): boolean {
       "--profile",
       "--scenario",
       "--stage",
+      "--stages",
       "--tag",
       "--up-to",
     ].includes(flag)

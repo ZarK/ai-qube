@@ -67,7 +67,9 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
     ['component-label', values => { policy.componentLabels = splitList(values); }],
     ['ignored-automation-author', values => { policy.ignoredAutomationAuthors = splitList(values); }],
     ['quality-gate', values => { policy.gates = splitList(values).map(buildQualityGate); }],
-    ['review-agent', values => { policy.reviewAgents = splitList(values); }],
+    ['review-agent', values => { policy.reviewAgentSelections = splitList(values); }],
+    ['local-review-agent', values => { policy.localReviewAgentSelections = splitList(values); }],
+    ['review-model', values => { policy.reviewModelSelections = splitList(values); }],
   ];
   for (const [flag, assign] of lists) {
     const value = stringListFlag(context, flag);
@@ -89,15 +91,15 @@ function addReviewGuidePolicy(context: RuntimeCommandContext, policy: InitPolicy
     }
     policy.reviewMode = reviewMode;
   }
+  const isolatedReviewAgent = stringFlag(context, 'isolated-review-agent');
+  if (isolatedReviewAgent !== undefined) policy.isolatedReviewAgent = isolatedReviewAgent;
   const publisher = stringFlag(context, 'publisher');
   if (publisher !== undefined) {
     if (publisher !== 'user' && publisher !== 'github-app') {
       throw new Error('--publisher must be user or github-app.');
     }
-    if (publisher === 'github-app') {
-      throw new Error('--publisher github-app requires a complete GitHub App publisher. Run `aie review setup github-app` or adopt one with --from.');
-    }
-    policy.publisher = { mode: 'user' };
+    policy.publisherIntent = publisher;
+    if (publisher === 'user') policy.publisher = { mode: 'user' };
   }
 }
 
@@ -111,9 +113,18 @@ function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolic
   if (primaryHost === undefined && primaryModel === undefined && mechanical === undefined && exploration === undefined && synthesis === undefined && independent === undefined) {
     return;
   }
-  if (!primaryHost || !primaryModel || !isModelRoutingHost(primaryHost)) {
+  if (primaryHost !== undefined && !isModelRoutingHost(primaryHost)) {
+    throw new Error('--primary-host must be an installed host: codex, claude-code, opencode, grok-build, or cursor.');
+  }
+  const hasModelSelections = primaryModel !== undefined || mechanical !== undefined || exploration !== undefined || synthesis !== undefined || independent !== undefined;
+  if (primaryHost !== undefined && !hasModelSelections) {
+    policy.primaryHost = primaryHost;
+    return;
+  }
+  if (!primaryHost || !primaryModel) {
     throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, grok-build, or cursor.');
   }
+  policy.primaryHost = primaryHost;
   const installed = detectInstalledRoutingHostsOnPath();
   assertInstalledRoutingHost(primaryHost, installed);
   const parsedMechanical = parseOptionalHostModel(mechanical, 'route-mechanical-implementation', installed);

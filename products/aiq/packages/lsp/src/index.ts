@@ -264,7 +264,7 @@ export class AiqLspAdapter {
       ...(configuredStages === undefined
         ? progress === undefined
           ? {}
-          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+          : { stages: resolveAiqProgressStageIds(progress.progress) }
         : { stages: [...configuredStages] }),
       ...(this.profile === undefined ? {} : { profile: this.profile }),
       surface: "lsp",

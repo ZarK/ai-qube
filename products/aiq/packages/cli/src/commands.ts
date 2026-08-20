@@ -6,8 +6,10 @@ import { promisify } from "node:util";
 
 import { runBenchmarkSuite } from "@tjalve/aiq/benchmark";
 import {
+  applyAiqSetupPlan,
   initializeAiqProjectConfig,
   loadAiqProgress,
+  planAiqSetup,
   resolveAiqConfig,
   setAiqProgressStage,
 } from "@tjalve/aiq/config";
@@ -35,7 +37,7 @@ import {
   type DoctorCommandOutput,
   type SetupCommandOutput,
   formatBenchmarkOutput,
-  formatConfigInitOutput,
+  formatConfigSetupOutput,
   formatConfigOutput,
   formatConfigStageOutput,
   formatDoctorOutput,
@@ -121,11 +123,26 @@ export async function runConfigCommand(parsed: ParsedArgs, io: CliIo): Promise<n
       return 0;
     }
 
-    const result = await initializeAiqProjectConfig(io.cwd);
-    io.stdout.write(formatConfigInitOutput(parsed.format, result));
+    const plan = await planAiqSetup({
+      cwd: io.cwd,
+      dryRun: parsed.dryRun,
+      ...(parsed.configStages === undefined ? {} : { stages: parsed.configStages }),
+    });
+    const result = await applyAiqSetupPlan(plan);
+    io.stdout.write(formatConfigSetupOutput(parsed.format, result));
     return 0;
   } catch (error) {
-    io.stderr.write(`${formatError(error)}\n`);
+    const message = formatError(error);
+    if (parsed.format === "json") {
+      io.stdout.write(`${JSON.stringify({
+        ok: false,
+        command: "config",
+        error: message,
+        nextAction: "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
+      })}\n`);
+    } else {
+      io.stderr.write(`${message}\n`);
+    }
     return 2;
   }
 }

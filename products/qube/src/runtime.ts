@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, realpathSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,9 +12,8 @@ import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mut
 import { promptConfirm } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
-import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "./model_routing_local.js";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
-import { getAgentHostProfileSync } from "@tjalve/aie";
+import { getAgentHostProfileSync, listInitExternalReviewers } from "@tjalve/aie";
 import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 import { AGENT_HOST_IDS, qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
 
@@ -23,13 +23,29 @@ import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQ
 import {
   applyUmpireHostProbes,
   composeHostToolkitManifests,
-  createInitRecord,
+  defaultReviewSelection,
   formatHostToolkits,
   formatPlannedHostToolkits,
   probeHostToolkits,
-  writeInitRecord,
   type HostToolkitReport,
 } from "./host_toolkit.js";
+import {
+  QUBE_REVIEW_MODES,
+  QUBE_REVIEW_PUBLISHERS,
+  QUBE_UMPIRE_SCOPES,
+  configForQubeScope,
+  mergeQubeInitConfigs,
+  readQubeInitConfig,
+  repoQubeConfigPath,
+  resolveQubeInitConfig,
+  userQubeConfigPath,
+  writeQubeInitConfig,
+  type QubeExternalReviewer,
+  type QubeInitConfig,
+  type QubeReviewMode,
+  type QubeReviewPublisher,
+  type QubeUmpireScope,
+} from "./init_config.js";
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
@@ -101,8 +117,8 @@ const offlineFlag = defineFlag({
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
-type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
-type InstallCiProvider = "github" | "gitlab" | "jenkins" | "local";
+type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira";
+type InstallCiProvider = "github" | "gitlab" | "jenkins";
 type InstallLifecycleScripts = "disabled" | "review";
 type YesNo = "yes" | "no";
 
@@ -115,7 +131,6 @@ interface InstallSelections {
   readonly workProviders: readonly InstallWorkProvider[];
   readonly ciProvider: InstallCiProvider;
   readonly ciProviders: readonly InstallCiProvider[];
-  readonly withComponents: readonly string[];
   readonly lifecycleScripts: InstallLifecycleScripts;
   readonly docs: boolean;
   readonly reviewMode: InstallReviewMode;
@@ -472,12 +487,6 @@ const ciProviderChoices = defineInstallerChoiceGroup({
   defaultValue: "github",
   choices: discoveryChoices<InstallCiProvider>(executorCiProviders)
 });
-const optionalInitComponents = qubeComponents.filter(component => component.initCapability?.participatesByDefault === false);
-const withChoices: readonly InstallerChoice<string>[] = Object.freeze(optionalInitComponents.map(component => Object.freeze({
-  value: component.command,
-  label: component.summary,
-  description: `Also run ${component.command} ${component.initCapability?.command.join(" ")} from qube init.`
-})));
 const lifecycleChoices = defineInstallerChoiceGroup({
   name: "lifecycle scripts",
   message: "How should package lifecycle scripts be handled?",
@@ -587,11 +596,6 @@ const installCommand = defineCommand({
     defineFlag({
       name: "ci-provider",
       description: `Comma-separated CI providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
-      type: "string"
-    }),
-    defineFlag({
-      name: "with",
-      description: "Comma-separated optional components to also initialize: aib, aiq.",
       type: "string"
     }),
     defineFlag({
@@ -1009,50 +1013,55 @@ const initCommand = defineCommand({
       type: "string"
     }),
     defineFlag({
-      name: "with",
-      description: "Comma-separated optional components to also initialize: aib, aiq.",
-      type: "string"
-    }),
-    defineFlag({
       name: "mcp",
       description: "Opt in to host MCP wiring for exploratory reading. Default: off. Provider access stays on qube commands.",
-      type: "boolean"
+      type: "boolean",
+      negatable: true
     }),
     defineFlag({
-      name: "primary-host",
-      description: "Primary modelRouting host: codex, claude-code, opencode, grok-build, or cursor. Must be installed.",
-      type: "string"
+      name: "config-scope",
+      description: "Store QUBE setup choices for this repository or as user-global defaults. Repository values override global values.",
+      type: "option",
+      options: ["repo", "global"]
     }),
     defineFlag({
-      name: "primary-model",
-      description: "Primary model identifier. Delegated routes fall back to this model.",
-      type: "string"
+      name: "continuous-shipping",
+      description: "Let QUBE complete the development cycle and continue with the next Ready issue. Default: on.",
+      type: "boolean",
+      negatable: true
     }),
     defineFlag({
-      name: "route-mechanical-implementation",
-      description: "Preferred mechanical-implementation host:model, for example grok-build:grok-4.5.",
-      type: "string"
+      name: "umpire-scope",
+      description: "Choose what Umpire may do after the current issue: Ready issues, the standard quality set, or a configured custom set.",
+      type: "option",
+      options: [...QUBE_UMPIRE_SCOPES]
     }),
     defineFlag({
-      name: "route-exploration-investigation",
-      description: "Preferred exploration-investigation host:model.",
-      type: "string"
-    }),
-    defineFlag({
-      name: "route-synthesis-judgment",
-      description: "Preferred synthesis-judgment host:model.",
-      type: "string"
-    }),
-    defineFlag({
-      name: "route-independent-review",
-      description: "reviewModels tier for independent-review: review, economy, or synthesis.",
+      name: "quality-stage",
+      description: "Comma-separated Quality stages. One stage includes all earlier stages; multiple stages run exactly those stages.",
       type: "string"
     }),
     defineFlag({
       name: "review-mode",
-      description: "Review mode forwarded to Executor init.",
+      description: "Choose review cost source: an external reviewer, subagents in the primary harness, or isolated agents in another harness.",
       type: "option",
-      options: ["isolated", "host", "external"]
+      options: [...QUBE_REVIEW_MODES]
+    }),
+    defineFlag({
+      name: "review-harness",
+      description: "Agent harness that runs isolated review. It must differ from the primary harness and support isolated review.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "external-reviewer",
+      description: "Comma-separated external reviewers. Use one or more of: coderabbit, copilot, cubic.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "review-publisher",
+      description: "Publish with the current GitHub account or record QUBE Reviewer App setup as a follow-up.",
+      type: "option",
+      options: [...QUBE_REVIEW_PUBLISHERS]
     }),
     defineFlag({
       name: "ui-audit-evidence-root",
@@ -1068,7 +1077,7 @@ const initCommand = defineCommand({
   ],
   examples: [
     { description: "Initialize the current directory for Claude Code with GitHub providers.", command: "qube init . --host claude-code --work-provider github --ci-provider github --yes" },
-    { description: "Initialize multiple hosts and also scaffold Bootstrap planning.", command: "qube init . --host claude-code,codex --with aib --yes --json" },
+    { description: "Initialize all components for multiple agent harnesses.", command: "qube init . --host claude-code,codex --yes --json" },
     { description: "Record an explicit MCP opt-in. This does not install provider MCP servers.", command: "qube init . --host claude-code --mcp --yes --dry-run --json" }
   ],
   interactions: {
@@ -1628,6 +1637,7 @@ interface QubeInitChildResult {
   readonly json?: unknown;
   readonly stderr?: string;
   readonly error?: string;
+  readonly nextAction?: string;
 }
 
 function normalizeInitQuestionState(value: unknown): unknown {
@@ -1659,11 +1669,19 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   try {
     parsed = JSON.parse(captured.stdout);
   } catch {
-    return { component: componentName, args, ok: false, exitCode: captured.exitCode === 0 ? 1 : captured.exitCode, stderr: captured.stderr, error: `${componentName} did not return a single JSON envelope.` };
+    return {
+      component: componentName,
+      args,
+      ok: false,
+      exitCode: captured.exitCode === 0 ? 1 : captured.exitCode,
+      stderr: captured.stderr,
+      error: captured.stderr.trim() || `${componentName} did not return a single JSON envelope.`,
+    };
   }
   const normalized = normalizeInitQuestionState(parsed);
   const isEnvelope = normalized !== null && typeof normalized === "object" && !Array.isArray(normalized);
   const ok = isEnvelope && (normalized as { ok?: unknown }).ok === true && captured.exitCode === 0;
+  const failure = ok ? undefined : exactChildFailure(componentName, args, normalized, captured.stderr, captured.exitCode);
   return {
     component: componentName,
     args,
@@ -1671,23 +1689,25 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
     exitCode: captured.exitCode,
     ...(isEnvelope ? { json: normalized } : {}),
     stderr: captured.stderr,
-    ...(ok ? {} : { error: `${componentName} ${args[0] ?? ""} did not report success.`.trim() })
+    ...(failure ? { error: failure.error, ...(failure.nextAction ? { nextAction: failure.nextAction } : {}) } : {})
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly primaryModel?: string; readonly mechanical?: string; readonly exploration?: string; readonly synthesis?: string; readonly independentReview?: string; readonly reviewMode?: string; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
-  if (options.workProvider && options.workProvider !== "local") args.push("--work-provider", options.workProvider);
+  if (options.workProvider) args.push("--work-provider", options.workProvider);
   if (options.reviewProvider) args.push("--review-provider", options.reviewProvider);
-  if (options.ciProvider && options.ciProvider !== "local") args.push("--ci-provider", options.ciProvider);
+  if (options.ciProvider) args.push("--ci-provider", options.ciProvider);
   if (options.primaryHost) args.push("--primary-host", options.primaryHost);
-  if (options.primaryModel) args.push("--primary-model", options.primaryModel);
-  if (options.mechanical) args.push("--route-mechanical-implementation", options.mechanical);
-  if (options.exploration) args.push("--route-exploration-investigation", options.exploration);
-  if (options.synthesis) args.push("--route-synthesis-judgment", options.synthesis);
-  if (options.independentReview) args.push("--route-independent-review", options.independentReview);
   if (options.reviewMode) args.push("--review-mode", options.reviewMode);
+  if (options.reviewAgents && options.reviewAgents.length > 0) args.push("--review-agent", options.reviewAgents.join(","));
+  if (options.localReviewAgents && options.localReviewAgents.length > 0) args.push("--local-review-agent", options.localReviewAgents.join(","));
+  if (options.isolatedReviewAgent) args.push("--isolated-review-agent", options.isolatedReviewAgent);
+  if (options.reviewModels && options.reviewModels.length > 0) args.push("--review-model", options.reviewModels.join(","));
+  if (options.publisher) args.push("--publisher", options.publisher);
+  if (options.continuousShipping === true) args.push("--autonomous");
+  if (options.continuousShipping === false) args.push("--no-autonomous");
   if (options.uiAuditEvidenceRoot) args.push("--ui-audit-evidence-root", options.uiAuditEvidenceRoot);
   if (options.creditWarning === true) args.push("--credit-warning");
   if (options.creditWarning === false) args.push("--no-credit-warning");
@@ -1698,159 +1718,620 @@ function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options
   return args;
 }
 
-function buildAiuInitArgs(tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean }): readonly string[] {
+function buildAiuInitArgs(tool: string, options: { readonly dryRun: boolean; readonly force: boolean; readonly scope: QubeUmpireScope }): readonly string[] {
   const args = ["init", "--json"];
-  if (tool) args.push("--tool", tool);
+  args.push("--tool", tool, "--post-issue-scope", options.scope);
   if (options.dryRun) args.push("--dry-run");
   if (options.force) args.push("--force");
   return args;
 }
 
+type QubeInitComponentId = "aie" | "aib" | "aiq" | "aiu" | "labels";
+
+interface QubeInitInvocation {
+  readonly id: QubeInitComponentId;
+  readonly component: "aie" | "aib" | "aiq" | "aiu";
+  readonly args: readonly string[];
+  readonly cwd: string;
+}
+
+function homeDirectory(environment: CliEnvironment): string {
+  return environment.env.USERPROFILE ?? environment.env.HOME ?? homedir();
+}
+
+function resolveInitTarget(cwd: string, target: string): string {
+  const selected = path.resolve(cwd, target);
+  const probe = spawnSync("git", ["-C", selected, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (probe.status !== 0) return selected;
+  const repositoryRoot = probe.stdout.trim();
+  return repositoryRoot === "" ? selected : path.resolve(repositoryRoot);
+}
+
+function detectCiProviders(target: string): readonly InstallCiProvider[] {
+  const detected: InstallCiProvider[] = [];
+  const workflowDirectory = path.join(target, ".github", "workflows");
+  try {
+    if (existsSync(workflowDirectory) && statSync(workflowDirectory).isDirectory()) {
+      const hasWorkflow = readdirSync(workflowDirectory).some(name => /\.ya?ml$/i.test(name));
+      if (hasWorkflow) detected.push("github");
+    }
+  } catch {
+    // An unreadable marker is ambiguous and must not become a detected choice.
+  }
+  if (existsSync(path.join(target, ".gitlab-ci.yml"))) detected.push("gitlab");
+  if (existsSync(path.join(target, "Jenkinsfile"))) detected.push("jenkins");
+  return Object.freeze([...new Set(detected)]);
+}
+
+function initConfigError(source: "user-global" | "repository", result: ReturnType<typeof readQubeInitConfig>): string | undefined {
+  return result.status === "invalid"
+    ? `The ${source} QUBE config is invalid: ${result.error ?? "unknown validation error"}`
+    : undefined;
+}
+
+function initExplicitConfig(flags: Readonly<Record<string, unknown>>, interactiveAnswers: {
+  readonly hosts?: readonly string[];
+  readonly workProviders?: readonly string[];
+  readonly ciProviders?: readonly string[];
+} = {}): QubeInitConfig {
+  const explicitReviewMode = readOption<QubeReviewMode>(flags, "review-mode");
+  const reviewHarness = readOption<string>(flags, "review-harness");
+  const externalReviewers = readOptionList<QubeExternalReviewer>(flags, "external-reviewer");
+  const publisher = readOption<QubeReviewPublisher>(flags, "review-publisher");
+  const config: QubeInitConfig = {
+    version: 1,
+    ...(interactiveAnswers.hosts ? { hosts: interactiveAnswers.hosts } : readOptionList<string>(flags, "host") ? { hosts: readOptionList<string>(flags, "host") } : {}),
+    ...(interactiveAnswers.workProviders ? { workProviders: interactiveAnswers.workProviders } : readOptionList<string>(flags, "work-provider") ? { workProviders: readOptionList<string>(flags, "work-provider") } : {}),
+    ...(interactiveAnswers.ciProviders ? { ciProviders: interactiveAnswers.ciProviders } : readOptionList<string>(flags, "ci-provider") ? { ciProviders: readOptionList<string>(flags, "ci-provider") } : {}),
+    ...(typeof flags["continuous-shipping"] === "boolean" ? { continuousShipping: flags["continuous-shipping"] as boolean } : {}),
+    ...(typeof flags["umpire-scope"] === "string" ? { umpire: { scope: flags["umpire-scope"] as QubeUmpireScope } } : {}),
+    ...(readOptionList<string>(flags, "quality-stage") ? { quality: { stages: readOptionList<string>(flags, "quality-stage")! } } : {}),
+    ...(explicitReviewMode || reviewHarness || externalReviewers || publisher ? {
+      review: {
+        ...(explicitReviewMode ? { mode: explicitReviewMode } : {}),
+        ...(reviewHarness ? { harness: reviewHarness } : {}),
+        ...(externalReviewers ? { externalReviewers } : {}),
+        ...(publisher ? { publisher } : {}),
+      },
+    } : {}),
+    ...(typeof flags.mcp === "boolean" ? { mcp: { optIn: flags.mcp } } : {}),
+  };
+  return Object.freeze(config);
+}
+
+function resolveExternalReviewerIds(
+  requested: readonly string[],
+  registered: readonly { readonly id: string; readonly aliases: readonly string[] }[],
+): { readonly values: readonly string[]; readonly error?: string } {
+  const values: string[] = [];
+  for (const raw of requested) {
+    const normalized = raw.trim().replace(/^@/, "").toLowerCase();
+    const match = registered.find(reviewer => reviewer.id === normalized || reviewer.aliases.some(alias => alias.toLowerCase() === normalized));
+    if (!match) {
+      const available = registered.map(reviewer => reviewer.id).join(", ");
+      return { values: Object.freeze(values), error: `External reviewer ${raw} is not registered for GitHub setup.${available === "" ? "" : ` Use one or more of: ${available}.`}` };
+    }
+    if (!values.includes(match.id)) values.push(match.id);
+  }
+  if (values.length === 0) return { values: Object.freeze([]), error: "External review requires a registered GitHub reviewer service." };
+  return { values: Object.freeze(values) };
+}
+
+function childRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function directText(value: unknown, keys: readonly string[]): string | undefined {
+  const record = childRecord(value);
+  if (!record) return undefined;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate.trim();
+    if (Array.isArray(candidate)) {
+      const messages = candidate.filter(item => typeof item === "string" && item.trim() !== "");
+      if (messages.length > 0) return messages.join("; ");
+    }
+  }
+  return undefined;
+}
+
+function exactChildFailure(component: string, args: readonly string[], json: unknown, stderr: string, exitCode: number): { readonly error: string; readonly nextAction?: string } {
+  const record = childRecord(json);
+  const nestedEnvelopes = record ? [record.error, record.init, record.setup, record.result] : [];
+  const stderrText = stderr.trim() || undefined;
+  const error = directText(record, ["error", "errors", "message", "likelyCause"])
+    ?? nestedEnvelopes.map(value => directText(value, ["error", "errors", "message", "likelyCause"])).find(Boolean)
+    ?? stderrText
+    ?? directText(record, ["reason"])
+    ?? `${component} ${args[0] ?? "init"} failed with exit code ${exitCode || 1}.`;
+  const nextAction = directText(record, ["nextAction", "nextCommand", "recoveryAction", "suggestedNextAction"])
+    ?? nestedEnvelopes.map(value => directText(value, ["nextAction", "nextCommand", "recoveryAction", "suggestedNextAction"])).find(Boolean);
+  return { error, ...(nextAction ? { nextAction } : {}) };
+}
+
+function childPlanActions(value: unknown): readonly unknown[] {
+  const record = childRecord(value);
+  if (!record) return Object.freeze([]);
+  if (Array.isArray(record.actions)) return Object.freeze(record.actions.map(summarizePlanAction));
+  for (const key of ["init", "setup", "plan"]) {
+    const nested = childRecord(record[key]);
+    if (nested && Array.isArray(nested.actions)) return Object.freeze(nested.actions.map(summarizePlanAction));
+    if (key === "init" && nested) {
+      const actions = [nested.config, ...(Array.isArray(nested.files) ? nested.files : [])].filter(item => item !== undefined);
+      if (actions.length > 0) return Object.freeze(actions.map(summarizePlanAction));
+    }
+  }
+  const setup = childRecord(record.setup);
+  if (setup) {
+    return Object.freeze([setup.config, setup.progress].filter(value => value !== undefined).map(summarizePlanAction));
+  }
+  return Object.freeze([]);
+}
+
+function summarizePlanAction(value: unknown): unknown {
+  const record = childRecord(value);
+  if (!record) return value;
+  return Object.freeze(Object.fromEntries(Object.entries(record).filter(([key]) => !["content", "hostProfiles"].includes(key))));
+}
+
+function childPostInitActions(value: unknown): readonly unknown[] {
+  const record = childRecord(value);
+  if (!record) return Object.freeze([]);
+  if (Array.isArray(record.postInitActions)) return Object.freeze([...record.postInitActions]);
+  for (const key of ["init", "setup", "plan"]) {
+    const actions = childPostInitActions(record[key]);
+    if (actions.length > 0) return actions;
+  }
+  return Object.freeze([]);
+}
+
+function childProviderActions(value: unknown): readonly unknown[] {
+  const record = childRecord(value);
+  if (!record) return Object.freeze([]);
+  if (Array.isArray(record.providerActions)) return Object.freeze([...record.providerActions]);
+  for (const key of ["init", "setup", "plan"]) {
+    const actions = childProviderActions(record[key]);
+    if (actions.length > 0) return actions;
+  }
+  return Object.freeze([]);
+}
+
+function childChanged(value: unknown): boolean {
+  const record = childRecord(value);
+  if (!record) return false;
+  if (record.mutated === true || record.changed === true || record.applied === true) return true;
+  if (Array.isArray(record.completedChanges) && record.completedChanges.length > 0) return true;
+  for (const action of childPlanActions(record)) {
+    const actionRecord = childRecord(action);
+    const operation = actionRecord?.operation;
+    if (typeof operation === "string" && !["skip", "skipped", "unchanged", "none"].includes(operation)) return true;
+  }
+  for (const key of ["init", "setup", "apply", "result"]) {
+    if (childChanged(record[key])) return true;
+  }
+  return false;
+}
+
+function childPlanMetadata(value: unknown): Record<string, unknown> {
+  const setup = childRecord(childRecord(value)?.setup);
+  if (!setup) return {};
+  return {
+    ...(childRecord(setup.selection) ? { selection: setup.selection } : {}),
+    ...(Array.isArray(setup.stageMetadata) ? { stageMetadata: setup.stageMetadata } : {}),
+  };
+}
+
+function planRow(invocation: QubeInitInvocation, result: QubeInitChildResult): Record<string, unknown> {
+  return {
+    id: invocation.id,
+    component: invocation.component,
+    args: invocation.args,
+    cwd: invocation.cwd,
+    status: result.ok ? "ready" : "failed",
+    actions: childPlanActions(result.json),
+    ...childPlanMetadata(result.json),
+    ...(result.ok ? {} : { error: result.error, ...(result.nextAction ? { nextAction: result.nextAction } : {}) }),
+  };
+}
+
+function qubeConfigOperation(
+  current: ReturnType<typeof readQubeInitConfig>,
+  desired: QubeInitConfig,
+  skipEmptyRepo: boolean,
+): "create" | "update" | "skip" {
+  if (skipEmptyRepo && current.status === "missing" && Object.keys(desired).length === 1) return "skip";
+  if (current.status === "missing") return "create";
+  if (current.config && JSON.stringify(current.config) === JSON.stringify(desired)) return "skip";
+  return "update";
+}
+
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  const target = readString(args.target) ?? ".";
-  const targetPath = path.resolve(environment.cwd, target);
+  const targetPath = resolveInitTarget(environment.cwd, readString(args.target) ?? ".");
   const json = flags.json === true;
   const dryRun = flags["dry-run"] === true;
   const force = flags.force === true;
-  const yes = flags.yes === true;
-  const defaults = flags.defaults === true;
-  const mcpOptIn = flags.mcp === true;
-
-  const routingFlagError = validateModelRoutingFlags(flags);
-  if (routingFlagError) {
+  const useDefaults = flags.yes === true || flags.defaults === true;
+  const configScope = readOption<"repo" | "global">(flags, "config-scope") ?? "repo";
+  const globalConfigPath = userQubeConfigPath(homeDirectory(environment));
+  const repositoryConfigPath = repoQubeConfigPath(targetPath);
+  const globalConfig = readQubeInitConfig(globalConfigPath);
+  const repositoryConfig = readQubeInitConfig(repositoryConfigPath);
+  const configError = initConfigError("user-global", globalConfig) ?? initConfigError("repository", repositoryConfig);
+  if (configError) {
+    const payload = { ok: false, command: "init", error: configError };
     return json
-      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: routingFlagError })}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${routingFlagError}\n` };
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${configError}\n` };
   }
-  const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags, initCommand);
-  const guideError = invalidInstallGuideFlag({
-    ...flags,
-    host: hosts.join(","),
-    yes: yes || defaults
-  });
-  if (guideError) {
+
+  const inherited = mergeQubeInitConfigs(globalConfig.config, repositoryConfig.config);
+  const choiceFlags = { ...flags, yes: useDefaults };
+  const hostSeed = readOptionList<InstallHost>(flags, "host") ?? inherited.hosts as readonly InstallHost[] | undefined;
+  const hosts = await resolveInstallChoices(hostChoices, hostSeed, choiceFlags, initCommand);
+  const workSeed = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? inherited.workProviders as readonly InstallWorkProvider[] | undefined;
+  const workProviders = await resolveInstallChoices(workProviderChoices, workSeed, choiceFlags, initCommand);
+  const detectedCi = detectCiProviders(targetPath);
+  const explicitCi = readOptionList<InstallCiProvider>(flags, "ci-provider");
+  if (useDefaults && !explicitCi && !inherited.ciProviders && detectedCi.length !== 1) {
+    const detail = detectedCi.length === 0 ? "no CI provider was detected" : `multiple CI providers were detected: ${detectedCi.join(", ")}`;
+    const error = `Automated checks (CI) are ambiguous because ${detail}. Pass --ci-provider with the provider that runs required checks.`;
     return json
-      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: guideError })}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${guideError}\n` };
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${error}\n` };
   }
-  const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags, initCommand);
-  const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags, initCommand);
-  const withComponents = await promptInstallerChoices({
-    command: initCommand,
-    promptName: "optional components",
-    message: "Which optional components should also initialize?",
-    choices: withChoices,
-    required: false,
-    value: readOptionList<string>(flags, "with"),
-    defaultValue: [],
-    jsonMode: json,
-    yes: yes || defaults
+  const ciSeed = explicitCi
+    ?? inherited.ciProviders as readonly InstallCiProvider[] | undefined
+    ?? (detectedCi.length === 1 ? detectedCi : undefined);
+  const ciProviders = await resolveInstallChoices(ciProviderChoices, ciSeed, choiceFlags, initCommand);
+  const interactive = !useDefaults;
+  const explicit = initExplicitConfig(flags, {
+    ...(readOptionList(flags, "host") || (!inherited.hosts && interactive) ? { hosts } : {}),
+    ...(readOptionList(flags, "work-provider") || (!inherited.workProviders && interactive) ? { workProviders } : {}),
+    ...(readOptionList(flags, "ci-provider") || (!inherited.ciProviders && detectedCi.length !== 1 && interactive) ? { ciProviders } : {}),
   });
-
-  const routingSelections = await collectModelRoutingSelections(flags);
-  const primaryModel = routingSelections.primaryModel;
-  const primaryHost = primaryModel ? routingSelections.primaryHost ?? hosts[0] : undefined;
-  const aieToolTargets = resolveAieInitToolTargets(hosts);
-  const aiuToolTargets = resolveAiuInitToolTargets(hosts);
-  const reviewProvider = workProviders[0] === "gitlab" ? "gitlab" : "github";
-  const aieOptions = {
-    dryRun,
-    force,
-    yes,
-    defaults,
-    workProvider: workProviders[0],
-    reviewProvider,
-    ciProvider: ciProviders[0],
-    primaryHost,
-    primaryModel,
-    mechanical: routingSelections.mechanical,
-    exploration: routingSelections.exploration,
-    synthesis: routingSelections.synthesis,
-    independentReview: routingSelections.independentReview,
-    reviewMode: readOption<string>(flags, "review-mode"),
-    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
-    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined,
-  };
-  const aiuOptions = { dryRun, force };
-  const aieRuns = aieToolTargets.length === 0
-    ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]
-    : aieToolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
-  const withRuns: Array<Promise<QubeInitChildResult>> = [];
-  if (withComponents.includes("aiq")) {
-    withRuns.push(dispatchInitChild("aiq", ["setup", "--format", "json"], environment));
+  const registeredReviewers = await listInitExternalReviewers();
+  const recommendedReviewer = registeredReviewers.find(reviewer => reviewer.id === "coderabbit") ?? registeredReviewers[0];
+  const defaultReview = defaultReviewSelection(hosts);
+  const defaultsConfig = Object.freeze({
+    version: 1,
+    hosts: Object.freeze(["codex"]),
+    workProviders: Object.freeze(["github"]),
+    ciProviders: Object.freeze(["github"]),
+    continuousShipping: true,
+    umpire: Object.freeze({ scope: "ready" as const }),
+    quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
+    review: Object.freeze({
+      mode: defaultReview.mode,
+      ...(defaultReview.harness ? { harness: defaultReview.harness } : {}),
+      externalReviewers: Object.freeze(recommendedReviewer ? [recommendedReviewer.id] : []),
+      publisher: "user" as const,
+    }),
+    mcp: Object.freeze({ optIn: false }),
+  });
+  const detectedConfig: QubeInitConfig = Object.freeze({
+    version: 1,
+    ...(detectedCi.length === 1 ? { ciProviders: detectedCi } : {}),
+  });
+  const baseResolved = resolveQubeInitConfig({
+    globalConfig: globalConfig.config,
+    repoConfig: repositoryConfig.config,
+    detected: detectedConfig,
+    explicit,
+    defaults: defaultsConfig,
+  });
+  let resolved = baseResolved;
+  if (baseResolved.config.review.mode === "external") {
+    const reviewerSelection = resolveExternalReviewerIds(baseResolved.config.review.externalReviewers ?? [], registeredReviewers);
+    if (reviewerSelection.error) {
+      return json
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: reviewerSelection.error })}\n` }
+        : { exitCode: 2, stdout: "", stderr: `${reviewerSelection.error}\n` };
+    }
+    resolved = Object.freeze({
+      ...baseResolved,
+      config: Object.freeze({
+        ...baseResolved.config,
+        review: Object.freeze({ ...baseResolved.config.review, externalReviewers: reviewerSelection.values }),
+      }),
+    });
+  }
+  const setup = resolved.config;
+  const reviewProvider = setup.workProviders[0] === "gitlab" ? "gitlab" : "github";
+  const primaryHarness = setup.hosts[0]!;
+  const reviewHarness = setup.review.harness;
+  const requestedReviewHarness = explicit.review?.harness;
+  const requestedExternalReviewers = explicit.review?.externalReviewers;
+  let reviewError: string | undefined;
+  if (setup.review.mode === "external" && reviewProvider !== "github") {
+    reviewError = `External reviewer services are not registered for the ${reviewProvider} review provider.`;
+  } else if (setup.review.mode === "external" && requestedReviewHarness) {
+    reviewError = "External review does not use an agent harness.";
+  } else if (setup.review.mode !== "external" && requestedExternalReviewers && requestedExternalReviewers.length > 0) {
+    reviewError = "External reviewer services require external review mode.";
+  } else if (setup.review.mode === "host") {
+    if (requestedReviewHarness && requestedReviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
+    else if (reviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
+    else if (getAgentHostProfileSync(primaryHarness as AgentHostId).review.local.support === "unsupported") reviewError = `${primaryHarness} does not support native review subagents.`;
+  } else if (setup.review.mode === "isolated") {
+    if (!reviewHarness) reviewError = "Isolated review requires another selected agent harness.";
+    else if (reviewHarness === primaryHarness) reviewError = "Isolated review must use an agent harness other than the primary harness.";
+    else if (!setup.hosts.includes(reviewHarness)) reviewError = `Isolated review harness ${reviewHarness} is not in the selected agent harnesses.`;
+    else if (getAgentHostProfileSync(reviewHarness as AgentHostId).review.isolated.support === "unsupported") reviewError = `${reviewHarness} does not support isolated review.`;
+  }
+  if (reviewError) {
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: reviewError })}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${reviewError}\n` };
+  }
+  if (setup.review.publisher === "github-app" && reviewProvider !== "github") {
+    const error = "QUBE Reviewer App publishing requires the GitHub review provider.";
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${error}\n` };
   }
 
-  // Umpire plans the complete selected harness set in one apply. Separate child
-  // runs would compete for the same config file and make later hosts conflict.
-  const aiu: QubeInitChildResult[] = [];
-  for (const tool of aiuToolTargets) {
-    aiu.push(await dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment, targetPath));
+  const selectedConfigPath = configScope === "global" ? globalConfigPath : repositoryConfigPath;
+  const selectedConfigRead = configScope === "global" ? globalConfig : repositoryConfig;
+  const selectedConfig = configForQubeScope(resolved, configScope, globalConfig.config);
+  const configOperation = qubeConfigOperation(selectedConfigRead, selectedConfig, configScope === "repo");
+  if (configScope === "global") {
+    const projectedMerged = mergeQubeInitConfigs(selectedConfig, repositoryConfig.config);
+    const projectedHosts = projectedMerged.hosts && projectedMerged.hosts.length > 0
+      ? projectedMerged.hosts
+      : defaultsConfig.hosts;
+    const projectedReview = defaultReviewSelection(projectedHosts);
+    const projectedDefaults = Object.freeze({
+      ...defaultsConfig,
+      review: Object.freeze({
+        mode: projectedReview.mode,
+        ...(projectedReview.harness ? { harness: projectedReview.harness } : {}),
+        externalReviewers: defaultsConfig.review.externalReviewers,
+        publisher: defaultsConfig.review.publisher,
+      }),
+    });
+    const projectedResolved = resolveQubeInitConfig({
+      globalConfig: selectedConfig,
+      repoConfig: repositoryConfig.config,
+      detected: detectedConfig,
+      defaults: projectedDefaults,
+    });
+    let projectedSetup = projectedResolved.config;
+    if (projectedSetup.review.mode === "external") {
+      const reviewerSelection = resolveExternalReviewerIds(projectedSetup.review.externalReviewers ?? [], registeredReviewers);
+      if (!reviewerSelection.error) {
+        projectedSetup = Object.freeze({
+          ...projectedSetup,
+          review: Object.freeze({ ...projectedSetup.review, externalReviewers: reviewerSelection.values }),
+        });
+      }
+    }
+    if (JSON.stringify(projectedSetup) !== JSON.stringify(setup)) {
+      const error = "Repository QUBE configuration overrides the requested global setup. Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.";
+      return json
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
+        : { exitCode: 2, stdout: "", stderr: `${error}\n` };
+    }
   }
 
-  const [aie, withResults] = await Promise.all([
-    Promise.all(aieRuns),
-    Promise.all(withRuns)
-  ]);
-
-  // Bootstrap owns a separate managed instruction section. Run it after
-  // Executor so concurrent writes cannot lose either managed section.
-  const aib = withComponents.includes("aib")
-    ? [await dispatchInitChild("aib", [
+  const aieTool = resolveAieInitToolTargets(setup.hosts as readonly InstallHost[])[0];
+  const aiuTool = resolveAiuInitToolTargets(setup.hosts as readonly InstallHost[])[0] ?? "none";
+  const buildInvocations = (planOnly: boolean): readonly QubeInitInvocation[] => Object.freeze([
+    {
+      id: "aie",
+      component: "aie",
+      cwd: targetPath,
+      args: buildAieInitArgs(targetPath, aieTool, {
+        dryRun: planOnly,
+        force,
+        yes: true,
+        defaults: false,
+        workProvider: setup.workProviders[0],
+        reviewProvider,
+        ciProvider: setup.ciProviders[0],
+        primaryHost: primaryHarness,
+        reviewMode: setup.review.mode,
+        reviewAgents: setup.review.mode === "external" ? setup.review.externalReviewers : undefined,
+        localReviewAgents: setup.review.mode === "host" ? [primaryHarness] : undefined,
+        isolatedReviewAgent: setup.review.mode === "isolated" ? reviewHarness : undefined,
+        reviewModels: setup.review.models,
+        publisher: reviewProvider === "github" ? setup.review.publisher : undefined,
+        continuousShipping: setup.continuousShipping,
+        uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
+        creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined,
+      }),
+    },
+    {
+      id: "aib",
+      component: "aib",
+      cwd: targetPath,
+      args: Object.freeze([
         "init",
-        target,
+        targetPath,
         "--json",
         "--agent",
-        hosts[0],
+        setup.hosts[0],
         "--surfaces",
-        hosts.join(","),
-        ...(dryRun ? ["--dry-run"] : [])
-      ], environment)]
-    : [];
-  const componentResults = [...aib, ...withResults];
-  const allRuns = [...aie, ...aiu, ...componentResults];
-  const ok = allRuns.every(run => run.ok);
-  const exitCode = ok ? 0 : Math.max(1, ...allRuns.filter(run => !run.ok).map(run => run.exitCode || 1));
-  const selections = {
-    target,
-    hosts,
-    workProviders,
-    ciProviders,
-    activeWorkProvider: workProviders[0],
-    activeCiProvider: ciProviders[0],
-    withComponents,
-    mcp: mcpOptIn
+        setup.hosts.join(","),
+        ...(planOnly ? ["--dry-run"] : []),
+      ]),
+    },
+    {
+      id: "aiq",
+      component: "aiq",
+      cwd: targetPath,
+      args: Object.freeze([
+        "config",
+        "--stages",
+        setup.quality.stages.join(","),
+        "--format",
+        "json",
+        ...(planOnly ? ["--dry-run"] : []),
+      ]),
+    },
+    {
+      id: "aiu",
+      component: "aiu",
+      cwd: targetPath,
+      args: buildAiuInitArgs(aiuTool, { dryRun: planOnly, force, scope: setup.umpire.scope }),
+    },
+  ]);
+
+  const planInvocations = buildInvocations(true);
+  const planResults = await Promise.all(planInvocations.map(invocation =>
+    dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd)));
+  const firstPlanFailureIndex = planResults.findIndex(result => !result.ok);
+  const postInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
+  const providerActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
+  const plan = {
+    target: targetPath,
+    resolved: setup,
+    sources: resolved.sources,
+    deviations: resolved.deviations,
+    components: planInvocations.map((invocation, index) => planRow(invocation, planResults[index]!)),
+    providerActions,
+    postInitActions,
+    config: {
+      scope: configScope,
+      path: selectedConfigPath,
+      operation: configOperation,
+    },
   };
-  const hostToolkits = await composeHostToolkitManifests(hosts, { workProviders, ciProviders, mcpOptIn });
-  if (!dryRun && ok) {
-    writeInitRecord(targetPath, createInitRecord({
-      hosts,
-      workProviders,
-      ciProviders,
-      mcpOptIn,
-    }));
+  const planStderr = planResults.map(result => result.stderr ?? "").join("");
+  if (firstPlanFailureIndex >= 0) {
+    const failure = planResults[firstPlanFailureIndex]!;
+    const payload = {
+      ok: false,
+      command: "init",
+      mode: "plan",
+      plan,
+      error: failure.error,
+      ...(failure.nextAction ? { nextAction: failure.nextAction } : {}),
+    };
+    return json
+      ? { exitCode: failure.exitCode || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+      : { exitCode: failure.exitCode || 1, stdout: "", stderr: `${failure.error ?? "QUBE init planning failed."}\n${failure.nextAction ? `${failure.nextAction}\n` : ""}${planStderr}` };
   }
-  const stderr = allRuns.map(run => run.stderr ?? "").filter(text => text.length > 0).join("");
 
-  if (json) {
-    const payload = { ok, command: "init", selections, hosts: hostToolkits, aie, aiu, with: componentResults };
-    return { exitCode, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
+  if (dryRun) {
+    const payload = { ok: true, command: "init", mode: "plan", plan };
+    if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr };
+    return {
+      exitCode: 0,
+      stdout: renderQubeInitSummary("plan", setup, planInvocations.map(invocation => invocation.id), configOperation, postInitActions),
+      stderr: planStderr,
+    };
   }
 
+  const applyInvocations = buildInvocations(false);
+  const applySteps: Array<Record<string, unknown>> = [];
+  const applyStderr: string[] = [];
+  if (configOperation !== "skip") {
+    try {
+      writeQubeInitConfig(selectedConfigPath, selectedConfig);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const nextAction = `Check write access to ${selectedConfigPath}, then rerun qube init with the same selections.`;
+      const apply = {
+        changed: false,
+        steps: Object.freeze([{ id: "config", status: "failed", exitCode: 1, error: message, nextAction }]),
+      };
+      const payload = { ok: false, command: "init", mode: "apply", plan, apply, error: message, nextAction };
+      return json
+        ? { exitCode: 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+        : { exitCode: 1, stdout: "", stderr: `${message}\n${nextAction}\n${planStderr}` };
+    }
+  }
+  let failedApply: QubeInitChildResult | undefined;
+  for (const invocation of applyInvocations) {
+    const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd);
+    if (result.stderr) applyStderr.push(result.stderr);
+    applySteps.push({
+      id: invocation.id,
+      status: result.ok ? (childChanged(result.json) ? "changed" : "unchanged") : "failed",
+      exitCode: result.exitCode,
+      ...(result.ok ? {} : { error: result.error, ...(result.nextAction ? { nextAction: result.nextAction } : {}) }),
+      result: result.json,
+    });
+    if (!result.ok) {
+      failedApply = result;
+      break;
+    }
+  }
+  if (!failedApply && setup.workProviders[0] === "github") {
+    const invocation: QubeInitInvocation = {
+      id: "labels",
+      component: "aie",
+      cwd: targetPath,
+      args: Object.freeze(["labels", "setup", "--json"]),
+    };
+    const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd);
+    if (result.stderr) applyStderr.push(result.stderr);
+    applySteps.push({
+      id: invocation.id,
+      status: result.ok ? (childChanged(result.json) ? "changed" : "unchanged") : "failed",
+      exitCode: result.exitCode,
+      ...(result.ok ? {} : { error: result.error, ...(result.nextAction ? { nextAction: result.nextAction } : {}) }),
+      result: result.json,
+    });
+    if (!result.ok) failedApply = result;
+  }
+  const changed = configOperation !== "skip" || applySteps.some(step => step.status === "changed");
+  const apply = { changed, steps: Object.freeze(applySteps) };
+  const stderr = `${planStderr}${applyStderr.join("")}`;
+  if (failedApply) {
+    const payload = {
+      ok: false,
+      command: "init",
+      mode: "apply",
+      plan,
+      apply,
+      error: failedApply.error,
+      ...(failedApply.nextAction ? { nextAction: failedApply.nextAction } : {}),
+    };
+    return json
+      ? { exitCode: failedApply.exitCode || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr }
+      : { exitCode: failedApply.exitCode || 1, stdout: "", stderr: `${failedApply.error ?? "QUBE init apply failed."}\n${failedApply.nextAction ? `${failedApply.nextAction}\n` : ""}` };
+  }
+
+  const payload = { ok: true, command: "init", mode: "apply", plan, apply };
+  if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
+  return {
+    exitCode: 0,
+    stdout: renderQubeInitSummary("apply", setup, applySteps.map(step => String(step.id)), configOperation, postInitActions),
+    stderr,
+  };
+}
+
+function renderQubeInitSummary(
+  mode: "plan" | "apply",
+  setup: ReturnType<typeof resolveQubeInitConfig>["config"],
+  componentIds: readonly string[],
+  configOperation: "create" | "update" | "skip",
+  postInitActions: readonly unknown[],
+): string {
   const lines = [
-    `QUBE init: ${ok ? "completed" : "completed with errors"}`,
-    `Target: ${target}`,
-    `Hosts: ${hosts.join(", ")}`,
-    `Work providers: ${workProviders.join(", ")} (active: ${workProviders[0]})`,
-    `CI providers: ${ciProviders.join(", ")} (active: ${ciProviders[0]})`,
-    ...(withComponents.length > 0 ? [`Also initialized: ${withComponents.join(", ")}`] : []),
-    "",
-    formatPlannedHostToolkits(hostToolkits).trimEnd(),
-    ""
+    `QUBE init ${mode === "plan" ? "plan is ready" : "is complete"}.`,
+    `Agent harnesses: ${setup.hosts.join(", ")}`,
+    `Issue tracker: ${setup.workProviders.join(", ")}`,
+    `Automated checks (CI): ${setup.ciProviders.join(", ")}`,
+    `Continuous Shipping: ${setup.continuousShipping ? "on" : "off"}`,
+    `Umpire: ${setup.umpire.scope}`,
+    `Quality stages: ${setup.quality.stages.join(", ")}`,
+    `Review: ${setup.review.mode}; publisher ${setup.review.publisher}`,
+    `Components: ${componentIds.join(", ")}`,
+    `QUBE configuration: ${configOperation}`,
   ];
-  for (const run of allRuns) {
-    lines.push(`- ${run.component} ${run.args[0] ?? ""}: ${run.ok ? "ok" : `failed — ${run.error ?? "unknown error"}`}`);
+  for (const action of postInitActions) {
+    const command = childRecord(action)?.command;
+    if (typeof command === "string") lines.push(`Next: ${command}`);
   }
-  return { exitCode, stdout: `${lines.join("\n")}\n`, stderr };
+  if (mode === "apply") lines.push("Start a new agent session so the selected harness loads the new instructions.");
+  return `${lines.join("\n")}\n`;
 }
 
 async function executeQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -4309,66 +4790,6 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
-function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): string | null {
-  const primaryHost = readString(flags["primary-host"]);
-  const primaryModel = readString(flags["primary-model"]);
-  const routeFlags = [
-    readString(flags["route-mechanical-implementation"]),
-    readString(flags["route-exploration-investigation"]),
-    readString(flags["route-synthesis-judgment"]),
-    readString(flags["route-independent-review"]),
-  ];
-  if (!primaryHost && !primaryModel && routeFlags.every(value => value === undefined)) return null;
-  if (!primaryModel) {
-    return "Model routing requires --primary-model when --primary-host or route overrides are set.";
-  }
-  const installed = detectInstalledRoutingHostsOnPath();
-  if (primaryHost) {
-    if (!isModelRoutingHost(primaryHost)) {
-      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok-build, cursor.`;
-    }
-    if (!installed.includes(primaryHost)) {
-      return `Host CLI for ${primaryHost} is not installed. Install and authenticate that host, or choose an installed host.`;
-    }
-  }
-  for (const flag of ["route-mechanical-implementation", "route-exploration-investigation", "route-synthesis-judgment"] as const) {
-    const value = readString(flags[flag]);
-    if (!value) continue;
-    const host = value.split(":")[0];
-    if (!isModelRoutingHost(host)) {
-      return `--${flag} must be host:model using codex, claude-code, opencode, grok-build, or cursor.`;
-    }
-    if (!installed.includes(host)) {
-      return `Host CLI for ${host} is not installed. Install and authenticate that host, or choose an installed host.`;
-    }
-  }
-  const independent = readString(flags["route-independent-review"]);
-  if (independent && independent !== "review" && independent !== "economy" && independent !== "synthesis") {
-    return "--route-independent-review must be review, economy, or synthesis.";
-  }
-  return null;
-}
-
-async function collectModelRoutingSelections(
-  flags: Readonly<Record<string, unknown>>,
-): Promise<{
-  primaryHost?: string;
-  primaryModel?: string;
-  mechanical?: string;
-  exploration?: string;
-  synthesis?: string;
-  independentReview?: string;
-}> {
-  return {
-    primaryHost: readString(flags["primary-host"]),
-    primaryModel: readString(flags["primary-model"]),
-    mechanical: readString(flags["route-mechanical-implementation"]),
-    exploration: readString(flags["route-exploration-investigation"]),
-    synthesis: readString(flags["route-synthesis-judgment"]),
-    independentReview: readString(flags["route-independent-review"]),
-  };
-}
-
 function readString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -4879,8 +5300,7 @@ async function runApplyWorkspaceInit(selections: InstallSelections, environment:
     yes: true,
     host: selections.hosts.join(","),
     "work-provider": selections.workProviders.join(","),
-    "ci-provider": selections.ciProviders.join(","),
-    ...(selections.withComponents.length > 0 ? { with: selections.withComponents.join(",") } : {})
+    "ci-provider": selections.ciProviders.join(",")
   }, { target: "." }, environment);
   if ((result.exitCode ?? 0) !== 0) {
     return {
@@ -5174,7 +5594,7 @@ function planQubeInstall(args: readonly string[]): CliExecution {
   };
 }
 
-/** Minimal plan-only forward for non-async callers; the real multi-component orchestration runs only through the async qube init handler (dispatchInitChild), mirroring how the plan-only doctor branch forwards to a single component. */
+/** The synchronous API validates init syntax, then fails closed because only the async runtime can resolve and plan every component. */
 function planQubeInit(args: readonly string[], environment: CliEnvironment): CliExecution {
   const flags: Record<string, unknown> = {};
   const positional: string[] = [];
@@ -5201,6 +5621,14 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
     }
     if (token === "--defaults") {
       flags.defaults = true;
+      continue;
+    }
+    if (token === "--mcp" || token === "--no-mcp") {
+      flags.mcp = token === "--mcp";
+      continue;
+    }
+    if (token === "--continuous-shipping" || token === "--no-continuous-shipping") {
+      flags["continuous-shipping"] = token === "--continuous-shipping";
       continue;
     }
     if (token === "--credit-warning") {
@@ -5232,19 +5660,16 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
     return validationError;
   }
 
-  const target = positional[0] ?? ".";
-  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
-  const toolTargets = resolveAieInitToolTargets(hosts);
-  const dispatchArgs = buildAieInitArgs(target, toolTargets[0], {
-    dryRun: flags["dry-run"] === true,
-    force: flags.force === true,
-    yes: flags.yes === true,
-    defaults: flags.defaults === true,
-    reviewMode: readOption<string>(flags, "review-mode"),
-    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
-    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined
-  });
-  return planQubeDispatch("aie", dispatchArgs, environment);
+  if (positional.length > 1) {
+    return { exitCode: 2, stdout: "", stderr: "QUBE init accepts at most one target directory.\n" };
+  }
+
+  void environment;
+  return {
+    exitCode: 2,
+    stdout: "",
+    stderr: "The synchronous planning API cannot resolve QUBE init across all components. Use runQubeCli() or the qube executable.\n"
+  };
 }
 
 function parseInitOptionToken(
@@ -5258,7 +5683,7 @@ function parseInitOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["host", "work-provider", "ci-provider", "with", "review-mode", "ui-audit-evidence-root"]) {
+  for (const key of ["host", "work-provider", "ci-provider", "review-mode", "review-harness", "ui-audit-evidence-root", "config-scope", "umpire-scope", "quality-stage", "external-reviewer", "review-publisher"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -5371,17 +5796,6 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
   );
   const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
   const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
-  const withComponents = await promptInstallerChoices({
-    command: installCommand,
-    promptName: "optional components",
-    message: "Which optional components should also initialize?",
-    choices: withChoices,
-    required: false,
-    value: readOptionList<string>(flags, "with"),
-    defaultValue: [],
-    jsonMode: flags.json === true,
-    yes: flags.yes === true
-  });
   return {
     scope,
     packageManager,
@@ -5391,7 +5805,6 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
     workProviders,
     ciProvider: ciProviders[0] ?? "github",
     ciProviders,
-    withComponents,
     lifecycleScripts,
     docs: docsValue === "yes",
     reviewMode,
@@ -5465,7 +5878,6 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
     workProviders,
     ciProvider: ciProviders[0] ?? "github",
     ciProviders,
-    withComponents: readOptionList<string>(flags, "with") ?? [],
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
     reviewMode: readOption<InstallReviewMode>(flags, "review-mode") ?? recommendedInstallReviewMode(hosts),
@@ -5563,9 +5975,6 @@ function buildQubeInitCommand(selections: InstallSelections): string {
     `--ui-audit-evidence-root ${selections.uiAuditEvidenceRoot}`,
     selections.creditWarning ? "--credit-warning" : "--no-credit-warning"
   ];
-  if (selections.withComponents.length > 0) {
-    parts.push(`--with ${selections.withComponents.join(",")}`);
-  }
   return parts.join(" ");
 }
 
@@ -5662,9 +6071,7 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   if (selections.hosts.length > 1) {
     notes.push(`qube init fans out across all selected hosts (${selections.hosts.join(", ")}) inside one command.`);
   }
-  if (selections.withComponents.length > 0) {
-    notes.push(`qube init also initializes: ${selections.withComponents.join(", ")}.`);
-  }
+  notes.push("qube init initializes Bootstrap, Executor, Quality, and Umpire together.");
   for (const host of selections.hosts) {
     const profile = getAgentHostProfileSync(host as AgentHostId);
     notes.push(`${profile.displayName}: reads ${profile.instructionTarget.path}; start with ${profile.makeItSo.invocation}.`);
@@ -5778,8 +6185,7 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
   const multiGroups = [
     { key: "host", choices: hostChoices.choices },
     { key: "work-provider", choices: workProviderChoices.choices },
-    { key: "ci-provider", choices: ciProviderChoices.choices },
-    { key: "with", choices: withChoices }
+    { key: "ci-provider", choices: ciProviderChoices.choices }
   ];
   for (const group of multiGroups) {
     const value = flags[group.key];
@@ -5929,7 +6335,7 @@ function parseOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "review-mode", "ui-audit-evidence-root"]) {
+  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "review-mode", "ui-audit-evidence-root"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -5957,8 +6363,6 @@ function installOptionValues(key: string): readonly string[] {
       return workProviderChoices.choices.map(choice => choice.value);
     case "ci-provider":
       return ciProviderChoices.choices.map(choice => choice.value);
-    case "with":
-      return withChoices.map(choice => choice.value);
     case "lifecycle-scripts":
       return lifecycleChoices.choices.map(choice => choice.value);
     case "review-mode":

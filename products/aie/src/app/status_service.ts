@@ -35,6 +35,7 @@ export type StatusReasonCode =
   | 'pending-review'
   | 'ready-to-ship'
   | 'continue-active-work'
+  | 'continue-dirty-active-work'
   | 'start-next-work'
   | 'read-only-work-provider'
   | 'no-ready-work';
@@ -352,7 +353,9 @@ function buildAiuStatusStates(input: {
   autonomousMode: boolean;
 }): readonly AiuStatusState[] {
   const workflowBlocked = blocksAiuContinuation(input.decision);
-  const continuationEnabled = input.autonomousMode && !workflowBlocked;
+  const currentIssueRecovery = permitsCurrentIssueRecovery(input.decision);
+  const continuousShipping = input.autonomousMode && !workflowBlocked;
+  const continuationEnabled = !workflowBlocked && (continuousShipping || currentIssueRecovery);
   const canRecoverWorkflow = continuationEnabled && (input.decision.state === 'continue' || input.decision.state === 'wait');
   const action = canRecoverWorkflow ? statusCommandRef(input.decision) : undefined;
   const activeStatus = canRecoverWorkflow && input.decision.state === 'continue' ? 'pass' as const : 'unknown' as const;
@@ -364,7 +367,9 @@ function buildAiuStatusStates(input: {
       kind: 'continuation-policy',
       status: 'pass',
       summary: !input.autonomousMode
-        ? 'Continuous Shipping is off, so Umpire must not continue workflow work.'
+        ? currentIssueRecovery
+          ? 'Continuous Shipping is off. Umpire can recover current local issue work, but it cannot ship or start Ready work.'
+          : 'Continuous Shipping is off, so Umpire cannot ship or start Ready work.'
         : workflowBlocked
           ? 'Executor reports a stop condition, so Umpire must not continue workflow work.'
           : 'Continuous Shipping allows Umpire continuation within the current Executor workflow.',
@@ -380,7 +385,7 @@ function buildAiuStatusStates(input: {
       status: queueStatus,
       summary: input.decision.summary,
       activeItems: Object.freeze(input.queue.activeWork.map(item => toAiuWorkItem(item, 'active', activeStatus, activeAction))),
-      readyItems: Object.freeze(canRecoverWorkflow && input.decision.reasonCodes.includes('start-next-work') && input.queue.nextWork ? [toAiuWorkItem(input.queue.nextWork, 'ready', 'pass', readyAction)] : []),
+      readyItems: Object.freeze(continuousShipping && canRecoverWorkflow && input.decision.reasonCodes.includes('start-next-work') && input.queue.nextWork ? [toAiuWorkItem(input.queue.nextWork, 'ready', 'pass', readyAction)] : []),
       blockedItems: Object.freeze(input.queue.blockedWork.map(item => toAiuWorkItem(item, 'blocked', 'pass'))),
       unknownItems: Object.freeze([]),
     }),
@@ -389,6 +394,11 @@ function buildAiuStatusStates(input: {
     states.push(toAiuReview(input.review.item, action));
   }
   return Object.freeze(states);
+}
+
+function permitsCurrentIssueRecovery(decision: StatusDecision): boolean {
+  return decision.reasonCodes.includes('continue-active-work')
+    || decision.reasonCodes.includes('continue-dirty-active-work');
 }
 
 function blocksAiuContinuation(decision: StatusDecision): boolean {
@@ -461,9 +471,18 @@ function decideStatus(input: { context: StatusServiceContext; repository: RepoSt
   if (!input.repository?.root) return { state: 'stop', reasonCodes: ['repository-unavailable'], nextCommand: 'aie doctor --json', summary: 'Run Executor from a valid git repository checkout.' };
   if (!input.queueState.available) return { state: 'unknown', reasonCodes: ['work-provider-unavailable'], nextCommand: 'aie doctor --json', summary: 'Work provider state is unavailable; Executor cannot safely continue.' };
   if (input.activeItems.length > 1) return { state: 'stop', reasonCodes: ['multiple-active-work'], nextCommand: 'aie queue --json', summary: 'Multiple active work items exist; fix status labels before continuing.' };
-  if (input.repository.dirty.dirty) return { state: 'stop', reasonCodes: ['dirty-checkout'], nextCommand: 'git status', summary: 'The checkout has uncommitted changes that must be resolved before autonomous continuation.' };
   if (input.context.config.noWorktree && input.repository.worktree.linked) return { state: 'stop', reasonCodes: ['linked-worktree'], nextCommand: 'aie doctor --json', summary: 'Repository policy disables linked worktrees; continue from the primary checkout.' };
-
+  if (input.repository.dirty.dirty) {
+    if (input.activeItems.length === 1) {
+      return {
+        state: 'continue',
+        reasonCodes: ['continue-dirty-active-work'],
+        nextCommand: 'git status',
+        summary: `Recover local changes for ${input.activeItems[0].workItem.displayId} before continuing its issue workflow.`,
+      };
+    }
+    return { state: 'stop', reasonCodes: ['dirty-checkout'], nextCommand: 'git status', summary: 'The checkout has uncommitted changes that are not tied to one active issue.' };
+  }
   if (input.activeItems.length === 0 && input.review.item && (input.review.item.state === 'open' || input.review.item.state === 'draft')) {
     return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${input.review.item.key.id} --json`, summary: 'An open pull request exists on the current branch; resolve it before starting new work.' };
   }

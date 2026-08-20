@@ -317,6 +317,7 @@ describe("provider-neutral stop hooks", () => {
       tool: "codex",
       stopHookBlocking: true,
       trustedState: emptyWorkState(),
+      postIssueScope: "standard",
     });
     try {
       const result = await runAiuHookStop({
@@ -330,7 +331,7 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(result.reason, "continue-whip-task");
       assert.equal(result.continuationDecision?.promptKind, "whip");
       assert.equal(result.prompt?.kind, "whip");
-      assert.equal(result.prompt?.selectedItem?.id, "review-doc-command-examples");
+      assert.equal(result.prompt?.selectedItem?.id, "improve-repository-quality");
       assert.match("reason" in result.stdoutJson ? result.stdoutJson.reason : "", /Prompt delivery does not complete the whip task/);
     } finally {
       await rm(target, { recursive: true, force: true });
@@ -449,6 +450,7 @@ async function createRepo(options: {
   readonly trustedState?: Record<string, unknown>;
   readonly trustedCommand?: readonly [string, ...string[]];
   readonly whipEnabled?: boolean;
+  readonly postIssueScope?: "ready" | "standard" | "custom";
   readonly modes?: readonly ("continue" | "repair" | "stop")[];
 }): Promise<string> {
   const target = await mkdtemp(path.join(tmpdir(), "aiu-hook-stop-"));
@@ -461,6 +463,7 @@ async function createRepo(options: {
   ] as const;
   await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
     version: 1,
+    postIssueScope: options.postIssueScope ?? "ready",
     hosts: {
       enabled: [options.tool],
       capabilities: {

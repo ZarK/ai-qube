@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { accessSync, constants } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -23,6 +23,7 @@ describe("config foundation", () => {
     assert.equal(result.defaultsUsed, true);
     assert.equal(result.selectedPath, path.join(repoRoot, ".qube", "aiu", "config.json"));
     assert.equal(result.config.version, 1);
+    assert.equal(result.config.postIssueScope, "ready");
     assert.deepEqual(result.config.paths, {
       stateDir: ".qube/aiu/state",
       lockDir: ".qube/aiu/locks",
@@ -35,10 +36,10 @@ describe("config foundation", () => {
     assert.equal(result.config.continuation.trustUnstructuredProse, false);
     assert.equal(result.config.supplyChain.stopOnApprovalRequired, true);
     assert.deepEqual(result.config.prompts.sections, {});
-    assert.equal(result.config.planning.enabled, true);
-    assert.equal(result.config.quality.enabled, true);
-    assert.equal(result.config.whip.enabled, true);
-    assert.equal(result.config.whip.usePackageDefaults, true);
+    assert.equal(result.config.planning.enabled, false);
+    assert.equal(result.config.quality.enabled, false);
+    assert.equal(result.config.whip.enabled, false);
+    assert.equal(result.config.whip.usePackageDefaults, false);
     assert.deepEqual(result.config.whip.tasks, []);
     assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
@@ -47,6 +48,7 @@ describe("config foundation", () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "ready",
       hosts: {
         enabled: ["opencode", "codex"],
         capabilities: {
@@ -136,6 +138,64 @@ describe("config foundation", () => {
     assert.equal(result.config.whip.usePackageDefaults, false);
     assert.equal(result.config.whip.statePath, ".umpire/custom-whip.json");
     assert.deepEqual(result.config.whip.tasks.map((task) => task.id), ["repo-docs"]);
+  });
+
+  it("derives post-issue continuation policies from the selected scope", async () => {
+    const standardRoot = await createRepoRoot();
+    await writeConfig(standardRoot, {
+      version: 1,
+      postIssueScope: "standard",
+      planning: { enabled: true },
+      quality: { enabled: false },
+      whip: {
+        enabled: false,
+        usePackageDefaults: false,
+        tasks: [{ id: "saved-custom", title: "Saved custom task", prompt: "Run the saved custom task.", priority: 10 }],
+      },
+    });
+    const standard = loadAiuConfig({ cwd: standardRoot });
+
+    assert.equal(standard.ok, true);
+    assert.equal(standard.config.planning.enabled, false);
+    assert.equal(standard.config.quality.enabled, true);
+    assert.equal(standard.config.whip.enabled, true);
+    assert.equal(standard.config.whip.usePackageDefaults, true);
+    assert.deepEqual(standard.config.whip.tasks.map((task) => task.id), ["saved-custom"]);
+
+    const customRoot = await createRepoRoot();
+    await writeConfig(customRoot, {
+      version: 1,
+      postIssueScope: "custom",
+      planning: { enabled: true },
+      quality: { enabled: true },
+      whip: {
+        enabled: false,
+        usePackageDefaults: true,
+        tasks: [{ id: "research", title: "Research", prompt: "Run the configured research task.", priority: 10 }],
+      },
+    });
+    const custom = loadAiuConfig({ cwd: customRoot });
+
+    assert.equal(custom.ok, true);
+    assert.equal(custom.config.planning.enabled, false);
+    assert.equal(custom.config.quality.enabled, false);
+    assert.equal(custom.config.whip.enabled, true);
+    assert.equal(custom.config.whip.usePackageDefaults, false);
+    assert.deepEqual(custom.config.whip.tasks.map((task) => task.id), ["research"]);
+  });
+
+  it("rejects a custom post-issue scope without configured Umpire tasks", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      postIssueScope: "custom",
+      whip: { tasks: [] },
+    });
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "custom-post-issue-tasks-required"));
   });
 
   it("returns stable validation diagnostics for unsafe config", async () => {
@@ -241,6 +301,143 @@ describe("config foundation", () => {
     assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.message.includes("Could not parse .qube/aiu/config.json")));
   });
 
+  it("rejects config paths outside the repository without loading trusted commands", async () => {
+    const repoRoot = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-config-external-"));
+    tempRoots.push(outsideRoot);
+    const outsideConfigPath = path.join(outsideRoot, "config.json");
+    await writeFile(outsideConfigPath, JSON.stringify({
+      version: 1,
+      trustedStateCommands: {
+        work: { argv: ["outside-command", "--json"] },
+      },
+    }), "utf8");
+
+    for (const configPath of [outsideConfigPath, path.relative(repoRoot, outsideConfigPath)]) {
+      const result = loadAiuConfig({ cwd: repoRoot, configPath });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.found, false);
+      assert.deepEqual(result.config.trustedStateCommands, {});
+      assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-config-path" && diagnostic.path === "$.configPath"));
+    }
+  });
+
+  it("rejects config paths through linked repository directories", async (t) => {
+    const repoRoot = await createRepoRoot();
+    const outsideQubeRoot = await mkdtemp(path.join(tmpdir(), "aiu-config-linked-"));
+    tempRoots.push(outsideQubeRoot);
+    await mkdir(path.join(outsideQubeRoot, "aiu"), { recursive: true });
+    await writeFile(path.join(outsideQubeRoot, "aiu", "config.json"), JSON.stringify({
+      version: 1,
+      trustedStateCommands: {
+        work: { argv: ["outside-command", "--json"] },
+      },
+    }), "utf8");
+    try {
+      await symlink(outsideQubeRoot, path.join(repoRoot, ".qube"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.found, false);
+    assert.deepEqual(result.config.trustedStateCommands, {});
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "linked-config-path" && diagnostic.path === "$.configPath"));
+  });
+
+  it("rejects absolute and parent-relative Umpire state paths", async () => {
+    const repoRoot = await createRepoRoot();
+    const cases = [
+      {
+        fieldPath: "$.paths.stateDir",
+        defaultValue: ".qube/aiu/state",
+        config: (value: string) => ({ version: 1, paths: { stateDir: value } }),
+        normalized: (result: ReturnType<typeof loadAiuConfig>) => result.config.paths.stateDir,
+      },
+      {
+        fieldPath: "$.paths.lockDir",
+        defaultValue: ".qube/aiu/locks",
+        config: (value: string) => ({ version: 1, paths: { lockDir: value } }),
+        normalized: (result: ReturnType<typeof loadAiuConfig>) => result.config.paths.lockDir,
+      },
+      {
+        fieldPath: "$.paths.logDir",
+        defaultValue: ".qube/aiu/logs",
+        config: (value: string) => ({ version: 1, paths: { logDir: value } }),
+        normalized: (result: ReturnType<typeof loadAiuConfig>) => result.config.paths.logDir,
+      },
+      {
+        fieldPath: "$.whip.statePath",
+        defaultValue: ".qube/aiu/whip.json",
+        config: (value: string) => ({ version: 1, postIssueScope: "standard", whip: { statePath: value } }),
+        normalized: (result: ReturnType<typeof loadAiuConfig>) => result.config.whip.statePath,
+      },
+    ];
+    const unsafePaths = [path.join(repoRoot, "absolute-state"), "../outside-state", "..\\outside-state"];
+
+    for (const testCase of cases) {
+      for (const unsafePath of unsafePaths) {
+        await writeConfig(repoRoot, testCase.config(unsafePath));
+        const result = loadAiuConfig({ cwd: repoRoot });
+
+        assert.equal(result.ok, false, `${testCase.fieldPath}: ${unsafePath}`);
+        assert.ok(
+          result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-path" && diagnostic.path === testCase.fieldPath),
+          `${testCase.fieldPath}: ${unsafePath}`,
+        );
+        assert.equal(testCase.normalized(result), testCase.defaultValue, `${testCase.fieldPath}: ${unsafePath}`);
+      }
+    }
+  });
+
+  it("rejects Umpire state paths through linked directories", async (t) => {
+    const repoRoot = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-config-outside-"));
+    tempRoots.push(outsideRoot);
+    try {
+      await symlink(outsideRoot, path.join(repoRoot, "linked-state"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+    await writeConfig(repoRoot, {
+      version: 1,
+      paths: {
+        stateDir: "linked-state/child",
+        lockDir: ".qube/aiu/locks",
+        logDir: ".qube/aiu/logs",
+      },
+    });
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "linked-state-path" && diagnostic.path === "$.paths.stateDir"));
+
+    await writeConfig(repoRoot, {
+      version: 1,
+      postIssueScope: "ready",
+      whip: {
+        statePath: "linked-state/whip.json",
+      },
+    });
+    const readyScope = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(readyScope.config.whip.enabled, false);
+    assert.equal(readyScope.ok, false);
+    assert.ok(readyScope.diagnostics.some((diagnostic) => diagnostic.kind === "linked-state-path" && diagnostic.path === "$.whip.statePath"));
+  });
+
   it("rejects state paths below file ancestors and non-searchable directories", async (t) => {
     const repoRoot = await createRepoRoot();
     const blockedDir = path.join(repoRoot, "blocked-dir");
@@ -280,6 +477,7 @@ describe("config foundation", () => {
     await writeFile(path.join(repoRoot, "state-parent-file"), "not a directory\n", "utf8");
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       whip: {
         statePath: "whip-state-dir",
       },
@@ -291,6 +489,7 @@ describe("config foundation", () => {
 
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       whip: {
         statePath: "state-parent-file/whip.json",
       },
@@ -301,7 +500,7 @@ describe("config foundation", () => {
     assert.ok(fileAncestorResult.diagnostics.some((diagnostic) => diagnostic.kind === "path-not-writable" && diagnostic.path === "$.whip.statePath"));
   });
 
-  it("does not validate unused whip state paths when whip is disabled", async () => {
+  it("rejects invalid whip state paths even when whip is disabled", async () => {
     const repoRoot = await createRepoRoot();
     await mkdir(path.join(repoRoot, "whip-state-dir"));
     await writeConfig(repoRoot, {
@@ -314,8 +513,8 @@ describe("config foundation", () => {
 
     const result = loadAiuConfig({ cwd: repoRoot });
 
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.diagnostics, []);
+    assert.equal(result.ok, false);
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-path" && diagnostic.path === "$.whip.statePath"));
     assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
 });

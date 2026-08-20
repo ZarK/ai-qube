@@ -1,5 +1,5 @@
-import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import { getAgentHostProfileSync } from "@tjalve/aie";
 import { AGENT_HOST_IDS, type AgentHostProfile } from "@tjalve/qube-core";
@@ -14,6 +14,15 @@ export interface AgentAssetFile {
   readonly path: string;
   readonly kind: AgentAssetKind;
   readonly body: string;
+}
+
+export type AgentAssetOperation = "create" | "update" | "skip" | "conflict";
+
+export interface AgentAssetAction extends AgentAssetFile {
+  readonly absolutePath: string;
+  readonly operation: AgentAssetOperation;
+  readonly reason: string;
+  readonly content: string;
 }
 
 const MANAGED_START = "<!-- BEGIN QUBE BOOTSTRAP MANAGED SECTION -->";
@@ -44,35 +53,93 @@ export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKi
 }
 
 export function writeAgentAssetFiles(target: string, files: readonly AgentAssetFile[]): readonly { readonly path: string }[] {
+  const actions = planAgentAssetFiles(target, files);
+  const conflict = actions.find((action) => action.operation === "conflict");
+  if (conflict) throw new TypeError(conflict.reason);
+  applyAgentAssetActions(actions);
+  return actions.map((action) => ({ path: action.absolutePath }));
+}
+
+export function planAgentAssetFiles(target: string, files: readonly AgentAssetFile[]): readonly AgentAssetAction[] {
   const baseDir = resolve(target);
-  mkdirSync(baseDir, { recursive: true });
-  const realBaseDir = realpathSync(baseDir);
-  const written: { path: string }[] = [];
-  for (const file of files) {
-    const path = safeAssetPath(realBaseDir, file.path);
-    const current = readAssetFile(path);
-    const next = mergeManagedInstruction(current, file.body);
-    if (current !== next) {
-      assertSafeAssetFile(path);
-      writeFileSync(path, next);
+  return Object.freeze(files.map((file) => planAgentAssetFile(baseDir, file)));
+}
+
+export function applyAgentAssetActions(actions: readonly AgentAssetAction[]): readonly { readonly path: string; readonly operation: AgentAssetOperation }[] {
+  const conflict = actions.find((action) => action.operation === "conflict");
+  if (conflict) throw new TypeError(conflict.reason);
+  for (const action of actions) {
+    if (action.operation !== "create" && action.operation !== "update") continue;
+    mkdirSync(dirname(action.absolutePath), { recursive: true });
+    const status = lstatSync(action.absolutePath, { throwIfNoEntry: false });
+    if (status?.isSymbolicLink()) {
+      throw new TypeError(`refusing to write agent asset through a symlink: ${action.absolutePath}`);
     }
-    written.push({ path });
+    if (status !== undefined && !status.isFile()) {
+      throw new TypeError(`refusing to replace a non-file agent asset: ${action.absolutePath}`);
+    }
+    writeFileSync(action.absolutePath, action.content, "utf8");
   }
-  return written;
+  return Object.freeze(actions.map((action) => ({ path: action.absolutePath, operation: action.operation })));
 }
 
-function readAssetFile(path: string): string {
-  const status = assertSafeAssetFile(path);
-  return status === undefined ? "" : readFileSync(path, "utf8");
+function planAgentAssetFile(baseDir: string, file: AgentAssetFile): AgentAssetAction {
+  let absolutePath = resolve(baseDir, file.path);
+  try {
+    absolutePath = safeAssetPath(baseDir, file.path);
+    const status = inspectAssetPath(baseDir, absolutePath);
+    const current = status === undefined ? "" : readFileSync(absolutePath, "utf8");
+    const content = mergeManagedInstruction(current, file.body);
+    const operation: AgentAssetOperation = status === undefined ? "create" : current === content ? "skip" : "update";
+    return Object.freeze({
+      ...file,
+      absolutePath,
+      operation,
+      reason: operation === "create"
+        ? "Managed instruction file does not exist."
+        : operation === "skip"
+          ? "The managed Bootstrap instruction section already matches."
+          : "The managed Bootstrap instruction section will be updated; other content will be preserved.",
+      content,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ...file,
+      absolutePath,
+      operation: "conflict",
+      reason: error instanceof Error ? error.message : String(error),
+      content: "",
+    });
+  }
 }
 
-function assertSafeAssetFile(path: string): ReturnType<typeof lstatSync> | undefined {
-  const status = lstatSync(path, { throwIfNoEntry: false });
+function inspectAssetPath(baseDir: string, absolutePath: string): ReturnType<typeof lstatSync> | undefined {
+  const relativePath = relative(baseDir, absolutePath);
+  const segments = relativePath.split(/[\\/]+/u).filter((segment) => segment.length > 0);
+  let current = baseDir;
+  for (const segment of segments.slice(0, -1)) {
+    const status = lstatSync(current, { throwIfNoEntry: false });
+    if (status?.isSymbolicLink()) {
+      throw new TypeError(`refusing to follow an agent asset directory symlink: ${current}`);
+    }
+    if (status !== undefined && !status.isDirectory()) {
+      throw new TypeError(`refusing to use a non-directory agent asset path: ${current}`);
+    }
+    current = resolve(current, segment);
+  }
+  const parentStatus = lstatSync(current, { throwIfNoEntry: false });
+  if (parentStatus?.isSymbolicLink()) {
+    throw new TypeError(`refusing to follow an agent asset directory symlink: ${current}`);
+  }
+  if (parentStatus !== undefined && !parentStatus.isDirectory()) {
+    throw new TypeError(`refusing to use a non-directory agent asset path: ${current}`);
+  }
+  const status = lstatSync(absolutePath, { throwIfNoEntry: false });
   if (status?.isSymbolicLink()) {
-    throw new TypeError(`refusing to write agent asset through a symlink: ${path}`);
+    throw new TypeError(`refusing to write agent asset through a symlink: ${absolutePath}`);
   }
   if (status !== undefined && !status.isFile()) {
-    throw new TypeError(`refusing to replace a non-file agent asset: ${path}`);
+    throw new TypeError(`refusing to replace a non-file agent asset: ${absolutePath}`);
   }
   return status;
 }
@@ -91,7 +158,7 @@ function mergeManagedInstruction(current: string, body: string): string {
   return prefix === "" ? `${block}\n` : `${prefix}\n\n${block}\n`;
 }
 
-function safeAssetPath(realBaseDir: string, assetPath: string): string {
+function safeAssetPath(baseDir: string, assetPath: string): string {
   if (isAbsolute(assetPath)) {
     throw new TypeError(`refusing to write absolute agent asset path: ${assetPath}`);
   }
@@ -99,34 +166,15 @@ function safeAssetPath(realBaseDir: string, assetPath: string): string {
   if (segments.length === 0 || segments.some((segment) => segment === "..")) {
     throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
   }
-  let current = realBaseDir;
-  for (const segment of segments.slice(0, -1)) {
-    const next = resolve(current, segment);
-    if (!inside(realBaseDir, next)) {
-      throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
-    }
-    const status = lstatSync(next, { throwIfNoEntry: false });
-    if (status?.isSymbolicLink()) {
-      throw new TypeError(`refusing to follow an agent asset directory symlink: ${assetPath}`);
-    }
-    if (status !== undefined && !status.isDirectory()) {
-      throw new TypeError(`refusing to use a non-directory agent asset path: ${assetPath}`);
-    }
-    if (status === undefined) mkdirSync(next);
-    current = realpathSync(next);
-    if (!inside(realBaseDir, current)) {
-      throw new TypeError(`refusing to follow agent asset directory outside target: ${assetPath}`);
-    }
-  }
-  const path = resolve(current, basename(assetPath));
-  if (!inside(realBaseDir, path)) {
+  const path = resolve(baseDir, ...segments);
+  if (!inside(baseDir, path)) {
     throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
   }
   return path;
 }
 
-function inside(realBaseDir: string, path: string): boolean {
-  const relativePath = relative(realBaseDir, path);
+function inside(baseDir: string, path: string): boolean {
+  const relativePath = relative(baseDir, path);
   return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 

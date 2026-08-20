@@ -146,6 +146,55 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
   });
 
+  for (const tool of ['codex', 'cursor']) {
+    it(`binds fresh default model routing to the selected ${tool} harness`, async () => {
+      const repo = makeGitRepo();
+      const result = await runInit({ target: '.', tool, dryRun: false, force: false, cwd: repo });
+
+      assert.equal(result.ok, true);
+      const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+      assert.equal(config.policy.modelRouting.primary, 'primary');
+      assert.deepEqual(config.policy.modelRouting.catalog, [{
+        id: 'primary',
+        host: tool,
+        transport: 'host',
+        costRank: 3,
+        notes: 'Primary host model. Fallback target for every delegated route class.',
+      }]);
+      assert.equal(result.modelRouting.primary.host, tool);
+    });
+  }
+
+  it('preserves valid custom model routing on rerun', async () => {
+    const repo = makeGitRepo();
+    const first = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(first.ok, true);
+
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const customRouting = {
+      primary: 'custom-primary',
+      catalog: [
+        { id: 'custom-primary', host: 'grok-build', transport: 'cli', costRank: 3, notes: 'Custom primary route.' },
+        { id: 'custom-economy', host: 'opencode', transport: 'cli', costRank: 1, notes: 'Custom economy route.' },
+      ],
+      routes: {
+        'mechanical-implementation': { preferred: 'custom-economy', fallback: ['custom-economy', 'custom-primary'] },
+        'exploration-investigation': { preferred: 'custom-primary', fallback: ['custom-primary'] },
+        'independent-review': { reviewTier: 'review' },
+        'synthesis-judgment': { preferred: 'custom-primary', fallback: ['custom-primary'] },
+      },
+    };
+    config.policy.modelRouting = customRouting;
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const rerun = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(rerun.ok, true);
+    assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')).policy.modelRouting, customRouting);
+    assert.equal(rerun.actions.find(action => action.id === 'config').status, 'skipped');
+  });
+
   it('writes managed sections and preserves user-authored instruction content', async () => {
     const repo = makeGitRepo();
     const userContent = '# Project Rules\n\nKeep this local rule.   \n\n';
@@ -1224,6 +1273,10 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--defaults'));
     assert.ok(metadata.flags.includes('--from'));
     assert.ok(metadata.flags.includes('--review-mode'));
+    assert.ok(metadata.flags.includes('--review-agent'));
+    assert.ok(metadata.flags.includes('--local-review-agent'));
+    assert.ok(metadata.flags.includes('--isolated-review-agent'));
+    assert.ok(metadata.flags.includes('--review-model'));
     assert.ok(metadata.flags.includes('--ui-audit-evidence-root'));
     assert.ok(metadata.flags.includes('--publisher'));
     assert.ok(metadata.flags.includes('--tool'));
@@ -1256,7 +1309,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--review-agent <id>] [--local-review-agent <host>] [--isolated-review-agent <host>] [--review-model <host:model>] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);
@@ -1295,6 +1348,273 @@ describe('init command metadata', () => {
     assert.equal(existsSync(join(repo, '.claude', 'commands', 'make-it-so.md')), true);
     assert.equal(existsSync(join(repo, '.grok', 'commands', 'make-it-so.md')), true);
     assert.equal(existsSync(join(repo, '.cursor', 'commands', 'make-it-so.md')), true);
+  });
+
+  it('binds the unpinned primary route to an explicit selected harness', () => {
+    const repo = makeGitRepo();
+    const requested = 'opencode,codex,claude-code,grok-build,cursor';
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      requested,
+      '--primary-host',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(config.policy.modelRouting.primary, 'primary');
+    assert.deepEqual(config.policy.modelRouting.catalog, [{
+      id: 'primary',
+      host: 'cursor',
+      transport: 'host',
+      costRank: 3,
+      notes: 'Primary host model. Fallback target for every delegated route class.',
+    }]);
+    assert.equal(Object.hasOwn(config.policy.modelRouting.catalog[0], 'model'), false);
+  });
+
+  it('rejects a primary harness that is not selected by --tool', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex',
+      '--primary-host',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 1, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.errors.join('\n'), /Primary harness cursor is not in the selected agent harnesses\./);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+  });
+
+  it('routes isolated review to the selected non-primary harness', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex,cursor',
+      '--review-mode',
+      'isolated',
+      '--isolated-review-agent',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selectedTools, ['codex', 'cursor']);
+    const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(config.policy.reviews.route.host, 'cursor');
+    assert.equal(Object.hasOwn(config.policy.reviews.route, 'model'), false);
+    assert.equal(config.policy.reviews.lanes.find(lane => lane.id === 'security').route.host, 'cursor');
+  });
+
+  it('rejects a selected harness that does not support isolated review', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'opencode,codex',
+      '--review-mode',
+      'isolated',
+      '--isolated-review-agent',
+      'opencode',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 1, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.errors.join('\n'), /opencode.*does not support isolated review/);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+  });
+
+  it('rejects an isolated review harness that is not selected by --tool', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex',
+      '--review-mode',
+      'isolated',
+      '--isolated-review-agent',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 1, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.errors.join('\n'), /cursor.*not selected by --tool/);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+  });
+
+  it('preserves the existing isolated review route when the flag is omitted on rerun', () => {
+    const repo = makeGitRepo();
+    const first = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex,cursor',
+      '--review-mode',
+      'isolated',
+      '--isolated-review-agent',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+    assert.equal(first.status, 0, first.stderr);
+
+    const rerun = binRun(['init', '.', '--tool', 'codex,cursor', '--yes', '--json'], repo);
+
+    assert.equal(rerun.status, 0, rerun.stderr);
+    const parsed = JSON.parse(rerun.stdout);
+    assert.equal(parsed.ok, true);
+    const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(config.policy.reviews.route.host, 'cursor');
+    assert.equal(config.policy.reviews.lanes.find(lane => lane.id === 'security').route.host, 'cursor');
+    assert.equal(parsed.actions.find(action => action.id === 'config').status, 'skipped');
+  });
+
+  it('reconciles mode-dependent review fields when an existing config changes review mode', () => {
+    const repo = makeGitRepo();
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    const config = cleanConfig();
+    config.policy.branch.baseBranch = 'develop';
+    config.policy.audit.manualUiAudit = false;
+    config.policy.reviews.mode = 'external';
+    config.policy.reviews.adapter = 'github';
+    config.policy.reviews.profile = 'remote-compatible';
+    config.policy.reviews.lanes = [];
+    config.policy.reviews.route = null;
+    config.policy.reviews.failover = null;
+    config.policy.reviews.localAgents = ['opencode'];
+    config.policy.reviews.models.review.codex = { model: 'custom-review-model', effort: 'high' };
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const isolated = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex,cursor',
+      '--review-mode',
+      'isolated',
+      '--isolated-review-agent',
+      'cursor',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(isolated.status, 0, isolated.stderr);
+    const isolatedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(isolatedConfig.policy.reviews.mode, 'isolated');
+    assert.equal(isolatedConfig.policy.reviews.adapter, 'local');
+    assert.equal(isolatedConfig.policy.reviews.profile, 'local-focused');
+    assert.equal(isolatedConfig.policy.reviews.route.host, 'cursor');
+    assert.deepEqual(isolatedConfig.policy.reviews.localAgents, []);
+    assert.ok(isolatedConfig.policy.reviews.lanes.length > 0);
+    assert.equal(isolatedConfig.policy.reviews.lanes.find(lane => lane.id === 'security').route.host, 'cursor');
+    assert.equal(isolatedConfig.policy.branch.baseBranch, 'develop');
+    assert.equal(isolatedConfig.policy.audit.manualUiAudit, false);
+    assert.deepEqual(isolatedConfig.policy.reviews.models.review.codex, { model: 'custom-review-model', effort: 'high' });
+
+    const external = binRun(['init', '.', '--tool', 'codex,cursor', '--review-mode', 'external', '--yes', '--json'], repo);
+
+    assert.equal(external.status, 0, external.stderr);
+    const externalConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(externalConfig.policy.reviews.mode, 'external');
+    assert.equal(externalConfig.policy.reviews.adapter, 'github');
+    assert.equal(externalConfig.policy.reviews.profile, 'remote-compatible');
+    assert.deepEqual(externalConfig.policy.reviews.lanes, []);
+    assert.equal(externalConfig.policy.reviews.route, null);
+    assert.equal(externalConfig.policy.reviews.failover, null);
+    assert.deepEqual(externalConfig.policy.reviews.localAgents, []);
+    assert.equal(externalConfig.policy.branch.baseBranch, 'develop');
+    assert.equal(externalConfig.policy.audit.manualUiAudit, false);
+    assert.deepEqual(externalConfig.policy.reviews.models.review.codex, { model: 'custom-review-model', effort: 'high' });
+  });
+
+  it('removes the GitHub publisher when an existing config changes to GitLab', () => {
+    const repo = makeGitRepo();
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    const config = cleanConfig();
+    config.providers.review.publisher = {
+      mode: 'github-app',
+      githubApp: {
+        appId: '123',
+        installationId: '456',
+        privateKeyEnv: 'QUBE_REVIEW_PRIVATE_KEY',
+      },
+    };
+    config.policy.branch.baseBranch = 'develop';
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex',
+      '--work-provider',
+      'gitlab',
+      '--review-provider',
+      'gitlab',
+      '--ci-provider',
+      'gitlab',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 0, result.stderr);
+    const written = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(written.providers.review.kind, 'gitlab');
+    assert.equal(written.providers.review.publisher, undefined);
+    assert.equal(written.policy.branch.baseBranch, 'develop');
+  });
+
+  it('rejects GitHub external review agents for a GitLab review provider', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--tool',
+      'codex',
+      '--work-provider',
+      'gitlab',
+      '--review-provider',
+      'gitlab',
+      '--review-mode',
+      'external',
+      '--review-agent',
+      'coderabbit',
+      '--yes',
+      '--json',
+    ], repo);
+
+    assert.equal(result.status, 1, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.errors.join('\n'), /coderabbit.*not available for the GitLab review provider/);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
   });
 
   it('rejects an unknown id in a comma-separated agent harness set', () => {
@@ -1347,7 +1667,7 @@ describe('init command metadata', () => {
       '15',
       '--no-pin-ci-actions',
       '--review-agent',
-      'review-bot',
+      'coderabbit',
     ], repo);
     const parsed = JSON.parse(result.stdout);
 

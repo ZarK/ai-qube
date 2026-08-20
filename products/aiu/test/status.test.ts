@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -129,9 +129,52 @@ describe("status reporting", () => {
     }
   });
 
+  it("rejects an external config before running its trusted commands", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "aiu-status-repo-"));
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "aiu-status-external-"));
+    const sentinelPath = path.join(outsideDir, "command-ran.txt");
+    const outsideConfigPath = path.join(outsideDir, "config.json");
+    try {
+      await mkdir(path.join(dir, ".git"));
+      await writeFile(outsideConfigPath, JSON.stringify({
+        version: 1,
+        trustedStateCommands: {
+          work: {
+            argv: [
+              process.execPath,
+              "-e",
+              `require('node:fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'ran')`,
+            ],
+          },
+        },
+      }), "utf8");
+
+      const result = await runCli(["status", "--config", outsideConfigPath, "--json"], dir);
+      const parsed = JSON.parse(result.stdout) as {
+        readonly ok: boolean;
+        readonly error?: { readonly kind?: string; readonly likelyCause?: string };
+        readonly status?: { readonly errors?: readonly { readonly code?: string; readonly path?: string }[] };
+      };
+
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.kind, "status-config-invalid");
+      assert.match(parsed.error?.likelyCause ?? "", /inside the repository/u);
+      assert.deepEqual(parsed.status?.errors, [{
+        code: "status-config-invalid",
+        message: "The Umpire config path must resolve to a file inside the repository.",
+        path: "$.configPath",
+      }]);
+      await assert.rejects(access(sentinelPath), { code: "ENOENT" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces quality idle targets in status and prompt output", async () => {
     const { createAiuStatusReport } = await loadStatus();
-    const report = createAiuStatusReport(await configLoad(), [
+    const report = createAiuStatusReport(await configLoad({ qualityEnabled: true }), [
       await successResult(envelope("quality", qualityState({
         ready: true,
         lastRunStatus: "fail",
@@ -168,7 +211,7 @@ describe("status reporting", () => {
 
   it("surfaces Bootstrap planning actions in status and prompt output", async () => {
     const { createAiuStatusReport } = await loadStatus();
-    const report = createAiuStatusReport(await configLoad(), [
+    const report = createAiuStatusReport(await configLoad({ planningEnabled: true }), [
       await successResult(envelope("planning", planningState({
         needsPlanning: true,
         currentPhase: "milestone-draft",
@@ -215,6 +258,7 @@ describe("status reporting", () => {
   it("surfaces whip tasks in status and prompt output without completing them", async () => {
     const { createAiuStatusReport } = await loadStatus();
     const report = createAiuStatusReport(await configLoad({
+      whipEnabled: true,
       whipUsePackageDefaults: false,
       whipTasks: [{
         id: "repo-docs",
@@ -243,7 +287,7 @@ describe("status reporting", () => {
       await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
       await writeFile(path.join(target, ".qube", "aiu", "whip.json"), "{", "utf8");
 
-      const report = createAiuStatusReport(await configLoad({ repoRoot: target }), []);
+      const report = createAiuStatusReport(await configLoad({ repoRoot: target, whipEnabled: true, whipUsePackageDefaults: true }), []);
 
       assert.deepEqual(report.decision.reasonCodes, ["stop-malformed-input"]);
       assert.equal(report.decision.selectedItem?.kind, "whip");
@@ -259,13 +303,13 @@ describe("status reporting", () => {
 
     assert.equal(result.exitCode, 0);
     assert.equal(result.stderr, "");
-    assert.match(result.stdout, /decision: continue/);
-    assert.match(result.stdout, /mode: continue/);
+    assert.match(result.stdout, /decision: stop/);
+    assert.match(result.stdout, /mode: stop/);
     assert.match(result.stdout, /stateDir: /);
     assert.match(result.stdout, /pendingPrompt: /);
-    assert.match(result.stdout, /whip: prompt review-doc-command-examples/);
-    assert.match(result.stdout, /reasons: continue-whip-task/);
-    assert.match(result.stdout, /next: Continue: use the ready whip task slot\./);
+    assert.match(result.stdout, /whip: disabled/);
+    assert.match(result.stdout, /reasons: stop-clean/);
+    assert.match(result.stdout, /next: Stop: no continuation, repair, or wait condition remains\./);
   });
 });
 

@@ -21,7 +21,14 @@ describe("OpenCode continuation runtime", () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-"));
     tempContinuationRoots.add(target);
     await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
-    const config = opencodeConfig();
+    const config = {
+      ...opencodeConfig(),
+      paths: {
+        stateDir: ".qube/aiu/state",
+        lockDir: ".qube/aiu/locks",
+        logDir: ".qube/aiu/logs",
+      },
+    } satisfies AiuConfig;
     await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
     const requests: Array<{ readonly path: { readonly id: string }; readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] }; readonly query?: { readonly directory: string } }> = [];
     const serverPlugin = createAiuOpenCodeServerPlugin({
@@ -108,7 +115,7 @@ describe("OpenCode continuation runtime", () => {
         name: "whip",
         states: [],
         expectedKind: "whip",
-        expectedId: "review-doc-command-examples",
+        expectedId: "improve-repository-quality",
       },
     ] as const;
 
@@ -118,7 +125,12 @@ describe("OpenCode continuation runtime", () => {
         { type: "session.idle", payload: { sessionId: `ses_${item.name}`, selectedSessionId: `ses_${item.name}` } },
         {
           cwd: repoRoot,
-          config: opencodeConfig(),
+          config: opencodeConfig({
+            postIssueScope: item.name === "planning" ? "ready" : "standard",
+            planningEnabled: item.name === "planning",
+            qualityEnabled: item.name === "quality",
+            whipEnabled: item.name === "whip",
+          }),
           observedAt: "2026-05-23T12:00:00.000Z",
           trustedStates: item.states,
           deliverPrompt: (prompt) => {
@@ -425,13 +437,20 @@ describe("OpenCode continuation runtime", () => {
   });
 });
 
-function opencodeConfig(): AiuConfig {
+function opencodeConfig(options: {
+  readonly postIssueScope?: "ready" | "standard";
+  readonly planningEnabled?: boolean;
+  readonly qualityEnabled?: boolean;
+  readonly whipEnabled?: boolean;
+} = {}): AiuConfig {
   const stateRoot = path.join(tmpdir(), `aiu-opencode-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   tempContinuationRoots.add(stateRoot);
+  const defaults = getDefaultAiuConfig();
   return {
-    ...getDefaultAiuConfig(),
+    ...defaults,
+    postIssueScope: options.postIssueScope ?? defaults.postIssueScope,
     hosts: {
-      ...getDefaultAiuConfig().hosts,
+      ...defaults.hosts,
       enabled: ["opencode"] as const,
       capabilities: {
         opencode: {
@@ -447,12 +466,25 @@ function opencodeConfig(): AiuConfig {
       },
     },
     timeouts: {
-      ...getDefaultAiuConfig().timeouts,
+      ...defaults.timeouts,
       hostMs: 5_000,
     },
     cooldowns: {
-      ...getDefaultAiuConfig().cooldowns,
+      ...defaults.cooldowns,
       promptMs: 600_000,
+    },
+    planning: {
+      ...defaults.planning,
+      enabled: options.planningEnabled ?? defaults.planning.enabled,
+    },
+    quality: {
+      ...defaults.quality,
+      enabled: options.qualityEnabled ?? defaults.quality.enabled,
+    },
+    whip: {
+      ...defaults.whip,
+      enabled: options.whipEnabled ?? defaults.whip.enabled,
+      usePackageDefaults: options.whipEnabled === true,
     },
     paths: {
       stateDir: path.join(stateRoot, "state"),

@@ -111,15 +111,50 @@ function failoverFromMachine(machine: GuideMachine, primaryHost: string | undefi
   };
 }
 
-function isolatedRoute(machine: GuideMachine): ReviewRoutePolicy | null {
-  const host = firstInstalledHost(machine);
-  if (!host) return null;
+export function buildIsolatedReviewRoute(host: ReviewModelHostId): ReviewRoutePolicy {
   return {
     host,
     tier: 'review',
     timeoutSeconds: FRESH_SETUP_ROUTE_TIMEOUT_SECONDS,
     maxTurns: FRESH_SETUP_ROUTE_MAX_TURNS,
   };
+}
+
+function isolatedRoute(machine: GuideMachine): ReviewRoutePolicy | null {
+  const host = firstInstalledHost(machine);
+  if (!host) return null;
+  return buildIsolatedReviewRoute(host);
+}
+
+export function reconcileReviewModePolicy(input: {
+  policy: InitPolicyOptions;
+  machine: GuideMachine;
+}): InitPolicyOptions {
+  const next: InitPolicyOptions = { ...input.policy };
+  const mode = next.reviewMode;
+  if (!mode) return next;
+  if (mode === 'external') {
+    next.reviewAdapter ??= 'github';
+    next.reviewProfile ??= 'remote-compatible';
+    next.reviewLanes ??= [];
+    next.reviewRoute = null;
+    next.reviewFailover = null;
+    next.localReviewAgents = [];
+    return next;
+  }
+
+  const route = mode === 'isolated' ? (next.reviewRoute ?? isolatedRoute(input.machine)) : null;
+  next.reviewAdapter ??= 'local';
+  next.reviewProfile ??= 'local-focused';
+  next.reviewLanes ??= defaultFreshSetupLanes(route?.host ?? null);
+  next.reviewWaitMinutes ??= 0;
+  next.reviewAgents ??= [];
+  next.localReviewAgents = mode === 'host' ? (next.localReviewAgents ?? [...input.machine.installedHosts]) : [];
+  next.reviewRoute = route;
+  next.reviewFailover = mode === 'isolated'
+    ? (next.reviewFailover ?? failoverFromMachine(input.machine, route?.host))
+    : null;
+  return next;
 }
 
 export function applyFreshSetupPolicy(input: {
@@ -135,7 +170,7 @@ export function applyFreshSetupPolicy(input: {
     if (mode === 'isolated' || mode === 'host') {
       if (next.reviewAdapter === undefined) next.reviewAdapter = 'local';
       if (next.reviewProfile === undefined) next.reviewProfile = 'local-focused';
-      if (next.reviewLanes === undefined) next.reviewLanes = defaultFreshSetupLanes(isolatedRoute(input.machine)?.host ?? null);
+      if (next.reviewLanes === undefined) next.reviewLanes = defaultFreshSetupLanes(next.reviewRoute?.host ?? isolatedRoute(input.machine)?.host ?? null);
       if (next.reviewWaitMinutes === undefined) next.reviewWaitMinutes = 0;
       if (next.reviewAgents === undefined) next.reviewAgents = [];
       if (next.localReviewAgents === undefined) {

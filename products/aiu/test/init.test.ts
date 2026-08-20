@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -160,7 +160,7 @@ describe("init planner", () => {
     const target = await createRepoRoot();
     await runCli(target, ["init", "--tool", "all", "--json"]);
 
-    const result = await runCli(target, ["init", "--tool", "codex,grok-build", "--force", "--json"]);
+    const result = await runCli(target, ["init", "--tool", "codex,grok-build", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
       hosts: { enabled: string[] };
@@ -171,6 +171,95 @@ describe("init planner", () => {
     assert.deepEqual(parsed.init.tools, ["codex", "grok-build"]);
     assert.deepEqual(parsed.init.config.hosts, ["codex", "grok-build"]);
     assert.deepEqual(config.hosts.enabled, ["codex", "grok-build"]);
+  });
+
+  it("configures Ready-only and standard post-issue scopes without host assets", async () => {
+    const cases = [
+      { scope: "ready", quality: false, whip: false, packageDefaults: false },
+      { scope: "standard", quality: true, whip: true, packageDefaults: true },
+    ] as const;
+
+    for (const expected of cases) {
+      const target = await createRepoRoot();
+      const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", expected.scope, "--json"]);
+      const parsed = JSON.parse(result.stdout) as InitEnvelope;
+      const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+        postIssueScope: string;
+        hosts: { enabled: string[] };
+        planning: { enabled: boolean };
+        quality: { enabled: boolean };
+        whip: { enabled: boolean; usePackageDefaults: boolean };
+      };
+
+      assert.equal(result.exitCode, 0, expected.scope);
+      assert.equal(parsed.init.postIssueScope, expected.scope);
+      assert.deepEqual(parsed.init.tools, []);
+      assert.deepEqual(parsed.init.files, []);
+      assert.equal(parsed.init.hostProfiles.length, 0);
+      assert.deepEqual(config.hosts.enabled, []);
+      assert.equal(config.postIssueScope, expected.scope);
+      assert.equal(config.planning.enabled, false);
+      assert.equal(config.quality.enabled, expected.quality);
+      assert.equal(config.whip.enabled, expected.whip);
+      assert.equal(config.whip.usePackageDefaults, expected.packageDefaults);
+      assert.equal(existsSync(path.join(target, ".opencode")), false);
+      assert.equal(existsSync(path.join(target, ".claude")), false);
+      assert.equal(existsSync(path.join(target, ".grok")), false);
+      assert.equal(existsSync(path.join(target, ".agents")), false);
+    }
+  });
+
+  it("uses only configured Umpire tasks for custom post-issue scope", async () => {
+    const target = await createRepoRoot();
+    const configPath = path.join(target, ".qube", "aiu", "config.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      version: 1,
+      postIssueScope: "ready",
+      teamSetting: "preserve",
+      whip: {
+        tasks: [{
+          id: "research-cycle",
+          title: "Run the research cycle",
+          prompt: "Run the repository research cycle and preserve measured evidence.",
+          priority: 10,
+        }],
+      },
+    }), "utf8");
+
+    const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", "custom", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      postIssueScope: string;
+      teamSetting: string;
+      planning: { enabled: boolean };
+      quality: { enabled: boolean };
+      whip: { enabled: boolean; usePackageDefaults: boolean; tasks: Array<{ id: string }> };
+    };
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(parsed.init.postIssueScope, "custom");
+    assert.equal(parsed.init.config.operation, "update");
+    assert.equal(config.teamSetting, "preserve");
+    assert.equal(config.postIssueScope, "custom");
+    assert.equal(config.planning.enabled, false);
+    assert.equal(config.quality.enabled, false);
+    assert.equal(config.whip.enabled, true);
+    assert.equal(config.whip.usePackageDefaults, false);
+    assert.deepEqual(config.whip.tasks.map((task) => task.id), ["research-cycle"]);
+  });
+
+  it("fails custom post-issue scope before writes when no tasks are configured", async () => {
+    const target = await createRepoRoot();
+    const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", "custom", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+
+    assert.equal(result.exitCode, 3);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.init.ok, false);
+    assert.equal(parsed.init.postIssueScope, "custom");
+    assert.match(parsed.init.conflicts[0]?.reason ?? "", /at least one configured Umpire task/);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
   it("rejects Cursor because Umpire continuation is unavailable", async () => {
@@ -453,6 +542,105 @@ describe("init planner", () => {
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
+  it("makes zero writes when the repository root becomes a linked directory after planning", async (t) => {
+    const target = await createRepoRoot();
+    const originalRoot = `${target}-original`;
+    tempRoots.push(originalRoot);
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-root-"));
+    tempRoots.push(outsideRoot);
+    await mkdir(path.join(outsideRoot, ".git"));
+    const sentinelPath = path.join(outsideRoot, "sentinel.txt");
+    await writeFile(sentinelPath, "outside sentinel\n", "utf8");
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    await rename(target, originalRoot);
+    try {
+      await symlink(outsideRoot, target, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("repository root link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+
+    assert.equal(applied.ok, false);
+    assert.ok(applied.conflicts.some((conflict) => conflict.relativePath === "." && /symbolic link or directory junction/u.test(conflict.reason)));
+    assert.equal(await readFile(sentinelPath, "utf8"), "outside sentinel\n");
+    assert.equal(existsSync(path.join(outsideRoot, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
+    assert.equal(existsSync(path.join(outsideRoot, ".qube", "aiu", "config.json")), false);
+    assert.equal(existsSync(path.join(originalRoot, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("makes zero writes when a managed parent becomes a linked directory after planning", async (t) => {
+    const target = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-parent-"));
+    tempRoots.push(outsideRoot);
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    try {
+      await symlink(outsideRoot, path.join(target, ".opencode"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+    const wrapper = applied.files.find((file) => file.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts"));
+
+    assert.equal(applied.ok, false);
+    assert.equal(wrapper?.operation, "conflict");
+    assert.match(wrapper?.reason ?? "", /symbolic links or directory junctions/u);
+    assert.equal(existsSync(path.join(outsideRoot, "plugins", "ai-umpire-continuation.ts")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("makes zero writes when a managed leaf becomes a matching symbolic link after planning", async (t) => {
+    const target = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-leaf-"));
+    tempRoots.push(outsideRoot);
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    const plannedWrapper = plan.files.find((file) => file.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts"));
+    assert(plannedWrapper);
+    const wrapperPath = path.join(target, plannedWrapper.relativePath);
+    const outsideWrapper = path.join(outsideRoot, "ai-umpire-continuation.ts");
+    await mkdir(path.dirname(wrapperPath), { recursive: true });
+    await writeFile(outsideWrapper, plannedWrapper.content, "utf8");
+    try {
+      await symlink(outsideWrapper, wrapperPath, "file");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("file link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+    const wrapper = applied.files.find((file) => file.relativePath === plannedWrapper.relativePath);
+
+    assert.equal(applied.ok, false);
+    assert.equal(wrapper?.operation, "conflict");
+    assert.match(wrapper?.reason ?? "", /symbolic links or directory junctions/u);
+    assert.equal(await readFile(outsideWrapper, "utf8"), plannedWrapper.content);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
   it("treats unreadable managed paths as conflicts", async () => {
     const target = await createRepoRoot();
     const wrapper = path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts");
@@ -508,10 +696,12 @@ interface InitEnvelope {
   readonly init: {
     readonly ok: boolean;
     readonly dryRun: boolean;
+    readonly postIssueScope: string;
     readonly tools: string[];
     readonly hostProfiles: Array<{ tool: string; supportLevel: string }>;
     readonly files: Array<{ relativePath: string; operation: string; reason?: string }>;
     readonly config: { operation: string; hosts: string[]; trustedStateCommands: string[] };
+    readonly conflicts: Array<{ relativePath: string; reason: string }>;
     readonly recommendedNextCommand: string;
   };
 }
@@ -524,7 +714,14 @@ function findFile(plan: InitEnvelope, relativePath: string): InitEnvelope["init"
 
 interface InitPlan {
   readonly ok: boolean;
-  readonly files: Array<{ operation: string }>;
+  readonly conflicts: Array<{ readonly relativePath: string; readonly reason: string }>;
+  readonly files: Array<{
+    readonly relativePath: string;
+    readonly absolutePath: string;
+    readonly operation: string;
+    readonly reason: string;
+    readonly content: string;
+  }>;
 }
 
 async function createRepoRoot(): Promise<string> {

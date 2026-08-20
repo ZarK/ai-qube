@@ -206,15 +206,17 @@ describe('status service', () => {
     assert.deepEqual(queue.activeItems[0].nextAction.argv, ['aie', 'branch', 'check', '76']);
   });
 
-  it('does not recover an active issue through Umpire when Continuous Shipping is off', async () => {
+  it('recovers current local issue work without shipping when Continuous Shipping is off', async () => {
     const config = makeConfig({ autonomousMode: false });
     const result = await buildStatus(makeContext({ config, workItems: [makeWork(76, 'Manual current issue', ['S-InProgress'])] }));
 
     const policy = result.states.find(state => state.kind === 'continuation-policy');
     const queue = result.states.find(state => state.kind === 'work-queue');
-    assert.deepEqual(policy.allowedModes, ['stop']);
-    assert.equal(queue.status, 'unknown');
-    assert.equal(queue.activeItems[0].nextAction, undefined);
+    assert.deepEqual(policy.allowedModes, ['continue', 'repair', 'wait', 'stop']);
+    assert.match(policy.summary, /cannot ship or start Ready work/);
+    assert.equal(queue.status, 'pass');
+    assert.deepEqual(queue.activeItems[0].nextAction.argv, ['aie', 'branch', 'check', '76']);
+    assert.deepEqual(queue.readyItems, []);
   });
 
   it('reports blocked work without selecting it as next work', async () => {
@@ -228,13 +230,28 @@ describe('status service', () => {
     assert.equal(result.queue.activeWork[0].number, 75);
   });
 
-  it('stops for a dirty checkout before continuing active work', async () => {
+  it('recovers dirty local work when exactly one issue is active', async () => {
     const repoState = makeRepoState(makeRoot(), { dirty: { dirty: true, paths: ['src/status.ts'], error: null } });
     const result = await buildStatus(makeContext({ repoState, workItems: [makeWork(76, 'Status command', ['S-InProgress'])] }));
 
-    assert.deepEqual(result.decision.reasonCodes, ['dirty-checkout']);
+    assert.deepEqual(result.decision.reasonCodes, ['continue-dirty-active-work']);
     assert.equal(result.decision.nextCommand, 'git status');
-    assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['stop']);
+    assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['continue', 'repair', 'wait', 'stop']);
+  });
+
+  it('does not expose a shipping action when Continuous Shipping is off', async () => {
+    const config = makeConfig({ autonomousMode: false });
+    const result = await buildStatus(makeContext({
+      config,
+      workItems: [makeWork(76, 'Manual current issue', ['S-InProgress'])],
+      review: { item: makeReview(90, { state: 'merged', reviewDecision: 'approved', mergeability: 'mergeable' }), pr: null, warning: null },
+    }));
+
+    const policy = result.states.find(state => state.kind === 'continuation-policy');
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.deepEqual(result.decision.reasonCodes, ['active-work-complete']);
+    assert.deepEqual(policy.allowedModes, ['stop']);
+    assert.equal(queue.activeItems[0].nextAction, undefined);
   });
 
   it('does not let idle Umpire work bypass a dirty-checkout stop', async () => {

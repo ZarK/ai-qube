@@ -421,6 +421,7 @@ describe("doctor diagnostics", () => {
     await writeFile(whipPath, `${JSON.stringify(whipState, null, 2)}\n`, "utf8");
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       trustedStateCommands: {
         planning: { argv: [process.execPath, "--version"] },
         quality: { argv: [process.execPath, "--version"] },
@@ -433,8 +434,7 @@ describe("doctor diagnostics", () => {
     const kinds = report.checks.map((check) => check.kind);
 
     assert.equal(after, before);
-    assert.ok(kinds.includes("planning-mode-enabled"));
-    assert.ok(kinds.includes("planning-trusted-command-found"));
+    assert.ok(kinds.includes("planning-mode-disabled"));
     assert.ok(kinds.includes("quality-mode-enabled"));
     assert.ok(kinds.includes("quality-trusted-command-found"));
     assert.ok(kinds.includes("whip-state-valid"));
@@ -466,6 +466,7 @@ describe("doctor diagnostics", () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
       version: 1,
+      postIssueScope: "standard",
       trustedStateCommands: {
         preplanning: { argv: [process.execPath, "--version"] },
         qualityish: { argv: [process.execPath, "--version"] },
@@ -476,8 +477,7 @@ describe("doctor diagnostics", () => {
     const planningChecks = report.checks.filter((check) => check.id.startsWith("planning-trusted-command"));
     const qualityChecks = report.checks.filter((check) => check.id.startsWith("quality-trusted-command"));
 
-    assert.equal(planningChecks.length, 1);
-    assert.equal(planningChecks[0]?.kind, "planning-trusted-command-missing");
+    assert.equal(planningChecks.length, 0);
     assert.equal(qualityChecks.length, 1);
     assert.equal(qualityChecks[0]?.kind, "quality-trusted-command-missing");
   });

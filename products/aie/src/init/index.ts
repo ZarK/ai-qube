@@ -1,6 +1,6 @@
 import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, type ReviewSourceConfig, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
-import { resolveModelRouting } from '../core/model_routing.js';
+import { defaultModelRoutingPolicy, resolveModelRouting, type ModelRoutingPolicy } from '../core/model_routing.js';
 import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
 import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
@@ -9,7 +9,7 @@ import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../manage
 import { getRepoRoot } from '../repo/index.js';
 import { reviewModeOf } from '../review_mode.js';
 import { adoptFromSource } from './from_source.js';
-import { applyFreshSetupPolicy } from './fresh_setup.js';
+import { applyFreshSetupPolicy, buildIsolatedReviewRoute, reconcileReviewModePolicy } from './fresh_setup.js';
 import {
   answersFromPolicy,
   applyQuestionAnswersToPolicy,
@@ -21,6 +21,14 @@ import {
   unansweredQuestionIds,
 } from './questions.js';
 import { planLocalRuntimeGitignoreUpdate } from './local_runtime_gitignore.js';
+import { getDesiredLabels } from '../labels.js';
+import {
+  listInitExternalReviewers,
+  resolveInitExternalReviewers,
+  resolveInitIsolatedReviewer,
+  resolveInitLocalReviewers,
+  resolveInitReviewModels,
+} from './review_selections.js';
 export { collectSetupDoctorRecommendations } from './setup_readiness.js';
 export { resolveContainedFromPath, parseAdoptedConfig, classifyFromSpec } from './from_source.js';
 export {
@@ -37,12 +45,14 @@ export type {
   InitOptions,
   InitPolicyOptions,
   InitPolicySummary,
+  InitPostAction,
+  InitProviderAction,
   InitQuestion,
   InitQuestionId,
   InitResult,
   InitSetupSummary,
 } from './types.js';
-import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPolicyOptions, InitPolicySummary, InitQuestion, InitResult } from './types.js';
+import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPolicyOptions, InitPolicySummary, InitPostAction, InitProviderAction, InitQuestion, InitResult } from './types.js';
 
 interface PlannedWrite {
   actionId: string;
@@ -98,7 +108,9 @@ function applyProviderPolicy(record: Record<string, unknown>, policy: InitPolicy
     providers.work = mergeNestedRecord(providers.work, { kind: policy.workProvider });
   }
   if (reviewKind) {
-    providers.review = mergeNestedRecord(providers.review, { kind: reviewKind });
+    const review = mergeNestedRecord(providers.review, { kind: reviewKind });
+    if (reviewKind !== 'github') delete review.publisher;
+    providers.review = review;
   }
   if (policy.ciProvider) {
     providers.ci = mergeNestedRecord(providers.ci, { kind: policy.ciProvider });
@@ -208,6 +220,16 @@ function defaultsRecord(): Record<string, unknown> {
   return configToFileShape(getDefaults()) as unknown as Record<string, unknown>;
 }
 
+function bindDefaultModelRouting(primaryHost: InitTool): ModelRoutingPolicy {
+  const modelRouting = defaultModelRoutingPolicy();
+  return {
+    ...modelRouting,
+    catalog: modelRouting.catalog.map(entry => entry.id === modelRouting.primary
+      ? { ...entry, host: primaryHost, transport: 'host' }
+      : entry),
+  };
+}
+
 function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
@@ -242,13 +264,15 @@ function persistReviewSources(record: Record<string, unknown>): void {
   record.policy = policy;
 }
 
-function emptyGuideFields(): Pick<InitResult, 'questions' | 'unansweredQuestionIds' | 'setupSummary' | 'from' | 'awaitingAnswers'> {
+function emptyGuideFields(): Pick<InitResult, 'questions' | 'unansweredQuestionIds' | 'setupSummary' | 'from' | 'awaitingAnswers' | 'postInitActions' | 'providerActions'> {
   return {
     questions: [],
     unansweredQuestionIds: [],
     setupSummary: null,
     from: null,
     awaitingAnswers: false,
+    postInitActions: [],
+    providerActions: [],
   };
 }
 
@@ -497,10 +521,14 @@ function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof a
   const validation = validateConfig(record);
   if (!validation.config) return {};
   const config = validation.config;
+  const reviewMode = reviewModeOf(config);
   return {
-    reviewMode: reviewModeOf(config),
-    reviewers: [...config.reviewAgents],
-    publisher: config.providers.review.publisher?.mode ?? 'user',
+    reviewMode,
+    reviewers: [...(reviewMode === 'host' ? config.localReviewAgents : config.reviewAgents)],
+    reviewModels: Object.entries(config.reviewModels.review).flatMap(([host, binding]) => (
+      binding?.model ? [`${host}:${binding.model}`] : []
+    )),
+    publisher: config.providers.review.kind === 'github' ? (config.providers.review.publisher?.mode ?? 'user') : undefined,
     qualityControl: config.qualityControl,
     manualUiAudit: config.manualUiAudit,
     uiAuditEvidenceRoot: config.uiAuditEvidenceRoot === '' ? undefined : config.uiAuditEvidenceRoot,
@@ -508,7 +536,34 @@ function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof a
   };
 }
 
+function hasCompleteGitHubAppPublisher(config: Config): boolean {
+  const app = config.providers.review.publisher?.githubApp;
+  return config.providers.review.publisher?.mode === 'github-app'
+    && Boolean(app?.appId && app.installationId && (app.privateKeyEnv || app.privateKeyPath));
+}
+
+function postInitActions(policy: InitPolicyOptions, config: Config): InitPostAction[] {
+  if (config.providers.review.kind !== 'github' || policy.publisherIntent !== 'github-app' || hasCompleteGitHubAppPublisher(config)) return [];
+  return [{
+    id: 'github-app-publisher-setup',
+    command: 'qube review setup github-app',
+    reason: 'Run the guided GitHub App setup after init. Init did not write incomplete publisher credentials.',
+  }];
+}
+
+function providerActions(config: Config): InitProviderAction[] {
+  if (config.providers.work.kind !== 'github') return [];
+  return [{
+    id: 'labels-setup',
+    provider: 'github',
+    command: 'qube aie labels setup',
+    labels: getDesiredLabels(config),
+    reason: 'Create or reuse the configured priority, lifecycle, and custom component labels after local init succeeds.',
+  }];
+}
+
 function publisherSummary(config: Config): string {
+  if (config.providers.review.kind !== 'github') return 'not applicable';
   const publisher = config.providers.review.publisher;
   if (!publisher) return 'user (not configured)';
   if (publisher.mode === 'github-app') return publisher.githubApp?.login ? `github-app (${publisher.githubApp.login})` : 'github-app';
@@ -524,7 +579,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const actions: InitAction[] = [];
   const writes: PlannedWrite[] = [];
   const selectedInstalledHosts = options.installedHosts ?? selectedTools;
-  const machine = detectGuideMachine({
+  const detectedMachine = detectGuideMachine({
     repoRoot,
     installedHosts: selectedInstalledHosts,
     agentBrowserAvailable: options.agentBrowserAvailable,
@@ -532,14 +587,30 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   });
   let fromReport: InitFromReport | null = null;
   let baseRecord = defaultsRecord();
+  let currentAnswers: ReturnType<typeof answersFromPolicy> = {};
+  let currentConfig: Config | null = null;
+  let existingConfigIsBase = false;
   let policy = options.policy ? { ...options.policy } : {};
+
+  if (!options.from && repoRoot) {
+    const current = await readConfig(join(repoRoot, AIE_CONFIG_FILENAME));
+    if (current.raw && !current.parseError) {
+      const validation = validateConfig(current.raw);
+      if (validation.ok && validation.config) {
+        currentConfig = validation.config;
+        baseRecord = configToFileShape(validation.config) as unknown as Record<string, unknown>;
+        currentAnswers = answersFromRecord(baseRecord);
+        existingConfigIsBase = true;
+      }
+    }
+  }
 
   if (options.from) {
     const adopted = await adoptFromSource({
       spec: options.from,
       cwd: options.cwd ?? process.cwd(),
       fetchRepoConfig: options.fetchRepoConfig,
-      machine,
+      machine: detectedMachine,
     });
     if (!adopted.ok) {
       const fallbackConfig = configFromPolicy(policy);
@@ -571,24 +642,85 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     warnings.push(...adopted.report.adjustments);
   }
 
+  const baseValidation = validateConfig(baseRecord);
+  const reviewProvider = policy.reviewProvider
+    ?? (policy.workProvider === 'gitlab' ? 'gitlab' : undefined)
+    ?? ((existingConfigIsBase || options.from) ? baseValidation.config?.providers.review.kind : undefined)
+    ?? 'github';
+  const machine = {
+    ...detectedMachine,
+    externalReviewers: reviewProvider === 'github' ? await listInitExternalReviewers() : [],
+  };
+
+  const selectionErrors: string[] = [];
+  const primaryHost = policy.primaryHost ?? selectedTools[0];
+  if (policy.primaryHost && !selectedTools.includes(policy.primaryHost)) {
+    selectionErrors.push(`Primary harness ${policy.primaryHost} is not in the selected agent harnesses.`);
+  }
+  if (!existingConfigIsBase && !options.from && policy.modelRouting === undefined && primaryHost) {
+    policy.modelRouting = bindDefaultModelRouting(primaryHost);
+  }
+  if (policy.reviewAgentSelections !== undefined) {
+    const resolved = resolveInitExternalReviewers(policy.reviewAgentSelections, machine.externalReviewers, reviewProvider);
+    policy.reviewAgentSelections = [...resolved.values];
+    policy.reviewAgents = [...resolved.values];
+    selectionErrors.push(...resolved.errors);
+  }
+  if (policy.localReviewAgentSelections !== undefined) {
+    const resolved = resolveInitLocalReviewers(policy.localReviewAgentSelections, machine.installedHosts);
+    policy.localReviewAgentSelections = [...resolved.values];
+    policy.localReviewAgents = [...resolved.values];
+    selectionErrors.push(...resolved.errors);
+  }
+  if (policy.isolatedReviewAgent !== undefined) {
+    const resolved = resolveInitIsolatedReviewer(policy.isolatedReviewAgent, selectedTools, machine.installedHosts);
+    selectionErrors.push(...resolved.errors);
+    if (resolved.values) {
+      policy.reviewMode ??= 'isolated';
+      policy.reviewRoute = buildIsolatedReviewRoute(resolved.values);
+    }
+  }
+  if (policy.reviewModelSelections !== undefined) {
+    const resolved = resolveInitReviewModels(policy.reviewModelSelections, machine.modelCatalogs ?? {});
+    policy.reviewModelSelections = Object.entries(resolved.values).flatMap(([host, binding]) => (
+      binding?.model ? [`${host}:${binding.model}`] : []
+    ));
+    selectionErrors.push(...resolved.errors);
+    warnings.push(...resolved.warnings);
+    if (Object.keys(resolved.values).length > 0) {
+      policy.reviewModels = {
+        review: resolved.values,
+        economy: currentConfig?.reviewModels.economy ?? policy.reviewModels?.economy ?? {},
+        synthesis: currentConfig?.reviewModels.synthesis ?? policy.reviewModels?.synthesis ?? {},
+      };
+    }
+  }
+  const reviewModeChanged = currentConfig !== null
+    && policy.reviewMode !== undefined
+    && policy.reviewMode !== reviewModeOf(currentConfig);
+  if (existingConfigIsBase && (reviewModeChanged || policy.isolatedReviewAgent !== undefined)) {
+    policy = reconcileReviewModePolicy({ policy, machine });
+  }
+
   const flagAnswers = answersFromPolicy(policy);
   const fromAnswers = options.from ? answersFromRecord(baseRecord) : {};
-  const answers = { ...fromAnswers, ...flagAnswers };
+  const answers = { ...currentAnswers, ...fromAnswers, ...flagAnswers };
   const askedQuestions = buildInitQuestions({
     machine,
     answers,
     useDefaults: options.useDefaults,
     repoRoot,
+    reviewProvider,
   });
   const fillAnswers = Boolean(options.guide) || Boolean(options.yes) || Boolean(options.useDefaults);
   const questions = fillAnswers ? fillUnansweredQuestions(askedQuestions) : askedQuestions;
-  policy = applyQuestionAnswersToPolicy(policy, questions);
-  if (fillAnswers) {
+  if (!existingConfigIsBase) policy = applyQuestionAnswersToPolicy(policy, questions);
+  if (fillAnswers && !existingConfigIsBase) {
     policy = applyFreshSetupPolicy({
       policy,
       machine,
       repoRoot,
-      fromAdopted: Boolean(options.from),
+      fromAdopted: Boolean(options.from) || existingConfigIsBase,
     });
   }
   const awaitingAnswers = Boolean(options.guide) && !options.yes;
@@ -618,11 +750,13 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         setupSummary: null,
         from: fromReport,
         awaitingAnswers: false,
+        postInitActions: [],
+        providerActions: [],
       },
       writes,
     };
   }
-  const fallbackConfig = configFromPolicy(policy);
+  const fallbackConfig = currentConfig ?? configFromPolicy(policy);
 
   if (selectedTools.length === 0) {
     const configPath = join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME);
@@ -649,6 +783,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         setupSummary: null,
         from: fromReport,
         awaitingAnswers: false,
+        postInitActions: [],
+        providerActions: [],
       },
       writes,
     };
@@ -679,6 +815,39 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         setupSummary: null,
         from: fromReport,
         awaitingAnswers: false,
+        postInitActions: [],
+        providerActions: [],
+      },
+      writes,
+    };
+  }
+
+  if (selectionErrors.length > 0) {
+    return {
+      result: {
+        ok: false,
+        command: 'init',
+        dryRun: options.dryRun,
+        forced: options.force,
+        target: options.target,
+        repoRoot,
+        selectedTools,
+        policy: policySummary(fallbackConfig),
+        configPath: join(repoRoot, AIE_CONFIG_FILENAME),
+        actions,
+        plannedChanges: [],
+        completedChanges: [],
+        skippedActions: [],
+        warnings,
+        errors: selectionErrors,
+        nextCommand: 'Select registered review services, installed local review harnesses, and models from the live host catalogs, then rerun init.',
+        questions,
+        unansweredQuestionIds: unanswered,
+        setupSummary: null,
+        from: fromReport,
+        awaitingAnswers: false,
+        postInitActions: [],
+        providerActions: [],
       },
       writes,
     };
@@ -777,6 +946,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       setupSummary,
       from: fromReport,
       awaitingAnswers,
+      postInitActions: postInitActions(policy, config),
+      providerActions: providerActions(config),
     },
     writes: awaitingAnswers ? [] : writes,
   };

@@ -40,6 +40,10 @@ export function formatInitHuman(result: InitResult): string {
   lines.push(...formatList('Skipped actions', result.skippedActions));
   lines.push(...formatList('Warnings', result.warnings));
   lines.push(...formatList('Errors', result.errors));
+  if (result.postInitActions.length > 0) {
+    lines.push('After init:');
+    for (const action of result.postInitActions) lines.push(`  ${action.command} — ${action.reason}`);
+  }
   lines.push(`Next: ${result.nextCommand}`);
   return lines.join('\n');
 }

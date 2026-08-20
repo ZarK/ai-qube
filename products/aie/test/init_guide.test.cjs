@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
 const { spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
@@ -16,6 +16,7 @@ const {
   classifyFromSpec,
 } = require('../dist/init/index.js');
 const { applyQuestionAnswersToPolicy, buildInitQuestions, detectGuideMachine, isolatedReviewHostsOnMachine, recommendedReviewMode } = require('../dist/init/questions.js');
+const { listInitExternalReviewers, resolveInitExternalReviewers, resolveInitReviewModels } = require('../dist/init/review_selections.js');
 const { configToFileShape, getDefaults, validateConfig } = require('../dist/config/index.js');
 
 function makeGitRepo() {
@@ -186,6 +187,36 @@ describe('init guide questions', () => {
     assert.equal(empty.reviewModels, undefined);
   });
 
+  it('discovers exactly the three tested external reviewers through the GitHub adapter registry', async () => {
+    const reviewers = await listInitExternalReviewers();
+    assert.deepEqual(reviewers.map(reviewer => reviewer.id), ['copilot', 'coderabbit', 'cubic']);
+    assert.deepEqual(
+      resolveInitExternalReviewers(['copilot', 'coderabbitai', 'cubic-dev-ai'], reviewers).values,
+      ['copilot', 'coderabbit', 'cubic'],
+    );
+    assert.match(resolveInitExternalReviewers(['qubereview'], reviewers).errors[0], /not available for normal GitHub setup/);
+  });
+
+  it('accepts live review models and rejects unlisted or unavailable model selections', () => {
+    const ready = {
+      'grok-build': { host: 'grok-build', status: 'ready', models: ['grok-4.5'], diagnostic: null },
+    };
+    const accepted = resolveInitReviewModels(['grok-build:grok-4.5'], ready);
+    assert.deepEqual(accepted.values['grok-build'], { model: 'grok-4.5', effort: null });
+    assert.deepEqual(accepted.errors, []);
+
+    const rejected = resolveInitReviewModels(['grok-build:unknown'], ready);
+    assert.match(rejected.errors[0], /not in the live grok-build model catalog/);
+    assert.deepEqual(rejected.values, {});
+
+    const unavailable = resolveInitReviewModels(['codex:gpt-current'], {
+      codex: { host: 'codex', status: 'unavailable', models: [], diagnostic: 'No catalog.' },
+    });
+    assert.deepEqual(unavailable.values, {});
+    assert.match(unavailable.errors[0], /live codex model catalog is unavailable/);
+    assert.deepEqual(unavailable.warnings, []);
+  });
+
   it('does not recommend isolated when no review host is installed', () => {
     const questions = buildInitQuestions({
       machine: { installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false, hasUserFacingUi: false },
@@ -321,6 +352,114 @@ describe('init guide questions', () => {
     assert.equal(omittedConfig.policy.instructions.noCreditWarning, false);
     assert.doesNotMatch(omittedAgents, /agent, model, service, or vendor credit/);
     assert.doesNotMatch(omittedAgents, /QUBE may use its configured review publisher/);
+  });
+
+  it('preserves valid custom review and quality config without writes on a guided rerun', async () => {
+    const repo = makeGitRepo();
+    const config = configToFileShape(getDefaults());
+    config.policy.reviews.mode = 'host';
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['opencode'];
+    config.policy.reviews.models.review.opencode = { model: 'private-review-model', effort: 'high' };
+    config.policy.gates.qualityControl = true;
+    config.policy.labels.components = ['C-Custom'];
+    config.providers.review.publisher = {
+      mode: 'github-app',
+      githubApp: {
+        appId: '123',
+        installationId: '456',
+        privateKeyEnv: 'QUBE_REVIEW_PRIVATE_KEY',
+        login: 'qube-review[bot]',
+      },
+    };
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const first = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+    assert.equal(first.ok, true);
+    const before = readFileSync(configPath, 'utf8');
+    const beforeMtime = statSync(configPath).mtimeMs;
+
+    const second = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      guide: true,
+      yes: true,
+      installedHosts: ['grok-build'],
+      agentBrowserAvailable: false,
+      aiqAvailable: true,
+    });
+
+    assert.equal(second.ok, true);
+    assert.deepEqual(second.completedChanges, []);
+    assert.equal(readFileSync(configPath, 'utf8'), before);
+    assert.equal(statSync(configPath).mtimeMs, beforeMtime);
+    assert.deepEqual(second.postInitActions, []);
+    assert.equal(second.providerActions[0].labels.length, 9);
+    assert.ok(second.providerActions[0].labels.some(label => label.name === 'C-Custom'));
+  });
+
+  it('returns GitHub App setup as a post-init action without writing incomplete publisher config', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      guide: true,
+      yes: true,
+      installedHosts: [],
+      agentBrowserAvailable: false,
+      aiqAvailable: false,
+      policy: { publisherIntent: 'github-app' },
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.postInitActions, [{
+      id: 'github-app-publisher-setup',
+      command: 'qube review setup github-app',
+      reason: 'Run the guided GitHub App setup after init. Init did not write incomplete publisher credentials.',
+    }]);
+    assert.equal(result.providerActions[0].labels.length, 8);
+    const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(written.providers.review.publisher, undefined);
+
+    const userRepo = makeGitRepo();
+    const user = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: userRepo,
+      guide: true,
+      yes: true,
+      installedHosts: [],
+      agentBrowserAvailable: false,
+      aiqAvailable: false,
+      policy: { publisherIntent: 'user', publisher: { mode: 'user' } },
+    });
+    assert.equal(user.ok, true);
+    assert.equal(JSON.parse(readFileSync(join(userRepo, '.qube', 'aie', 'config.json'), 'utf8')).providers.review.publisher.mode, 'user');
+  });
+
+  it('renders different Continuous Shipping instructions for enabled and disabled policy', async () => {
+    const enabledRepo = makeGitRepo();
+    const disabledRepo = makeGitRepo();
+    assert.equal((await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: enabledRepo, policy: { autonomousMode: true } })).ok, true);
+    assert.equal((await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: disabledRepo, policy: { autonomousMode: false } })).ok, true);
+
+    const enabled = readFileSync(join(enabledRepo, 'AGENTS.md'), 'utf8');
+    const disabled = readFileSync(join(disabledRepo, 'AGENTS.md'), 'utf8');
+    assert.match(enabled, /Autonomous shipping mode is enabled/);
+    assert.match(enabled, /commit, push, create non-draft PRs/);
+    assert.match(disabled, /Autonomous shipping mode is disabled/);
+    assert.match(disabled, /Stop before commit, push, pull request creation, merge, or continuation into new issue work/);
   });
 });
 
@@ -523,13 +662,57 @@ describe('init guide CLI and doctor-clean setup', () => {
     }
   });
 
-  it('publishes --from, --review-mode, and --publisher in schema metadata', () => {
+  it('publishes guided review selections in schema metadata', () => {
     const { getCommandMetadata } = require('../dist/command_metadata.js');
     const metadata = getCommandMetadata('init');
     assert.ok(metadata.flags.includes('--from'));
     assert.ok(metadata.flags.includes('--review-mode'));
+    assert.ok(metadata.flags.includes('--review-agent'));
+    assert.ok(metadata.flags.includes('--local-review-agent'));
+    assert.ok(metadata.flags.includes('--review-model'));
     assert.ok(metadata.flags.includes('--ui-audit-evidence-root'));
     assert.ok(metadata.flags.includes('--publisher'));
+  });
+
+  it('CLI records GitHub App selection as a follow-up action only', () => {
+    const repo = makeGitRepo();
+    const result = binRun(['init', '.', '--publisher', 'github-app', '--yes', '--json'], repo);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.postInitActions[0].command, 'qube review setup github-app');
+    const config = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
+    assert.equal(config.providers.review.publisher, undefined);
+  });
+
+  it('CLI omits GitHub setup actions when all providers use GitLab', () => {
+    const repo = makeGitRepo();
+    const result = binRun([
+      'init',
+      '.',
+      '--json',
+      '--tool',
+      'codex',
+      '--work-provider',
+      'gitlab',
+      '--review-provider',
+      'gitlab',
+      '--ci-provider',
+      'gitlab',
+      '--review-mode',
+      'isolated',
+      '--autonomous',
+      '--dry-run',
+      '--yes',
+    ], repo);
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.postInitActions, []);
+    assert.deepEqual(parsed.providerActions, []);
+    assert.equal(parsed.questions.some(question => question.id === 'publisher'), false);
+    assert.equal(parsed.setupSummary.publisher, 'not applicable');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
   });
 
   it('CLI --ui-audit-evidence-root writes the evidence root', () => {

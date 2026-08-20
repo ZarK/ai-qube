@@ -1,7 +1,7 @@
 import { defineCommand, defineExample, defineFlag } from "@tjalve/qube-cli/metadata";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 
-import { AIU_CONFIG_FILENAME } from "./config.js";
+import { AIU_CONFIG_FILENAME, AIU_POST_ISSUE_SCOPES } from "./config.js";
 import { AIU_INIT_TOOLS } from "./init.js";
 
 const jsonFlag = defineFlag({
@@ -445,6 +445,12 @@ export const initCommand = defineCommand({
       defaultValue: "all",
     }),
     defineFlag({
+      name: "post-issue-scope",
+      description: "Choose what Umpire can continue after active and Ready issue work: ready, standard, or custom.",
+      type: "option",
+      options: AIU_POST_ISSUE_SCOPES,
+    }),
+    defineFlag({
       name: "dry-run",
       description: "Render the init plan without writing files.",
       type: "boolean",
@@ -462,7 +468,11 @@ export const initCommand = defineCommand({
     }),
     defineExample({
       description: "Initialize only Codex host files.",
-      command: "aiu init --tool codex",
+      command: "aiu init --tool codex --post-issue-scope ready",
+    }),
+    defineExample({
+      description: "Configure Cursor-only use without installing Umpire host assets.",
+      command: "aiu init --tool none --post-issue-scope ready",
     }),
     defineExample({
       description: "Initialize OpenCode and Claude Code in one plan.",

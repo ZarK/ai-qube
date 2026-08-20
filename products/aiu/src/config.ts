@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
@@ -9,15 +9,18 @@ export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as c
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
 export const AIU_CONTINUATION_MODES = ["continue", "repair", "wait", "stop"] as const;
 export const AIU_PROMPT_SECTION_KINDS = ["work", "planning", "quality", "whip"] as const;
+export const AIU_POST_ISSUE_SCOPES = ["ready", "standard", "custom"] as const;
 
 export type AiuHost = (typeof AIU_HOSTS)[number];
 export type AiuHostCapabilityName = (typeof AIU_HOST_CAPABILITY_NAMES)[number];
 export type AiuContinuationMode = (typeof AIU_CONTINUATION_MODES)[number];
 export type AiuPromptSectionKind = (typeof AIU_PROMPT_SECTION_KINDS)[number];
+export type AiuPostIssueScope = (typeof AIU_POST_ISSUE_SCOPES)[number];
 export type AiuDiagnosticSeverity = "error" | "warning";
 
 export interface AiuConfig {
   readonly version: typeof AIU_CONFIG_SCHEMA_VERSION;
+  readonly postIssueScope: AiuPostIssueScope;
   readonly hosts: AiuHostsConfig;
   readonly trustedStateCommands: Readonly<Record<string, AiuTrustedStateCommandDescriptor>>;
   readonly continuation: AiuContinuationPolicy;
@@ -131,6 +134,7 @@ export interface AiuConfigLoadResult {
 
 const DEFAULT_CONFIG: AiuConfig = Object.freeze({
   version: AIU_CONFIG_SCHEMA_VERSION,
+  postIssueScope: "ready",
   hosts: Object.freeze({
     enabled: Object.freeze([]),
     capabilities: Object.freeze({}),
@@ -166,14 +170,14 @@ const DEFAULT_CONFIG: AiuConfig = Object.freeze({
     sections: Object.freeze({}),
   }),
   planning: Object.freeze({
-    enabled: true,
+    enabled: false,
   }),
   quality: Object.freeze({
-    enabled: true,
+    enabled: false,
   }),
   whip: Object.freeze({
-    enabled: true,
-    usePackageDefaults: true,
+    enabled: false,
+    usePackageDefaults: false,
     tasks: Object.freeze([]),
     statePath: ".qube/aiu/whip.json",
   }),
@@ -185,11 +189,12 @@ export function getDefaultAiuConfig(): AiuConfig {
 
 export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoadResult {
   const repoRoot = findRepositoryRoot(path.resolve(options.cwd ?? process.cwd()));
+  const diagnostics: AiuConfigDiagnostic[] = [];
   const selectedPath = options.configPath
     ? path.resolve(repoRoot, options.configPath)
     : path.join(repoRoot, AIU_CONFIG_FILENAME);
-  const found = existsSync(selectedPath);
-  const diagnostics: AiuConfigDiagnostic[] = [];
+  const configPathSafe = validateRepositoryConfigPath(repoRoot, selectedPath, diagnostics);
+  const found = configPathSafe && existsSync(selectedPath);
   let rawConfig: unknown = {};
 
   if (found) {
@@ -241,6 +246,7 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   }
 
   const version = normalizeVersion(raw.version, diagnostics);
+  const postIssueScope = normalizePostIssueScope(raw.postIssueScope, diagnostics);
   const hosts = normalizeHosts(raw.hosts, diagnostics);
   const trustedStateCommands = normalizeTrustedStateCommands(raw.trustedStateCommands, diagnostics);
   const continuation = normalizeContinuation(raw.continuation, diagnostics);
@@ -249,9 +255,10 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   const pathsConfig = normalizePaths(raw.paths, diagnostics);
   const supplyChain = normalizeSupplyChain(raw.supplyChain, diagnostics);
   const prompts = normalizePrompts(raw.prompts, diagnostics);
-  const planning = normalizePlanning(raw.planning, diagnostics);
-  const quality = normalizeQuality(raw.quality, diagnostics);
-  const whip = normalizeWhip(raw.whip, diagnostics);
+  const configuredPlanning = normalizePlanning(raw.planning, diagnostics);
+  const configuredQuality = normalizeQuality(raw.quality, diagnostics);
+  const configuredWhip = normalizeWhip(raw.whip, diagnostics);
+  const { planning, quality, whip } = applyPostIssueScope(postIssueScope, configuredPlanning, configuredQuality, configuredWhip);
 
   validateNoLegacyFallback(raw, "$", diagnostics);
   if (isRecord(raw.continuation)) {
@@ -262,13 +269,20 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   validateWritablePath("stateDir", pathsConfig.stateDir, repoRoot, diagnostics);
   validateWritablePath("lockDir", pathsConfig.lockDir, repoRoot, diagnostics);
   validateWritablePath("logDir", pathsConfig.logDir, repoRoot, diagnostics);
-  if (whip.enabled) {
-    validateWritableFilePath("whip.statePath", whip.statePath, repoRoot, "$.whip.statePath", diagnostics);
+  validateWritableFilePath("whip.statePath", whip.statePath, repoRoot, "$.whip.statePath", diagnostics);
+  if (postIssueScope === "custom" && whip.tasks.length === 0) {
+    diagnostics.push(diagnostic(
+      "custom-post-issue-tasks-required",
+      "$.whip.tasks",
+      "Custom post-issue work requires at least one Umpire task.",
+      "Add one or more concrete tasks under whip.tasks, or select ready or standard post-issue scope.",
+    ));
   }
 
   return {
     config: Object.freeze({
       version,
+      postIssueScope,
       hosts,
       trustedStateCommands,
       continuation,
@@ -282,6 +296,105 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
       whip,
     }),
     diagnostics: Object.freeze(diagnostics),
+  };
+}
+
+function validateRepositoryConfigPath(repoRoot: string, selectedPath: string, diagnostics: AiuConfigDiagnostic[]): boolean {
+  const relativePath = path.relative(repoRoot, selectedPath);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    diagnostics.push(diagnostic(
+      "invalid-config-path",
+      "$.configPath",
+      "The Umpire config path must resolve to a file inside the repository.",
+      "Use a config file inside the current repository.",
+    ));
+    return false;
+  }
+
+  let currentPath = repoRoot;
+  const segments = relativePath.split(path.sep).filter((segment) => segment.length > 0);
+  for (const [index, segment] of segments.entries()) {
+    currentPath = path.join(currentPath, segment);
+    let status: ReturnType<typeof lstatSync>;
+    try {
+      status = lstatSync(currentPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return true;
+      }
+      diagnostics.push(diagnostic(
+        "invalid-config-path",
+        "$.configPath",
+        `The Umpire config path could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+        "Use a readable repository-owned config path.",
+      ));
+      return false;
+    }
+    if (status.isSymbolicLink()) {
+      diagnostics.push(diagnostic(
+        "linked-config-path",
+        "$.configPath",
+        "The Umpire config path must not traverse symbolic links or directory junctions.",
+        "Use a repository-owned config file whose existing path segments are not links.",
+      ));
+      return false;
+    }
+    const isConfigFile = index === segments.length - 1;
+    if (isConfigFile ? !status.isFile() : !status.isDirectory()) {
+      diagnostics.push(diagnostic(
+        "invalid-config-path",
+        "$.configPath",
+        isConfigFile
+          ? "The Umpire config path must resolve to a regular file."
+          : "Every existing Umpire config parent path must be a directory.",
+        "Use a regular config file under repository-owned directories.",
+      ));
+      return false;
+    }
+  }
+  return true;
+}
+
+function normalizePostIssueScope(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuPostIssueScope {
+  if (value === undefined) {
+    return DEFAULT_CONFIG.postIssueScope;
+  }
+  if (typeof value !== "string" || !(AIU_POST_ISSUE_SCOPES as readonly string[]).includes(value)) {
+    diagnostics.push(diagnostic(
+      "invalid-post-issue-scope",
+      "$.postIssueScope",
+      "postIssueScope must be ready, standard, or custom.",
+      "Select ready to stop after Ready work, standard for repository quality and measured performance work, or custom for configured Umpire tasks.",
+    ));
+    return DEFAULT_CONFIG.postIssueScope;
+  }
+  return value as AiuPostIssueScope;
+}
+
+function applyPostIssueScope(
+  scope: AiuPostIssueScope,
+  planning: AiuPlanningPolicy,
+  quality: AiuQualityPolicy,
+  whip: AiuWhipPolicy,
+): { readonly planning: AiuPlanningPolicy; readonly quality: AiuQualityPolicy; readonly whip: AiuWhipPolicy } {
+  if (scope === "ready") {
+    return {
+      planning: Object.freeze({ ...planning, enabled: false }),
+      quality: Object.freeze({ ...quality, enabled: false }),
+      whip: Object.freeze({ ...whip, enabled: false, usePackageDefaults: false }),
+    };
+  }
+  if (scope === "standard") {
+    return {
+      planning: Object.freeze({ ...planning, enabled: false }),
+      quality: Object.freeze({ ...quality, enabled: true }),
+      whip: Object.freeze({ ...whip, enabled: true, usePackageDefaults: true }),
+    };
+  }
+  return {
+    planning: Object.freeze({ ...planning, enabled: false }),
+    quality: Object.freeze({ ...quality, enabled: false }),
+    whip: Object.freeze({ ...whip, enabled: true, usePackageDefaults: false }),
   };
 }
 
@@ -670,12 +783,8 @@ function normalizeWhip(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuW
     enabled,
     usePackageDefaults: normalizeBoolean(value.usePackageDefaults, DEFAULT_CONFIG.whip.usePackageDefaults, "$.whip.usePackageDefaults", diagnostics),
     tasks: Object.freeze(normalizeWhipTasks(value.tasks, diagnostics)),
-    statePath: enabled ? normalizePathValue(value.statePath, DEFAULT_CONFIG.whip.statePath, "$.whip.statePath", diagnostics) : normalizeDisabledWhipStatePath(value.statePath),
+    statePath: normalizePathValue(value.statePath, DEFAULT_CONFIG.whip.statePath, "$.whip.statePath", diagnostics),
   });
-}
-
-function normalizeDisabledWhipStatePath(value: unknown): string {
-  return typeof value === "string" && value.length > 0 && !value.includes("\0") ? value : DEFAULT_CONFIG.whip.statePath;
 }
 
 function normalizeWhipTasks(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuWhipTaskDefinition[] {
@@ -812,20 +921,35 @@ function normalizePathValue(value: unknown, defaultValue: string, fieldPath: str
   if (value === undefined) {
     return defaultValue;
   }
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
-    diagnostics.push(diagnostic("invalid-path", fieldPath, "Paths must be non-empty strings without NUL bytes.", "Use a safe repository-relative or absolute path."));
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || !isRepositoryRelativePath(value)) {
+    diagnostics.push(diagnostic(
+      "invalid-path",
+      fieldPath,
+      "Paths must be non-empty repository-relative strings without NUL bytes or parent-directory segments.",
+      "Use a repository-relative path without .. segments.",
+    ));
     return defaultValue;
   }
   return value;
 }
 
+function isRepositoryRelativePath(value: string): boolean {
+  return path.win32.parse(value).root.length === 0
+    && !path.posix.isAbsolute(value.replace(/\\/gu, "/"))
+    && !value.split(/[\\/]+/u).includes("..");
+}
+
 function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string, repoRoot: string, diagnostics: AiuConfigDiagnostic[]): void {
-  const resolved = path.resolve(repoRoot, configuredPath);
+  const fieldPath = `$.paths.${name}`;
+  const resolved = resolveRepositoryStatePath(configuredPath, repoRoot, fieldPath, diagnostics);
+  if (resolved === null) {
+    return;
+  }
   try {
     if (existsSync(resolved)) {
       const stat = statSync(resolved);
       if (!stat.isDirectory()) {
-        diagnostics.push(diagnostic("path-not-directory", `$.paths.${name}`, `${name} resolves to a file, not a directory.`, "Choose a directory path for Umpire state."));
+        diagnostics.push(diagnostic("path-not-directory", fieldPath, `${name} resolves to a file, not a directory.`, "Choose a directory path for Umpire state."));
         return;
       }
       accessSync(resolved, constants.W_OK | constants.X_OK);
@@ -837,7 +961,7 @@ function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string
     diagnostics.push(
       diagnostic(
         "path-not-writable",
-        `$.paths.${name}`,
+        fieldPath,
         `${name} is not writable or cannot be created: ${error instanceof Error ? error.message : String(error)}`,
         "Choose a writable repository-local path or fix directory permissions.",
       ),
@@ -846,7 +970,10 @@ function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string
 }
 
 function validateWritableFilePath(name: string, configuredPath: string, repoRoot: string, fieldPath: string, diagnostics: AiuConfigDiagnostic[]): void {
-  const resolved = path.resolve(repoRoot, configuredPath);
+  const resolved = resolveRepositoryStatePath(configuredPath, repoRoot, fieldPath, diagnostics);
+  if (resolved === null) {
+    return;
+  }
   try {
     if (existsSync(resolved)) {
       const stat = statSync(resolved);
@@ -869,6 +996,66 @@ function validateWritableFilePath(name: string, configuredPath: string, repoRoot
       ),
     );
   }
+}
+
+function resolveRepositoryStatePath(
+  configuredPath: string,
+  repoRoot: string,
+  fieldPath: string,
+  diagnostics: AiuConfigDiagnostic[],
+): string | null {
+  if (!isRepositoryRelativePath(configuredPath)) {
+    diagnostics.push(diagnostic(
+      "path-outside-repository",
+      fieldPath,
+      "Umpire state paths must stay inside the repository and must not contain parent-directory segments.",
+      "Use a repository-relative path without .. segments.",
+    ));
+    return null;
+  }
+
+  const resolved = path.resolve(repoRoot, configuredPath);
+  const relativePath = path.relative(repoRoot, resolved);
+  if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    diagnostics.push(diagnostic(
+      "path-outside-repository",
+      fieldPath,
+      "Umpire state paths must resolve inside the repository.",
+      "Use a repository-relative path inside the current repository.",
+    ));
+    return null;
+  }
+
+  let currentPath = repoRoot;
+  for (const segment of relativePath.split(path.sep).filter((segment) => segment.length > 0)) {
+    currentPath = path.join(currentPath, segment);
+    let status: ReturnType<typeof lstatSync>;
+    try {
+      status = lstatSync(currentPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        break;
+      }
+      diagnostics.push(diagnostic(
+        "path-not-writable",
+        fieldPath,
+        `Umpire state path inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+        "Choose a readable repository-owned state path.",
+      ));
+      return null;
+    }
+    if (status.isSymbolicLink()) {
+      diagnostics.push(diagnostic(
+        "linked-state-path",
+        fieldPath,
+        "Umpire state paths must not traverse symbolic links or directory junctions.",
+        "Use a repository-owned path whose existing segments are real directories or files.",
+      ));
+      return null;
+    }
+  }
+
+  return resolved;
 }
 
 function findExistingDirectoryAncestor(targetPath: string): string {
@@ -949,6 +1136,7 @@ function isPromptSectionKind(value: string): value is AiuPromptSectionKind {
 function cloneConfig(config: AiuConfig): AiuConfig {
   return Object.freeze({
     version: config.version,
+    postIssueScope: config.postIssueScope,
     hosts: Object.freeze({
       enabled: Object.freeze([...config.hosts.enabled]),
       capabilities: Object.freeze({ ...config.hosts.capabilities }),

@@ -25,8 +25,10 @@ import {
   composeHostToolkitManifests,
   formatPlannedHostToolkits,
   createInitRecord,
+  readInitRecord,
+  repoQubeConfigPath,
+  userQubeConfigPath,
   writeInitRecord,
-  MCP_BYPASS_CAVEAT,
   PROVIDER_MCP_CONFIG_PATHS,
   QUBE_INIT_RECORD_PATH,
   qubeComponents,
@@ -63,6 +65,74 @@ function runCli(args, options = {}) {
     encoding: "utf8",
     env
   });
+}
+
+function initEnv(packageRoot, extra = {}) {
+  const isolatedHome = extra.USERPROFILE ?? mkdtempSync(path.join(tmpdir(), "qube-init-home-"));
+  const systemPath = process.env.PATH ?? process.env.Path ?? "";
+  return {
+    PATH: systemPath,
+    Path: systemPath,
+    QUBE_TEST_PACKAGE_ROOT: packageRoot,
+    USERPROFILE: isolatedHome,
+    HOME: isolatedHome,
+    ...extra,
+  };
+}
+
+function createInitComponentShim(root, componentId, options = {}) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const packageDir = path.join(root, "node_modules", "@tjalve", componentId);
+  const scriptPath = path.join(packageDir, "init-shim.mjs");
+  const configPath = path.join(packageDir, "init-shim.json");
+  const logPath = path.join(root, "init-calls.ndjson");
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(configPath, JSON.stringify({
+    stateful: options.stateful === true,
+    plan: options.plan ?? { ok: true, command: componentId === "aiq" ? "config" : "init", actions: [{ operation: "create" }] },
+    apply: options.apply ?? { ok: true, command: componentId === "aiq" ? "config" : "init", changed: true },
+    labels: options.labels ?? { ok: true, command: "labels setup", changed: true },
+    exitCodes: options.exitCodes ?? {},
+  }), "utf8");
+  writeFileSync(scriptPath, [
+    "import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from \"node:fs\";",
+    "import path from \"node:path\";",
+    "const component = " + JSON.stringify(componentId) + ";",
+    "const config = JSON.parse(readFileSync(" + JSON.stringify(configPath) + ", \"utf8\"));",
+    "const args = process.argv.slice(2);",
+    "const phase = args[0] === \"labels\" ? \"labels\" : args.includes(\"--dry-run\") ? \"plan\" : \"apply\";",
+    "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify({ component, phase, args, cwd: process.cwd() }) + \"\\n\");",
+    "let payload = { ...config[phase] };",
+    "if (config.stateful && phase !== \"plan\" && payload.ok === true) {",
+    "  const suffix = phase === \"labels\" ? \"-labels\" : \"\";",
+    "  const statePath = path.join(process.cwd(), \".qube\", \"test-init-shim\", component + suffix + \".json\");",
+    "  const existed = existsSync(statePath);",
+    "  if (!existed) {",
+    "    mkdirSync(path.dirname(statePath), { recursive: true });",
+    "    writeFileSync(statePath, JSON.stringify({ component, phase }) + \"\\n\", \"utf8\");",
+    "  }",
+    "  payload = { ...payload, changed: !existed };",
+    "}",
+    "process.stdout.write(JSON.stringify(payload) + \"\\n\");",
+    "process.exitCode = Number(config.exitCodes[phase] ?? (payload.ok === true ? 0 : 1));",
+    "",
+  ].join("\n"), "utf8");
+  const commandPath = path.join(binDir, process.platform === "win32" ? componentId + ".cmd" : componentId);
+  writeFileSync(commandPath, process.platform === "win32"
+    ? "@echo off\r\n\"" + process.execPath + "\" \"" + scriptPath + "\" %*\r\n"
+    : "#!/bin/sh\nexec " + JSON.stringify(process.execPath) + " " + JSON.stringify(scriptPath) + " \"$@\"\n", "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+    name: "@tjalve/" + componentId,
+    version: findQubeComponent(componentId).packageVersion,
+  }) + "\n", "utf8");
+}
+
+function createInitShims(root, optionsByComponent = {}) {
+  for (const componentId of ["aie", "aib", "aiq", "aiu"]) {
+    createInitComponentShim(root, componentId, optionsByComponent[componentId] ?? {});
+  }
 }
 
 function assertSameCommandPath(actual, expected) {
@@ -316,9 +386,11 @@ describe("qube composer CLI", () => {
     assert.doesNotMatch(installHelp.stdout, /generic|--force|--migration/);
     assert.match(installHelp.stdout, /--work-provider <value>/);
     assert.match(installHelp.stdout, /Default: github/);
-    assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
+    assert.match(installHelp.stdout, /github, gitlab, linear, jira/);
+    assert.doesNotMatch(installHelp.stdout, /jira, local/);
     assert.match(installHelp.stdout, /--ci-provider <value>/);
-    assert.match(installHelp.stdout, /github, gitlab, jenkins, local/);
+    assert.match(installHelp.stdout, /github, gitlab, jenkins/);
+    assert.doesNotMatch(installHelp.stdout, /jenkins, local/);
 
     const makeItSoHelp = runCli(["make-it-so", "--help"]);
     assert.equal(makeItSoHelp.status, 0);
@@ -458,8 +530,7 @@ describe("qube composer CLI", () => {
       scope: "local",
       uiAuditEvidenceRoot: "~/.qube/verification",
       workProvider: "github",
-      workProviders: ["github"],
-      withComponents: []
+      workProviders: ["github"]
     });
     assert.equal(parsed.installPlan.dryRun, true);
     assert.deepEqual(parsed.installPlan.connections.map(connection => connection.adapterId), ["github"]);
@@ -497,8 +568,7 @@ describe("qube composer CLI", () => {
         ["github", "installed", true, "adapter-contract"],
         ["gitlab", "optional", false, "adapter-contract"],
         ["linear", "optional", false, "adapter-contract"],
-        ["jira", "optional", false, "adapter-contract"],
-        ["local", "unsupported", false, "local-option"]
+        ["jira", "optional", false, "adapter-contract"]
       ]
     );
     assert.deepEqual(
@@ -506,8 +576,7 @@ describe("qube composer CLI", () => {
       [
         ["github", "installed", true, "adapter-contract"],
         ["gitlab", "optional", false, "adapter-contract"],
-        ["jenkins", "optional", false, "adapter-contract"],
-        ["local", "unsupported", false, "local-option"]
+        ["jenkins", "optional", false, "adapter-contract"]
       ]
     );
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
@@ -1491,8 +1560,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const isolated = parsed.questions.find(item => item.id === "review-mode").options.find(option => option.value === "isolated");
     assert.equal(isolated.available, false);
     const workOptions = parsed.questions.find(item => item.id === "work-provider").options.map(option => option.value);
-    assert.ok(workOptions.includes("local"));
-    assert.deepEqual(workOptions, ["github", "gitlab", "linear", "jira", "local"]);
+    assert.deepEqual(workOptions, ["github", "gitlab", "linear", "jira"]);
   });
 
   it("keeps answered host and work-provider flags answered on the next invocation", () => {
@@ -1752,32 +1820,15 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.apply, undefined);
   });
 
-  it("refuses apply for unsupported local providers", () => {
-    const result = runCli([
-      "install",
-      "--apply",
-      "--yes",
-      "--json",
-      "--scope",
-      "local",
-      "--package-manager",
-      "pnpm",
-      "--host",
-      "codex",
-      "--work-provider",
-      "local",
-      "--ci-provider",
-      "local",
-      "--lifecycle-scripts",
-      "disabled",
-      "--docs",
-    ]);
-    assert.equal(result.status, 3);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.error.kind, "unsupported-install-selection");
-    assert.match(parsed.error.likelyCause, /work-provider local/);
-    assert.match(parsed.error.likelyCause, /ci-provider local/);
+  it("rejects removed local provider tokens", () => {
+    for (const providerFlag of ["--work-provider", "--ci-provider"]) {
+      const result = runCli(["install", "--yes", "--json", providerFlag, "local"]);
+      assert.equal(result.status, 2, providerFlag);
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error.kind, "invalid-command-usage");
+      assert.match(parsed.error.likelyCause, new RegExp("Invalid install option " + providerFlag + "=local"));
+    }
   });
 
   it("blocks human --apply without confirmation", () => {
@@ -2140,11 +2191,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
-    assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "local" && provider.support === "unsupported"));
+    assert.equal(executor.capabilities.workProviders.some(provider => provider.id === "local"), false);
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "gitlab" && provider.support === "optional"));
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
     assert.match(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").summary, /without triggering or rerunning jobs/);
     assert.ok(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").capabilities.some(capability => capability.id === "trigger-ci-run" && capability.support === "unsupported"));
+    assert.equal(executor.capabilities.ciProviders.some(provider => provider.id === "local"), false);
   });
 
   it("keeps all five agent harnesses consistent across components, help, and install planning", async () => {
@@ -3180,142 +3232,553 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
   });
 });
 
-describe("qube init composer orchestrator", () => {
-  function initEnv(packageRoot, extra = {}) {
-    return { PATH: "", Path: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, ...extra };
+describe("qube init orchestrator", () => {
+  function readInitCalls(root) {
+    const logPath = path.join(root, "init-calls.ndjson");
+    if (!existsSync(logPath)) return [];
+    return readFileSync(logPath, "utf8").trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
   }
 
-  it("composes aie and aiu init from one selection set for a single host", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-single-host-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-single-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: false, actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true } });
+  function componentRows(plan) {
+    return new Map(plan.components.map(component => [component.id, component]));
+  }
 
-    const result = runCli(["init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.command, "init");
-    assert.deepEqual(parsed.selections.hosts, ["claude-code"]);
-    assert.equal(parsed.selections.activeWorkProvider, "github");
-    assert.equal(parsed.selections.activeCiProvider, "github");
-    assert.equal(parsed.aie.length, 1);
-    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "claude-code", "--work-provider", "github", "--review-provider", "github", "--ci-provider", "github", "--yes"]);
-    const splitRoot = mkdtempSync(path.join(tmpdir(), "qube-init-split-"));
-    const splitCwd = mkdtempSync(path.join(tmpdir(), "qube-init-split-cwd-"));
-    createJsonEnvelopeShim(splitRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(splitRoot, "aiu", { ok: true, command: "init" });
-    const split = runCli(["init", ".", "--host", "codex", "--work-provider", "jira", "--ci-provider", "jenkins", "--yes", "--json"], { cwd: splitCwd, env: initEnv(splitRoot) });
-    assert.equal(split.status, 0, split.stderr);
-    assert.deepEqual(JSON.parse(split.stdout).aie[0].args, ["init", ".", "--json", "--tool", "codex", "--work-provider", "jira", "--review-provider", "github", "--ci-provider", "jenkins", "--yes"]);
-    assert.equal(parsed.aiu.length, 1);
-    assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "claude-code"]);
-    assert.deepEqual(parsed.with, []);
+  function optionValue(args, name) {
+    const index = args.indexOf(name);
+    return index < 0 ? undefined : args[index + 1];
+  }
+
+  it("fails closed when synchronous planning receives component-spanning init selections", () => {
+    const cases = [
+      ["--host", "codex,grok-build", "--work-provider", "gitlab", "--ci-provider", "jenkins"],
+      ["--quality-stage", "security", "--umpire-scope", "custom"],
+      ["--review-mode", "isolated", "--review-harness", "grok-build", "--review-publisher", "github-app", "--config-scope", "global"],
+    ];
+
+    for (const selections of cases) {
+      const planned = planQubeCli(["init", ".", ...selections, "--yes", "--dry-run"]);
+      assert.equal(planned.exitCode, 2);
+      assert.equal(planned.dispatch, undefined);
+      assert.equal(planned.stdout, "");
+      assert.match(planned.stderr, /synchronous planning API cannot resolve QUBE init across all components/);
+    }
   });
 
-  it("passes each selected harness set to Executor and Umpire in one apply", async () => {
-    const profiles = await Promise.all(AGENT_HOST_IDS.map(getAgentHostProfile));
-    const umpireHosts = profiles
-      .filter(profile => profile.umpire.continuation.support !== "unsupported")
-      .map(profile => profile.id);
-    const allRoot = mkdtempSync(path.join(tmpdir(), "qube-init-all-hosts-"));
-    const allCwd = mkdtempSync(path.join(tmpdir(), "qube-init-all-cwd-"));
-    createJsonEnvelopeShim(allRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(allRoot, "aiu", { ok: true, command: "init" });
-    const allResult = runCli(["init", ".", "--host", "opencode,codex,claude-code,grok-build,cursor", "--yes", "--json"], { cwd: allCwd, env: initEnv(allRoot) });
-    assert.equal(allResult.status, 0, allResult.stderr);
-    const allParsed = JSON.parse(allResult.stdout);
-    assert.equal(allParsed.aie.length, 1);
-    assert.equal(allParsed.aie[0].args[allParsed.aie[0].args.indexOf("--tool") + 1], "opencode,codex,claude-code,grok-build,cursor");
-    assert.equal(allParsed.aiu.length, 1);
-    assert.equal(allParsed.aiu[0].args[allParsed.aiu[0].args.indexOf("--tool") + 1], umpireHosts.join(","));
+  it("does not infer init defaults or accept an ambiguous synchronous target", () => {
+    const defaultPlan = planQubeCli(["init", ".", "--yes", "--dry-run"]);
+    assert.equal(defaultPlan.exitCode, 2);
+    assert.equal(defaultPlan.dispatch, undefined);
+    assert.match(defaultPlan.stderr, /Use runQubeCli\(\) or the qube executable/);
 
-    const partialRoot = mkdtempSync(path.join(tmpdir(), "qube-init-partial-hosts-"));
-    const partialCwd = mkdtempSync(path.join(tmpdir(), "qube-init-partial-cwd-"));
-    createJsonEnvelopeShim(partialRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(partialRoot, "aiu", { ok: true, command: "init" });
-    const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { cwd: partialCwd, env: initEnv(partialRoot) });
-    assert.equal(partialResult.status, 0, partialResult.stderr);
-    const partialParsed = JSON.parse(partialResult.stdout);
-    assert.equal(partialParsed.aie.length, 1);
-    assert.equal(partialParsed.aie[0].args[partialParsed.aie[0].args.indexOf("--tool") + 1], "opencode,claude-code");
-    assert.equal(partialParsed.aiu.length, 1);
-    assert.equal(
-      partialParsed.aiu[0].args[partialParsed.aiu[0].args.indexOf("--tool") + 1],
-      umpireHosts.filter(host => ["opencode", "claude-code"].includes(host)).join(","),
-    );
+    const ambiguousTarget = planQubeCli(["init", "first", "second", "--yes", "--dry-run"]);
+    assert.equal(ambiguousTarget.exitCode, 2);
+    assert.equal(ambiguousTarget.dispatch, undefined);
+    assert.equal(ambiguousTarget.stderr, "QUBE init accepts at most one target directory.\n");
   });
 
-  it("initializes every harness through the real component CLIs and repeats without content changes", async () => {
-    const outer = mkdtempSync(path.join(tmpdir(), "qube-init-real-components-"));
-    const target = path.join(outer, "repo");
-    const initialized = spawnSync("git", ["init", "--quiet", target], { cwd: outer, encoding: "utf8" });
-    assert.equal(initialized.status, 0, initialized.stderr);
+  it("publishes the focused init surface without optional components or free-text routing", () => {
+    const schema = runCli(["schema", "--json"]);
+    assert.equal(schema.status, 0, schema.stderr);
+    const init = JSON.parse(schema.stdout).commands.find(command => command.name === "init");
+    const flags = new Set(init.flags.map(flag => flag.name));
 
-    const requestedHosts = ["cursor", "grok-build", "codex", "opencode", "claude-code", "cursor"];
-    const expectedHosts = ["cursor", "grok-build", "codex", "opencode", "claude-code"];
-    const canonicalHosts = AGENT_HOST_IDS.filter(host => expectedHosts.includes(host));
-    const profiles = await Promise.all(canonicalHosts.map(getAgentHostProfile));
-    const umpireHosts = profiles
-      .filter(profile => profile.umpire.continuation.support !== "unsupported")
-      .map(profile => profile.id);
-    const args = [
-      "init", "repo",
-      "--host", requestedHosts.join(","),
+    for (const name of ["host", "work-provider", "ci-provider", "continuous-shipping", "umpire-scope", "quality-stage", "review-mode", "review-harness", "review-publisher"]) {
+      assert.equal(flags.has(name), true, name);
+    }
+    for (const name of ["with", "primary-host", "primary-model", "mechanical-host", "mechanical-model", "exploration-host", "exploration-model", "synthesis-host", "synthesis-model"]) {
+      assert.equal(flags.has(name), false, name);
+    }
+  });
+
+  it("rejects a global host update that repository config would override", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-override-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-override-repo-"));
+    const env = initEnv(packageRoot);
+    const repoConfigPath = repoQubeConfigPath(cwd);
+    mkdirSync(path.dirname(repoConfigPath), { recursive: true });
+    writeFileSync(repoConfigPath, `${JSON.stringify({ version: 1, hosts: ["codex"] }, null, 2)}\n`, "utf8");
+    writeFileSync(path.join(cwd, "AGENTS.md"), "existing instructions\n", "utf8");
+    const before = readdirSync(cwd, { recursive: true }).map(String).sort();
+    createInitShims(packageRoot);
+
+    const result = runCli([
+      "init", ".",
+      "--host", "cursor",
       "--work-provider", "github",
       "--ci-provider", "github",
-      "--review-mode", "external",
+      "--config-scope", "global",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(
+      JSON.parse(result.stdout).error,
+      "Repository QUBE configuration overrides the requested global setup. Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.",
+    );
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(readFileSync(repoConfigPath, "utf8"), `${JSON.stringify({ version: 1, hosts: ["codex"] }, null, 2)}\n`);
+    assert.equal(existsSync(userQubeConfigPath(env.USERPROFILE)), false);
+    assert.deepEqual(readdirSync(cwd, { recursive: true }).map(String).sort(), before);
+    assert.equal(readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), "existing instructions\n");
+  });
+
+  it("rejects an exact linked repository config before child planning or apply", (context) => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-root-"));
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-workspace-"));
+    const cwd = path.join(workspace, "repo");
+    const env = initEnv(packageRoot);
+    mkdirSync(cwd, { recursive: true });
+    createInitShims(packageRoot);
+    const initArgs = [
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
       "--yes",
       "--json",
     ];
-    const options = { cwd: outer, env: { QUBE_TEST_PACKAGE_ROOT: packageRoot } };
+    const initialized = runCli(initArgs, { cwd, env });
+    assert.equal(initialized.status, 0, initialized.stderr);
 
-    const first = runCli(args, options);
-    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
-    const firstResult = JSON.parse(first.stdout);
-    assert.equal(firstResult.ok, true);
-    assert.deepEqual(firstResult.selections.hosts, expectedHosts);
-    assert.equal(firstResult.aie.length, 1);
-    assert.equal(firstResult.aiu.length, 1);
-    assert.equal(firstResult.aie[0].args[firstResult.aie[0].args.indexOf("--tool") + 1], canonicalHosts.join(","));
-    assert.equal(firstResult.aiu[0].args[firstResult.aiu[0].args.indexOf("--tool") + 1], umpireHosts.join(","));
-    assert.deepEqual(firstResult.aie[0].json.selectedTools, canonicalHosts);
-    assert.deepEqual(firstResult.aiu[0].json.init.tools, umpireHosts);
-    assert.equal(path.resolve(firstResult.aie[0].json.repoRoot), path.resolve(target));
-    assert.equal(path.resolve(firstResult.aiu[0].json.init.repoRoot), path.resolve(target));
-
-    const initRecordPath = path.join(target, ".qube", "init.json");
-    const aiuConfigPath = path.join(target, ".qube", "aiu", "config.json");
-    const initRecord = JSON.parse(readFileSync(initRecordPath, "utf8"));
-    const aiuConfig = JSON.parse(readFileSync(aiuConfigPath, "utf8"));
-    assert.deepEqual(initRecord.hosts, expectedHosts);
-    assert.deepEqual(aiuConfig.hosts.enabled, umpireHosts);
-    assert.equal(aiuConfig.hosts.enabled.includes("cursor"), false);
-    for (const profile of profiles) {
-      assert.equal(existsSync(path.join(target, profile.makeItSo.path)), true, profile.id);
+    const configPath = repoQubeConfigPath(cwd);
+    const exactConfig = readFileSync(configPath, "utf8");
+    const outsidePath = path.join(workspace, "outside-init.json");
+    writeFileSync(outsidePath, exactConfig, "utf8");
+    unlinkSync(configPath);
+    try {
+      symlinkSync(outsidePath, configPath, "file");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EPERM") {
+        context.skip("Symbolic link creation is unavailable on this platform.");
+        return;
+      }
+      throw error;
     }
-    const firstContents = new Map([
-      [initRecordPath, readFileSync(initRecordPath, "utf8")],
-      [aiuConfigPath, readFileSync(aiuConfigPath, "utf8")],
-      ...profiles.map(profile => {
-        const file = path.join(target, profile.makeItSo.path);
-        return [file, readFileSync(file, "utf8")];
-      }),
-    ]);
+    const callLog = path.join(packageRoot, "init-calls.ndjson");
+    if (existsSync(callLog)) unlinkSync(callLog);
 
-    const second = runCli(args, options);
-    assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
-    const secondResult = JSON.parse(second.stdout);
-    assert.equal(secondResult.ok, true);
-    assert.deepEqual(secondResult.selections.hosts, expectedHosts);
-    assert.deepEqual(secondResult.aie[0].json.completedChanges, []);
-    assert.equal(secondResult.aiu[0].json.init.config.operation, "skip");
-    assert.ok(secondResult.aiu[0].json.init.files.every(file => file.operation === "skip"));
-    for (const [file, content] of firstContents) {
-      assert.equal(readFileSync(file, "utf8"), content, file);
+    const rejected = runCli(initArgs, { cwd, env });
+    assert.equal(rejected.status, 2, rejected.stderr);
+    const payload = JSON.parse(rejected.stdout);
+    assert.equal(payload.ok, false);
+    assert.match(payload.error, /repository QUBE config is invalid.*symbolic link or directory junction/iu);
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(readFileSync(outsidePath, "utf8"), exactConfig);
+  });
+
+  it("plans all four components against one absolute target and canonical harness set", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-plan-root-"));
+    const outer = mkdtempSync(path.join(tmpdir(), "qube-init-plan-cwd-"));
+    const target = path.join(outer, "repo");
+    const initialized = spawnSync("git", ["init", "--quiet", target], { cwd: outer, encoding: "utf8" });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    mkdirSync(path.join(target, "packages", "app"), { recursive: true });
+    createInitShims(packageRoot, {
+      aiq: {
+        plan: {
+          ok: true,
+          command: "config",
+          setup: {
+            selection: {
+              mode: "cumulative",
+              requestedStages: ["maintainability"],
+              resolvedStages: ["sloc", "maintainability"],
+            },
+            stageMetadata: [
+              { id: "sloc", refactorDriving: false },
+              {
+                id: "maintainability",
+                refactorDriving: true,
+                warning: {
+                  code: "robust-e2e-tests-recommended",
+                  message: "This stage can force refactoring. Use robust end-to-end tests.",
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = runCli([
+      "init", path.join("repo", "packages", "app"),
+      "--host", "cursor,grok-build,codex,cursor",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--quality-stage", "maintainability",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd: outer, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual({ ok: parsed.ok, command: parsed.command, mode: parsed.mode }, { ok: true, command: "init", mode: "plan" });
+    assert.equal(parsed.apply, undefined);
+    assert.equal(parsed.plan.target, path.resolve(target));
+    assert.deepEqual(parsed.plan.resolved.hosts, ["cursor", "grok-build", "codex"]);
+    assert.deepEqual(parsed.plan.components.map(component => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.ok(parsed.plan.components.every(component => component.cwd === path.resolve(target)));
+    assert.ok(parsed.plan.components.every(component => component.args.includes("--dry-run")));
+
+    const rows = componentRows(parsed.plan);
+    assert.equal(rows.get("aie").args[1], path.resolve(target));
+    assert.equal(optionValue(rows.get("aie").args, "--tool"), "codex,grok-build,cursor");
+    assert.equal(optionValue(rows.get("aie").args, "--primary-host"), "cursor");
+    assert.equal(optionValue(rows.get("aie").args, "--isolated-review-agent"), "grok-build");
+    assert.equal(optionValue(rows.get("aib").args, "--agent"), "cursor");
+    assert.equal(optionValue(rows.get("aib").args, "--surfaces"), "cursor,grok-build,codex");
+    assert.equal(rows.get("aib").args[1], path.resolve(target));
+    assert.deepEqual(rows.get("aiq").args.slice(0, 5), ["config", "--stages", "maintainability", "--format", "json"]);
+    assert.deepEqual(rows.get("aiq").selection.resolvedStages, ["sloc", "maintainability"]);
+    assert.match(
+      rows.get("aiq").stageMetadata.find(stage => stage.refactorDriving).warning.message,
+      /robust end-to-end tests/,
+    );
+    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build");
+    assert.equal(optionValue(rows.get("aiu").args, "--post-issue-scope"), "ready");
+  });
+
+  it("plans Umpire for Cursor with an explicit unsupported-host value", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-cwd-"));
+    createInitShims(packageRoot);
+
+    const result = runCli(["init", ".", "--host", "cursor", "--ci-provider", "github", "--yes", "--dry-run", "--json"], {
+      cwd,
+      env: initEnv(packageRoot),
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const rows = componentRows(parsed.plan);
+    assert.deepEqual(parsed.plan.components.map(component => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(optionValue(rows.get("aie").args, "--tool"), "cursor");
+    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "none");
+  });
+
+  it("does not apply any component when a child plan fails", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-plan-failure-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-plan-failure-cwd-"));
+    createInitShims(packageRoot, {
+      aiq: {
+        plan: {
+          ok: false,
+          command: "config",
+          error: { kind: "invalid-stage", message: "Quality stage readability is unavailable." },
+          nextAction: "Choose a stage returned by aiq schema.",
+        },
+        exitCodes: { plan: 7 },
+      },
+    });
+
+    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+      cwd,
+      env: initEnv(packageRoot),
+    });
+
+    assert.equal(result.status, 7, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual({ ok: parsed.ok, command: parsed.command, mode: parsed.mode }, { ok: false, command: "init", mode: "plan" });
+    assert.equal(parsed.apply, undefined);
+    assert.equal(parsed.error, "Quality stage readability is unavailable.");
+    assert.equal(parsed.nextAction, "Choose a stage returned by aiq schema.");
+    assert.deepEqual(readInitCalls(packageRoot).map(call => call.phase), ["plan", "plan", "plan", "plan"]);
+    assert.equal(existsSync(path.join(cwd, ".qube", "init.json")), false);
+  });
+
+  it("applies in stable order and stops at the first exact child failure", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-apply-failure-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-apply-failure-cwd-"));
+    createInitShims(packageRoot, {
+      aiq: {
+        apply: {
+          ok: false,
+          command: "config",
+          error: { message: "Quality configuration is read-only." },
+          nextAction: "Make the Quality configuration writable and rerun qube init.",
+        },
+        exitCodes: { apply: 9 },
+      },
+    });
+
+    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+      cwd,
+      env: initEnv(packageRoot),
+    });
+
+    assert.equal(result.status, 9, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.mode, "apply");
+    assert.equal(parsed.error, "Quality configuration is read-only.");
+    assert.equal(parsed.nextAction, "Make the Quality configuration writable and rerun qube init.");
+    assert.deepEqual(parsed.apply.steps.map(step => [step.id, step.status]), [
+      ["aie", "changed"],
+      ["aib", "changed"],
+      ["aiq", "failed"],
+    ]);
+    assert.deepEqual(
+      readInitCalls(packageRoot).filter(call => call.phase === "apply").map(call => call.component),
+      ["aie", "aib", "aiq"],
+    );
+    const saved = JSON.parse(readFileSync(path.join(cwd, ".qube", "init.json"), "utf8"));
+    assert.deepEqual(saved.hosts, ["codex"]);
+    assert.deepEqual(saved.workProviders, ["github"]);
+    assert.deepEqual(saved.ciProviders, ["github"]);
+    assert.equal(saved.continuousShipping, true);
+    assert.deepEqual(saved.umpire, { scope: "ready" });
+    assert.deepEqual(saved.quality, { stages: ["unit"] });
+    assert.deepEqual(saved.review, { mode: "host", harness: "codex", publisher: "user" });
+  });
+
+  it("rejects an invalid QUBE intent path before child planning", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-config-failure-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-config-failure-cwd-"));
+    createInitShims(packageRoot);
+    writeFileSync(path.join(cwd, ".qube"), "blocks the config directory\n", "utf8");
+
+    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+      cwd,
+      env: initEnv(packageRoot),
+    });
+
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error, /repository QUBE config is invalid.*non-directory parent/iu);
+    assert.deepEqual(readInitCalls(packageRoot), []);
+  });
+
+  it("returns the QUBE Reviewer App setup as a post-init action", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-app-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-app-cwd-"));
+    createInitShims(packageRoot, {
+      aie: {
+        plan: {
+          ok: true,
+          command: "init",
+          actions: [],
+          postInitActions: [{
+            id: "github-app",
+            command: "qube review setup github-app",
+            description: "Set up the QUBE Reviewer GitHub App after initialization.",
+          }],
+        },
+      },
+    });
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-publisher", "github-app",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.plan.postInitActions, [{
+      id: "github-app",
+      command: "qube review setup github-app",
+      description: "Set up the QUBE Reviewer GitHub App after initialization.",
+    }]);
+    assert.equal(optionValue(componentRows(parsed.plan).get("aie").args, "--publisher"), "github-app");
+    assert.ok(readInitCalls(packageRoot).every(call => call.phase === "plan"));
+  });
+
+  it("forwards host and isolated review harnesses to Executor", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-review-root-"));
+    createInitShims(packageRoot);
+
+    const hostRepo = mkdtempSync(path.join(tmpdir(), "qube-init-host-review-"));
+    const host = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--ci-provider", "github",
+      "--review-mode", "host",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd: hostRepo, env: initEnv(packageRoot) });
+    assert.equal(host.status, 0, host.stderr);
+    const hostPlan = JSON.parse(host.stdout).plan;
+    assert.equal(hostPlan.resolved.review.harness, "codex");
+    assert.equal(optionValue(componentRows(hostPlan).get("aie").args, "--local-review-agent"), "codex");
+
+    const isolatedRepo = mkdtempSync(path.join(tmpdir(), "qube-init-isolated-review-"));
+    const isolated = runCli([
+      "init", ".",
+      "--host", "codex,grok-build",
+      "--ci-provider", "github",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd: isolatedRepo, env: initEnv(packageRoot) });
+    assert.equal(isolated.status, 0, isolated.stderr);
+    const isolatedPlan = JSON.parse(isolated.stdout).plan;
+    assert.equal(isolatedPlan.resolved.review.harness, "grok-build");
+    assert.equal(optionValue(componentRows(isolatedPlan).get("aie").args, "--isolated-review-agent"), "grok-build");
+  });
+
+  it("rejects review harnesses that violate the selected review mode", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-review-reject-root-"));
+    const cases = [
+      {
+        hosts: "codex,grok-build",
+        mode: "host",
+        harness: "grok-build",
+        error: /Primary-harness review must use codex/,
+      },
+      {
+        hosts: "codex,grok-build",
+        mode: "isolated",
+        harness: "codex",
+        error: /other than the primary harness/,
+      },
+      {
+        hosts: "codex,opencode",
+        mode: "isolated",
+        harness: "opencode",
+        error: /opencode does not support isolated review/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-review-reject-"));
+      const result = runCli([
+        "init", ".",
+        "--host", testCase.hosts,
+        "--ci-provider", "github",
+        "--review-mode", testCase.mode,
+        "--review-harness", testCase.harness,
+        "--yes",
+        "--dry-run",
+        "--json",
+      ], { cwd, env: initEnv(packageRoot) });
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(JSON.parse(result.stdout).error, testCase.error);
     }
   });
 
+  it("rejects explicit external reviewers outside external review mode", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-reviewer-reject-root-"));
+    const cases = [
+      { hosts: "codex", mode: "host" },
+      { hosts: "codex,grok-build", mode: "isolated", harness: "grok-build" },
+    ];
+
+    for (const testCase of cases) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-reviewer-reject-"));
+      const result = runCli([
+        "init", ".",
+        "--host", testCase.hosts,
+        "--ci-provider", "github",
+        "--review-mode", testCase.mode,
+        ...(testCase.harness ? ["--review-harness", testCase.harness] : []),
+        "--external-reviewer", "coderabbit",
+        "--yes",
+        "--dry-run",
+        "--json",
+      ], { cwd, env: initEnv(packageRoot) });
+      assert.equal(result.status, 2, result.stderr);
+      assert.equal(
+        JSON.parse(result.stdout).error,
+        "External reviewer services require external review mode.",
+      );
+    }
+  });
+
+  it("uses one detected CI provider and treats conflicting markers as ambiguous", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-ci-root-"));
+    createInitShims(packageRoot);
+
+    const gitlabRepo = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-"));
+    writeFileSync(path.join(gitlabRepo, ".gitlab-ci.yml"), "test: {}\n", "utf8");
+    const detected = runCli(["init", ".", "--host", "codex", "--yes", "--dry-run", "--json"], {
+      cwd: gitlabRepo,
+      env: initEnv(packageRoot),
+    });
+    assert.equal(detected.status, 0, detected.stderr);
+    const detectedPlan = JSON.parse(detected.stdout).plan;
+    assert.deepEqual(detectedPlan.resolved.ciProviders, ["gitlab"]);
+    assert.equal(detectedPlan.sources.ciProviders, "detected");
+    assert.equal(optionValue(componentRows(detectedPlan).get("aie").args, "--ci-provider"), "gitlab");
+
+    const ambiguousRepo = mkdtempSync(path.join(tmpdir(), "qube-init-ci-ambiguous-"));
+    mkdirSync(path.join(ambiguousRepo, ".github", "workflows"), { recursive: true });
+    writeFileSync(path.join(ambiguousRepo, ".github", "workflows", "ci.yml"), "name: ci\n", "utf8");
+    writeFileSync(path.join(ambiguousRepo, ".gitlab-ci.yml"), "test: {}\n", "utf8");
+    const ambiguous = runCli(["init", ".", "--host", "codex", "--yes", "--dry-run", "--json"], {
+      cwd: ambiguousRepo,
+      env: initEnv(packageRoot),
+    });
+    assert.equal(ambiguous.status, 2, ambiguous.stderr);
+    const ambiguousPayload = JSON.parse(ambiguous.stdout);
+    assert.equal(ambiguousPayload.ok, false);
+    assert.match(ambiguousPayload.error, /multiple CI providers were detected: github, gitlab/);
+    assert.match(ambiguousPayload.error, /--ci-provider/);
+  });
+
+  it("reports an unchanged second apply without rewriting its QUBE config", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-noop-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-noop-cwd-"));
+    const stateful = { stateful: true };
+    createInitShims(packageRoot, { aie: stateful, aib: stateful, aiq: stateful, aiu: stateful });
+    const env = initEnv(packageRoot);
+    const args = [
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "host",
+      "--yes",
+      "--json",
+    ];
+
+    const first = runCli(args, { cwd, env });
+    assert.equal(first.status, 0, first.stderr);
+    const firstPayload = JSON.parse(first.stdout);
+    assert.equal(firstPayload.mode, "apply");
+    assert.equal(firstPayload.plan.config.operation, "create");
+    assert.equal(firstPayload.apply.changed, true);
+    assert.deepEqual(firstPayload.apply.steps.map(step => step.id), ["aie", "aib", "aiq", "aiu", "labels"]);
+
+    const configPath = path.join(cwd, ".qube", "init.json");
+    const firstConfig = readFileSync(configPath, "utf8");
+    const second = runCli(args, { cwd, env });
+    assert.equal(second.status, 0, second.stderr);
+    const secondPayload = JSON.parse(second.stdout);
+    assert.equal(secondPayload.plan.config.operation, "skip");
+    assert.equal(secondPayload.apply.changed, false);
+    assert.ok(secondPayload.apply.steps.every(step => step.status === "unchanged"));
+    assert.equal(readFileSync(configPath, "utf8"), firstConfig);
+  });
+
+  it("rejects unknown harnesses and blocks unanswered JSON prompts", () => {
+    const unsupported = runCli(["init", ".", "--host", "bogus-host", "--yes", "--json"], {
+      env: initEnv(mkdtempSync(path.join(tmpdir(), "qube-init-invalid-root-"))),
+    });
+    assert.notEqual(unsupported.status, 0);
+    const unsupportedPayload = JSON.parse(unsupported.stdout);
+    assert.equal(unsupportedPayload.ok, false);
+    assert.match(unsupportedPayload.error.likelyCause, /Unsupported choice "bogus-host"/);
+
+    const unanswered = runCli(["init", ".", "--json"], {
+      env: initEnv(mkdtempSync(path.join(tmpdir(), "qube-init-prompt-root-"))),
+    });
+    assert.equal(unanswered.status, 2);
+    const unansweredPayload = JSON.parse(unanswered.stdout);
+    assert.equal(unansweredPayload.error.kind, "prompt-blocked");
+  });
+});
+
+describe("QUBE routing and connection boundaries", () => {
   it("derives routing launch names from the canonical harness profiles", async () => {
     for (const host of AGENT_HOST_IDS) {
       const profile = await getAgentHostProfile(host);
@@ -3324,251 +3787,22 @@ describe("qube init composer orchestrator", () => {
     }
   });
 
-  it("skips Umpire init when Cursor is the only selected harness", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-only-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-only-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createAiuMergingShim(packageRoot);
-
-    const result = runCli(["init", ".", "--host", "cursor", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, true);
-    assert.deepEqual(parsed.selections.hosts, ["cursor"]);
-    assert.equal(parsed.aie.length, 1);
-    assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "cursor");
-    assert.deepEqual(parsed.aiu, []);
-    assert.equal(existsSync(path.join(cwd, ".qube", "aiu", "config.json")), false);
-  });
-
-  it("treats Grok Build as its own init tool instead of Codex", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: true, selectedTools: ["grok-build"], actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true, tools: ["grok-build"] } });
-    const result = runCli(["init", ".", "--host", "grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, true);
-    assert.deepEqual(parsed.selections.hosts, ["grok-build"]);
-    assert.equal(parsed.aie.length, 1);
-    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "grok-build", "--work-provider", "github", "--review-provider", "github", "--ci-provider", "github", "--dry-run", "--yes"]);
-    assert.equal(parsed.aiu.length, 1);
-    assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "grok-build", "--dry-run"]);
-    assert.equal(parsed.aie[0].args.includes("codex"), false);
-    assert.equal(parsed.aiu[0].args.includes("codex"), false);
-  });
-
-  it("applies the complete Umpire harness set through one child", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createAiuMergingShim(packageRoot);
-    const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.aiu.length, 1);
-    assert.equal(parsed.aiu[0].args[parsed.aiu[0].args.indexOf("--tool") + 1], "codex,grok-build");
-    const configPath = path.join(cwd, ".qube", "aiu", "config.json");
-    assert.equal(existsSync(configPath), true);
-    const enabled = JSON.parse(readFileSync(configPath, "utf8")).hosts.enabled.sort();
-    assert.deepEqual(enabled, ["codex", "grok-build"]);
-  });
-
-  it("keeps one Executor and one Umpire init for Grok Build plus Codex", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-    const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.aie.length, 1);
-    assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "codex,grok-build");
-    assert.equal(parsed.aiu.length, 1);
-    assert.equal(parsed.aiu[0].args[parsed.aiu[0].args.indexOf("--tool") + 1], "codex,grok-build");
-  });
-
-  it("also initializes aib when selected through --with", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-with-aib-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-    createJsonEnvelopeShim(packageRoot, "aib", { ok: true, command: "init", files: [] });
-
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-with-aib-cwd-"));
-    const result = runCli(["init", ".", "--host", "codex", "--with", "aib", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.selections.withComponents, ["aib"]);
-    assert.equal(parsed.with.length, 1);
-    assert.equal(parsed.with[0].component, "aib");
-    assert.ok(parsed.with[0].ok);
-  });
-
-  it("rejects an unsupported --host token with a loud, non-silent error", () => {
-    const result = runCli(["init", ".", "--host", "bogus-host", "--yes", "--json"]);
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.match(parsed.error.likelyCause, /Unsupported choice "bogus-host"/);
-  });
-
-  it("rejects an unsupported --with token instead of silently ignoring it", () => {
-    const result = runCli(["init", ".", "--with", "not-a-component", "--yes", "--json"]);
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.match(parsed.error.likelyCause, /Unsupported choice "not-a-component"/);
-  });
-
-  it("never reports success when a required init component is unavailable", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-missing-aiu-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-missing-aiu-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    // aiu is intentionally not shimmed, so it cannot be resolved.
-
-    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.aie[0].ok, true);
-    assert.equal(parsed.aiu[0].ok, false);
-    assert.match(parsed.aiu[0].error, /cannot find aiu/i);
-  });
-
-  it("never coerces a child ok:false envelope into an overall success", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-failing-aie-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: false, command: "init", error: { kind: "conflict", likelyCause: "managed section drift" } });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-
-    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.aie[0].ok, false);
-  });
-
-  it("requires each child to report explicit top-level success", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-implicit-child-success-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { command: "init", init: { ok: false } });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-
-    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.aie[0].ok, false);
-  });
-
-  it("accepts Cursor as a primary model-routing host", () => {
-    const schema = runCli(["schema", "--json"]);
-    assert.equal(schema.status, 0);
-    const parsedSchema = JSON.parse(schema.stdout);
-    const init = parsedSchema.commands.find(command => command.name === "init");
-    const primaryHost = init.flags.find(flag => flag.name === "primary-host");
-    assert.match(primaryHost.description, /cursor/i);
-
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-package-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-init-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    const binDir = createExecutableStub(packageRoot, "cursor-agent");
-    const result = runCli([
-      "init", ".",
-      "--host", "cursor",
-      "--yes",
-      "--json",
-      "--primary-host", "cursor",
-      "--primary-model", "cursor-model",
-    ], { cwd, env: initEnv(packageRoot, { PATH: binDir, Path: binDir }) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.aie.length, 1);
-    const primaryHostIndex = parsed.aie[0].args.indexOf("--primary-host");
-    assert.deepEqual(parsed.aie[0].args.slice(primaryHostIndex, primaryHostIndex + 4), [
-      "--primary-host", "cursor", "--primary-model", "cursor-model",
-    ]);
-  });
-
-  it("does not invent a primary model when only a routing host is selected", () => {
-    const result = runCli([
-      "init", ".",
-      "--host", "cursor",
-      "--yes",
-      "--json",
-      "--primary-host", "cursor",
-    ]);
-    assert.notEqual(result.status, 0);
-    const parsed = JSON.parse(result.stdout);
-    assert.match(String(parsed.error), /requires --primary-model/i);
-  });
-
   it("does not discover root-level Executor config files", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-current-config-doctor-"));
-    writeFileSync(path.join(cwd, "aie.config.json"), `${JSON.stringify({
+    writeFileSync(path.join(cwd, "aie.config.json"), JSON.stringify({
       version: 1,
       providers: {
         work: { kind: "github" },
         review: { kind: "github" },
         ci: { kind: "github" },
       },
-    })}\n`, "utf8");
+    }) + "\n", "utf8");
 
     const result = await runConnectionDoctor({ cwd });
 
     assert.equal(result.status, "unverified");
     assert.equal(result.configPath, null);
     assert.deepEqual(result.connections, []);
-  });
-
-  it("refuses an uninstalled modelRouting host during init", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-routing-init-"));
-    const result = runCli([
-      "init", ".",
-      "--host", "claude-code",
-      "--yes",
-      "--json",
-      "--primary-host", "opencode",
-      "--primary-model", "opencode-model",
-    ], { cwd, env: { PATH: "" } });
-    assert.notEqual(result.status, 0);
-    const parsed = result.stdout.trim() ? JSON.parse(result.stdout) : { error: result.stderr };
-    assert.match(String(parsed.error ?? result.stderr), /not installed/i);
-  });
-
-  it("blocks JSON init prompts unless flags or safe defaults are supplied", () => {
-    const result = runCli(["init", ".", "--json"]);
-    assert.equal(result.status, 2);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.command, "init");
-    assert.equal(parsed.error.kind, "prompt-blocked");
-  });
-
-  it("keeps --defaults JSON init non-interactive and removes answered child question IDs", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-defaults-package-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-defaults-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", {
-      ok: true,
-      command: "init",
-      awaitingAnswers: false,
-      questions: [
-        { id: "work-provider", answered: true, value: "github" },
-        { id: "review-mode", answered: true, value: "host" },
-      ],
-      unansweredQuestionIds: ["work-provider", "review-mode"],
-      actions: [],
-    });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-
-    const result = runCli(["init", ".", "--host", "codex", "--defaults", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.error, undefined);
-    assert.ok(parsed.aie[0].args.includes("--defaults"));
-    assert.deepEqual(parsed.aie[0].json.unansweredQuestionIds, []);
-    assert.equal(parsed.aie[0].json.questions.every(question => question.answered === true), true);
   });
 });
 
@@ -3643,6 +3877,88 @@ describe("host toolkit manifests", () => {
     });
   }
 
+  it("derives primary-harness review for a single Codex host record", () => {
+    const record = createInitRecord({
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    });
+
+    assert.deepEqual(record.review, {
+      mode: "host",
+      harness: "codex",
+      publisher: "user",
+    });
+  });
+
+  it("completes a record from partial global and repository config", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-partial-repo-"));
+    const home = mkdtempSync(path.join(tmpdir(), "qube-toolkit-partial-home-"));
+    const globalPath = userQubeConfigPath(home);
+    const repoPath = repoQubeConfigPath(cwd);
+    mkdirSync(path.dirname(globalPath), { recursive: true });
+    mkdirSync(path.dirname(repoPath), { recursive: true });
+    writeFileSync(globalPath, `${JSON.stringify({ version: 1, hosts: ["codex"] })}\n`, "utf8");
+    writeFileSync(repoPath, `${JSON.stringify({
+      version: 1,
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      continuousShipping: true,
+      umpire: { scope: "ready" },
+      quality: { stages: ["unit"] },
+      review: { publisher: "user" },
+      mcp: { optIn: false },
+    })}\n`, "utf8");
+
+    const record = readInitRecord(cwd, { USERPROFILE: home, HOME: home });
+    assert.deepEqual(record, {
+      version: 1,
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      continuousShipping: true,
+      umpire: { scope: "ready" },
+      quality: { stages: ["unit"] },
+      review: { mode: "host", harness: "codex", publisher: "user" },
+      mcp: { optIn: false },
+    });
+  });
+
+  it("finds the repository record and assets from a deeper directory", async () => {
+    const outer = mkdtempSync(path.join(tmpdir(), "qube-toolkit-root-discovery-"));
+    const repoRoot = path.join(outer, "repo");
+    const target = path.join(repoRoot, "packages", "app");
+    const deeper = path.join(target, "src", "feature");
+    const initialized = spawnSync("git", ["init", "--quiet", repoRoot], { encoding: "utf8" });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    mkdirSync(deeper, { recursive: true });
+    writeRequiredAssets(repoRoot, "codex");
+
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-root-discovery-pkg-"));
+    createInitShims(packageRoot);
+    const env = initEnv(packageRoot);
+    const initializedQube = runCli([
+      "init", path.join("repo", "packages", "app"),
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--yes",
+      "--json",
+    ], { cwd: outer, env });
+    assert.equal(initializedQube.status, 0, initializedQube.stderr);
+    assert.equal(JSON.parse(initializedQube.stdout).plan.target, path.resolve(repoRoot));
+
+    const record = readInitRecord(deeper, env);
+    assert.ok(record);
+    assert.deepEqual(record.hosts, ["codex"]);
+    const report = await probeHostToolkits({ cwd: deeper, env, offline: true });
+    assert.deepEqual(report.selected, ["codex"]);
+    assert.equal(report.hosts[0].status, "complete");
+    assert.ok(report.hosts[0].present.includes("AGENTS.md"));
+    assert.ok(report.hosts[0].present.includes("plugins/ai-umpire/hooks/hooks.json"));
+  });
+
   it("reports Umpire continuation as active only after a successful host probe", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-umpire-probe-"));
     writeInitRecord(cwd, createInitRecord({
@@ -3691,21 +4007,17 @@ describe("host toolkit manifests", () => {
 
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-claude-pkg-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-claude-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    createInitShims(packageRoot);
     const planned = runCli([
       "init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github",
       "--yes", "--dry-run", "--json",
-    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    ], { cwd, env: initEnv(packageRoot) });
     assert.equal(planned.status, 0, planned.stderr);
     const parsed = JSON.parse(planned.stdout);
-    assert.deepEqual(parsed.hosts.selected, ["claude-code"]);
-    assert.deepEqual(
-      parsed.hosts.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path),
-      claudePaths,
-    );
-    assert.equal(parsed.selections.mcp, false);
-    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), false);
+    assert.deepEqual(parsed.plan.resolved.hosts, ["claude-code"]);
+    assert.deepEqual(parsed.plan.components.map((component) => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(parsed.plan.resolved.mcp.optIn, false);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
     for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
       assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
     }
@@ -3735,18 +4047,16 @@ describe("host toolkit manifests", () => {
 
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-pkg-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    createInitShims(packageRoot);
     const planned = runCli([
-      "init", ".", "--host", "grok-build", "--yes", "--dry-run", "--json",
-    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+      "init", ".", "--host", "grok-build", "--work-provider", "github", "--ci-provider", "github",
+      "--yes", "--dry-run", "--json",
+    ], { cwd, env: initEnv(packageRoot) });
     assert.equal(planned.status, 0, planned.stderr);
     const parsed = JSON.parse(planned.stdout);
-    assert.deepEqual(
-      parsed.hosts.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path),
-      grokRequired,
-    );
-    assert.equal(parsed.selections.mcp, false);
+    assert.deepEqual(parsed.plan.resolved.hosts, ["grok-build"]);
+    assert.deepEqual(parsed.plan.components.map((component) => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(parsed.plan.resolved.mcp.optIn, false);
     for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
       assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
     }
@@ -3781,19 +4091,18 @@ describe("host toolkit manifests", () => {
   it("does not write provider MCP config without an explicit --mcp opt-in", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-mcp-pkg-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-mcp-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    createInitShims(packageRoot);
+    const env = initEnv(packageRoot, { QUBE_MCP: "1", MCP: "1" });
 
     const implicit = runCli([
       "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
       "--yes", "--json",
-    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, QUBE_MCP: "1", MCP: "1" } });
+    ], { cwd, env });
     assert.equal(implicit.status, 0, implicit.stderr);
     const implicitParsed = JSON.parse(implicit.stdout);
-    assert.equal(implicitParsed.selections.mcp, false);
-    assert.equal(implicitParsed.hosts.mcp.optIn, false);
-    assert.equal(implicitParsed.hosts.mcp.configured, false);
-    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), true);
+    assert.equal(implicitParsed.plan.resolved.mcp.optIn, false);
+    assert.deepEqual(implicitParsed.plan.components.map((component) => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), true);
     for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
       assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
     }
@@ -3801,14 +4110,12 @@ describe("host toolkit manifests", () => {
     const opted = runCli([
       "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
       "--yes", "--mcp", "--json",
-    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    ], { cwd, env });
     assert.equal(opted.status, 0, opted.stderr);
     const optedParsed = JSON.parse(opted.stdout);
-    assert.equal(optedParsed.selections.mcp, true);
-    assert.equal(optedParsed.hosts.mcp.optIn, true);
-    assert.equal(optedParsed.hosts.mcp.configured, false);
-    assert.match(optedParsed.hosts.mcp.caveat, /bypass QUBE policy/);
-    assert.equal(optedParsed.hosts.mcp.caveat, MCP_BYPASS_CAVEAT);
+    assert.equal(optedParsed.plan.resolved.mcp.optIn, true);
+    assert.deepEqual(optedParsed.plan.components.map((component) => component.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8")).mcp.optIn, true);
     for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
       assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
     }
@@ -3853,7 +4160,7 @@ describe("host toolkit manifests", () => {
     assert.equal(parsed.ok, false);
   });
 
-  it("does not report complete for an unknown or empty selected host record", async () => {
+  it("does not report complete for an unknown host and rejects an empty host record", async () => {
     const unknownRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-unknown-host-"));
     writeInitRecord(unknownRoot, createInitRecord({
       hosts: ["unsupported-host"],
@@ -3866,16 +4173,15 @@ describe("host toolkit manifests", () => {
     assert.equal(unknown.hosts[0].status, "missing");
     assert.match(unknown.hosts[0].reason, /not a supported toolkit host/);
 
-    const emptyRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-empty-hosts-"));
-    writeInitRecord(emptyRoot, createInitRecord({
-      hosts: [],
-      workProviders: ["github"],
-      ciProviders: ["github"],
-      mcpOptIn: false,
-    }));
-    const empty = await probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
-    assert.equal(empty.status, "missing");
-    assert.notEqual(empty.status, "complete");
+    assert.throws(
+      () => createInitRecord({
+        hosts: [],
+        workProviders: ["github"],
+        ciProviders: ["github"],
+        mcpOptIn: false,
+      }),
+      /QUBE init record requires at least one agent harness/,
+    );
   });
 
   it("does not report Codex complete when only the marketplace file is present", async () => {

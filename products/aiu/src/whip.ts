@@ -7,15 +7,15 @@ import type { AiuConfig, AiuWhipPolicy, AiuWhipTaskDefinition } from "./config.j
 export const AIU_WHIP_STATE_SCHEMA_VERSION = 1;
 export const AIU_DEFAULT_WHIP_TASKS: readonly AiuWhipTaskDefinition[] = Object.freeze([
   Object.freeze({
-    id: "review-doc-command-examples",
-    title: "Review documented aiu command examples",
-    prompt: "Inspect README.md and docs/ for stale aiu command examples, update only incorrect examples, then run the relevant documentation or CLI tests.",
+    id: "improve-repository-quality",
+    title: "Improve repository quality",
+    prompt: "Inspect the repository for the highest-impact maintainability, readability, reliability, or complexity problem that can be fixed safely. Make one bounded improvement and run the relevant tests.",
     priority: 100,
   }),
   Object.freeze({
-    id: "inspect-focused-test-coverage",
-    title: "Inspect focused test coverage",
-    prompt: "Find one implemented aiu behavior with weak local test coverage, add a focused test for that behavior, and run the affected test file plus typecheck.",
+    id: "measure-repository-performance",
+    title: "Measure repository performance",
+    prompt: "Measure a representative performance-sensitive workflow before changing it. If the result identifies a meaningful bottleneck, make one bounded improvement, repeat the same measurement, and run the relevant tests. If it does not, preserve the measured evidence and complete the task without changing code.",
     priority: 200,
   }),
 ]);

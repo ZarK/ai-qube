@@ -23,7 +23,7 @@ export function createRunWorkflowOutput(
 ): RunWorkflowOutput {
   return createRunWorkflowForStages(
     loadedProgress,
-    request.stages ?? resolveAiqProgressStageIds(loadedProgress.progress.current_stage),
+    request.stages ?? resolveAiqProgressStageIds(loadedProgress.progress),
     result,
   );
 }
@@ -57,16 +57,13 @@ export function createRunWorkflowForStages(
   };
 }
 
-export function createDefaultRunOutput(currentStageIndex: number): RunWorkflowOutput["defaultRun"] {
+export function createDefaultRunOutput(
+  progress: LoadedAiqProgress["progress"],
+): RunWorkflowOutput["defaultRun"] {
   return createAiqProgressRunSelection(
     {
       path: "",
-      progress: {
-        current_stage: currentStageIndex as LoadedAiqProgress["progress"]["current_stage"],
-        disabled: [],
-        last_run: null,
-        order: [],
-      },
+      progress,
       source: "defaults",
     },
     [],

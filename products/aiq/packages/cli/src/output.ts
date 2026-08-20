@@ -1,4 +1,5 @@
 import { formatBenchmarkReportAsJson, formatBenchmarkReportAsText } from "@tjalve/aiq/benchmark";
+import type { AiqSetupPlan } from "@tjalve/aiq/config";
 import type { RunPlan, RunResult, StageId, ToolRunResult } from "@tjalve/aiq/model";
 import {
   formatPlanAsJson,
@@ -530,6 +531,29 @@ export function formatConfigInitOutput(format: OutputFormat, output: ConfigInitO
     `${output.progressCreated ? "Wrote" : "Found"} progress: ${output.progressPath}`,
     "",
   ].join("\n");
+}
+
+export function formatConfigSetupOutput(format: OutputFormat, plan: AiqSetupPlan): string {
+  if (format === "json") {
+    return `${JSON.stringify({ ok: plan.ok, command: "config", setup: plan }, null, 2)}\n`;
+  }
+
+  const selectedWarnings = plan.stageMetadata
+    .filter(
+      (stage) => stage.refactorDriving && plan.selection.resolvedStages.includes(stage.id),
+    )
+    .flatMap((stage) => (stage.warning === undefined ? [] : [stage.warning.message]));
+  return [
+    plan.dryRun ? "AIQ config plan" : "AIQ config initialized",
+    `Selection: ${plan.selection.mode} (${plan.selection.resolvedStages.join(", ")})`,
+    `Config: ${plan.config.operation} ${plan.config.path}`,
+    `Progress: ${plan.progress.operation} ${plan.progress.path}`,
+    ...[...new Set(selectedWarnings)].map((warning) => `Warning: ${warning}`),
+    plan.dryRun ? "No files were written." : undefined,
+    "",
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 export function formatConfigStageOutput(format: OutputFormat, output: ConfigStageOutput): string {

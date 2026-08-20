@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { getAgentHostProfileSync } from '../agent_host_adapters.js';
-import { listHostModels } from '../app/model_catalog.js';
+import { listHostModels, type HostModelListing } from '../app/model_catalog.js';
 import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
 import { commandExistsOnPath, detectInstalledReviewHostsOnPath } from '../app/model_routing_hosts.js';
 import { REVIEW_MODEL_HOST_IDS, type ReviewMode, type ReviewModelHostId } from '../core/policy.js';
@@ -9,6 +9,8 @@ import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
 import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
 import type { InitTool } from '../init_content.js';
 import { DEFAULT_UI_AUDIT_EVIDENCE_ROOT } from '../audit.js';
+import type { InitExternalReviewer } from './review_selections.js';
+import type { ReviewProviderKind } from '../config/index.js';
 
 export interface GuideMachine {
   installedHosts: readonly ReviewModelHostId[];
@@ -16,6 +18,8 @@ export interface GuideMachine {
   aiqAvailable: boolean;
   hasUserFacingUi: boolean;
   liveModels?: Readonly<Partial<Record<ReviewModelHostId, readonly string[]>>>;
+  modelCatalogs?: Readonly<Partial<Record<ReviewModelHostId, HostModelListing>>>;
+  externalReviewers?: readonly InitExternalReviewer[];
 }
 
 export interface InvocationAnswers {
@@ -42,8 +46,10 @@ export function detectGuideMachine(input: {
     ? REVIEW_MODEL_HOST_IDS.filter(host => input.installedHosts?.includes(host))
     : detectInstalledReviewHostsOnPath();
   const liveModels: Partial<Record<ReviewModelHostId, readonly string[]>> = {};
+  const modelCatalogs: Partial<Record<ReviewModelHostId, HostModelListing>> = {};
   for (const host of installedHosts) {
     const listing = listHostModels(host);
+    modelCatalogs[host] = listing;
     if (listing.status === 'ready') liveModels[host] = listing.models;
   }
   return {
@@ -52,6 +58,7 @@ export function detectGuideMachine(input: {
     aiqAvailable: input.aiqAvailable ?? commandExistsOnPath('aiq'),
     hasUserFacingUi: detectUserFacingUi(input.repoRoot),
     liveModels,
+    modelCatalogs,
   };
 }
 
@@ -92,13 +99,20 @@ export function recommendedQualityControl(machine: GuideMachine): boolean {
 export function answersFromPolicy(policy: InitPolicyOptions | undefined): InvocationAnswers {
   const answers: InvocationAnswers = {};
   if (policy?.reviewMode !== undefined) answers.reviewMode = policy.reviewMode;
-  if (policy?.reviewAgents !== undefined) answers.reviewers = [...policy.reviewAgents];
-  if (policy?.reviewModels !== undefined) {
+  if (policy?.reviewMode === 'host' && (policy.localReviewAgentSelections !== undefined || policy.localReviewAgents !== undefined)) {
+    answers.reviewers = [...(policy.localReviewAgentSelections ?? policy.localReviewAgents ?? [])];
+  } else if (policy?.reviewAgentSelections !== undefined || policy?.reviewAgents !== undefined) {
+    answers.reviewers = [...(policy.reviewAgentSelections ?? policy.reviewAgents ?? [])];
+  }
+  if (policy?.reviewModelSelections !== undefined) {
+    answers.reviewModels = [...policy.reviewModelSelections];
+  } else if (policy?.reviewModels !== undefined) {
     answers.reviewModels = Object.entries(policy.reviewModels.review ?? {}).flatMap(([host, binding]) => (
       binding?.model ? [`${host}:${binding.model}`] : []
     ));
   }
-  if (policy?.publisher?.mode !== undefined) answers.publisher = policy.publisher.mode;
+  if (policy?.publisherIntent !== undefined) answers.publisher = policy.publisherIntent;
+  else if (policy?.publisher?.mode !== undefined) answers.publisher = policy.publisher.mode;
   if (policy?.qualityControl !== undefined) answers.qualityControl = policy.qualityControl;
   if (policy?.manualUiAudit !== undefined) answers.manualUiAudit = policy.manualUiAudit;
   if (policy?.uiAuditEvidenceRoot !== undefined) answers.uiAuditEvidenceRoot = policy.uiAuditEvidenceRoot;
@@ -111,6 +125,7 @@ export function buildInitQuestions(input: {
   answers: InvocationAnswers;
   useDefaults?: boolean;
   repoRoot?: string | null;
+  reviewProvider?: ReviewProviderKind;
 }): InitQuestion[] {
   const recommendedMode = recommendedReviewMode(input.machine);
   const isolatedHosts = isolatedReviewHostsOnMachine(input.machine);
@@ -120,6 +135,7 @@ export function buildInitQuestions(input: {
   const qualityControlValue = recommendedQualityControl(input.machine);
   const recommendedPublisher: 'user' | 'github-app' | 'token' = 'user';
   const recommendedReviewers: string[] = [];
+  const reviewerQuestion = reviewerQuestionFor(input.machine, selectedMode);
   const includeEvidenceRoot = input.answers.manualUiAudit === true
     || (input.answers.manualUiAudit !== false && recommendedAudit);
 
@@ -144,14 +160,9 @@ export function buildInitQuestions(input: {
     }),
     question({
       id: 'reviewers',
-      prompt: 'Which reviewers should the gate request?',
-      options: [
-        { value: 'coderabbitai', label: 'CodeRabbit (external service)' },
-        ...isolatedHosts.map(host => ({ value: host, label: `${host} (installed review host adapter)`, available: true })),
-      ],
-      recommendation: recommendedMode === 'isolated'
-        ? 'Leave external reviewers empty. Isolated review uses host models on this machine.'
-        : 'Leave external reviewers empty unless this repository already uses a review service.',
+      prompt: reviewerQuestion.prompt,
+      options: reviewerQuestion.options,
+      recommendation: reviewerQuestion.recommendation,
       recommendedValue: recommendedReviewers,
       answered: input.answers.reviewers !== undefined,
       value: input.answers.reviewers ?? null,
@@ -173,7 +184,7 @@ export function buildInitQuestions(input: {
         ? 'The invocation already selected review models.'
         : 'Init presents each host catalog so the agent can choose a model the host currently serves.',
     }),
-    question({
+    ...(input.reviewProvider === 'gitlab' ? [] : [question({
       id: 'publisher',
       prompt: 'Which identity should publish formal pull request reviews?',
       options: [
@@ -188,7 +199,7 @@ export function buildInitQuestions(input: {
       reason: input.answers.publisher !== undefined
         ? 'The invocation already selected the publisher identity.'
         : 'Init recommends a user publisher until review setup writes an app or token identity.',
-    }),
+    })]),
     question({
       id: 'quality-gate',
       prompt: 'Should Quality Control run?',
@@ -266,6 +277,35 @@ function uiAuditRecommendation(guide: GuideMachine): string {
   return 'Leave UI audit off. This repository looks like UI, but agent-browser is not on PATH.';
 }
 
+function reviewerQuestionFor(machine: GuideMachine, mode: ReviewMode): Pick<InitQuestion, 'prompt' | 'options' | 'recommendation'> {
+  if (mode === 'external') {
+    return {
+      prompt: 'Which external review services should the gate request?',
+      options: (machine.externalReviewers ?? []).map(reviewer => ({
+        value: reviewer.id,
+        label: `${reviewer.label} (external service)`,
+        available: true,
+      })),
+      recommendation: 'Leave external reviewers empty unless this repository already uses one of the listed services.',
+    };
+  }
+  if (mode === 'host') {
+    const hosts = machine.installedHosts.filter(host => getAgentHostProfileSync(host).review.local.support !== 'unsupported');
+    return {
+      prompt: 'Which installed agent harnesses should run native review subagents?',
+      options: hosts.map(host => ({ value: host, label: `${getAgentHostProfileSync(host).displayName} subscription`, available: true })),
+      recommendation: hosts.length > 0
+        ? 'Use the primary agent harness, or select another installed harness to move review work to that subscription.'
+        : 'No installed agent harness supports native review subagents.',
+    };
+  }
+  return {
+    prompt: 'Should isolated review request an external reviewer?',
+    options: [],
+    recommendation: 'Leave reviewers empty. Isolated review uses the selected live harness models.',
+  };
+}
+
 function reviewModelHostsForMode(machine: GuideMachine, mode: ReviewMode): readonly ReviewModelHostId[] {
   if (mode === 'isolated') return isolatedReviewHostsOnMachine(machine);
   if (mode === 'host') {
@@ -340,16 +380,20 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
   for (const item of questions) {
     if (!item.answered) continue;
     if (item.id === 'review-mode' && isReviewMode(item.value) && next.reviewMode === undefined) next.reviewMode = item.value;
-    if (item.id === 'reviewers' && Array.isArray(item.value) && next.reviewAgents === undefined) {
-      next.reviewAgents = item.value.filter(value => !value.includes(':'));
+    if (item.id === 'reviewers' && Array.isArray(item.value)) {
+      const reviewers = item.value.filter(value => !value.includes(':'));
+      if (next.reviewMode === 'host' && next.localReviewAgents === undefined) next.localReviewAgents = reviewers;
+      else if (next.reviewMode !== 'host' && next.reviewAgents === undefined) next.reviewAgents = reviewers;
     }
     if (item.id === 'review-models' && Array.isArray(item.value) && next.reviewModels === undefined) {
       const mapped = reviewModelsFromAnswers(item.value);
       if (Object.keys(mapped.review).length > 0) next.reviewModels = mapped;
     }
-    if (item.id === 'publisher' && (item.value === 'user' || item.value === 'github-app' || item.value === 'token') && next.publisher === undefined) {
+    const usesGitHubReview = next.reviewProvider === 'github' || (next.reviewProvider === undefined && next.workProvider !== 'gitlab');
+    if (item.id === 'publisher' && usesGitHubReview && (item.value === 'user' || item.value === 'github-app' || item.value === 'token') && next.publisher === undefined) {
       if (item.value === 'user') next.publisher = { mode: 'user' };
-      // github-app and token require extra fields; those must arrive through --from or review setup flags.
+      if (item.value === 'github-app') next.publisherIntent = 'github-app';
+      // Token publishers require an environment-variable reference from --from or review setup.
     }
     if (item.id === 'quality-gate' && next.qualityControl === undefined) {
       const enabled = asEnabledFlag(item.value);
