@@ -1,14 +1,8 @@
-import { executableExistsOnPath } from "@tjalve/qube-core";
+import { getAgentHostProfileSync } from "@tjalve/aie";
+import { AGENT_HOST_IDS, executableExistsOnPath, type AgentHostId } from "@tjalve/qube-core";
 
-export const MODEL_ROUTING_HOSTS = Object.freeze(["codex", "claude-code", "opencode", "grok-build"] as const);
-export type ModelRoutingHostId = (typeof MODEL_ROUTING_HOSTS)[number];
-
-const HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, readonly string[]>> = Object.freeze({
-  codex: Object.freeze(["codex"]),
-  "claude-code": Object.freeze(["claude"]),
-  opencode: Object.freeze(["opencode"]),
-  "grok-build": Object.freeze(["grok"]),
-});
+export const MODEL_ROUTING_HOSTS = AGENT_HOST_IDS;
+export type ModelRoutingHostId = AgentHostId;
 
 export function isModelRoutingHost(value: string): value is ModelRoutingHostId {
   return (MODEL_ROUTING_HOSTS as readonly string[]).includes(value);
@@ -17,7 +11,10 @@ export function isModelRoutingHost(value: string): value is ModelRoutingHostId {
 export function detectInstalledRoutingHostsOnPath(
   lookup: (command: string) => boolean = commandExistsOnPath,
 ): readonly ModelRoutingHostId[] {
-  return MODEL_ROUTING_HOSTS.filter(host => HOST_COMMANDS[host].some(lookup));
+  return MODEL_ROUTING_HOSTS.filter((host) => {
+    const executables = getAgentHostProfileSync(host).executables;
+    return [...executables.names, ...executables.windowsNames].some(lookup);
+  });
 }
 
 export function commandExistsOnPath(command: string): boolean {

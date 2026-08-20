@@ -8,6 +8,9 @@ import { listOpenIssues, runGh, type GhExec, type GitHubIssue } from '../provide
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels.js';
 import { getManagedSectionHealth } from '../managed_file.js';
 import { inspectBaseRef, inspectRepoRoot, inspectWorktree } from '../providers/local/local_git_provider.js';
+import { AGENT_HOST_IDS, type AgentHostId } from '@tjalve/qube-core';
+import { getAgentHostProfileSync } from '../agent_host_adapters.js';
+import { reviewModeOf } from '../review_mode.js';
 export type { RepoAffectedCommandResult, RepoInspectCommandResult } from './layout.js';
 export { inspectAffected, inspectRepoLayout, runRepoAffected, runRepoInspect } from './layout.js';
 
@@ -62,24 +65,29 @@ export interface IssueMilestoneWarning {
 }
 
 export interface InstructionStatus {
-  agents: boolean;
-  agentsManaged: boolean;
-  claude: boolean;
-  claudeManaged: boolean;
-  opencodeMakeItSo: boolean;
-  opencodeMakeItSoManaged: boolean;
-  opencodeMakeitsoAlias: boolean;
-  opencodeMakeitsoAliasManaged: boolean;
-  codexReviewFocusAgent: boolean;
-  codexReviewFocusAgentManaged: boolean;
+  harnesses: AgentHarnessInstructionStatus[];
   targets: InstructionTargetStatus[];
 }
 
-type InstructionTargetStatusName = 'agents' | 'claude' | 'opencodeMakeItSo' | 'opencodeMakeitsoAlias' | 'codexReviewFocusAgent';
+export interface InstructionStatusOptions {
+  reviewMode?: 'external' | 'host' | 'isolated';
+  localReviewAgents?: readonly string[];
+}
+
+export interface AgentHarnessInstructionStatus {
+  host: AgentHostId;
+  displayName: string;
+  installed: boolean;
+  healthy: boolean;
+  targets: InstructionTargetStatus[];
+}
 
 export interface InstructionTargetStatus {
-  name: InstructionTargetStatusName;
+  host: AgentHostId;
+  kind: 'instructions' | 'make-it-so' | 'review-agent';
+  id: string;
   path: string;
+  required: boolean;
   present: boolean;
   managed: boolean;
   checksumValid: boolean;
@@ -301,45 +309,37 @@ export function findMilestoneWarnings(issues: GitHubIssue[], config: Config): Is
   return [...missing, ...findMilestoneOrderWarnings(issues, config)];
 }
 
-export function getInstructionStatus(repoRoot: string | null): InstructionStatus {
-  if (!repoRoot) return { agents: false, agentsManaged: false, claude: false, claudeManaged: false, opencodeMakeItSo: false, opencodeMakeItSoManaged: false, opencodeMakeitsoAlias: false, opencodeMakeitsoAliasManaged: false, codexReviewFocusAgent: false, codexReviewFocusAgentManaged: false, targets: [] };
-  const targetByPath = new Map([
-    { name: 'agents' as const, path: 'AGENTS.md' },
-    { name: 'claude' as const, path: 'CLAUDE.md' },
-    { name: 'opencodeMakeItSo' as const, path: join('.opencode', 'commands', 'make-it-so.md') },
-    { name: 'opencodeMakeitsoAlias' as const, path: join('.opencode', 'commands', 'makeitso.md') },
-    { name: 'codexReviewFocusAgent' as const, path: join('.codex', 'agents', 'qube-review-focus.toml') },
-  ].map(target => [target.path, target]));
-  const targets = [...targetByPath.values()].map(target => instructionTarget(repoRoot, target.name, target.path));
-  const byName = new Map(targets.map(target => [target.name, target]));
-  const agents = byName.get('agents');
-  const claude = byName.get('claude');
-  const makeItSo = byName.get('opencodeMakeItSo');
-  const makeitsoAlias = byName.get('opencodeMakeitsoAlias');
-  const codexReviewFocusAgent = byName.get('codexReviewFocusAgent');
-  return {
-    agents: agents?.present ?? false,
-    agentsManaged: agents?.managed ?? false,
-    claude: claude?.present ?? false,
-    claudeManaged: claude?.managed ?? false,
-    opencodeMakeItSo: makeItSo?.present ?? false,
-    opencodeMakeItSoManaged: makeItSo?.managed ?? false,
-    opencodeMakeitsoAlias: makeitsoAlias?.present ?? false,
-    opencodeMakeitsoAliasManaged: makeitsoAlias?.managed ?? false,
-    codexReviewFocusAgent: codexReviewFocusAgent?.present ?? false,
-    codexReviewFocusAgentManaged: codexReviewFocusAgent?.managed ?? false,
-    targets,
-  };
+export function getInstructionStatus(repoRoot: string | null, options: InstructionStatusOptions = {}): InstructionStatus {
+  if (!repoRoot) return { harnesses: [], targets: [] };
+  const requiredReviewHosts = new Set(options.reviewMode === 'host' ? options.localReviewAgents ?? [] : []);
+  const harnesses = AGENT_HOST_IDS.map((host) => {
+    const profile = getAgentHostProfileSync(host);
+    const reviewAssetsRequired = requiredReviewHosts.has(host);
+    const targets = [
+      instructionTarget(repoRoot, host, 'instructions', profile.instructionTarget.id, profile.instructionTarget.path, true),
+      instructionTarget(repoRoot, host, 'make-it-so', profile.makeItSo.id, profile.makeItSo.path, true),
+      ...profile.review.local.agents.map((agent) => instructionTarget(repoRoot, host, 'review-agent', agent.id, agent.path, reviewAssetsRequired)),
+    ];
+    const required = targets.filter((target) => target.required);
+    return {
+      host,
+      displayName: profile.displayName,
+      installed: required.every((target) => target.present),
+      healthy: required.every((target) => target.healthy),
+      targets,
+    };
+  });
+  return { harnesses, targets: harnesses.flatMap((harness) => harness.targets) };
 }
 
-function instructionTarget(repoRoot: string, name: InstructionTargetStatusName, path: string): InstructionTargetStatus {
+function instructionTarget(repoRoot: string, host: AgentHostId, kind: InstructionTargetStatus['kind'], id: string, path: string, required: boolean): InstructionTargetStatus {
   const fullPath = join(repoRoot, path);
-  if (!existsSync(fullPath)) return { name, path, present: false, managed: false, checksumValid: false, healthy: false };
+  if (!existsSync(fullPath)) return { host, kind, id, path, required, present: false, managed: false, checksumValid: false, healthy: false };
   try {
     const health = getManagedSectionHealth(readFileSync(fullPath, 'utf8'));
-    return { name, path, present: true, managed: health.managedFound, checksumValid: health.checksumValid, healthy: health.managedFound && health.checksumValid };
+    return { host, kind, id, path, required, present: true, managed: health.managedFound, checksumValid: health.checksumValid, healthy: health.managedFound && health.checksumValid };
   } catch {
-    return { name, path, present: true, managed: false, checksumValid: false, healthy: false };
+    return { host, kind, id, path, required, present: true, managed: false, checksumValid: false, healthy: false };
   }
 }
 
@@ -464,7 +464,10 @@ export async function buildRepoPrimePlan(options: { config: Config; dryRun: bool
     milestones,
     milestoneWarnings: findMilestoneWarnings(openIssues, options.config),
     milestoneError,
-    instructions: getInstructionStatus(repoRoot),
+    instructions: getInstructionStatus(repoRoot, {
+      reviewMode: reviewModeOf(options.config),
+      localReviewAgents: options.config.localReviewAgents,
+    }),
     planning: getPlanningStatus(repoRoot),
     plannedChanges,
     completedChanges,

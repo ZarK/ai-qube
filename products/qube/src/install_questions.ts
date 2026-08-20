@@ -20,7 +20,11 @@ export type InstallQuestion = {
   readonly reason: string;
 };
 
-export const ISOLATED_REVIEW_HOSTS = Object.freeze(["codex", "grok-build", "cursor"] as const);
+export const ISOLATED_REVIEW_HOSTS = Object.freeze(
+  executorHostSurfaces
+    .filter(option => option.capabilities.some(capability => capability.id === "isolated-review" && capability.support !== "unsupported"))
+    .map(option => option.id),
+);
 export const INSTALL_REVIEW_MODES = Object.freeze(["isolated", "host", "external"] as const);
 export const DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT = "~/.qube/verification";
 export type InstallReviewMode = (typeof INSTALL_REVIEW_MODES)[number];
@@ -62,9 +66,9 @@ export function invalidInstallGuideFlag(flags: Readonly<Record<string, unknown>>
       return `Invalid install option --review-mode=${reviewMode}. Use one of: ${INSTALL_REVIEW_MODES.join(", ")}.`;
     }
     const hosts = readList(flags.host);
-    const selectedHosts = hosts.length > 0 ? hosts : (flags.yes === true ? ["generic"] : []);
+    const selectedHosts = hosts.length > 0 ? hosts : (flags.yes === true ? ["codex"] : []);
     if (reviewMode === "isolated" && selectedHosts.length > 0 && !isolatedReviewAvailable(selectedHosts)) {
-      return "Isolated review is not available because no selected host adapter can run isolated review. Use --review-mode host or --review-mode external, or select Codex, Grok Build, or Cursor.";
+      return `Isolated review is not available because no selected agent harness can run it. Use --review-mode host or --review-mode external, or select one of: ${ISOLATED_REVIEW_HOSTS.join(", ")}.`;
     }
   }
   const evidenceRoot = flags["ui-audit-evidence-root"];
@@ -139,19 +143,19 @@ export function buildInstallQuestions(input: {
     }),
     question({
       id: "host",
-      prompt: "Which host or hosts should this repository use?",
+      prompt: "Which agent harness or harnesses should this repository use?",
       options: discoveryQuestionOptions(executorHostSurfaces),
-      recommendation: "Choose host adapters that the install plan can install.",
-      recommendedValue: host[0] ?? "generic",
+      recommendation: "Choose the agent harnesses that will run QUBE.",
+      recommendedValue: host[0] ?? "codex",
       answered: host.length > 0,
       value: host.length > 0 ? host : null,
       reason: host.length > 0
         ? "The invocation already selected host adapters."
-        : "Host selection chooses which adapter packages the plan can install.",
+        : "Agent harness selection chooses which QUBE instructions and workflow entry point to install.",
     }),
     question({
       id: "work-provider",
-      prompt: "Which work provider should this repository use?",
+      prompt: "Which issue tracker should this repository use?",
       options: discoveryQuestionOptions(executorWorkProviders),
       recommendation: "Use GitHub when the remotes point at GitHub.",
       recommendedValue: "github",
@@ -163,7 +167,7 @@ export function buildInstallQuestions(input: {
     }),
     question({
       id: "ci-provider",
-      prompt: "Which CI provider should this repository use?",
+      prompt: "Which automated checks (CI) provider should this repository use?",
       options: discoveryQuestionOptions(executorCiProviders),
       recommendation: "Use the same forge as the work provider when that CI adapter exists.",
       recommendedValue: work[0] === "gitlab" ? "gitlab" : "github",
@@ -196,7 +200,6 @@ export function buildInstallQuestions(input: {
       prompt: "Where should this machine keep local UI audit evidence?",
       options: [
         { value: "~/.qube/verification", label: "QUBE user default (~/.qube/verification/)" },
-        { value: "~/github-verification", label: "Existing legacy path (~/github-verification/)" },
         { value: "custom", label: "Custom directory that you supply" },
       ],
       recommendation: "Use the QUBE user default ~/.qube/verification/.",
@@ -230,7 +233,6 @@ export function buildInstallQuestions(input: {
 }
 
 const INSTALL_OPTION_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  generic: "Generic terminal",
   codex: "Codex",
   opencode: "OpenCode",
   "claude-code": "Claude Code",

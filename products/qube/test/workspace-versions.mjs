@@ -61,19 +61,3 @@ export const qubeNpmGlobalInstallPattern = new RegExp(
 export const qubePnpmAddPattern = new RegExp(
   `pnpm add -D --save-exact --ignore-scripts @tjalve\\/qube@${escapeRegExp(qubePackageVersion)}`
 );
-
-export const aibExpectedPathPattern = new RegExp(
-  `expected @tjalve\\/aib@${escapeRegExp(aibVersion)}, found 0\\.0\\.1`
-);
-
-export const aibUnableVerifyPattern = new RegExp(
-  `unable to verify @tjalve\\/aib@${escapeRegExp(aibVersion)}`
-);
-
-export const aieUnableVerifyPattern = new RegExp(
-  `unable to verify @tjalve\\/aie@${escapeRegExp(aieVersion)}`
-);
-
-export const aieExpectedPathPattern = new RegExp(
-  `expected @tjalve\\/aie@${escapeRegExp(aieVersion)}, found 0\\.0\\.1`
-);

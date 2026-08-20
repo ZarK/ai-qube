@@ -1,17 +1,10 @@
-import { createRequire } from 'node:module';
-import { ISOLATED_REVIEW_HOST_PACKAGE_NAMES } from '@tjalve/qube-core';
-
-export {
-  AGENT_HOST_IDS,
-  RETIRED_GROK_HOST_ID,
-  retiredGrokHostIdMessage,
-} from '@tjalve/qube-core';
+import { isolatedReviewHostAdapter as codexReviewHostAdapter } from '@tjalve/qube-adapter-codex';
+import { isolatedReviewHostAdapter as cursorReviewHostAdapter } from '@tjalve/qube-adapter-cursor';
+import { isolatedReviewHostAdapter as grokBuildReviewHostAdapter } from '@tjalve/qube-adapter-grok-build';
+import { AGENT_HOST_REGISTRATIONS } from '@tjalve/qube-core';
 import type { ReviewModelEffort } from '../core/policy.js';
-import { isMissingAdapterPackage } from '../missing_adapter_package.js';
 import { redact } from '../redact.js';
 import type { LaneUsage } from '../review_usage.js';
-
-const requireAdapter = createRequire(import.meta.url);
 
 export { readHostUsage, type LaneUsage } from '../review_usage.js';
 
@@ -28,8 +21,6 @@ export interface ReviewHostParsedEnvelope {
   text: string;
   sessionId: string | null;
   transientTexts?: string[];
-  /** @deprecated Use transientTexts. Earlier host messages are never review evidence. */
-  priorTexts?: string[];
   usage?: LaneUsage;
 }
 
@@ -102,65 +93,31 @@ export function sanitizeProbeText(value: string): string {
   return redact(value.replace(/\[[0-9;]*[A-Za-z]/g, '').replace(/[^ -~]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
 }
 
-const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([]);
+const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([
+  codexReviewHostAdapter as ReviewHostAdapter,
+  grokBuildReviewHostAdapter as ReviewHostAdapter,
+  cursorReviewHostAdapter as ReviewHostAdapter,
+]);
 
-let omittedReviewHostPackages = new Set<string>();
+const isolatedHostPackages = Object.freeze(new Map(BUILTIN_REVIEW_HOST_ADAPTERS.map((adapter) => [
+  adapter.id,
+  AGENT_HOST_REGISTRATIONS[adapter.id as keyof typeof AGENT_HOST_REGISTRATIONS].packageName,
+])));
 
 export function isolatedReviewHostPackageName(host: string): string | null {
-  if (!Object.prototype.hasOwnProperty.call(ISOLATED_REVIEW_HOST_PACKAGE_NAMES, host)) return null;
-  return ISOLATED_REVIEW_HOST_PACKAGE_NAMES[host as keyof typeof ISOLATED_REVIEW_HOST_PACKAGE_NAMES];
+  return isolatedHostPackages.get(host) ?? null;
 }
 
 export function unregisteredIsolatedReviewHostMessage(host: string): string {
-  const packageName = isolatedReviewHostPackageName(host);
-  if (packageName) {
-    return `must name an installed review host adapter; ${host} is unavailable because ${packageName} is not installed`;
-  }
   const registered = listReviewHostIds();
   return `must name a registered review host adapter, got ${JSON.stringify(host)} (registered: ${registered.join(', ') || 'none'})`;
-}
-
-function isReviewAdapterUnavailable(error: unknown, packageName: string): boolean {
-  return isMissingAdapterPackage(error, packageName);
-}
-
-function isReviewHostAdapter(value: unknown): value is ReviewHostAdapter {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const adapter = value as Partial<ReviewHostAdapter>;
-  return typeof adapter.id === 'string'
-    && Array.isArray(adapter.executableNames)
-    && adapter.executableNames.length > 0
-    && typeof adapter.buildInvocation === 'function'
-    && typeof adapter.parseEnvelope === 'function'
-    && typeof adapter.probeAfterVersion === 'function';
-}
-
-export function loadReviewHostAdapterPackage(packageName: string): ReviewHostAdapter | null {
-  try {
-    const imported = requireAdapter(packageName) as Record<string, unknown>;
-    const adapter = imported.isolatedReviewHostAdapter ?? imported.reviewHostAdapter;
-    return isReviewHostAdapter(adapter) ? adapter : null;
-  } catch (error) {
-    if (isReviewAdapterUnavailable(error, packageName)) return null;
-    throw error;
-  }
 }
 
 function builtinAdapterMap(): Map<string, ReviewHostAdapter> {
   return new Map(BUILTIN_REVIEW_HOST_ADAPTERS.map(adapter => [adapter.id, adapter]));
 }
 
-function loadRegisteredReviewHostAdapters(): Map<string, ReviewHostAdapter> {
-  const adapters = builtinAdapterMap();
-  for (const packageName of Object.values(ISOLATED_REVIEW_HOST_PACKAGE_NAMES)) {
-    if (omittedReviewHostPackages.has(packageName)) continue;
-    const loaded = loadReviewHostAdapterPackage(packageName);
-    if (loaded) adapters.set(loaded.id, loaded);
-  }
-  return adapters;
-}
-
-let reviewHostAdapters = loadRegisteredReviewHostAdapters();
+let reviewHostAdapters = builtinAdapterMap();
 
 export function getReviewHostAdapter(id: string): ReviewHostAdapter {
   const adapter = reviewHostAdapters.get(id);
@@ -180,12 +137,6 @@ export function registerReviewHostAdapterForTests(adapter: ReviewHostAdapter): v
   reviewHostAdapters.set(adapter.id, adapter);
 }
 
-export function omitReviewHostPackagesForTests(packageNames: readonly string[]): void {
-  omittedReviewHostPackages = new Set(packageNames);
-  reviewHostAdapters = loadRegisteredReviewHostAdapters();
-}
-
 export function resetReviewHostAdaptersForTests(): void {
-  omittedReviewHostPackages = new Set();
-  reviewHostAdapters = loadRegisteredReviewHostAdapters();
+  reviewHostAdapters = builtinAdapterMap();
 }

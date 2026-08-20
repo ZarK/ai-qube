@@ -174,6 +174,7 @@ async function inspectIssueChecklistState(options: PrBodyOptions): Promise<{ res
 }
 
 function reviewState(result: ReviewGateResult): 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown' | 'inconclusive' {
+  if (!result.reviewAvailable) return 'missing';
   if (result.evidence.source === 'not-recorded') return 'pending';
   return result.evidence.status;
 }
@@ -219,7 +220,8 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   const pending: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
   if (uiAuditAppliesToPr(audit, prReview) && audit.evidence.state !== 'visual-analysis-recorded') pending.push(readinessItem(audit.evidence.reasonCode, 'Record browser-observation evidence, capture screenshots, and add visual analysis notes for the real running app.', audit.evidence.source, audit.evidence.trust));
-  if (!prLocalReviewSupersedesIssueReview(prReview) && reviewEvidencePending(review.evidence) && !(review.localReview.required && review.localReview.status === 'passed')) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
+  if (!prLocalReviewSupersedesIssueReview(prReview) && !review.reviewAvailable) pending.push(readinessItem('review-not-recorded', review.nextAction, 'review-agent', 'unverified'));
+  else if (!prLocalReviewSupersedesIssueReview(prReview) && reviewEvidencePending(review.evidence) && !(review.localReview.required && review.localReview.status === 'passed')) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
   if (!pr) pending.push(readinessItem('missing-pr', 'Create a non-draft, ready-for-review pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
   else {
     if (!prReview && pr.reviewDecision !== 'APPROVED' && !githubReviewDecisionBlocks(pr)) pending.push(readinessItem('pr-review-pending', `Run or rerun \`aie pr gate ${pr.number}\` until PR review state is ready.`, 'github-pr', 'trusted-provider'));

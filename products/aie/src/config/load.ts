@@ -6,8 +6,6 @@ import { ConfigLoadError, type Config, type ConfigLoadResult } from './types.js'
 import { validateConfig } from './schema.js';
 
 export const AIE_CONFIG_FILENAME = '.qube/aie/config.json';
-export const AIE_LEGACY_CONFIG_FILENAME = 'aie.config.json';
-export const AIE_CONFIG_FILENAMES = [AIE_CONFIG_FILENAME, AIE_LEGACY_CONFIG_FILENAME] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -109,10 +107,6 @@ export async function loadConfig(startDir: string = process.cwd()): Promise<Conf
 }
 
 export function selectConfigPath(root: string): string {
-  for (const filename of AIE_CONFIG_FILENAMES) {
-    const candidate = join(root, filename);
-    if (existsSync(candidate)) return candidate;
-  }
   return join(root, AIE_CONFIG_FILENAME);
 }
 

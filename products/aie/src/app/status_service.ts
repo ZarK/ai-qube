@@ -11,7 +11,7 @@ import type { RepoState } from '../core/repo_state.js';
 import type { ReviewItem } from '../core/review_item.js';
 import type { WorkItem } from '../core/work_item.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import type { CurrentReviewForge } from '../providers/review_forge_provider.js';
+import type { CurrentReviewForge, ReviewForgeProvider, ReviewForgeProviderCapabilities } from '../providers/review_forge_provider.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
 import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../providers/repository_provider.js';
 import type { ReviewProvider, ReviewProviderCapabilities } from '../providers/review_provider.js';
@@ -41,7 +41,7 @@ export type StatusReasonCode =
 
 export interface ProviderStatus {
   id: string;
-  capabilities: WorkProviderCapabilities | RepositoryProviderCapabilities | ReviewProviderCapabilities;
+  capabilities: WorkProviderCapabilities | RepositoryProviderCapabilities | ReviewProviderCapabilities | ReviewForgeProviderCapabilities;
 }
 
 export interface StatusWorkSummary {
@@ -92,7 +92,59 @@ export interface StatusDecision {
   summary: string;
 }
 
+interface AiuStatusCommandRef {
+  readonly id: string;
+  readonly argv: readonly [string, ...string[]];
+}
+
+interface AiuStatusWorkItem {
+  readonly kind: 'work-item';
+  readonly status: 'pass' | 'unknown';
+  readonly id: string;
+  readonly title: string;
+  readonly lifecycle: 'active' | 'ready' | 'blocked';
+  readonly priority: 'low' | 'normal' | 'high' | 'critical';
+  readonly blockers: readonly string[];
+  readonly nextAction?: AiuStatusCommandRef;
+}
+
+interface AiuStatusWorkQueue {
+  readonly kind: 'work-queue';
+  readonly status: 'pass' | 'unknown';
+  readonly summary: string;
+  readonly activeItems: readonly AiuStatusWorkItem[];
+  readonly readyItems: readonly AiuStatusWorkItem[];
+  readonly blockedItems: readonly AiuStatusWorkItem[];
+  readonly unknownItems: readonly AiuStatusWorkItem[];
+}
+
+interface AiuStatusReview {
+  readonly kind: 'review';
+  readonly status: 'pass' | 'fail';
+  readonly summary: string;
+  readonly targetId: string;
+  readonly reviewStatus: 'active' | 'approved' | 'changes-requested' | 'blocked' | 'none';
+  readonly unresolvedFeedbackCount: number;
+  readonly nextAction?: AiuStatusCommandRef;
+}
+
+interface AiuStatusContinuationPolicy {
+  readonly kind: 'continuation-policy';
+  readonly status: 'pass';
+  readonly summary: string;
+  readonly allowedModes: readonly ('continue' | 'repair' | 'wait' | 'stop')[];
+  readonly stopOnUnknownState: true;
+  readonly stopOnStaleState: true;
+  readonly stopOnSupplyChainApprovalBlock: true;
+  readonly allowProviderMutation: false;
+  readonly allowBackgroundScheduling: false;
+}
+
+type AiuStatusState = AiuStatusContinuationPolicy | AiuStatusWorkQueue | AiuStatusReview;
+
 export interface StatusResult {
+  schemaVersion: 1;
+  states: readonly AiuStatusState[];
   ok: boolean;
   command: 'status';
   timestamp: string;
@@ -130,7 +182,7 @@ export interface StatusServiceContext {
   policy: ExecutorPolicy;
   workProvider: WorkProvider;
   repositoryProvider: RepositoryProvider;
-  reviewProvider: ReviewProvider;
+  reviewProvider: ReviewProvider | ReviewForgeProvider;
   readCurrentReview: () => Promise<CurrentReviewForge>;
   cwd?: string;
   now?: () => Date;
@@ -186,8 +238,18 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
   const activeIssueNumber = activeItems.length === 1 ? maybeWorkItemKeyNumber(activeItems[0].workItem.key) : null;
   const reviewGate = activeIssueNumber !== null ? runReviewGate(context.config, { issueNumber: activeIssueNumber, repoRoot: repository?.root ?? context.configLoad.root }) : null;
   const decision = decideStatus({ context, repository, queueState, activeItems, nextItem, review, gates, reviewGate });
+  const queue: StatusResult['queue'] = {
+    available: queueState.available,
+    error: queueState.error,
+    summary: queueSummary(queueState.queue),
+    activeWork: activeItems.map(workSummary),
+    nextWork: nextItem ? workSummary(nextItem) : null,
+    blockedWork: queueState.queue.items.filter(item => item.effectiveStatus === 'Blocked').map(workSummary),
+  };
 
   return {
+    schemaVersion: 1,
+    states: buildAiuStatusStates({ queue, review, decision, autonomousMode: context.config.autonomousMode }),
     ok: true,
     command: 'status',
     timestamp: (context.now ?? (() => new Date()))().toISOString(),
@@ -196,14 +258,7 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
     repository,
     currentBranch: repository?.activeRef?.kind === 'branch' ? repository.activeRef.name : null,
     expectedBranch,
-    queue: {
-      available: queueState.available,
-      error: queueState.error,
-      summary: queueSummary(queueState.queue),
-      activeWork: activeItems.map(workSummary),
-      nextWork: nextItem ? workSummary(nextItem) : null,
-      blockedWork: queueState.queue.items.filter(item => item.effectiveStatus === 'Blocked').map(workSummary),
-    },
+    queue,
     review,
     gates,
     reviewGate,
@@ -213,7 +268,12 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
 
 function configErrorStatus(context: StatusServiceContext): StatusResult {
   const gates = summarizeGates(buildGateStatus(getDefaults(), { evidenceRoot: context.configLoad.root }));
+  const queue: StatusResult['queue'] = { available: false, error: 'Trusted Executor config is invalid.', summary: queueSummary(EMPTY_QUEUE), activeWork: [], nextWork: null, blockedWork: [] };
+  const review: StatusReviewState = { state: 'unavailable', item: null, warning: 'Trusted Executor config is invalid, so review state was not loaded.' };
+  const decision: StatusDecision = { state: 'stop', reasonCodes: ['config-invalid'], nextCommand: 'aie init . --dry-run --force', summary: 'Fix the selected Executor config before continuing Executor work.' };
   return {
+    schemaVersion: 1,
+    states: buildAiuStatusStates({ queue, review, decision, autonomousMode: false }),
     ok: false,
     command: 'status',
     timestamp: (context.now ?? (() => new Date()))().toISOString(),
@@ -222,11 +282,11 @@ function configErrorStatus(context: StatusServiceContext): StatusResult {
     repository: null,
     currentBranch: null,
     expectedBranch: null,
-    queue: { available: false, error: 'Trusted Executor config is invalid.', summary: queueSummary(EMPTY_QUEUE), activeWork: [], nextWork: null, blockedWork: [] },
-    review: { state: 'unavailable', item: null, warning: 'Trusted Executor config is invalid, so review state was not loaded.' },
+    queue,
+    review,
     gates,
     reviewGate: null,
-    decision: { state: 'stop', reasonCodes: ['config-invalid'], nextCommand: 'aie init . --dry-run --force', summary: 'Fix the selected Executor config before continuing Executor work.' },
+    decision,
   };
 }
 
@@ -285,6 +345,112 @@ function workSummary(item: QueueItem): StatusWorkSummary {
   return { key: item.workItem.key, displayId: item.workItem.displayId, number, title: item.workItem.title, url: item.workItem.url, state: item.workItem.state, effectiveStatus: item.effectiveStatus, openBlockers: item.openBlockers, priority: item.workItem.priority, checklist: item.workItem.checklist };
 }
 
+function buildAiuStatusStates(input: {
+  queue: StatusResult['queue'];
+  review: StatusReviewState;
+  decision: StatusDecision;
+  autonomousMode: boolean;
+}): readonly AiuStatusState[] {
+  const workflowBlocked = blocksAiuContinuation(input.decision);
+  const continuationEnabled = input.autonomousMode && !workflowBlocked;
+  const canRecoverWorkflow = continuationEnabled && (input.decision.state === 'continue' || input.decision.state === 'wait');
+  const action = canRecoverWorkflow ? statusCommandRef(input.decision) : undefined;
+  const activeStatus = canRecoverWorkflow && input.decision.state === 'continue' ? 'pass' as const : 'unknown' as const;
+  const queueStatus = input.queue.available && continuationEnabled ? 'pass' as const : 'unknown' as const;
+  const activeAction = input.decision.reasonCodes.includes('start-next-work') ? undefined : action;
+  const readyAction = input.decision.reasonCodes.includes('start-next-work') ? action : undefined;
+  const states: AiuStatusState[] = [
+    Object.freeze({
+      kind: 'continuation-policy',
+      status: 'pass',
+      summary: !input.autonomousMode
+        ? 'Continuous Shipping is off, so Umpire must not continue workflow work.'
+        : workflowBlocked
+          ? 'Executor reports a stop condition, so Umpire must not continue workflow work.'
+          : 'Continuous Shipping allows Umpire continuation within the current Executor workflow.',
+      allowedModes: Object.freeze(continuationEnabled ? ['continue', 'repair', 'wait', 'stop'] as const : ['stop'] as const),
+      stopOnUnknownState: true,
+      stopOnStaleState: true,
+      stopOnSupplyChainApprovalBlock: true,
+      allowProviderMutation: false,
+      allowBackgroundScheduling: false,
+    }),
+    Object.freeze({
+      kind: 'work-queue',
+      status: queueStatus,
+      summary: input.decision.summary,
+      activeItems: Object.freeze(input.queue.activeWork.map(item => toAiuWorkItem(item, 'active', activeStatus, activeAction))),
+      readyItems: Object.freeze(canRecoverWorkflow && input.decision.reasonCodes.includes('start-next-work') && input.queue.nextWork ? [toAiuWorkItem(input.queue.nextWork, 'ready', 'pass', readyAction)] : []),
+      blockedItems: Object.freeze(input.queue.blockedWork.map(item => toAiuWorkItem(item, 'blocked', 'pass'))),
+      unknownItems: Object.freeze([]),
+    }),
+  ];
+  if (canRecoverWorkflow && input.review.state === 'available' && input.review.item) {
+    states.push(toAiuReview(input.review.item, action));
+  }
+  return Object.freeze(states);
+}
+
+function blocksAiuContinuation(decision: StatusDecision): boolean {
+  if (decision.state === 'unknown') return true;
+  if (decision.state !== 'stop') return false;
+  return !decision.reasonCodes.includes('no-ready-work');
+}
+
+function toAiuWorkItem(
+  item: StatusWorkSummary,
+  lifecycle: AiuStatusWorkItem['lifecycle'],
+  status: AiuStatusWorkItem['status'],
+  nextAction?: AiuStatusCommandRef,
+): AiuStatusWorkItem {
+  return Object.freeze({
+    kind: 'work-item',
+    status,
+    id: item.number === null ? item.displayId : String(item.number),
+    title: item.title,
+    lifecycle,
+    priority: aiuPriority(item.priority),
+    blockers: Object.freeze(item.openBlockers.map(String)),
+    ...(nextAction ? { nextAction } : {}),
+  });
+}
+
+function toAiuReview(review: ReviewItem, nextAction: AiuStatusCommandRef | undefined): AiuStatusReview {
+  const reviewStatus = aiuReviewStatus(review);
+  return Object.freeze({
+    kind: 'review',
+    status: reviewStatus === 'blocked' || reviewStatus === 'changes-requested' ? 'fail' : 'pass',
+    summary: `Executor review ${review.displayId} is ${reviewStatus}.`,
+    targetId: review.key.id,
+    reviewStatus,
+    unresolvedFeedbackCount: review.feedback.length + review.conversations.filter(conversation => !conversation.resolved).length,
+    ...(nextAction ? { nextAction } : {}),
+  });
+}
+
+function aiuReviewStatus(review: ReviewItem): AiuStatusReview['reviewStatus'] {
+  if (review.state === 'merged') return 'approved';
+  if (review.state === 'closed') return 'none';
+  if (review.reviewDecision === 'changes-requested' || review.feedback.some(item => item.source === 'thread')) return 'changes-requested';
+  if (review.mergeability === 'blocked' || review.mergeability === 'conflicting') return 'blocked';
+  if (review.reviewDecision === 'approved') return 'approved';
+  return 'active';
+}
+
+function aiuPriority(priority: StatusWorkSummary['priority']): AiuStatusWorkItem['priority'] {
+  if (priority === 'critical' || priority === 'high' || priority === 'low') return priority;
+  return 'normal';
+}
+
+function statusCommandRef(decision: StatusDecision): AiuStatusCommandRef | undefined {
+  const argv = decision.nextCommand.trim().split(/\s+/).filter(Boolean);
+  if (argv.length === 0) return undefined;
+  return Object.freeze({
+    id: decision.reasonCodes[0] ?? 'aie-status',
+    argv: Object.freeze(argv) as readonly [string, ...string[]],
+  });
+}
+
 function summarizeGates(result: GateStatusResult): StatusGateState {
   const requiredBlocking = result.gates.filter(gate => gate.requirement === 'required' && gate.status !== 'passed' && gate.status !== 'skipped').length;
   const supplyChainStopConditions = result.gates.filter(gate => gate.supplyChainSensitive && gate.status !== 'passed' && gate.status !== 'skipped').map(gate => gate.name);
@@ -330,6 +496,7 @@ function decideActiveWork(activeItem: QueueItem, input: { context: StatusService
   if (review?.state === 'merged') return { state: 'continue', reasonCodes: ['active-work-complete'], nextCommand: `aie complete ${issueNumber}`, summary: `Complete ${activeItem.workItem.displayId}; its pull request is merged.` };
   if (review?.reviewDecision === 'changes-requested' || review?.feedback.some(item => item.source === 'thread')) return { state: 'continue', reasonCodes: ['review-changes-requested'], nextCommand: `aie pr gate ${review.key.id} --json`, summary: 'Address requested PR feedback, then rerun the PR gate.' };
   if (review && input.gates.requiredBlocking > 0) return { state: 'continue', reasonCodes: ['pending-gates'], nextCommand: 'aie gates status --json', summary: 'Required gate evidence is missing, stale, unknown, or failed.' };
+  if (review && input.reviewGate && issueNumber !== null && !input.reviewGate.reviewAvailable) return { state: 'stop', reasonCodes: ['pending-review'], nextCommand: 'aie doctor --json', summary: input.reviewGate.nextAction };
   if (review && input.reviewGate && issueNumber !== null && input.reviewGate.evidence.status !== 'passed') return { state: 'continue', reasonCodes: ['pending-review'], nextCommand: `aie review gate ${issueNumber} --json`, summary: 'Review-agent evidence is not recorded as passed.' };
   if (review && review.mergeability === 'mergeable' && review.reviewDecision === 'approved') return { state: 'continue', reasonCodes: ['ready-to-ship'], nextCommand: `aie pr gate ${review.key.id} --json`, summary: 'PR state is mergeable and approved; run the PR gate before shipping.' };
   if (!lifecycleSupported || issueNumber === null) return readOnlyProviderDecision(input.context.workProvider.id, `Continue active work ${activeItem.workItem.displayId} outside GitHub issue lifecycle commands.`);

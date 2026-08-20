@@ -194,8 +194,14 @@ export function parseRoundSummaryMarker(body: string | undefined): RoundSummaryM
     if (typeof parsed.prNumber !== 'number' || !Number.isSafeInteger(parsed.prNumber) || parsed.prNumber <= 0) return null;
     if (typeof parsed.issueNumber !== 'number' || !Number.isSafeInteger(parsed.issueNumber) || parsed.issueNumber <= 0) return null;
     if (parsed.verdict !== 'approve' && parsed.verdict !== 'request-changes' && parsed.verdict !== 'pending' && parsed.verdict !== 'inconclusive') return null;
-    if (!Array.isArray(parsed.expectedLanes) || parsed.expectedLanes.length === 0 || !parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')) return null;
-    const findingDigest = typeof parsed.findingDigest === 'string' ? parsed.findingDigest.trim() : '';
+    if (!Array.isArray(parsed.expectedLanes) || parsed.expectedLanes.length === 0 || !parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() === lane && lane !== '')) return null;
+    if (new Set(parsed.expectedLanes).size !== parsed.expectedLanes.length) return null;
+    if (parsed.superseded !== undefined && typeof parsed.superseded !== 'boolean') return null;
+    if (typeof parsed.inlineCommentCount !== 'number' || !Number.isSafeInteger(parsed.inlineCommentCount) || parsed.inlineCommentCount < 0) return null;
+    if (typeof parsed.unanchoredFindingCount !== 'number' || !Number.isSafeInteger(parsed.unanchoredFindingCount) || parsed.unanchoredFindingCount < 0) return null;
+    if (typeof parsed.blockingFindingCount !== 'number' || !Number.isSafeInteger(parsed.blockingFindingCount) || parsed.blockingFindingCount < 0) return null;
+    if (typeof parsed.advisoryFindingCount !== 'number' || !Number.isSafeInteger(parsed.advisoryFindingCount) || parsed.advisoryFindingCount < 0) return null;
+    if (typeof parsed.findingDigest !== 'string' || parsed.findingDigest.trim() === '') return null;
     return {
       version: 1,
       head: parsed.head,
@@ -204,12 +210,12 @@ export function parseRoundSummaryMarker(body: string | undefined): RoundSummaryM
       issueNumber: parsed.issueNumber,
       verdict: parsed.verdict,
       expectedLanes: [...parsed.expectedLanes] as string[],
-      ...(parsed.superseded === true ? { superseded: true as const } : {}),
-      inlineCommentCount: typeof parsed.inlineCommentCount === 'number' && Number.isSafeInteger(parsed.inlineCommentCount) ? parsed.inlineCommentCount : 0,
-      unanchoredFindingCount: typeof parsed.unanchoredFindingCount === 'number' && Number.isSafeInteger(parsed.unanchoredFindingCount) ? parsed.unanchoredFindingCount : 0,
-      blockingFindingCount: typeof parsed.blockingFindingCount === 'number' && Number.isSafeInteger(parsed.blockingFindingCount) ? parsed.blockingFindingCount : 0,
-      advisoryFindingCount: typeof parsed.advisoryFindingCount === 'number' && Number.isSafeInteger(parsed.advisoryFindingCount) ? parsed.advisoryFindingCount : 0,
-      findingDigest,
+      ...(typeof parsed.superseded === 'boolean' ? { superseded: parsed.superseded } : {}),
+      inlineCommentCount: parsed.inlineCommentCount,
+      unanchoredFindingCount: parsed.unanchoredFindingCount,
+      blockingFindingCount: parsed.blockingFindingCount,
+      advisoryFindingCount: parsed.advisoryFindingCount,
+      findingDigest: parsed.findingDigest.trim(),
     };
   } catch {
     return null;

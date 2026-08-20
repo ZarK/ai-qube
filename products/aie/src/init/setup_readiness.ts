@@ -20,7 +20,9 @@ export function collectSetupDoctorRecommendations(repoRoot: string, config: Conf
     supplyChainSafetyConfigured: config.instructions.supplyChainSafety,
   });
   const running = readAiePackageVersion();
-  const versions = ['AGENTS.md', 'CLAUDE.md']
+  const versions = [...new Set(instructions.harnesses
+    .filter(harness => harness.installed)
+    .flatMap(harness => harness.targets.filter(target => target.kind === 'instructions').map(target => target.path)))]
     .map(name => join(repoRoot, name))
     .filter(path => existsSync(path))
     .map(path => readManagedToolVersion(readFileSync(path, 'utf8')));

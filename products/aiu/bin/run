@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+
+try {
+  const { runAiuCli } = await import("../dist/src/cli.js");
+  process.exitCode = await runAiuCli(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

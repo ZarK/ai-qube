@@ -527,7 +527,7 @@ async function createFixture() {
   writePackage(qubeDir, "@tjalve/qube", "0.0.0", "bin/run", componentsBinSource());
   writePackage(path.join(root, "products", "aib"), "@tjalve/aib", "0.0.0", "bin/run", "process.stdout.write('aib\\n');\n");
   writePackage(path.join(root, "products", "aie"), "@tjalve/aie", "0.0.0", "bin/run", "process.stdout.write('aie\\n');\n");
-  writePackage(path.join(root, "products", "aiu"), "@tjalve/aiu", "0.0.0", "dist/src/bin/aiu.js", "process.stdout.write('aiu\\n');\n");
+  writePackage(path.join(root, "products", "aiu"), "@tjalve/aiu", "0.0.0", "bin/run", "process.stdout.write('aiu\\n');\n");
   writePackage(path.join(root, "products", "aiq", "packages", "cli"), "@tjalve/aiq", "0.0.0", "dist/bin/aiq.js", "process.stdout.write('aiq\\n');\n");
   writePackage(coreDir, "@tjalve/qube-core", "0.0.0", null, null);
   const linkedCore = path.join(qubeDir, "node_modules", "@tjalve", "qube-core");

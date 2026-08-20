@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { AGENT_HOST_IDS } from "@tjalve/qube-core";
+
 import type { AgentHostKind, AgentNextAction, ContextInspectionTarget, PlanningState } from "./contracts.js";
 import { createInitialPlanningState } from "./contracts.js";
 import { selectSpecChapters, specAcceptanceStatus, type SelectedSpecChapter, type SpecChapterId } from "./spec_chapters.js";
@@ -524,7 +526,7 @@ function applySpecAnswer(state: BootstrapState, value: string): BootstrapState {
 }
 
 export function isAgentHost(value: string): value is AgentHostKind {
-  return value === "codex" || value === "opencode" || value === "claude-code" || value === "gemini" || value === "other";
+  return (AGENT_HOST_IDS as readonly string[]).includes(value);
 }
 
 export function missingDiscoveryFields(state: BootstrapState): readonly DiscoveryQuestion[] {

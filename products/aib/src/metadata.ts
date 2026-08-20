@@ -1,6 +1,7 @@
 import { defineArgument, defineCommand, defineExample, defineFlag, defineTopic } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, dryRunSupported, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
+import { AGENT_HOST_IDS } from "@tjalve/qube-core";
 
 export const planningTopic = defineTopic({
   kind: "topic",
@@ -46,7 +47,12 @@ export const initCommand = defineCommand({
       name: "agent",
       description: "Agent host that will operate aib.",
       type: "option",
-      options: ["codex", "opencode", "claude-code", "gemini", "other"]
+      options: [...AGENT_HOST_IDS]
+    }),
+    defineFlag({
+      name: "surfaces",
+      description: "Comma-separated agent harnesses that need Bootstrap instructions.",
+      type: "string"
     })
   ],
   examples: [

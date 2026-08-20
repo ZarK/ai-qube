@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_HOST_IDS, type AgentHostProfile } from '@tjalve/qube-core';
+import { getAgentHostProfileSync } from './agent_host_adapters.js';
 import type { LocalReviewTrust } from './local_review_evidence.js';
 import { redact } from './redact.js';
 
@@ -117,39 +119,28 @@ export interface RenderedAgentPrompt {
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROMPT_ROOT = join(PACKAGE_ROOT, 'prompts');
 
-export const DEFAULT_AGENT_TOOL_HOSTS: readonly AgentToolHost[] = [
-  {
-    id: 'fallback-single-agent',
-    name: 'Fallback single agent',
-    canRun: false,
-    canComment: false,
-    canInline: false,
-    canUseTools: false,
-    canRunShell: false,
-    canUseBrowser: false,
-    canReadMcp: false,
-    canAccessNetwork: false,
-    canWriteEvidence: true,
-    supportsJson: true,
-    supportsPromptStack: true,
-    supportsIncrementalReview: false,
-  },
-  {
-    id: 'codex',
-    name: 'Codex host prompt',
-    canRun: false,
+function agentToolHost(profile: AgentHostProfile): AgentToolHost {
+  const localReview = profile.review.local.support !== 'unsupported';
+  return {
+    id: profile.id,
+    name: `${profile.displayName} host prompt`,
+    canRun: profile.subagents.support !== 'unsupported',
     canComment: false,
     canInline: false,
     canUseTools: true,
     canRunShell: true,
-    canUseBrowser: true,
-    canReadMcp: true,
-    canAccessNetwork: true,
-    canWriteEvidence: true,
+    canUseBrowser: false,
+    canReadMcp: false,
+    canAccessNetwork: false,
+    canWriteEvidence: localReview,
     supportsJson: true,
     supportsPromptStack: true,
     supportsIncrementalReview: false,
-  },
+  };
+}
+
+export const DEFAULT_AGENT_TOOL_HOSTS: readonly AgentToolHost[] = [
+  ...AGENT_HOST_IDS.map((id) => agentToolHost(getAgentHostProfileSync(id))),
 ];
 
 export const DEFAULT_CATEGORY_DESCRIPTORS: readonly CategoryDescriptor[] = [
@@ -203,7 +194,7 @@ export const DEFAULT_AGENT_DESCRIPTORS: readonly AgentDescriptor[] = [
     requiredTools: ['repository-read', 'test-output-read'],
     requiredSkills: [],
     modelPreferences: { effort: 'high', supportsLargeContext: true },
-    fallbackBehavior: 'Use the fallback single-agent prompt and record inconclusive evidence when context is missing.',
+    fallbackBehavior: 'Report missing context and record inconclusive evidence. Do not emulate another agent harness.',
     outputContract: 'Bottom line, the complete ranked finding set for the requested scope at the current head (all blocking findings first, then advisory findings; do not stop after the first blocker), addressed/remaining acceptance criteria, a completeness self-check of what was and was not inspected, and residual risks.',
   },
   {
@@ -224,7 +215,7 @@ export const DEFAULT_AGENT_DESCRIPTORS: readonly AgentDescriptor[] = [
   {
     id: 'oracle',
     name: 'Oracle reviewer',
-    description: 'Default read-only strategic reviewer for review gates when no host reviewer is configured.',
+    description: 'Read-only strategic reviewer for a configured agent harness.',
     roleKind: 'reviewer',
     categoryIds: ['review'],
     promptSeed: 'descriptors/oracle',
@@ -233,7 +224,7 @@ export const DEFAULT_AGENT_DESCRIPTORS: readonly AgentDescriptor[] = [
     requiredTools: ['repository-read', 'diff-read', 'test-output-read'],
     requiredSkills: [],
     modelPreferences: { effort: 'high', supportsLargeContext: true },
-    fallbackBehavior: 'Use fallback-single-agent prompt text when @oracle is unavailable.',
+    fallbackBehavior: 'Report the missing harness capability. Do not emulate review execution.',
     outputContract: 'Bottom Line, Action Plan with effort tags, Rationale, and residual risks.',
   },
   {
@@ -286,7 +277,6 @@ const BUILTIN_PROMPT_FRAGMENTS: readonly PromptFragmentDefinition[] = [
   { id: 'review-lanes/data-database', relativePath: 'review-lanes/data-database.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/concurrency-resource', relativePath: 'review-lanes/concurrency-resource.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/error-observability', relativePath: 'review-lanes/error-observability.md', trust: 'policy', sourceCategory: 'lane' },
-  { id: 'review-lanes/api-contract-compatibility', relativePath: 'review-lanes/api-contract-compatibility.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/docs-instructions', relativePath: 'review-lanes/docs-instructions.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/ui-ux-accessibility', relativePath: 'review-lanes/ui-ux-accessibility.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/release-ci-supply-chain', relativePath: 'review-lanes/release-ci-supply-chain.md', trust: 'policy', sourceCategory: 'lane' },
@@ -294,7 +284,7 @@ const BUILTIN_PROMPT_FRAGMENTS: readonly PromptFragmentDefinition[] = [
   { id: 'review-lanes/final-gate', relativePath: 'review-lanes/final-gate.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'acceptance/verify-criterion', relativePath: 'acceptance/verify-criterion.md', trust: 'policy', sourceCategory: 'acceptance' },
   { id: 'hosts/codex', relativePath: 'hosts/codex.md', trust: 'policy', sourceCategory: 'host' },
-  { id: 'hosts/fallback-single-agent', relativePath: 'hosts/fallback-single-agent.md', trust: 'policy', sourceCategory: 'host' },
+  { id: 'hosts/agent-harness', relativePath: 'hosts/agent-harness.md', trust: 'policy', sourceCategory: 'host' },
 ];
 
 function hash(text: string): string {
@@ -426,7 +416,7 @@ export function renderAgentPrompt(input: PromptRenderInput): RenderedAgentPrompt
     'safety/repository-policy',
     'safety/prompt-injection',
     'safety/review-output-untrusted',
-    host.id === 'codex' ? 'hosts/codex' : 'hosts/fallback-single-agent',
+    host.id === 'codex' ? 'hosts/codex' : 'hosts/agent-harness',
     descriptor.promptSeed,
     ...category.promptFragmentIds,
     ...laneIds.map(id => `review-lanes/${id}`).filter(id => fragmentDefinition(id) !== null),

@@ -4,8 +4,6 @@ import path from "node:path";
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
 
 export const AIU_CONFIG_FILENAME = ".qube/aiu/config.json";
-export const AIU_LEGACY_CONFIG_FILENAME = "aiu.config.json";
-export const AIU_CONFIG_FILENAMES = [AIU_CONFIG_FILENAME, AIU_LEGACY_CONFIG_FILENAME] as const;
 export const AIU_CONFIG_SCHEMA_VERSION = 1;
 export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as const;
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
@@ -189,7 +187,7 @@ export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoad
   const repoRoot = findRepositoryRoot(path.resolve(options.cwd ?? process.cwd()));
   const selectedPath = options.configPath
     ? path.resolve(repoRoot, options.configPath)
-    : selectAiuConfigPath(repoRoot);
+    : path.join(repoRoot, AIU_CONFIG_FILENAME);
   const found = existsSync(selectedPath);
   const diagnostics: AiuConfigDiagnostic[] = [];
   let rawConfig: unknown = {};
@@ -292,7 +290,7 @@ function normalizeVersion(value: unknown, diagnostics: AiuConfigDiagnostic[]): t
     return AIU_CONFIG_SCHEMA_VERSION;
   }
   if (value !== AIU_CONFIG_SCHEMA_VERSION) {
-    diagnostics.push(diagnostic("unsupported-config-version", "$.version", "Config version must be 1.", "Set version to 1 or migrate the config before using this package version."));
+    diagnostics.push(diagnostic("unsupported-config-version", "$.version", "Config version must be 1.", "Set version to 1 before you use this package version."));
   }
   return AIU_CONFIG_SCHEMA_VERSION;
 }
@@ -901,16 +899,6 @@ function findRepositoryRoot(startDir: string): string {
     }
     current = parent;
   }
-}
-
-function selectAiuConfigPath(repoRoot: string): string {
-  for (const filename of AIU_CONFIG_FILENAMES) {
-    const candidate = path.join(repoRoot, filename);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return path.join(repoRoot, AIU_CONFIG_FILENAME);
 }
 
 function displayConfigPath(repoRoot: string, selectedPath: string): string {

@@ -17,7 +17,7 @@ Evidence to demand:
 - A case showing malformed or missing input is rejected rather than silently accepted.
 
 Out of lane (ignore):
-- Whether the schema change breaks external callers — api-contract-compatibility lane.
+- Whether producers and callers use the same current public data contract.
 - Concurrent access races — concurrency-resource lane.
 - CI artifact packaging — release-ci-supply-chain lane.
 

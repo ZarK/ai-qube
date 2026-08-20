@@ -23,9 +23,8 @@ qube install --scope local --package-manager pnpm --host codex --work-provider g
 ```
 
 `qube install` is a guided installer planner by default. It asks about
-project-local versus global use, package manager, host surface, work provider,
-lifecycle-script posture, docs/config notes, and migration from standalone
-package globals. In agent and CI contexts, pass explicit flags or `--yes` for
+project-local versus global use, package manager, agent harness, issue tracker,
+automated checks, review mode, and lifecycle-script posture. In agent and CI contexts, pass explicit flags or `--yes` for
 safe defaults. Plan mode prints copyable commands and does not run package
 managers. `--apply` executes the remaining pinned install delta after a TTY
 confirmation, or immediately with `--yes`. `--json` without `--yes` stays
@@ -91,18 +90,17 @@ qube doctor --json
 qube check src --json
 qube quality status --json
 qube evidence --json
-qube status --json
+qube continue --json
 ```
 
 The direct command surface covers the regular path from idea, planning, issue
 work, review gates, local audit helpers, quality evidence, and continuation
 status. Use product routing when a command is intentionally product-specific or
-ambiguous, such as config and migration:
+ambiguous, such as config:
 
 ```sh
 qube aiq config --print-config --format json
 qube aiu config --json
-qube aie migrate legacy --dry-run --json
 ```
 
 Use `qube run` as the low-level escape hatch when debugging a component command
@@ -232,11 +230,10 @@ QUBE resolves component binaries in this order:
 
 1. Component binaries installed in QUBE's own package scope.
 2. Component binaries available in the local workspace.
-3. Ambient `PATH` binaries as a diagnosed fallback.
 
-PATH fallback is deliberately conservative. If QUBE can identify that a
-same-package PATH binary is stale, it refuses to dispatch rather than silently
-running the wrong version.
+QUBE does not load component binaries from the ambient `PATH`. Install each
+component with QUBE or in the current workspace so QUBE can verify the package
+and version before dispatch.
 
 ## Safety Notes
 

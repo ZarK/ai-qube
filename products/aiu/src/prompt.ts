@@ -65,13 +65,13 @@ function defaultPromptBody(decision: AiuContinuationDecision, sourceTimestamps: 
 function promptLead(decision: AiuContinuationDecision): string {
   const item = describeSelectedItem(decision.selectedItem);
   if (decision.kind === "continue" && decision.promptKind === "review") {
-    return `Continue review work${item}. Address the active review feedback before starting new work.`;
+    return appendConfiguredCommand(`Continue review work${item}. Address the active review feedback before starting new work.`, decision);
   }
   if (decision.kind === "continue" && decision.reasonCodes.includes("continue-active-work")) {
-    return `Continue active work${item}. Resume the selected work item and complete only the next safe step.`;
+    return appendConfiguredCommand(`Continue active work${item}. Resume the selected work item and complete only the next safe step.`, decision);
   }
   if (decision.kind === "continue" && decision.reasonCodes.includes("continue-ready-work")) {
-    return `Start ready work${item}. Start the selected ready work item and keep the change scoped to that item.`;
+    return appendConfiguredCommand(`Start ready work${item}. Start the selected ready work item and keep the change scoped to that item.`, decision);
   }
   if (decision.kind === "continue" && decision.promptKind === "planning") {
     return planningLead(decision, item);
@@ -83,12 +83,18 @@ function promptLead(decision: AiuContinuationDecision): string {
     return whipLead(decision, item);
   }
   if (decision.kind === "repair") {
-    return repairLead(decision);
+    return appendConfiguredCommand(repairLead(decision), decision);
   }
   if (decision.kind === "wait") {
     return `Wait before prompting${item}. Do not deliver a continuation prompt until the wait condition clears.`;
   }
   return stopLead(decision);
+}
+
+function appendConfiguredCommand(lead: string, decision: AiuContinuationDecision): string {
+  return decision.selectedItem?.command
+    ? `${lead}\nNext configured command: ${formatCommand(decision.selectedItem.command)}.`
+    : lead;
 }
 
 function qualityLead(decision: AiuContinuationDecision, item: string): string {

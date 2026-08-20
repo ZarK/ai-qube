@@ -5,6 +5,8 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { getAiuResolvedPaths, runAiuDoctor } from "../dist/src/doctor.js";
+import { getDefaultAiuConfig } from "../dist/src/config.js";
+import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "../dist/src/continuation_store.js";
 import { getAiuHostCapabilityProfile } from "../dist/src/host_policy.js";
 import { inspectGrokFolderTrust } from "../dist/src/grok_trust.js";
 
@@ -44,7 +46,8 @@ describe("doctor diagnostics", () => {
 
   it("reports invalid config with stable error kinds", async () => {
     const repoRoot = await createRepoRoot();
-    await writeFile(path.join(repoRoot, "aiu.config.json"), "{ invalid json", "utf8");
+    await mkdir(path.join(repoRoot, ".qube", "aiu"), { recursive: true });
+    await writeFile(path.join(repoRoot, ".qube", "aiu", "config.json"), "{ invalid json", "utf8");
 
     const report = runAiuDoctor({ cwd: repoRoot });
     const kinds = report.checks.map((check) => check.kind);
@@ -53,8 +56,8 @@ describe("doctor diagnostics", () => {
     assert.equal(report.config.valid, false);
     assert.ok(kinds.includes("config-invalid"));
     assert.ok(kinds.includes("invalid-json"));
-    assert.ok(report.checks.some((check) => check.kind === "config-present" && check.message.includes("aiu.config.json was found")));
-    assert.ok(report.checks.some((check) => check.kind === "invalid-json" && check.message.includes("aiu.config.json")));
+    assert.ok(report.checks.some((check) => check.kind === "config-present" && check.message.includes(".qube/aiu/config.json was found")));
+    assert.ok(report.checks.some((check) => check.kind === "invalid-json" && check.message.includes(".qube/aiu/config.json")));
   });
 
   it("reports missing configured host files", async () => {
@@ -181,6 +184,134 @@ describe("doctor diagnostics", () => {
     }
   });
 
+  it("does not claim effective continuation before a managed host integration runs", async () => {
+    const repoRoot = await createRepoRoot();
+    const grokHome = await createTempRoot("aiu-grok-home-probe-unverified-");
+    const trustedStateFingerprint = await writeContinuationHostConfig(repoRoot);
+    for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
+      await writeManagedHostFiles(repoRoot, host);
+    }
+    await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
+    const previousHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const report = runAiuDoctor({ cwd: repoRoot });
+
+      assert.equal(report.hostProbes.length, 4);
+      assert.equal(report.hostProbes.every((probe) => probe.state === "unverified"), true);
+      assert.equal(report.hostProbes.every((probe) => probe.currentIssueRecovery === false), true);
+      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-unverified").length, 4);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousHome;
+      }
+    }
+  });
+
+  it("reports effective current-issue recovery only after each managed integration runs", async () => {
+    const repoRoot = await createRepoRoot();
+    const grokHome = await createTempRoot("aiu-grok-home-probe-active-");
+    const trustedStateFingerprint = await writeContinuationHostConfig(repoRoot);
+    for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
+      await writeManagedHostFiles(repoRoot, host);
+    }
+    await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
+    const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
+    const observedAt = "2026-08-20T12:00:00.000Z";
+    for (const host of ["codex", "claude-code", "grok-build"] as const) {
+      writeAiuHostActivation(paths, { schemaVersion: 1, host, delivery: "stdout", event: "stop-hook", trustedStateFingerprint, observedAt });
+    }
+    writeAiuHostActivation(paths, { schemaVersion: 1, host: "opencode", delivery: "host", event: "plugin-event", trustedStateFingerprint, observedAt });
+    const previousHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const report = runAiuDoctor({ cwd: repoRoot });
+
+      assert.equal(report.hostProbes.every((probe) => probe.state === "active"), true);
+      assert.equal(report.hostProbes.every((probe) => probe.currentIssueRecovery), true);
+      assert.equal(report.hostProbes.find((probe) => probe.host === "opencode")?.effectiveDelivery, "host");
+      assert.equal(report.hostProbes.find((probe) => probe.host === "codex")?.effectiveDelivery, "stdout");
+      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-active").length, 4);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousHome;
+      }
+    }
+  });
+
+  it("does not report active recovery when the trusted state executable is unavailable", async () => {
+    const repoRoot = await createRepoRoot();
+    const trustedStateCommands = {
+      work: { argv: ["definitely-not-aiu-test-command"] as [string, ...string[]] },
+    };
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["codex"],
+        modes: { codex: ["continue", "repair", "stop"] },
+        stopHookBlocking: { codex: true },
+      },
+      trustedStateCommands,
+    });
+    await writeManagedHostFiles(repoRoot, "codex");
+    const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
+    writeAiuHostActivation(paths, {
+      schemaVersion: 1,
+      host: "codex",
+      delivery: "stdout",
+      event: "stop-hook",
+      trustedStateFingerprint: createAiuTrustedStateFingerprint(trustedStateCommands),
+      observedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+    const probe = report.hostProbes.find((item) => item.host === "codex");
+
+    assert.equal(probe?.state, "unavailable");
+    assert.equal(probe?.currentIssueRecovery, false);
+    assert.match(probe?.reason ?? "", /unavailable/);
+  });
+
+  it("requires a new successful event after trusted state command configuration changes", async () => {
+    const repoRoot = await createRepoRoot();
+    const previousCommands = {
+      work: { argv: [process.execPath, "--version"] as [string, ...string[]] },
+    };
+    const currentCommands = {
+      work: { argv: [process.execPath, "-e", "process.stdout.write('{}')"] as [string, ...string[]] },
+    };
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["codex"],
+        modes: { codex: ["continue", "repair", "stop"] },
+        stopHookBlocking: { codex: true },
+      },
+      trustedStateCommands: currentCommands,
+    });
+    await writeManagedHostFiles(repoRoot, "codex");
+    const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
+    writeAiuHostActivation(paths, {
+      schemaVersion: 1,
+      host: "codex",
+      delivery: "stdout",
+      event: "stop-hook",
+      trustedStateFingerprint: createAiuTrustedStateFingerprint(previousCommands),
+      observedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+    const probe = report.hostProbes.find((item) => item.host === "codex");
+
+    assert.equal(probe?.state, "unverified");
+    assert.equal(probe?.currentIssueRecovery, false);
+    assert.match(probe?.reason ?? "", /current trusted state command configuration/);
+  });
+
   it("does not treat a missing trust file as a trusted Grok project hook", async () => {
     const repoRoot = await createRepoRoot();
     const grokHome = await createTempRoot("aiu-grok-home-missing-");
@@ -212,6 +343,9 @@ describe("doctor diagnostics", () => {
         modes: {
           opencode: ["continue"],
           codex: ["continue"],
+        },
+        stopHookBlocking: {
+          codex: true,
         },
       },
     });
@@ -420,7 +554,33 @@ async function createRepoRoot(prefix = "aiu-doctor-"): Promise<string> {
 }
 
 async function writeConfig(repoRoot: string, config: unknown): Promise<void> {
-  await writeFile(path.join(repoRoot, "aiu.config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await mkdir(path.join(repoRoot, ".qube", "aiu"), { recursive: true });
+  await writeFile(path.join(repoRoot, ".qube", "aiu", "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function writeContinuationHostConfig(repoRoot: string): Promise<string> {
+  const trustedStateCommands = {
+    work: { argv: [process.execPath, "--version"] as [string, ...string[]] },
+  };
+  await writeConfig(repoRoot, {
+    version: 1,
+    hosts: {
+      enabled: ["opencode", "codex", "claude-code", "grok-build"],
+      modes: {
+        opencode: ["continue", "repair", "wait", "stop"],
+        codex: ["continue", "repair", "stop"],
+        "claude-code": ["continue", "repair", "stop"],
+        "grok-build": ["continue", "repair", "stop"],
+      },
+      stopHookBlocking: {
+        codex: true,
+        "claude-code": true,
+        "grok-build": true,
+      },
+    },
+    trustedStateCommands,
+  });
+  return createAiuTrustedStateFingerprint(trustedStateCommands);
 }
 
 async function readText(pathValue: string): Promise<string> {

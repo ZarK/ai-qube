@@ -4,7 +4,7 @@ import { resolveReviewSources } from '../review_source.js';
 import type { ReviewSourceIdentity, ReviewSourceMarkers } from '../config/index.js';
 import type { DoctorReadinessStatus, GateReadinessDiagnostics, LifecycleDiagnostics } from './types.js';
 
-export type WorkflowStageStatus = 'ready' | 'blocked' | 'unconfigured' | 'fallback-only' | 'manual' | 'disabled' | 'needs-action' | 'unavailable';
+export type WorkflowStageStatus = 'ready' | 'blocked' | 'unconfigured' | 'manual' | 'disabled' | 'needs-action' | 'unavailable';
 
 export type WorkflowStageId = 'lifecycle' | 'issue-start' | 'quality-gates' | 'review' | 'publication' | 'ui-audit' | 'shipping';
 
@@ -15,7 +15,7 @@ export interface WorkflowStage {
   nextAction: string | null;
 }
 
-export type WorkflowReviewState = 'fallback-only' | 'provider-reviewers' | 'local-lanes' | 'evidence-ready';
+export type WorkflowReviewState = 'unavailable' | 'provider-reviewers' | 'local-lanes' | 'evidence-ready';
 
 export type WorkflowEvidenceState = 'not-applicable' | 'missing' | 'present';
 
@@ -31,8 +31,6 @@ export interface WorkflowReviewSourceReadiness {
 
 export interface WorkflowReviewReadiness {
   state: WorkflowReviewState;
-  fallbackPromptAvailable: boolean;
-  fallbackEnforcesReview: boolean;
   providerReviewers: string[];
   lanes: {
     required: string[];
@@ -90,11 +88,7 @@ export interface WorkflowReadinessInput {
 }
 
 export function selectedAgentHosts(instructions: InstructionStatus): string[] {
-  const hosts: string[] = [];
-  if (instructions.agents) hosts.push('codex');
-  if (instructions.claude) hosts.push('claude-code');
-  if (instructions.opencodeMakeItSo || instructions.opencodeMakeitsoAlias) hosts.push('opencode');
-  return hosts;
+  return instructions.harnesses.filter(harness => harness.installed).map(harness => harness.host);
 }
 
 function buildLifecycleStage(input: WorkflowReadinessInput): WorkflowStage {
@@ -187,7 +181,7 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
   const reviewAgent = input.gateReadiness.reviewAgent;
   // Provider reviewer names only count when the selected adapter actually runs provider reviewers.
   const providerAdapterActive = reviewAgent.adapter !== 'local' && reviewAgent.adapter !== 'shadow';
-  const providerReviewers = !providerAdapterActive || reviewAgent.defaultOracle ? [] : reviewAgent.reviewers.filter(name => name.trim() !== '');
+  const providerReviewers = !providerAdapterActive ? [] : reviewAgent.reviewers.filter(name => name.trim() !== '');
   const lanesConfigured = reviewAgent.configuredLanes.length > 0 || reviewAgent.localRunner.configured;
   const lanesRunnable = lanesConfigured && reviewAgent.localRunner.readiness === 'ready';
   // Only known lane ids count as evidence; lock files, raw-output captures, or unrelated JSON never do.
@@ -205,7 +199,7 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
       ? 'local-lanes'
       : providerReviewers.length > 0
         ? 'provider-reviewers'
-        : 'fallback-only';
+        : 'unavailable';
   const publisher = input.config.providers.review.publisher;
   // Doctor has no live provider record, so per-source readiness reads the
   // same local signals every other doctor review check already reads: local
@@ -241,8 +235,6 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
   });
   return {
     state,
-    fallbackPromptAvailable: reviewAgent.fallbackPromptAvailable,
-    fallbackEnforcesReview: false,
     providerReviewers,
     lanes: {
       required: [...reviewAgent.requiredLanes],
@@ -271,12 +263,12 @@ function buildReviewStage(review: WorkflowReviewReadiness): WorkflowStage {
       nextAction: 'Fix the local review runner configuration before relying on lane execution.',
     };
   }
-  if (review.state === 'fallback-only') {
+  if (review.state === 'unavailable') {
     return {
       stage: 'review',
-      status: 'fallback-only',
-      detail: 'Only the safe fallback review prompt is available; no configured provider reviewer or local review lanes enforce QUBEReview execution.',
-      nextAction: 'Configure reviews.lanes with a local runner or add provider reviewers in the selected Executor config before relying on enforced review.',
+      status: 'unavailable',
+      detail: 'No real agent harness or external reviewer is configured. Review execution is unavailable.',
+      nextAction: 'Configure OpenCode, Codex, Claude Code, Grok Build, or Cursor for native review, or add a supported external reviewer.',
     };
   }
   const description = review.state === 'evidence-ready'

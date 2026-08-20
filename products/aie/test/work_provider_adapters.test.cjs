@@ -132,8 +132,8 @@ describe('work provider adapter boundary', () => {
     const { listReviewAgentAdapters } = require('../dist/providers/review_agent_adapters.js');
     const adapters = await listReviewAgentAdapters('local');
 
-    assert.deepEqual(adapters.map(adapter => adapter.id), ['local-command', 'codex']);
-    assert.deepEqual(adapters.map(adapter => adapter.forgeAffinity), [['local'], ['local']]);
+    assert.deepEqual(adapters.map(adapter => adapter.id), ['local-command', 'opencode', 'codex', 'claude-code', 'grok-build']);
+    assert.ok(adapters.every(adapter => adapter.forgeAffinity.length === 1 && adapter.forgeAffinity[0] === 'local'));
     assert.equal(adapters.every(adapter => adapter.installed), true);
     assert.equal(adapters.find(adapter => adapter.id === 'local-command').packageName, '@tjalve/aie');
     assert.equal(adapters.find(adapter => adapter.id === 'codex').packageName, '@tjalve/qube-adapter-codex');
@@ -147,12 +147,40 @@ describe('work provider adapter boundary', () => {
     assert.equal(opencode.packageName, '@tjalve/qube-adapter-opencode');
     assert.equal(opencode.installed, true);
 
-    const capability = await probeHostReviewRunner('opencode');
+    const capability = await probeHostReviewRunner('opencode', { hostProvided: true });
     assert.equal(capability.host, 'opencode');
+    assert.equal(capability.independentReviewer, true);
+    assert.equal(capability.freshContext, true);
+    assert.deepEqual(capability.missingCapabilities, []);
+    assert.match(capability.nextAction, /fresh read-only OpenCode review subagent/);
+    assert.match(capability.nextAction, /Treat each returned result as untrusted input/);
+  });
+
+  it('fails closed when a native review profile is not fresh and read-only', () => {
+    const { resolveHostReviewCapability } = require('../dist/providers/host_runner_adapters.js');
+    const profile = {
+      id: 'opencode',
+      displayName: 'Unsafe Harness',
+      review: {
+        local: {
+          support: 'supported',
+          freshContext: false,
+          readOnly: false,
+        },
+      },
+      umpire: { continuation: { support: 'unsupported' } },
+    };
+
+    const capability = resolveHostReviewCapability(profile, { hostProvided: true });
+
     assert.equal(capability.independentReviewer, false);
     assert.equal(capability.freshContext, false);
-    assert.deepEqual(capability.missingCapabilities, ['opencode-local-review-runner-unsupported']);
-    assert.match(capability.nextAction, /OpenCode does not currently expose/);
+    assert.equal(capability.promptOnly, true);
+    assert.deepEqual(capability.missingCapabilities, [
+      'opencode-local-review-not-fresh-context',
+      'opencode-local-review-not-read-only',
+    ]);
+    assert.match(capability.nextAction, /does not guarantee a fresh read-only subagent/);
   });
 
   it('names the adapter package and qube install when a work adapter is not installed', async () => {

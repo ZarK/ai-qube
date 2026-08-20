@@ -28,6 +28,18 @@
       "prNumber": 617,
       "headSha": "f13ba5edd5e7a01e1fb9eefc8e36bd83fd4cba2b",
       "recordedAt": "2026-08-18T18:13:33.207Z"
+    },
+    {
+      "id": "learning:24c11c96dd7e",
+      "disposition": "guidance",
+      "findingId": null,
+      "lane": null,
+      "message": "Rejected security finding: Codex shell_environment_policy.inherit=all does not inherit the QUBE parent environment. QUBE launches Codex with modelRouteEnvironment(), which retains only a fixed non-credential allowlist. The real-process test proves that GH_TOKEN and a parent sentinel are absent. Do not report an environment-secret leak unless the launch path stops applying that allowlist or the real-process test fails.",
+      "guidance": "Rejected security finding: Codex shell_environment_policy.inherit=all does not inherit the QUBE parent environment. QUBE launches Codex with modelRouteEnvironment(), which retains only a fixed non-credential allowlist. The real-process test proves that GH_TOKEN and a parent sentinel are absent. Do not report an environment-secret leak unless the launch path stops applying that allowlist or the real-process test fails.",
+      "paths": [],
+      "prNumber": 641,
+      "headSha": null,
+      "recordedAt": "2026-08-20T15:15:20.781Z"
     }
   ]
 }

@@ -38,7 +38,7 @@ describe('review model catalog', () => {
     assert.deepEqual(statuses[0].absent, []);
   });
 
-  it('includes registered review-only hosts in the default diagnostic catalog', () => {
+  it('includes registered review hosts in the default diagnostic catalog', () => {
     const models = {
       review: { cursor: { model: 'gpt-5.6-luna-high', effort: null } },
       economy: {},
@@ -51,6 +51,7 @@ describe('review model catalog', () => {
       diagnostic: null,
     }));
     const cursor = statuses.find(item => item.host === 'cursor');
+    assert.deepEqual(statuses.map(item => item.host), ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor']);
     assert.ok(cursor);
     assert.deepEqual(cursor.served, ['gpt-5.6-luna-high']);
   });

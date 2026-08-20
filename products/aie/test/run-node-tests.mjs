@@ -11,7 +11,6 @@ const SLOW_INTEGRATION_TESTS = new Set([
   'doctor.test.cjs',
   'init.test.cjs',
   'lifecycle.test.cjs',
-  'migrate.test.cjs',
   'pr_gate_a.test.cjs',
   'pr_gate_b.test.cjs',
   'pr_gate_c.test.cjs',

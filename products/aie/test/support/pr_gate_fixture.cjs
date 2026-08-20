@@ -269,10 +269,9 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
   }, null, 2)}\n`);
 }
 
-function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123', options = {}) {
+function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123') {
   const evidencePath = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headSha, `${id}.json`);
-  const publishCommand = options.publishCommand ?? `qube aie pr review publish ${prNumber} --lane ${id} --issue ${issueNumber}`;
-  return promptTextHashFromLines(promptStack(id, laneContextLines(id, [issueNumber], prNumber, headSha, [evidencePath], [], repo, publishCommand)).text);
+  return promptTextHashFromLines(promptStack('codex', id, laneContextLines('codex', id, [issueNumber], prNumber, headSha, [evidencePath], [], repo)).text);
 }
 
 async function alignLocalEvidencePromptHashes(repo, config, exec, { issueNumber = 93, prNumber = 12, headSha = 'abc123' } = {}) {
@@ -348,14 +347,15 @@ function writeLocalEvidence(repo, evidence, options = {}) {
     return;
   }
   for (const lane of evidence.lanes) {
+    const { id: laneId, ...laneRecord } = lane;
     const promptStackHash = options.rewritePromptHashes === false
       ? lane.runnerProvenance?.promptStackHash
-      : expectedPromptHashForLane(repo, lane.id, issueNumber, prNumber, headSha, options);
+      : expectedPromptHashForLane(repo, lane.id, issueNumber, prNumber, headSha);
     const runnerProvenance = lane.runnerProvenance
       ? { ...lane.runnerProvenance, promptStackHash }
       : lane.runnerProvenance;
-    const body = { ...lane, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter };
-    writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify(body, null, 2)}\n`);
+    const body = { ...laneRecord, lane: laneId, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter };
+    writeFileSync(join(directory, `${laneId}.json`), `${JSON.stringify(body, null, 2)}\n`);
     if (evidence.adapter === 'local-host' && options.writeTrustedHostProvenance !== false && runnerProvenance) {
       writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance, evidenceSha256: localReviewEvidenceSha256(body) });
     }
@@ -388,10 +388,18 @@ function localReviewConfig() {
   const config = getDefaults();
   config.reviewAdapter = 'local';
   config.reviewAgents = [];
-  config.localReviewAgents = ['oracle'];
+  config.localReviewAgents = ['codex'];
   config.reviewWaitMinutes = 0;
   config.reviewProfile = 'local-standard';
   config.reviewLanes = standardReviewLanes('local-host');
+  config.reviewSources = [{
+    id: 'local-lanes',
+    identity: 'lane',
+    expected: [...STANDARD_LOCAL_REVIEW_LANES],
+    blocking: true,
+    markers: 'trusted',
+    enabled: true,
+  }];
   return config;
 }
 
@@ -460,7 +468,6 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
     'concurrency-resource',
     'error-observability',
     'tests-quality',
-    'api-contract-compatibility',
     'docs-instructions',
     'ui-ux-accessibility',
     'release-ci-supply-chain',

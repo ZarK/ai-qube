@@ -8,6 +8,7 @@ import {
   type ModelRoutingHostId,
 } from './core/model_routing.js';
 import { detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
+import { buildQualityGate } from './gate_config.js';
 import { isReviewMode } from './review_mode.js';
 import { numberFlag, stringFlag, stringListFlag } from './runtime_result.js';
 
@@ -38,7 +39,6 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
   setBoolean('assign-on-start', value => { policy.assignOnStart = value; });
   setBoolean('comment-on-start', value => { policy.commentOnStart = value; });
   setBoolean('manual-ui-audit', value => { policy.manualUiAudit = value; });
-  setBoolean('opencode-command-alias', value => { policy.opencodeCommandAlias = value; });
   setBoolean('quality-control', value => { policy.qualityControl = value; });
   const strings: [string, (value: string) => void][] = [
     ['branch-naming', value => { policy.branchNaming = value; }],
@@ -66,7 +66,7 @@ export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPoli
     ['status-label', values => { policy.statusLabels = splitList(values); }],
     ['component-label', values => { policy.componentLabels = splitList(values); }],
     ['ignored-automation-author', values => { policy.ignoredAutomationAuthors = splitList(values); }],
-    ['quality-gate', values => { policy.qualityGates = splitList(values); }],
+    ['quality-gate', values => { policy.gates = splitList(values).map(buildQualityGate); }],
     ['review-agent', values => { policy.reviewAgents = splitList(values); }],
   ];
   for (const [flag, assign] of lists) {
@@ -91,14 +91,11 @@ function addReviewGuidePolicy(context: RuntimeCommandContext, policy: InitPolicy
   }
   const publisher = stringFlag(context, 'publisher');
   if (publisher !== undefined) {
-    if (publisher !== 'user' && publisher !== 'github-app' && publisher !== 'token') {
-      throw new Error('--publisher must be user, github-app, or token.');
+    if (publisher !== 'user' && publisher !== 'github-app') {
+      throw new Error('--publisher must be user or github-app.');
     }
     if (publisher === 'github-app') {
       throw new Error('--publisher github-app requires a complete GitHub App publisher. Run `aie review setup github-app` or adopt one with --from.');
-    }
-    if (publisher === 'token') {
-      throw new Error('--publisher token requires a complete token publisher. Run `aie review setup token` or adopt one with --from.');
     }
     policy.publisher = { mode: 'user' };
   }
@@ -115,7 +112,7 @@ function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolic
     return;
   }
   if (!primaryHost || !primaryModel || !isModelRoutingHost(primaryHost)) {
-    throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, or grok-build.');
+    throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, grok-build, or cursor.');
   }
   const installed = detectInstalledRoutingHostsOnPath();
   assertInstalledRoutingHost(primaryHost, installed);
@@ -143,7 +140,7 @@ function parseOptionalHostModel(
   if (value === undefined) return undefined;
   const parsed = parseHostModel(value);
   if (!parsed) {
-    throw new Error(`--${flag} must be host:model using an installed host: codex, claude-code, opencode, or grok-build.`);
+    throw new Error(`--${flag} must be host:model using an installed host: codex, claude-code, opencode, grok-build, or cursor.`);
   }
   assertInstalledRoutingHost(parsed.host, installed);
   return parsed;

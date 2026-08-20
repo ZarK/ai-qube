@@ -9,7 +9,7 @@ const { basename, delimiter, join } = require('node:path');
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
-const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
+const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
 const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
 const { resolveFailoverReviewPlan } = require('../dist/app/local_review_runner.js');
@@ -35,10 +35,21 @@ describe('doctor diagnostics', () => {
     const status = getInstructionStatus(repo);
     const policy = buildInstructionPolicyDiagnostics(config, repo);
 
-    assert.equal(status.agents, true);
-    assert.equal(status.claude, true);
-    assert.equal(status.opencodeMakeItSo, true);
-    assert.equal(status.opencodeMakeItSoManaged, true);
+    assert.deepEqual(Object.keys(status).sort(), ['harnesses', 'targets']);
+    assert.deepEqual(status.harnesses.map(harness => ({
+      host: harness.host,
+      displayName: harness.displayName,
+      installed: harness.installed,
+      healthy: harness.healthy,
+    })), [
+      { host: 'opencode', displayName: 'OpenCode', installed: true, healthy: true },
+      { host: 'codex', displayName: 'Codex', installed: true, healthy: true },
+      { host: 'claude-code', displayName: 'Claude Code', installed: true, healthy: true },
+      { host: 'grok-build', displayName: 'Grok Build', installed: true, healthy: true },
+      { host: 'cursor', displayName: 'Cursor', installed: true, healthy: true },
+    ]);
+    assert.ok(status.harnesses.every(harness => harness.targets.some(target => target.kind === 'instructions' && target.healthy)));
+    assert.ok(status.harnesses.every(harness => harness.targets.some(target => target.kind === 'make-it-so' && target.healthy)));
     assert.equal(status.targets.find(target => target.path === 'AGENTS.md').managed, true);
     assert.equal(status.targets.find(target => target.path === 'AGENTS.md').healthy, true);
     assert.equal(policy.namingRules.configured, true);
@@ -47,6 +58,95 @@ describe('doctor diagnostics', () => {
     assert.equal(policy.supplyChainSafety.installed, true);
     assert.equal(policy.canonicalSupplyChainGuard.installed, true);
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /Naming rules:/);
+  });
+
+  it('requires selected native review-agent assets for host review', async () => {
+    const repo = makeGitRepo();
+    const hosts = ['codex', 'claude-code', 'opencode', 'grok-build'];
+    const init = await runInit({
+      target: '.',
+      tool: 'all',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      policy: { reviewMode: 'host', reviewAdapter: 'mixed', localReviewAgents: hosts },
+    });
+    assert.equal(init.ok, true);
+    const removedAssets = [];
+
+    for (const host of hosts) {
+      const installed = getInstructionStatus(repo, { reviewMode: 'host', localReviewAgents: [host] });
+      const harness = installed.harnesses.find(candidate => candidate.host === host);
+      assert(harness, host);
+      const asset = harness.targets.find(target => target.kind === 'review-agent');
+      assert(asset, host);
+      rmSync(join(repo, asset.path));
+      removedAssets.push({ host, path: asset.path });
+
+      const config = getDefaults();
+      config.reviewMode = 'host';
+      config.reviewAdapter = 'mixed';
+      config.localReviewAgents = [host];
+      config.reviewLanes = [{
+        id: 'issue-compliance',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+      }];
+
+      const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true, evidenceRoot: repo });
+      const hostDiagnostics = diagnostics.reviewAgent.localRunner.hosts[host];
+
+      assert.equal(diagnostics.reviewAgent.localRunner.host, host);
+      assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
+      assert.equal(hostDiagnostics.independentReviewer, false);
+      assert.equal(hostDiagnostics.freshContext, false);
+      assert.equal(hostDiagnostics.promptOnly, true);
+      assert.ok(hostDiagnostics.missingCapabilities.includes(`${host}-review-agent-asset-missing:${asset.path}`));
+      assert.match(diagnostics.reviewAgent.localRunner.nextAction, new RegExp(asset.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.match(diagnostics.reviewAgent.localRunner.nextAction, /aie init \. --dry-run/);
+    }
+
+    const mixed = getDefaults();
+    mixed.reviewMode = 'host';
+    mixed.reviewAdapter = 'mixed';
+    mixed.reviewAgents = ['@coderabbitai'];
+    mixed.localReviewAgents = hosts;
+    mixed.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+    const mixedDiagnostics = buildGateReadinessDiagnostics(mixed, { ghAuthenticated: true, evidenceRoot: repo });
+    assert.equal(mixedDiagnostics.reviewAgent.localRunner.readiness, 'missing');
+    assert.equal(mixedDiagnostics.reviewAgent.readiness, 'needs-action');
+    for (const { host, path: assetPath } of removedAssets) {
+      assert.ok(mixedDiagnostics.reviewAgent.localRunner.hosts[host].missingCapabilities.includes(`${host}-review-agent-asset-missing:${assetPath}`));
+      assert.match(mixedDiagnostics.reviewAgent.localRunner.nextAction, new RegExp(assetPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+
+    for (const mode of ['external', 'isolated']) {
+      const config = getDefaults();
+      config.reviewMode = mode;
+      config.reviewAdapter = mode === 'external' ? 'github' : 'mixed';
+      config.localReviewAgents = hosts;
+      const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true, evidenceRoot: repo });
+
+      for (const host of hosts) {
+        assert.equal(
+          diagnostics.reviewAgent.localRunner.hosts[host].missingCapabilities.some(capability => capability.includes('review-agent-asset-missing')),
+          false,
+          `${mode}:${host}`,
+        );
+      }
+    }
   });
 
   it('reports repository and supply-chain policy without mutating', () => {
@@ -123,8 +223,8 @@ describe('doctor diagnostics', () => {
     config.manualUiAudit = false;
     config.qualityControl = true;
     config.reviewAdapter = 'mixed';
-    config.reviewAgents = ['@copilot', '@coderabbitai', 'oracle', 'custom bot'];
-    config.localReviewAgents = ['local-oracle'];
+    config.reviewAgents = ['@copilot', '@coderabbitai', 'custom bot'];
+    config.localReviewAgents = ['codex'];
     config.reviewWaitMinutes = 3;
     config.gates = [
       { name: 'build', kind: 'build', command: 'npm run build', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
@@ -149,7 +249,7 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.audit.readiness, 'disabled');
     assert.equal(diagnostics.prReview.readiness, 'ready');
     assert.equal(diagnostics.prReview.adapter, 'mixed');
-    assert.deepEqual(diagnostics.prReview.localReviewers, ['local-oracle']);
+    assert.deepEqual(diagnostics.prReview.localReviewers, ['codex']);
     assert.equal(diagnostics.prReview.localRunnerReadiness, 'missing');
     assert.equal(diagnostics.prReview.reviewWaitMinutes, 3);
     assert.equal(diagnostics.reviewAgent.adapter, 'mixed');
@@ -158,20 +258,20 @@ describe('doctor diagnostics', () => {
     assert.ok(diagnostics.reviewAgent.descriptorSupport.categories.includes('review'));
     assert.ok(diagnostics.reviewAgent.descriptorSupport.agents.includes('oracle'));
     assert.ok(diagnostics.reviewAgent.descriptorSupport.promptFragments.some(fragment => fragment.id === 'safety/review-output-untrusted'));
-    assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
+    assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['codex']);
     assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/reviews');
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.host, 'codex');
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.promptOnly, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.independentReviewer, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.freshContext, true);
     assert.equal(diagnostics.aiq.enabled, true);
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('github-copilot'));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('coderabbitai'));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('custom-pr-reviewer:custom-bot'));
-    assert.ok(!diagnostics.reviewAgent.externalServices.includes('oracle'));
-    assert.ok(!diagnostics.externalServices.includes('local-oracle'));
+    assert.ok(!diagnostics.externalServices.includes('codex'));
     assert.equal(diagnostics.supplyChain.readiness, 'ready');
     assert.ok(diagnostics.supplyChain.supplyChainSensitiveGates.includes('build'));
   });
@@ -481,8 +581,9 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
     assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
+    assert.equal(diagnostics.reviewAgent.localRunner.host, 'codex');
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.promptOnly, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.hosts.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
     assert.equal(diagnostics.prReview.localRunnerReadiness, 'ready');
   });
 
@@ -506,11 +607,13 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'needs-action');
     assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRun, true);
     assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRunShell, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
-    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /spawnPrompt/);
+    assert.equal(diagnostics.reviewAgent.localRunner.host, 'codex');
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.independentReviewer, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.promptOnly, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.freshContext, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.evidenceWriting, false);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.hosts.codex.missingCapabilities, []);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /fresh read-only Codex review subagent/);
   });
 
   function isolatedLocalHostConfig() {
@@ -564,19 +667,7 @@ describe('doctor diagnostics', () => {
         lifecycleCommandsReady: true,
       },
       gateReadiness: diagnostics,
-      instructions: {
-        agents: false,
-        agentsManaged: false,
-        claude: false,
-        claudeManaged: false,
-        opencodeMakeItSo: false,
-        opencodeMakeItSoManaged: false,
-        opencodeMakeitsoAlias: false,
-        opencodeMakeitsoAliasManaged: false,
-        codexReviewFocusAgent: false,
-        codexReviewFocusAgentManaged: false,
-        targets: [],
-      },
+      instructions: { harnesses: [], targets: [] },
       dirty: { dirty: false, entries: [] },
       currentBranch: 'main',
       blockingPullRequests: [],
@@ -593,7 +684,7 @@ describe('doctor diagnostics', () => {
     assert.doesNotMatch(diagnostics.reviewAgent.localRunner.nextAction, /Codex subagent/);
     assert.equal(byStage.review.status, 'ready');
     assert.equal(workflow.review.state, 'local-lanes');
-    assert.notEqual(workflow.review.state, 'fallback-only');
+    assert.notEqual(workflow.review.state, 'unavailable');
   });
 
   it('reports isolated review ready when the preferred route is blocked and fallback is ready', () => {
@@ -656,13 +747,14 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
     assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRun, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
+    assert.equal(diagnostics.reviewAgent.localRunner.host, 'codex');
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.promptOnly, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.hosts.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
     assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, ['codex local review agent']);
   });
 
-  it('reports OpenCode local-host review-runner status distinctly from Codex', () => {
+  it('reports the selected local review host and canonical capability rows for every harness', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
     config.localReviewAgents = ['opencode'];
@@ -679,39 +771,18 @@ describe('doctor diagnostics', () => {
     const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
 
     assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.opencode.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.opencode.promptOnly, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.opencode.hooks, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.opencode.missingCapabilities, ['opencode-local-review-runner-unsupported']);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, ['opencode local review runner']);
-    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /OpenCode does not currently expose/);
-  });
-
-  it('reports configured local-host command as Codex independent review capability', () => {
-    const config = getDefaults();
-    config.reviewAdapter = 'local';
-    config.reviewLanes = [{
-      id: 'issue-compliance',
-      required: 'always',
-      match: [],
-      severityThreshold: 'high',
-      prompt: [],
-      tools: [],
-      runner: 'local-host',
-      command: 'aie:fixture-local-review',
-    }];
-
-    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
-
-    assert.equal(diagnostics.reviewAgent.descriptorSupport.runnerAvailable, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
-    assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'needs-action');
+    assert.equal(diagnostics.reviewAgent.localRunner.host, 'opencode');
+    assert.deepEqual(Object.keys(diagnostics.reviewAgent.localRunner.hosts), ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor']);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.codex.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.independentReviewer, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.promptOnly, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.freshContext, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.hooks, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.hosts.opencode.missingCapabilities, []);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, []);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /fresh read-only OpenCode review subagent/);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.evidenceWriting, false);
   });
 
   it('redacts token-like values from gate readiness diagnostics', () => {
@@ -734,8 +805,6 @@ describe('doctor diagnostics', () => {
 
   it('emits product-generic doctor JSON with gate readiness diagnostics', () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, 'gh-queue.sh'), '#!/usr/bin/env bash\n');
-    writeFileSync(join(repo, 'AGENTS.md'), 'Use gh-queue.sh before selecting the next issue.\n');
 
     const result = binRun(['doctor', '--json'], repo);
     const parsed = JSON.parse(result.stdout);
@@ -748,72 +817,9 @@ describe('doctor diagnostics', () => {
     assert.equal(typeof parsed.gateReadiness.gates.configured, 'number');
     assert.equal(typeof parsed.gateReadiness.gates.evidence.notRecorded, 'number');
     assert.equal(Array.isArray(parsed.gateReadiness.gates.gateEvidence), true);
-    assert.equal(parsed.migrationReadiness.available, true);
-    assert.equal(parsed.migrationReadiness.detectedPaths, 2);
-    assert.equal(parsed.migrationReadiness.legacyState, 'detected');
-    assert.deepEqual(parsed.migrationReadiness.detectedCategories, ['instruction-block', 'shell-helper']);
-    assert.equal(parsed.migrationReadiness.wrapperState.installed, 0);
-    assert.equal(parsed.migrationReadiness.remainingLegacyReferences.count, 1);
-    assert.deepEqual(parsed.migrationReadiness.remainingLegacyReferences.paths, ['AGENTS.md']);
-    assert.equal(parsed.migrationReadiness.cleanupStatus, 'blocked');
-    assert.ok(parsed.migrationReadiness.recommendedCommands.includes('aie migrate legacy --cleanup --dry-run'));
-    assert.equal(parsed.migrationReadiness.nextCommand, 'aie migrate legacy --dry-run');
     assert.equal(parsed.gateReadiness.audit.screenshotUpload, 'disabled');
     assert.equal(Array.isArray(parsed.gateReadiness.externalServices), true);
     assert.equal(parsed.recommendations.some(recommendation => recommendation.includes('Labels health check failed')), true);
-  });
-
-  it('reports config recommendations against the selected legacy config path', () => {
-    const repo = makeGitRepo();
-    writeFileSync(join(repo, 'aie.config.json'), '{ invalid json');
-
-    const result = binRun(['doctor', '--json'], repo);
-    const parsed = JSON.parse(result.stdout);
-
-    assert.equal(result.status, 0);
-    assert.equal(parsed.configPresent, true);
-    assert.equal(parsed.configValid, false);
-    assert.equal(parsed.recommendations.some(recommendation => recommendation.includes('Failed to read or parse aie.config.json')), true);
-  });
-
-  it('reports installed and stale compatibility wrapper state', async () => {
-    const repo = makeGitRepo();
-    writeFileSync(join(repo, 'gh-priority-order.sh'), [
-      '#!/usr/bin/env sh',
-      '# executor-compat-wrapper-version: 1',
-      '# executor-compat-wrapper-command: aie stale',
-      'exec aie stale "$@"',
-      '',
-    ].join('\n'));
-
-    const plan = await require('../dist/migrate/index.js').buildMigrationPlan({ cwd: repo, dryRun: true });
-    const diagnostics = buildMigrationReadinessDiagnostics(plan);
-
-    assert.equal(diagnostics.wrapperState.installed, 1);
-    assert.equal(diagnostics.wrapperState.stale, 1);
-    assert.deepEqual(diagnostics.wrapperState.stalePaths, ['gh-priority-order.sh']);
-    assert.equal(diagnostics.remainingLegacyReferences.count, 0);
-    assert.ok(diagnostics.recommendedCommands.includes('aie migrate legacy --install-wrappers --dry-run'));
-    assert.equal(diagnostics.recommendedCommands.includes('aie migrate legacy --install-wrappers --apply --dry-run'), false);
-  });
-
-  it('counts unique migration diagnostic paths', () => {
-    const plan = {
-      repoRoot: null,
-      inventory: [
-        { category: 'instruction-block', path: 'AGENTS.md', confidence: 'medium' },
-        { category: 'workflow-doc', path: 'AGENTS.md', confidence: 'medium' },
-      ],
-      plannedFileChanges: [],
-      cleanupCandidates: [],
-      conflicts: [],
-    };
-
-    const diagnostics = buildMigrationReadinessDiagnostics(plan);
-
-    assert.equal(diagnostics.detectedPaths, 1);
-    assert.equal(diagnostics.remainingLegacyReferences.count, 1);
-    assert.deepEqual(diagnostics.remainingLegacyReferences.paths, ['AGENTS.md']);
   });
 
   it('shows doctor help without running diagnostics', () => {
@@ -912,21 +918,19 @@ describe('staged workflow readiness', () => {
     };
   }
 
-  function instructionsFixture(overrides = {}) {
+  function harnessFixture(host, overrides = {}) {
     return {
-      agents: false,
-      agentsManaged: false,
-      claude: false,
-      claudeManaged: false,
-      opencodeMakeItSo: false,
-      opencodeMakeItSoManaged: false,
-      opencodeMakeitsoAlias: false,
-      opencodeMakeitsoAliasManaged: false,
-      codexReviewFocusAgent: false,
-      codexReviewFocusAgentManaged: false,
+      host,
+      displayName: host,
+      installed: true,
+      healthy: true,
       targets: [],
       ...overrides,
     };
+  }
+
+  function instructionsFixture(harnesses = [], targets = []) {
+    return { harnesses, targets };
   }
 
   function workflowInput(config, gateReadiness, overrides = {}) {
@@ -952,19 +956,19 @@ describe('staged workflow readiness', () => {
     return Object.fromEntries(workflow.stages.map(stage => [stage.stage, stage]));
   }
 
-  it('reports lifecycle ready, gates unconfigured, review fallback-only, issue start blocked, and manual shipping for a fallback-only repository', () => {
+  it('reports lifecycle ready, gates unconfigured, review unavailable, issue start blocked, and manual shipping when no review path is configured', () => {
     const config = getDefaults();
     config.reviewAgents = [];
     config.autonomousMode = false;
     const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
     const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
-      instructions: instructionsFixture({ agents: true, agentsManaged: true }),
+      instructions: instructionsFixture([harnessFixture('codex')]),
       dirty: { dirty: true, entries: ['?? .qube/aie/config.json'] },
     }));
     const byStage = stagesById(workflow);
     assert.equal(byStage['lifecycle'].status, 'ready');
     assert.equal(byStage['quality-gates'].status, 'unconfigured');
-    assert.equal(byStage['review'].status, 'fallback-only');
+    assert.equal(byStage['review'].status, 'unavailable');
     assert.equal(byStage['issue-start'].status, 'blocked');
     assert.match(byStage['issue-start'].detail, /dirty primary checkout/);
     assert.match(byStage['issue-start'].detail, /\.qube\/aie\/config\.json/);
@@ -972,10 +976,8 @@ describe('staged workflow readiness', () => {
     assert.equal(byStage['shipping'].nextAction, null);
     assert.deepEqual(workflow.shipping, { mode: 'manual' });
     assert.deepEqual(workflow.selectedHosts, ['codex']);
-    // The safe fallback prompt stays available without being represented as enforced review execution.
-    assert.equal(workflow.review.fallbackPromptAvailable, true);
-    assert.equal(workflow.review.fallbackEnforcesReview, false);
-    assert.equal(workflow.review.state, 'fallback-only');
+    assert.equal(workflow.review.state, 'unavailable');
+    assert.match(byStage.review.nextAction, /OpenCode, Codex, Claude Code, Grok Build, or Cursor/);
     // Exactly one prioritized next action per incomplete stage; complete stages and explicit modes carry none.
     for (const stage of workflow.stages) {
       if (stage.status === 'ready' || stage.status === 'manual' || stage.status === 'disabled') {
@@ -1155,24 +1157,23 @@ describe('staged workflow readiness', () => {
     assert.match(stage.nextAction, /git/);
   });
 
-  it('never recommends OpenCode initialization for a Codex-only repository', () => {
+  it('selects installed harnesses and recommends repair for unmanaged instruction targets', () => {
     const config = getDefaults();
     const instructionPolicy = buildInstructionPolicyDiagnostics(config, null);
-    const codexOnly = instructionsFixture({
-      agents: true,
-      agentsManaged: true,
-      codexReviewFocusAgent: true,
-      codexReviewFocusAgentManaged: true,
-      targets: [{ name: 'agents', path: 'AGENTS.md', present: true, managed: true, checksumValid: true, healthy: true }],
-    });
+    const codexTarget = { host: 'codex', kind: 'instructions', id: 'instructions', path: 'AGENTS.md', present: true, managed: true, checksumValid: true, healthy: true };
+    const codexOnly = instructionsFixture([harnessFixture('codex', { targets: [codexTarget] })], [codexTarget]);
     const recommendations = buildInstructionRecommendations({ repoRoot: '/repo', instructions: codexOnly, instructionPolicy, supplyChainSafetyConfigured: false });
     assert.equal(recommendations.some(entry => entry.includes('OpenCode')), false);
     assert.equal(chooseNextCommand(true, recommendations).includes('opencode'), false);
     assert.deepEqual(selectedAgentHosts(codexOnly), ['codex']);
-    // A present-but-unmanaged OpenCode asset is a selected host that still gets the repair recommendation.
-    const opencodeUnmanaged = instructionsFixture({ agents: true, agentsManaged: true, opencodeMakeItSo: true });
+    const opencodeTarget = { host: 'opencode', kind: 'make-it-so', id: 'make-it-so', path: '.opencode/commands/make-it-so.md', present: true, managed: false, checksumValid: false, healthy: false };
+    const opencodeUnmanaged = instructionsFixture([
+      harnessFixture('codex', { targets: [codexTarget] }),
+      harnessFixture('opencode', { healthy: false, targets: [opencodeTarget] }),
+    ], [codexTarget, opencodeTarget]);
     const repairRecommendations = buildInstructionRecommendations({ repoRoot: '/repo', instructions: opencodeUnmanaged, instructionPolicy, supplyChainSafetyConfigured: false });
-    assert.equal(repairRecommendations.some(entry => entry.includes('OpenCode project command is not installed')), true);
+    assert.equal(repairRecommendations.some(entry => entry.includes('Instruction targets without Executor managed sections')), true);
+    assert.equal(repairRecommendations.some(entry => entry.includes('.opencode/commands/make-it-so.md')), true);
     assert.deepEqual(selectedAgentHosts(opencodeUnmanaged), ['codex', 'opencode']);
   });
 
@@ -1226,19 +1227,7 @@ describe('workflow evidence identity', () => {
         lifecycleCommandsReady: true,
       },
       gateReadiness,
-      instructions: {
-        agents: false,
-        agentsManaged: false,
-        claude: false,
-        claudeManaged: false,
-        opencodeMakeItSo: false,
-        opencodeMakeItSoManaged: false,
-        opencodeMakeitsoAlias: false,
-        opencodeMakeitsoAliasManaged: false,
-        codexReviewFocusAgent: false,
-        codexReviewFocusAgentManaged: false,
-        targets: [],
-      },
+      instructions: { harnesses: [], targets: [] },
       dirty: { dirty: false, entries: [], error: null },
       currentBranch: 'main',
       blockingPullRequests: [],

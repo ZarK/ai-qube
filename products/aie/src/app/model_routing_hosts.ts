@@ -6,6 +6,7 @@ import {
   type ModelRoutingHostId,
 } from '../core/model_routing.js';
 import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId } from '../core/policy.js';
+import { getAgentHostProfileSync } from '../agent_host_adapters.js';
 import { getReviewHostAdapter, isRegisteredReviewHost } from './review_host_adapters.js';
 
 export function commandExistsOnPath(command: string): boolean {
@@ -29,7 +30,11 @@ export function detectInstalledReviewHostsOnPath(
     if (!isRegisteredReviewHost(host)) return false;
     const adapter = getReviewHostAdapter(host);
     if (adapter.supportsPlatform && !adapter.supportsPlatform(platform)) return false;
-    return adapter.executableNames.some(lookup);
+    const executables = getAgentHostProfileSync(host).executables;
+    const names = platform === 'win32'
+      ? [...executables.windowsNames, ...executables.names]
+      : executables.names;
+    return names.some(lookup);
   });
 }
 

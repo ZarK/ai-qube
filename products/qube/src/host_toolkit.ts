@@ -2,7 +2,17 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { listGrokBuildHostFiles } from "./grok_build_host.js";
+import { getAgentHostProfiles } from "@tjalve/aie";
+import {
+  AGENT_HOST_IDS,
+  defineAgentHostProfile,
+  type AgentHostCapability,
+  type AgentHostCapabilitySupport,
+  type AgentHostContinuationDelivery,
+  type AgentHostId,
+  type AgentHostProfile,
+  type AgentHostTrustAction,
+} from "@tjalve/qube-core";
 
 export const QUBE_INIT_RECORD_PATH = ".qube/init.json";
 
@@ -16,7 +26,7 @@ export const PROVIDER_MCP_CONFIG_PATHS = Object.freeze([
   path.posix.join(".cursor", "mcp.json"),
 ]);
 
-export type ToolkitHostId = "generic" | "codex" | "claude-code" | "grok-build" | "opencode" | "cursor";
+export type ToolkitHostId = AgentHostId;
 export type ToolkitAssetKind = "instruction" | "subagent" | "command" | "skill" | "hook" | "cli-dependency";
 export type ToolkitHostStatus = "complete" | "missing" | "partial" | "unknown";
 export type ToolkitCliStatus = "pass" | "missing" | "unauthenticated" | "unverified" | "not-required";
@@ -31,10 +41,55 @@ export interface ToolkitAsset {
   readonly description: string;
 }
 
+export interface ToolkitCapability {
+  readonly support: AgentHostCapabilitySupport;
+  readonly description: string;
+  readonly nextAction?: string;
+}
+
+export interface ToolkitReviewCapabilities {
+  readonly local: ToolkitCapability & { readonly freshContext: boolean; readonly readOnly: boolean };
+  readonly isolated: ToolkitCapability & { readonly freshContext: boolean; readonly readOnly: boolean };
+}
+
+export interface ToolkitExecutables {
+  readonly names: readonly string[];
+  readonly windowsNames: readonly string[];
+}
+
+export interface ToolkitContinuationCapability extends ToolkitCapability {
+  readonly delivery: AgentHostContinuationDelivery;
+  readonly effectiveDelivery: AgentHostContinuationDelivery;
+  readonly state: "active" | "disabled" | "unverified" | "unavailable";
+  readonly currentIssueRecovery: boolean;
+}
+
+export interface ToolkitUmpireCapabilities {
+  readonly continuation: ToolkitContinuationCapability;
+  readonly probe: ToolkitCapability & { readonly command: readonly string[] };
+}
+
+export interface ToolkitTrustCapability {
+  readonly required: boolean;
+  readonly description: string;
+  readonly actions: readonly AgentHostTrustAction[];
+}
+
+export interface ToolkitHostCapabilities {
+  readonly taskList: ToolkitCapability & { readonly tools: readonly string[] };
+  readonly subagents: ToolkitCapability;
+  readonly review: ToolkitReviewCapabilities;
+  readonly modelDiscovery: ToolkitCapability;
+  readonly umpire: ToolkitUmpireCapabilities;
+  readonly trust: ToolkitTrustCapability;
+}
+
 export interface HostToolkitManifest {
   readonly host: ToolkitHostId;
   readonly displayName: string;
+  readonly executables: ToolkitExecutables;
   readonly assets: readonly ToolkitAsset[];
+  readonly capabilities: ToolkitHostCapabilities;
 }
 
 export interface HostToolkitComposition {
@@ -74,6 +129,7 @@ export interface HostToolkitProbe {
   readonly present: readonly string[];
   readonly missing: readonly string[];
   readonly reason: string;
+  readonly capabilities?: ToolkitHostCapabilities;
 }
 
 export interface HostToolkitReport {
@@ -98,16 +154,7 @@ export interface ProbeHostToolkitOptions {
   readonly record?: QubeInitRecord | null;
 }
 
-const HOST_DISPLAY_NAMES: Readonly<Record<ToolkitHostId, string>> = Object.freeze({
-  generic: "generic",
-  codex: "Codex",
-  "claude-code": "Claude Code",
-  "grok-build": "Grok Build",
-  opencode: "OpenCode",
-  cursor: "Cursor",
-});
-
-const KNOWN_HOSTS = Object.freeze(["generic", "codex", "claude-code", "grok-build", "opencode", "cursor"] as const);
+const KNOWN_HOSTS: readonly ToolkitHostId[] = AGENT_HOST_IDS;
 
 function asset(
   id: string,
@@ -127,71 +174,102 @@ function asset(
   });
 }
 
-function claudeCodeAssets(): readonly ToolkitAsset[] {
-  return Object.freeze([
-    asset("claude-instructions", "instruction", "aie", "Always-loaded Claude Code instructions.", { path: "CLAUDE.md" }),
-    asset("claude-make-it-so", "command", "aie", "Claude Code make-it-so project command.", { path: path.posix.join(".claude", "commands", "make-it-so.md") }),
-    asset("claude-make-it-so-skill", "skill", "aie", "Claude Code make-it-so skill.", { path: path.posix.join(".claude", "skills", "make-it-so", "SKILL.md") }),
-    asset("claude-review-focus", "subagent", "aie", "Claude Code review-focus subagent.", { path: path.posix.join(".claude", "agents", "qube-review-focus.md"), required: false }),
-    asset("claude-review-explorer", "subagent", "aie", "Claude Code review-explorer subagent.", { path: path.posix.join(".claude", "agents", "qube-review-explorer.md"), required: false }),
-    asset("claude-review-digest", "subagent", "aie", "Claude Code review-digest subagent.", { path: path.posix.join(".claude", "agents", "qube-review-digest.md"), required: false }),
-    asset("claude-review-librarian", "subagent", "aie", "Claude Code review-librarian subagent.", { path: path.posix.join(".claude", "agents", "qube-review-librarian.md"), required: false }),
-    asset("claude-stop-hook", "hook", "aiu", "Claude Code AI Umpire Stop hook.", { path: path.posix.join(".claude", "settings.json") }),
-  ]);
+function capabilitySummary(capability: AgentHostCapability): ToolkitCapability {
+  return Object.freeze({
+    support: capability.support,
+    description: capability.description,
+    ...(capability.nextAction ? { nextAction: capability.nextAction } : {}),
+  });
 }
 
-function codexAssets(): readonly ToolkitAsset[] {
-  return Object.freeze([
-    asset("codex-instructions", "instruction", "aie", "Always-loaded Codex instructions.", { path: "AGENTS.md" }),
-    asset("codex-make-it-so", "command", "aie", "Codex make-it-so project prompt.", { path: path.posix.join(".codex", "prompts", "make-it-so.md") }),
-    asset("codex-review-focus", "subagent", "aie", "Codex review-focus subagent.", { path: path.posix.join(".codex", "agents", "qube-review-focus.toml"), required: false }),
-    asset("codex-review-explorer", "subagent", "aie", "Codex review-explorer subagent.", { path: path.posix.join(".codex", "agents", "qube-review-explorer.toml"), required: false }),
-    asset("codex-review-digest", "subagent", "aie", "Codex review-digest subagent.", { path: path.posix.join(".codex", "agents", "qube-review-digest.toml"), required: false }),
-    asset("codex-review-librarian", "subagent", "aie", "Codex review-librarian subagent.", { path: path.posix.join(".codex", "agents", "qube-review-librarian.toml"), required: false }),
-    asset("codex-stop-hook", "hook", "aiu", "Codex AI Umpire plugin marketplace entry.", { path: path.posix.join(".agents", "plugins", "marketplace.json") }),
-    asset("codex-plugin-manifest", "hook", "aiu", "Codex AI Umpire plugin manifest.", { path: path.posix.join("plugins", "ai-umpire", ".codex-plugin", "plugin.json") }),
-    asset("codex-plugin-hooks", "hook", "aiu", "Codex AI Umpire Stop hook.", { path: path.posix.join("plugins", "ai-umpire", "hooks", "hooks.json") }),
-    asset("codex-plugin-skill", "skill", "aiu", "Codex AI Umpire skill instructions.", { path: path.posix.join("plugins", "ai-umpire", "skills", "ai-umpire", "SKILL.md") }),
-  ]);
+function hostCapabilities(profile: AgentHostProfile): ToolkitHostCapabilities {
+  const umpireProbe = profile.umpire.probe.support === "unsupported"
+    ? Object.freeze({ ...capabilitySummary(profile.umpire.probe), command: Object.freeze([]) })
+    : Object.freeze({ ...capabilitySummary(profile.umpire.probe), command: Object.freeze([...profile.umpire.probe.command]) });
+  const continuationState = profile.umpire.continuation.support === "unsupported" ? "unavailable" : "unverified";
+  return Object.freeze({
+    taskList: Object.freeze({
+      ...capabilitySummary(profile.taskList),
+      tools: Object.freeze([...profile.taskList.tools]),
+    }),
+    subagents: capabilitySummary(profile.subagents),
+    review: Object.freeze({
+      local: Object.freeze({
+        ...capabilitySummary(profile.review.local),
+        freshContext: profile.review.local.freshContext,
+        readOnly: profile.review.local.readOnly,
+      }),
+      isolated: Object.freeze({
+        ...capabilitySummary(profile.review.isolated),
+        freshContext: profile.review.isolated.freshContext,
+        readOnly: profile.review.isolated.readOnly,
+      }),
+    }),
+    modelDiscovery: capabilitySummary(profile.modelDiscovery),
+    umpire: Object.freeze({
+      continuation: Object.freeze({
+        ...capabilitySummary(profile.umpire.continuation),
+        delivery: profile.umpire.continuation.delivery,
+        effectiveDelivery: "none",
+        state: continuationState,
+        currentIssueRecovery: false,
+      }),
+      probe: umpireProbe,
+    }),
+    trust: Object.freeze({
+      required: profile.trust.required,
+      description: profile.trust.description,
+      actions: Object.freeze([...profile.trust.actions]),
+    }),
+  });
 }
 
-function opencodeAssets(): readonly ToolkitAsset[] {
-  return Object.freeze([
-    asset("opencode-instructions", "instruction", "aie", "Always-loaded OpenCode instructions.", { path: "AGENTS.md" }),
-    asset("opencode-make-it-so", "command", "aie", "OpenCode make-it-so project command.", { path: path.posix.join(".opencode", "commands", "make-it-so.md") }),
-    asset("opencode-review-focus", "subagent", "aie", "OpenCode review-focus subagent.", { path: path.posix.join(".opencode", "agent", "qube-review-focus.md"), required: false }),
-    asset("opencode-review-explorer", "subagent", "aie", "OpenCode review-explorer subagent.", { path: path.posix.join(".opencode", "agent", "qube-review-explorer.md"), required: false }),
-    asset("opencode-review-digest", "subagent", "aie", "OpenCode review-digest subagent.", { path: path.posix.join(".opencode", "agent", "qube-review-digest.md"), required: false }),
-    asset("opencode-review-librarian", "subagent", "aie", "OpenCode review-librarian subagent.", { path: path.posix.join(".opencode", "agent", "qube-review-librarian.md"), required: false }),
-    asset("opencode-plugin", "hook", "aiu", "OpenCode AI Umpire continuation plugin.", { path: path.posix.join(".opencode", "plugins", "ai-umpire-continuation.ts") }),
-  ]);
+function assetsForProfile(profile: AgentHostProfile): readonly ToolkitAsset[] {
+  const assets: ToolkitAsset[] = [
+    asset(profile.instructionTarget.id, "instruction", "aie", profile.instructionTarget.description, {
+      path: profile.instructionTarget.path,
+    }),
+    asset(profile.makeItSo.id, profile.makeItSo.kind, "aie", profile.makeItSo.description, {
+      path: profile.makeItSo.path,
+      command: profile.makeItSo.invocation,
+    }),
+  ];
+  for (const target of profile.review.local.agents) {
+    assets.push(asset(target.id, "subagent", "aie", target.description, { path: target.path, required: false }));
+  }
+  const continuationRequired = profile.umpire.continuation.support !== "unsupported"
+    && profile.umpire.continuation.currentIssueRecovery;
+  for (const action of profile.trust.actions) {
+    if (action.kind !== "review-files") continue;
+    action.paths.forEach((assetPath, index) => {
+      assets.push(asset(`${action.id}-${index + 1}`, "hook", "aiu", action.description, {
+        path: assetPath,
+        required: continuationRequired,
+      }));
+    });
+  }
+  const seenPaths = new Set<string>();
+  return Object.freeze(assets.filter((item) => {
+    if (!item.path || !seenPaths.has(item.path)) {
+      if (item.path) seenPaths.add(item.path);
+      return true;
+    }
+    return false;
+  }));
 }
 
-function grokBuildAssets(): readonly ToolkitAsset[] {
-  return Object.freeze(
-    listGrokBuildHostFiles().map((file) =>
-      asset(file.id, file.kind, file.source, file.description, { path: file.path, required: file.required }),
-    ),
-  );
-}
-
-function genericAssets(): readonly ToolkitAsset[] {
-  return Object.freeze([]);
-}
-
-function cursorAssets(): readonly ToolkitAsset[] {
-  return Object.freeze([
-    asset("cursor-instructions", "instruction", "aie", "Always-loaded Cursor instructions.", { path: "AGENTS.md" }),
-  ]);
-}
-
-function assetsForHost(host: ToolkitHostId): readonly ToolkitAsset[] {
-  if (host === "claude-code") return claudeCodeAssets();
-  if (host === "codex") return codexAssets();
-  if (host === "opencode") return opencodeAssets();
-  if (host === "grok-build") return grokBuildAssets();
-  if (host === "cursor") return cursorAssets();
-  return genericAssets();
+export function composeHostToolkitManifest(profile: AgentHostProfile): HostToolkitManifest {
+  const canonicalProfile = defineAgentHostProfile(profile);
+  return Object.freeze({
+    host: canonicalProfile.id,
+    displayName: canonicalProfile.displayName,
+    executables: Object.freeze({
+      names: Object.freeze([...canonicalProfile.executables.names]),
+      windowsNames: Object.freeze([...canonicalProfile.executables.windowsNames]),
+    }),
+    assets: assetsForProfile(canonicalProfile),
+    capabilities: hostCapabilities(canonicalProfile),
+  });
 }
 
 function isToolkitHostId(value: string): value is ToolkitHostId {
@@ -202,17 +280,16 @@ function usesGithub(workProviders: readonly string[], ciProviders: readonly stri
   return workProviders.includes("github") || ciProviders.includes("github");
 }
 
-export function composeHostToolkitManifests(
+export async function composeHostToolkitManifests(
   hosts: readonly string[],
   options: ComposeHostToolkitOptions = {},
-): HostToolkitComposition {
+): Promise<HostToolkitComposition> {
   const selected = Object.freeze([...hosts]);
+  const selectedHostIds = selected.filter(isToolkitHostId);
+  const profiles = await getAgentHostProfiles([...selectedHostIds]);
+  const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
   const manifests = Object.freeze(
-    selected.filter(isToolkitHostId).map((host) => Object.freeze({
-      host,
-      displayName: HOST_DISPLAY_NAMES[host],
-      assets: assetsForHost(host),
-    })),
+    selectedHostIds.map((host) => composeHostToolkitManifest(profilesById.get(host)!)),
   );
   return Object.freeze({
     status: "planned",
@@ -381,6 +458,7 @@ function probeManifest(cwd: string, manifest: HostToolkitManifest): HostToolkitP
       present: Object.freeze(present),
       missing: Object.freeze(missing),
       reason: `${manifest.displayName} has no required host toolkit files.`,
+      capabilities: manifest.capabilities,
     });
   }
   if (missing.length === 0) {
@@ -391,6 +469,7 @@ function probeManifest(cwd: string, manifest: HostToolkitManifest): HostToolkitP
       present: Object.freeze(present),
       missing: Object.freeze(missing),
       reason: `${manifest.displayName} required toolkit files are present.`,
+      capabilities: manifest.capabilities,
     });
   }
   return Object.freeze({
@@ -400,6 +479,7 @@ function probeManifest(cwd: string, manifest: HostToolkitManifest): HostToolkitP
     present: Object.freeze(present),
     missing: Object.freeze(missing),
     reason: `${manifest.displayName} is missing required toolkit files: ${missing.join(", ")}.`,
+    capabilities: manifest.capabilities,
   });
 }
 
@@ -411,25 +491,18 @@ function rollupStatus(hosts: readonly HostToolkitProbe[], cli: readonly ToolkitC
   return "partial";
 }
 
-function probeSelectedHost(cwd: string, host: string): HostToolkitProbe {
-  if (!isToolkitHostId(host)) {
-    return Object.freeze({
-      host,
-      displayName: host,
-      status: "missing",
-      present: Object.freeze([]),
-      missing: Object.freeze([host]),
-      reason: `Host "${host}" is not a supported toolkit host.`,
-    });
-  }
-  return probeManifest(cwd, Object.freeze({
+function probeUnknownHost(host: string): HostToolkitProbe {
+  return Object.freeze({
     host,
-    displayName: HOST_DISPLAY_NAMES[host],
-    assets: assetsForHost(host),
-  }));
+    displayName: host,
+    status: "missing",
+    present: Object.freeze([]),
+    missing: Object.freeze([host]),
+    reason: `Host "${host}" is not a supported toolkit host.`,
+  });
 }
 
-export function probeHostToolkits(options: ProbeHostToolkitOptions): HostToolkitReport {
+export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promise<HostToolkitReport> {
   const record = options.record === undefined ? readInitRecord(options.cwd) : options.record;
   const mcpConfigured = providerMcpConfigPresent(options.cwd);
   if (!record) {
@@ -447,7 +520,17 @@ export function probeHostToolkits(options: ProbeHostToolkitOptions): HostToolkit
     });
   }
 
-  const hosts = Object.freeze(record.hosts.map((host) => probeSelectedHost(options.cwd, host)));
+  const composition = await composeHostToolkitManifests(record.hosts, {
+    workProviders: record.workProviders,
+    ciProviders: record.ciProviders,
+    mcpOptIn: record.mcp.optIn,
+  });
+  const manifestsByHost = new Map(composition.manifests.map((manifest) => [manifest.host, manifest]));
+  const hosts = Object.freeze(record.hosts.map((host) => {
+    if (!isToolkitHostId(host)) return probeUnknownHost(host);
+    const manifest = manifestsByHost.get(host);
+    return manifest ? probeManifest(options.cwd, manifest) : probeUnknownHost(host);
+  }));
   const githubSelected = usesGithub(record.workProviders, record.ciProviders);
   const cliDependencies = Object.freeze([
     probeGh(options.env, options.offline === true, githubSelected),
@@ -492,6 +575,7 @@ export function formatHostToolkits(report: HostToolkitReport): string {
   for (const host of report.hosts) {
     const detail = host.missing.length > 0 ? ` missing ${host.missing.join(", ")}` : "";
     lines.push(`- ${host.host}: ${host.status}${detail}`);
+    if (host.capabilities) lines.push(`  ${formatToolkitCapabilities(host.capabilities)}`);
   }
   for (const cli of report.cliDependencies) {
     lines.push(`- cli ${cli.id}: ${cli.status}`);
@@ -507,10 +591,82 @@ export function formatHostToolkits(report: HostToolkitReport): string {
 export function formatPlannedHostToolkits(composition: HostToolkitComposition): string {
   const lines = ["Host toolkits:"];
   for (const manifest of composition.manifests) {
-    const required = manifest.assets.filter((item) => item.required).map((item) => item.path ?? item.command ?? item.id);
-    lines.push(`- ${manifest.host}: ${required.length > 0 ? required.join(", ") : "no required host files"}`);
+    const instruction = manifest.assets.find((item) => item.kind === "instruction");
+    const makeItSo = manifest.assets.find((item) => item.command);
+    lines.push(`- ${manifest.host}: instructions ${instruction?.path ?? "unavailable"}; Make It So ${makeItSo?.command ?? "unavailable"}`);
+    lines.push(`  ${formatToolkitCapabilities(manifest.capabilities)}`);
   }
   lines.push(`Provider MCP: ${composition.mcp.optIn ? "opt-in recorded" : "off"}; configured=no`);
   lines.push(composition.mcp.caveat);
   return `${lines.join("\n")}\n`;
+}
+
+interface UmpireHostProbe {
+  readonly host?: unknown;
+  readonly state?: unknown;
+  readonly effectiveDelivery?: unknown;
+  readonly currentIssueRecovery?: unknown;
+  readonly reason?: unknown;
+  readonly nextAction?: unknown;
+}
+
+export function applyUmpireHostProbes(report: HostToolkitReport, doctorReport: unknown): HostToolkitReport {
+  const rawProbes = isRecord(doctorReport) && Array.isArray(doctorReport.hostProbes)
+    ? doctorReport.hostProbes.filter(isRecord) as UmpireHostProbe[]
+    : [];
+  const probes = new Map(rawProbes
+    .filter((probe): probe is UmpireHostProbe & { host: string } => typeof probe.host === "string")
+    .map((probe) => [probe.host, probe]));
+  const hosts = report.hosts.map((host) => {
+    if (!host.capabilities) return host;
+    const probe = probes.get(host.host);
+    const declared = host.capabilities.umpire.continuation;
+    const state = probe && (probe.state === "active" || probe.state === "disabled" || probe.state === "unverified" || probe.state === "unavailable")
+      ? probe.state
+      : declared.support === "unsupported"
+        ? "unavailable"
+        : "unverified";
+    const effectiveDelivery = state === "active" && (probe?.effectiveDelivery === "host" || probe?.effectiveDelivery === "stdout")
+      ? probe.effectiveDelivery
+      : "none";
+    const currentIssueRecovery = state === "active" && probe?.currentIssueRecovery === true;
+    const description = typeof probe?.reason === "string" && probe.reason.trim() !== ""
+      ? probe.reason
+      : declared.description;
+    const nextAction = typeof probe?.nextAction === "string" && probe.nextAction.trim() !== ""
+      ? probe.nextAction
+      : declared.nextAction;
+    return Object.freeze({
+      ...host,
+      capabilities: Object.freeze({
+        ...host.capabilities,
+        umpire: Object.freeze({
+          ...host.capabilities.umpire,
+          continuation: Object.freeze({
+            ...declared,
+            description,
+            ...(nextAction ? { nextAction } : {}),
+            state,
+            effectiveDelivery,
+            currentIssueRecovery,
+          }),
+        }),
+      }),
+    });
+  });
+  return Object.freeze({ ...report, hosts: Object.freeze(hosts) });
+}
+
+function formatToolkitCapabilities(capabilities: ToolkitHostCapabilities): string {
+  const continuation = capabilities.umpire.continuation;
+  const recovery = continuation.currentIssueRecovery ? ", current-issue recovery" : "";
+  return [
+    `task list ${capabilities.taskList.support}`,
+    `subagents ${capabilities.subagents.support}`,
+    `local review ${capabilities.review.local.support}`,
+    `isolated review ${capabilities.review.isolated.support}`,
+    `live models ${capabilities.modelDiscovery.support}`,
+    `Umpire ${continuation.state}${recovery}`,
+    `trust ${capabilities.trust.required ? "required" : "not required"}`,
+  ].join("; ");
 }

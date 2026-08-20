@@ -5,7 +5,7 @@ import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import { resolveExecutable } from '@tjalve/qube-core';
+import { resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
@@ -212,11 +212,16 @@ export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExe
 // Probe and execution must resolve hosts identically; both paths share this
 // synchronous core so a probe verdict always reflects the executable that
 // routed execution would actually spawn.
-export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelHostExecutable {
+export function resolveModelHostExecutableSync(
+  host: RoutedReviewHostId,
+  profileExecutables?: AgentHostExecutables,
+): ModelHostExecutable {
   const adapter = getReviewHostAdapter(host);
-  const commandName = adapter.executableNames[0] ?? host;
+  const executableNames = profileExecutables?.names ?? adapter.executableNames;
+  const windowsExecutableNames = profileExecutables?.windowsNames ?? adapter.windowsExecutableNames;
+  const commandName = executableNames[0] ?? host;
   if (process.platform === 'win32') {
-    for (const executableName of adapter.executableNames) {
+    for (const executableName of executableNames) {
       const shim = findOnPathSync(`${executableName}.cmd`);
       if (!shim) continue;
       const adapterResolved = adapter.resolveWindowsShim?.(shim);
@@ -230,7 +235,7 @@ export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelH
       }
     }
   }
-  const names = process.platform === 'win32' ? adapter.windowsExecutableNames : adapter.executableNames;
+  const names = process.platform === 'win32' ? windowsExecutableNames : executableNames;
   for (const name of names) {
     const resolved = findOnPathSync(name);
     if (resolved) return resolved;
@@ -970,8 +975,8 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       invocationId,
       routeSource: input.routeSource ?? 'configured',
     };
-    if ('transientTexts' in parsedHostOutput || 'priorTexts' in parsedHostOutput) {
-      const transientTexts = parsedHostOutput.transientTexts ?? parsedHostOutput.priorTexts;
+    if ('transientTexts' in parsedHostOutput) {
+      const transientTexts = parsedHostOutput.transientTexts;
       if (!Array.isArray(transientTexts) || !transientTexts.every((text): text is string => typeof text === 'string')) {
         return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
       }

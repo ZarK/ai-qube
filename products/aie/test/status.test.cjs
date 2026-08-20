@@ -148,6 +148,22 @@ describe('status service', () => {
     assert.equal(result.queue.nextWork.number, 76);
     assert.equal(result.providers.work.id, 'github');
     assert.equal(result.providers.repository.id, 'local-git');
+    assert.equal(result.schemaVersion, 1);
+    const policy = result.states.find(state => state.kind === 'continuation-policy');
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.deepEqual(policy.allowedModes, ['continue', 'repair', 'wait', 'stop']);
+    assert.equal(queue.readyItems[0].id, '76');
+    assert.deepEqual(queue.readyItems[0].nextAction.argv, ['aie', 'start', 'next']);
+  });
+
+  it('does not expose ready work to Umpire when Continuous Shipping is off', async () => {
+    const config = makeConfig({ autonomousMode: false });
+    const result = await buildStatus(makeContext({ config, workItems: [makeWork(76, 'Manual shipping', ['S-Ready'])] }));
+
+    const policy = result.states.find(state => state.kind === 'continuation-policy');
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.deepEqual(policy.allowedModes, ['stop']);
+    assert.deepEqual(queue.readyItems, []);
   });
 
   it('reports ready Jira work without suggesting unsupported lifecycle start', async () => {
@@ -185,6 +201,20 @@ describe('status service', () => {
     assert.equal(result.queue.activeWork[0].number, 76);
     assert.equal(result.review.state, 'none');
     assert.match(formatStatusHuman(result), /Next: aie branch check 76/);
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.equal(queue.activeItems[0].id, '76');
+    assert.deepEqual(queue.activeItems[0].nextAction.argv, ['aie', 'branch', 'check', '76']);
+  });
+
+  it('does not recover an active issue through Umpire when Continuous Shipping is off', async () => {
+    const config = makeConfig({ autonomousMode: false });
+    const result = await buildStatus(makeContext({ config, workItems: [makeWork(76, 'Manual current issue', ['S-InProgress'])] }));
+
+    const policy = result.states.find(state => state.kind === 'continuation-policy');
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.deepEqual(policy.allowedModes, ['stop']);
+    assert.equal(queue.status, 'unknown');
+    assert.equal(queue.activeItems[0].nextAction, undefined);
   });
 
   it('reports blocked work without selecting it as next work', async () => {
@@ -204,6 +234,17 @@ describe('status service', () => {
 
     assert.deepEqual(result.decision.reasonCodes, ['dirty-checkout']);
     assert.equal(result.decision.nextCommand, 'git status');
+    assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['stop']);
+  });
+
+  it('does not let idle Umpire work bypass a dirty-checkout stop', async () => {
+    const repoState = makeRepoState(makeRoot(), { dirty: { dirty: true, paths: ['src/status.ts'], error: null } });
+    const result = await buildStatus(makeContext({ repoState, workItems: [] }));
+
+    const policy = result.states.find(state => state.kind === 'continuation-policy');
+    const queue = result.states.find(state => state.kind === 'work-queue');
+    assert.deepEqual(policy.allowedModes, ['stop']);
+    assert.equal(queue.status, 'unknown');
   });
 
   it('stops for linked worktrees when policy disables them', async () => {
@@ -223,6 +264,9 @@ describe('status service', () => {
 
     assert.deepEqual(result.decision.reasonCodes, ['open-review-before-new-work']);
     assert.equal(result.decision.nextCommand, 'aie pr gate 90 --json');
+    const review = result.states.find(state => state.kind === 'review');
+    assert.equal(review.reviewStatus, 'active');
+    assert.deepEqual(review.nextAction.argv, ['aie', 'pr', 'gate', '90', '--json']);
   });
 
   it('reports merged review state as ready for issue completion', async () => {
@@ -233,6 +277,29 @@ describe('status service', () => {
 
     assert.deepEqual(result.decision.reasonCodes, ['active-work-complete']);
     assert.equal(result.decision.nextCommand, 'aie complete 76');
+  });
+
+  it('exposes the current review recovery command to Umpire', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(76, 'Review recovery', ['S-InProgress'])],
+      review: { item: makeReview(90, { state: 'open', reviewDecision: 'changes-requested' }), pr: null, warning: null },
+    }));
+
+    const review = result.states.find(state => state.kind === 'review');
+    assert.deepEqual(result.decision.reasonCodes, ['review-changes-requested']);
+    assert.equal(review.reviewStatus, 'changes-requested');
+    assert.deepEqual(review.nextAction.argv, ['aie', 'pr', 'gate', '90', '--json']);
+  });
+
+  it('reports a blocked review as blocked even when provider approval exists', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(76, 'Blocked review recovery', ['S-InProgress'])],
+      review: { item: makeReview(90, { state: 'open', reviewDecision: 'approved', mergeability: 'blocked' }), pr: null, warning: null },
+    }));
+
+    const review = result.states.find(state => state.kind === 'review');
+    assert.equal(review.reviewStatus, 'blocked');
+    assert.equal(review.status, 'fail');
   });
 
   it('reports configured gate evidence as pending before shipping', async () => {
@@ -279,6 +346,7 @@ describe('status service', () => {
 
     assert.deepEqual(empty.decision.reasonCodes, ['no-ready-work']);
     assert.equal(empty.queue.summary.total, 0);
+    assert.deepEqual(empty.states.find(state => state.kind === 'continuation-policy').allowedModes, ['continue', 'repair', 'wait', 'stop']);
     assert.deepEqual(blocked.decision.reasonCodes, ['no-ready-work']);
     assert.equal(blocked.queue.summary.blocked, 1);
   });

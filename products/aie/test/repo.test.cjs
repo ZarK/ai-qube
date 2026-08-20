@@ -6,12 +6,14 @@ const { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { getDefaults } = require('../dist/config/index.js');
+const { runInit } = require('../dist/init/index.js');
 const { getDesiredLabels } = require('../dist/labels.js');
 const {
   buildRepoPrimePlan,
   findMissingMilestones,
   findMilestoneWarnings,
   formatMinimalConfig,
+  getInstructionStatus,
   listMilestones,
   listOpenPullRequests,
   runRepoAffected,
@@ -94,7 +96,9 @@ describe('repo prime service', () => {
     assert.equal(plan.pullRequests.length, 2);
     assert.deepEqual(plan.blockingPullRequests.map(pr => pr.number), [3]);
     assert.deepEqual(plan.milestoneWarnings.map(warning => warning.issueNumber), [10]);
-    assert.equal(plan.instructions.agents, true);
+    assert.deepEqual(plan.instructions.harnesses.map(harness => harness.host), ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    assert.ok(plan.instructions.harnesses.every(harness => harness.installed === false));
+    assert.deepEqual(Object.keys(plan.instructions).sort(), ['harnesses', 'targets']);
     assert.equal(plan.planning.spec, true);
     assert.equal(plan.planning.milestones.length, 1);
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
@@ -118,6 +122,63 @@ describe('repo prime service', () => {
     assert.equal(plan.configWillWrite, true);
     assert.equal(plan.completedChanges.includes(`Wrote ${plan.configPath}`), true);
     assert.equal(readFileSync(plan.configPath, 'utf8'), formatMinimalConfig());
+  });
+
+  it('requires native review assets only for selected host-mode harnesses', async () => {
+    const repo = makeGitRepo();
+    const hosts = ['codex', 'claude-code', 'opencode', 'grok-build'];
+    const init = await runInit({
+      target: '.',
+      tool: 'all',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      policy: { reviewMode: 'host', reviewAdapter: 'mixed', localReviewAgents: hosts },
+    });
+    assert.equal(init.ok, true);
+
+    const installed = getInstructionStatus(repo, { reviewMode: 'host', localReviewAgents: hosts });
+    for (const host of hosts) {
+      const harness = installed.harnesses.find(candidate => candidate.host === host);
+      assert(harness, host);
+      const reviewAssets = harness.targets.filter(target => target.kind === 'review-agent');
+      assert.ok(reviewAssets.length > 0, host);
+      assert.ok(reviewAssets.every(target => target.required && target.healthy), host);
+      assert.equal(harness.installed, true, host);
+      assert.equal(harness.healthy, true, host);
+    }
+
+    const codexOnly = getInstructionStatus(repo, { reviewMode: 'host', localReviewAgents: ['codex'] });
+    assert.ok(codexOnly.harnesses.find(harness => harness.host === 'codex').targets.filter(target => target.kind === 'review-agent').every(target => target.required));
+    assert.ok(codexOnly.harnesses.find(harness => harness.host === 'claude-code').targets.filter(target => target.kind === 'review-agent').every(target => !target.required));
+
+    for (const host of hosts) {
+      const status = getInstructionStatus(repo, { reviewMode: 'host', localReviewAgents: [host] });
+      const harness = status.harnesses.find(candidate => candidate.host === host);
+      assert(harness, host);
+      const asset = harness.targets.find(target => target.kind === 'review-agent');
+      assert(asset, host);
+      rmSync(join(repo, asset.path));
+
+      const missing = getInstructionStatus(repo, { reviewMode: 'host', localReviewAgents: [host] });
+      const missingHarness = missing.harnesses.find(candidate => candidate.host === host);
+      const missingAsset = missingHarness.targets.find(target => target.path === asset.path);
+      assert.equal(missingAsset.required, true, host);
+      assert.equal(missingAsset.present, false, host);
+      assert.equal(missingHarness.installed, false, host);
+      assert.equal(missingHarness.healthy, false, host);
+    }
+
+    for (const reviewMode of ['external', 'isolated']) {
+      const optional = getInstructionStatus(repo, { reviewMode, localReviewAgents: hosts });
+      for (const host of hosts) {
+        const harness = optional.harnesses.find(candidate => candidate.host === host);
+        assert(harness, `${reviewMode}:${host}`);
+        assert.ok(harness.targets.filter(target => target.kind === 'review-agent').every(target => !target.required), `${reviewMode}:${host}`);
+        assert.equal(harness.installed, true, `${reviewMode}:${host}`);
+        assert.equal(harness.healthy, true, `${reviewMode}:${host}`);
+      }
+    }
   });
 });
 

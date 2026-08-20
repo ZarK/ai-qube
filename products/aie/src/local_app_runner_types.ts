@@ -15,7 +15,7 @@ export interface RunMetadata {
   cwd: string;
   startedAt: string;
   platform: NodeJS.Platform;
-  attemptId?: string;
+  attemptId: string;
   stdoutPath: string;
   stderrPath: string;
   metadataPath: string;

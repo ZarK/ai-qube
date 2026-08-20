@@ -3,7 +3,7 @@ import { join } from 'path';
 import { probeExecutable, type ResolveExecutableOptions } from '@tjalve/qube-core';
 import { suggestBranchName, validateBranchPattern } from '../branch.js';
 import type { Config, GateKind, GateStage } from '../config/index.js';
-import type { BaseRefStatus, InstructionStatus } from '../repo/index.js';
+import { getInstructionStatus, type BaseRefStatus, type InstructionStatus } from '../repo/index.js';
 import type { GitHubIssue } from '../providers/github_adapter_exports.js';
 import { MANAGED_START, readManagedToolVersion } from '../managed_file.js';
 import { readAiePackageVersion, reviewModeOf } from '../review_mode.js';
@@ -12,8 +12,10 @@ import { redact } from '../redact.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
-import { probeCodexReviewCapabilitySync, probeOpenCodeReviewCapabilitySync } from '../app/local_review_runner.js';
+import { probeAgentHostReviewCapabilitySync } from '../app/local_review_runner.js';
+import { configuredReviewModelHost } from '../app/local_review_runner_support.js';
 import { reviewModelHostStatuses } from '../app/model_catalog.js';
+import { REVIEW_MODEL_HOST_IDS } from '../core/policy.js';
 import type { RouteProbeCheck, RoutedProbeHost } from '../app/model_route_probe.js';
 import { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, DoctorToolLookupState, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
@@ -215,7 +217,6 @@ function unique(values: string[]): string[] {
 function reviewerExternalService(name: string): string | null {
   const normalized = name.trim().toLowerCase().replace(/^@/, '');
   if (normalized === '') return null;
-  if (normalized === 'oracle' || normalized === 'opencode-oracle' || normalized === 'fallback-oracle') return null;
   if (normalized === 'copilot') return 'github-copilot';
   if (normalized === 'cubic' || normalized === 'cubic-dev-ai') return 'cubic';
   if (normalized === 'coderabbit' || normalized === 'coderabbitai') return 'coderabbitai';
@@ -240,9 +241,26 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const externalServiceGates = gatePlan.gates.filter(gate => gate.externalService).map(gate => gate.name);
   const configuredReviewers = config.reviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
   const configuredLocalReviewers = config.localReviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
+  const reviewMode = reviewModeOf(config);
+  const reviewInstructionStatus = options.evidenceRoot
+    ? getInstructionStatus(options.evidenceRoot, { reviewMode, localReviewAgents: config.localReviewAgents })
+    : null;
+  const missingReviewAssets = Object.fromEntries(REVIEW_MODEL_HOST_IDS.map(host => [
+    host,
+    reviewInstructionStatus?.harnesses
+      .find(harness => harness.host === host)
+      ?.targets.filter(target => target.kind === 'review-agent' && target.required && !target.healthy)
+      .map(target => target.path) ?? [],
+  ])) as Record<(typeof REVIEW_MODEL_HOST_IDS)[number], string[]>;
+  const selectedMissingReviewAssets = REVIEW_MODEL_HOST_IDS.flatMap(host =>
+    missingReviewAssets[host].map(asset => ({ host, asset })),
+  );
+  const nativeReviewAssetsMissing = selectedMissingReviewAssets.length > 0;
+  const nativeReviewAssetNextAction = nativeReviewAssetsMissing
+    ? `Native review-agent assets are missing or unhealthy: ${selectedMissingReviewAssets.map(({ host, asset }) => `${host}: ${asset}`).join(', ')}. Run \`aie init . --dry-run\`, review the plan, and apply it before host-local review.`
+    : null;
   const reviewerServices = unique(config.reviewAgents.map(reviewerExternalService).filter((service): service is string => service !== null));
   const descriptorSummary = buildDescriptorSummary();
-  const defaultOracle = configuredReviewers.length === 0 && config.reviewAdapter !== 'local';
   const localReviewEnabled = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
   const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
   const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
@@ -272,12 +290,29 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localCommandLanes = config.reviewLanes.filter(lane => lane.runner === 'local-command' && lane.command?.trim());
   const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
   const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
-  const codexReviewCapability = probeCodexReviewCapabilitySync(localHostCommand, config.localReviewAgents.includes('codex'));
-  const opencodeReviewCapability = probeOpenCodeReviewCapabilitySync();
+  const localReviewHost = configuredReviewModelHost(config);
+  const hostReviewCapabilities = Object.fromEntries(REVIEW_MODEL_HOST_IDS.map(host => {
+    const capability = probeAgentHostReviewCapabilitySync(host, null, config.localReviewAgents.includes(host));
+    const missingAssets = missingReviewAssets[host] ?? [];
+    return [host, missingAssets.length === 0
+      ? capability
+      : {
+          ...capability,
+          independentReviewer: false,
+          freshContext: false,
+          promptOnly: true,
+          evidenceWriting: false,
+          missingCapabilities: [
+            ...capability.missingCapabilities,
+            ...missingAssets.map(asset => `${host}-review-agent-asset-missing:${asset}`),
+          ],
+          nextAction: `Native ${host} review-agent assets are missing or unhealthy: ${missingAssets.join(', ')}. Run \`aie init . --dry-run\`, review the plan, and apply it before host-local review.`,
+        }];
+  }));
+  const hostReviewCapability = hostReviewCapabilities[localReviewHost];
   const localHostNeedsAgent = localHostLanes.length > 0 && !localHostCommand;
-  const opencodeLocalReviewConfigured = config.localReviewAgents.includes('opencode');
-  const commandlessCodexHostReady = localHostNeedsAgent && codexReviewCapability.independentReviewer;
-  const isolated = reviewModeOf(config) === 'isolated';
+  const commandlessHostReady = localHostNeedsAgent && hostReviewCapability.independentReviewer;
+  const isolated = reviewMode === 'isolated';
   const isolatedProbes = reviewPreflight.checks.routeProbes;
   const isolatedRoutesReady = isolated
     && localHostNeedsAgent
@@ -289,21 +324,34 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     ? 'needs-action'
     : 'missing';
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
-  const localRunnerReadiness: DoctorReadinessStatus = !(localReviewEnabled || localReviewShadow)
-    ? 'disabled'
+  const localRunnerReadiness: DoctorReadinessStatus = nativeReviewAssetsMissing
+    ? 'missing'
+    : !(localReviewEnabled || localReviewShadow)
+      ? 'disabled'
     : localCommandLanes.length > 0 || localHostCommand || isolatedRoutesReady
       ? 'ready'
       : isolatedRoutesUnresolved
         ? isolatedRouteStatus
-        : commandlessCodexHostReady
+        : commandlessHostReady
           ? 'needs-action'
           : 'missing';
+  const hostDiagnostics = Object.fromEntries(REVIEW_MODEL_HOST_IDS.map(host => {
+    const capability = hostReviewCapabilities[host];
+    return [host, {
+      independentReviewer: capability.independentReviewer,
+      freshContext: capability.freshContext,
+      promptOnly: capability.promptOnly,
+      hooks: capability.hooks,
+      evidenceWriting: capability.evidenceWriting,
+      missingCapabilities: [...capability.missingCapabilities],
+    }];
+  })) as GateReadinessDiagnostics['reviewAgent']['localRunner']['hosts'];
   const localRunner = {
     configured: localRunnerConfigured,
     readiness: localRunnerReadiness,
     command: localCommandLanes[0]?.command ?? localHostCommand,
     capabilities: {
-      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand) || isolatedRoutesReady || commandlessCodexHostReady,
+      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand) || isolatedRoutesReady || commandlessHostReady,
       canComment: false,
       canInline: false,
       canUseTools: false,
@@ -314,42 +362,30 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       canWriteEvidence: true,
       supportsJson: true,
       supportsPromptStack: true,
-      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand) || isolatedRoutesReady || commandlessCodexHostReady,
+      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand) || isolatedRoutesReady || commandlessHostReady,
     },
-    missingTools: localRunnerReadiness === 'missing'
-      ? localHostNeedsAgent
-        ? [opencodeLocalReviewConfigured ? 'opencode local review runner' : 'codex local review agent']
+    missingTools: nativeReviewAssetsMissing
+      ? selectedMissingReviewAssets.map(({ host, asset }) => `${host} review-agent asset ${asset}`)
+      : localRunnerReadiness === 'missing'
+        ? localHostNeedsAgent
+        ? [`${localReviewHost} local review agent`]
         : ['local-command review lane command']
       : [],
-    codex: {
-      independentReviewer: codexReviewCapability.independentReviewer,
-      freshContext: codexReviewCapability.freshContext,
-      promptOnly: codexReviewCapability.promptOnly,
-      hooks: codexReviewCapability.hooks,
-      evidenceWriting: codexReviewCapability.evidenceWriting,
-      missingCapabilities: [...codexReviewCapability.missingCapabilities],
-    },
-    opencode: {
-      independentReviewer: opencodeReviewCapability.independentReviewer,
-      freshContext: opencodeReviewCapability.freshContext,
-      promptOnly: opencodeReviewCapability.promptOnly,
-      hooks: opencodeReviewCapability.hooks,
-      evidenceWriting: opencodeReviewCapability.evidenceWriting,
-      missingCapabilities: [...opencodeReviewCapability.missingCapabilities],
-    },
-    nextAction: localRunnerReadiness === 'ready'
+    host: localReviewHost,
+    hosts: hostDiagnostics,
+    nextAction: nativeReviewAssetNextAction ?? (localRunnerReadiness === 'ready'
       ? 'Local review lanes are configured; run `aie pr gate <pr> --dry-run --json` to inspect planned lane execution.'
       : localRunnerReadiness === 'needs-action'
         ? isolated
           ? isolatedProbes.nextAction ?? 'Fix blocked or missing isolated review routes before relying on lane execution.'
-          : codexReviewCapability.nextAction
+          : hostReviewCapability.nextAction
         : localRunnerReadiness === 'missing'
           ? isolated
             ? isolatedProbes.nextAction ?? 'Configure isolated review routes or local reviewers before relying on lane execution.'
-            : opencodeLocalReviewConfigured && localHostNeedsAgent
-              ? opencodeReviewCapability.nextAction
+            : localHostNeedsAgent
+              ? hostReviewCapability.nextAction
               : 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
-          : 'Local review evidence is disabled by the selected review adapter.',
+          : 'Local review evidence is disabled by the selected review adapter.'),
   };
   const policy = config.supplyChain;
   const supplyChainReady = policy.packageAgeDays <= policy.highRiskPackageAgeDays && policy.disableLifecycleScripts && policy.intentionalLockfileChanges;
@@ -385,7 +421,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     },
     reviewAgent: {
       required: true,
-      readiness: (!defaultOracle && configuredReviewers.length > 0) || localRunnerReadiness === 'ready' ? 'ready' : 'needs-action',
+      readiness: !nativeReviewAssetsMissing && (configuredReviewers.length > 0 || localRunnerReadiness === 'ready') ? 'ready' : 'needs-action',
       descriptorSupport: {
         available: true,
         runnerAvailable: localRunner.readiness === 'ready',
@@ -394,7 +430,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
         promptFragments: descriptorSummary.promptFragments,
       },
       adapter: config.reviewAdapter,
-      mode: reviewModeOf(config),
+      mode: reviewMode,
       modeSource: config.reviewMode ? 'configured' : 'inferred',
       models: Object.values(config.reviewModels.review).map(binding => binding.model).filter(model => model.trim() !== ''),
       hostModels: reviewModelHostStatuses(config.reviewModels).map(item => ({
@@ -423,7 +459,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       instructionRefreshCommand: 'aie init . --force',
       profile: effectiveReviewProfile,
       severityThreshold: config.reviewSeverityThreshold,
-      reviewers: defaultOracle ? ['oracle'] : configuredReviewers,
+      reviewers: configuredReviewers,
       localReviewers: configuredLocalReviewers,
       configuredProfiles: ['remote-compatible', 'local-standard', 'local-focused', 'local-comprehensive', 'local-shadow'],
       requiredLanes: [...requiredLocalReviewLanes(effectiveReviewProfile)],
@@ -447,8 +483,6 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
         prComments: config.reviewContextSources.prComments,
         reviewThreads: config.reviewContextSources.reviewThreads,
       },
-      defaultOracle,
-      fallbackPromptAvailable: true,
       localEvidenceRoot,
       localRunner,
       externalServices: reviewerServices,
@@ -501,9 +535,7 @@ export function buildInstructionRecommendations(input: {
   const unmanagedTargets = input.repoRoot ? input.instructions.targets.filter(target => target.present && !target.managed) : [];
   const unhealthyTargets = input.repoRoot ? input.instructions.targets.filter(target => target.managed && !target.healthy) : [];
   const missingInstructionChecks = missingConfiguredInstructionChecks(input.instructionPolicy);
-  if (input.repoRoot && !input.instructions.agentsManaged && !input.instructions.claudeManaged) recommendations.push('Managed always-loaded instructions are not installed. Run `aie init . --dry-run` to review installation.');
-  const opencodeSelected = input.instructions.opencodeMakeItSo || input.instructions.opencodeMakeitsoAlias;
-  if (input.repoRoot && opencodeSelected && !input.instructions.opencodeMakeItSoManaged) recommendations.push('OpenCode project command is not installed. Run `aie init . --tool opencode --dry-run` to review installation.');
+  if (input.repoRoot && !input.instructions.harnesses.some(harness => harness.installed && harness.healthy)) recommendations.push('No complete agent harness setup is installed. Run `aie init . --dry-run` to review installation.');
   if (unmanagedTargets.length > 0) recommendations.push(`Instruction targets without Executor managed sections: ${unmanagedTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
   if (input.repoRoot && missingInstructionChecks.length > 0) recommendations.push(`Configured instruction policy is not installed for: ${missingInstructionChecks.join(', ')}. Run \`aie init . --dry-run\` to refresh managed instructions.`);
   if (unhealthyTargets.length > 0) recommendations.push(`Managed instruction targets need refresh: ${unhealthyTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);

@@ -1,82 +1,47 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, it } from "node:test";
 
-import {
-  assertClaudeCodeOperationAvailable,
-  claudeCodeAdapter,
-  claudeCodeHostProfile,
-  formatClaudeCodeUnsupportedOperationMessage,
-  getClaudeCodeOperationSupport,
-  inspectClaudeCodeWorkspace,
-  listClaudeCodeInstallFiles,
-  listClaudeCodeInstallNotes,
-  listClaudeCodeOperationSupport,
-} from "../dist/index.js";
+import { claudeCodeHostProfile } from "../dist/index.js";
 
 describe("claude-code adapter", () => {
-  it("registers the claude-code adapter contract", () => {
-    assert.equal(claudeCodeAdapter.id, "claude-code");
-    assert.equal(claudeCodeAdapter.packageName, "@tjalve/qube-adapter-claude-code");
-  });
-
-  it("exposes the claude-code host profile", () => {
+  it("exposes one canonical Claude Code host profile", () => {
     assert.equal(claudeCodeHostProfile.id, "claude-code");
-    assert.equal(claudeCodeHostProfile.instructionTargets[0].path, "CLAUDE.md");
-    assert.deepEqual(claudeCodeHostProfile.todo.tools, ["TodoWrite", "TodoRead"]);
-    assert.equal(claudeCodeHostProfile.supportsProjectCommands, true);
-    assert.ok(claudeCodeHostProfile.commandTargets.some((target) => target.path === ".claude/commands/make-it-so.md"));
-    assert.ok(claudeCodeHostProfile.commandTargets.some((target) => target.path === ".claude/skills/make-it-so/SKILL.md"));
+    assert.deepEqual(claudeCodeHostProfile.executables, { names: ["claude"], windowsNames: ["claude.exe"] });
+    assert.equal(claudeCodeHostProfile.instructionTarget.path, "CLAUDE.md");
+    assert.deepEqual(claudeCodeHostProfile.taskList.tools, ["TodoWrite", "TodoRead"]);
+    assert.equal(claudeCodeHostProfile.makeItSo.path, ".claude/commands/make-it-so.md");
+    assert.equal(claudeCodeHostProfile.makeItSo.kind, "command");
+    assert.equal(claudeCodeHostProfile.makeItSo.invocation, "/make-it-so");
+    assert.equal("commandTargets" in claudeCodeHostProfile, false);
+    assert.equal("instructionTargets" in claudeCodeHostProfile, false);
+    assert.equal("todo" in claudeCodeHostProfile, false);
+    assert.equal("dialogue" in claudeCodeHostProfile, false);
+    assert.equal("hooks" in claudeCodeHostProfile, false);
+    assert.equal("supportsProjectCommands" in claudeCodeHostProfile, false);
+    assert.equal(claudeCodeHostProfile.review.local.support, "supported");
+    assert.equal(claudeCodeHostProfile.review.local.readOnly, true);
+    assert.match(claudeCodeHostProfile.review.local.description, /returns one candidate lane result to the main session/);
+    assert.doesNotMatch(claudeCodeHostProfile.review.local.description, /writes only named review evidence|invokes QUBE's configured publisher/);
+    assert.deepEqual(claudeCodeHostProfile.review.local.agents.map((target) => target.renderer), [
+      "claude-review-focus-agent",
+      "claude-review-explorer-agent",
+      "claude-review-digest-agent",
+      "claude-review-librarian-agent",
+    ]);
+    assert.equal(claudeCodeHostProfile.review.isolated.support, "unsupported");
+    assert.deepEqual(claudeCodeHostProfile.review.isolated.agents, []);
+    assert.equal(claudeCodeHostProfile.modelDiscovery.support, "unsupported");
+    assert.equal("executableNames" in claudeCodeHostProfile.modelDiscovery, false);
+    assert.equal(claudeCodeHostProfile.umpire.continuation.support, "experimental");
+    assert.equal(claudeCodeHostProfile.umpire.continuation.currentIssueRecovery, true);
+    assert.deepEqual(claudeCodeHostProfile.umpire.probe.command, ["qube", "aiu", "doctor", "--json"]);
+    assert.equal(claudeCodeHostProfile.trust.required, true);
+    assert.deepEqual(claudeCodeHostProfile.trust.actions[0].paths, [".claude/settings.json"]);
   });
 
-  it("reports claude-code capabilities from workspace inspection", () => {
-    const capabilities = listClaudeCodeOperationSupport();
-    assert.equal(capabilities.filter((capability) => capability.support === "supported").length, 3);
-    assert.equal(capabilities.filter((capability) => capability.support === "host-provided").length, 6);
-    assert.equal(capabilities.filter((capability) => capability.support === "unsupported").length, 4);
-    assert.equal(new Set(capabilities.map((capability) => capability.id)).size, capabilities.length);
-
-    assert.equal(assertClaudeCodeOperationAvailable("read-instructions").support, "supported");
-    assert.equal(getClaudeCodeOperationSupport("install-slash-command").support, "unsupported");
-    assert.deepEqual(getClaudeCodeOperationSupport("use-task-state").tools, ["TodoWrite", "TodoRead"]);
-    assert.deepEqual(listClaudeCodeInstallFiles(), [
-      "CLAUDE.md policy notes: Claude Code project instructions use CLAUDE.md with repository policy precedence.",
-      ".claude/settings.json hook notes: Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop.",
-    ]);
-    assert.equal(listClaudeCodeInstallNotes().length, 5);
-
-    const unknownCapability = getClaudeCodeOperationSupport("completely-unknown-id");
-    assert.equal(unknownCapability.support, "unsupported");
-    assert.match(formatClaudeCodeUnsupportedOperationMessage(unknownCapability), /completely-unknown-id/);
-    assert.throws(() => assertClaudeCodeOperationAvailable("install-slash-command"), /Unsupported Claude Code capability/);
-
-    const repo = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-"));
-    writeFileSync(path.join(repo, "CLAUDE.md"), "Repository policy\n");
-    mkdirSync(path.join(repo, ".claude", "commands"), { recursive: true });
-    mkdirSync(path.join(repo, ".claude", "skills"), { recursive: true });
-    writeFileSync(path.join(repo, ".claude", "settings.json"), "{}\n");
-    const inspection = inspectClaudeCodeWorkspace(repo);
-
-    assert.equal(inspection.cwd, repo);
-    assert.equal(inspection.instructionTarget.present, true);
-    assert.equal(path.basename(inspection.instructionTarget.path), "CLAUDE.md");
-    assert.equal(inspection.settingsDirectory.present, true);
-    assert.equal(inspection.projectSettings.present, true);
-    assert.equal(inspection.localSettings.present, false);
-    assert.equal(inspection.commandDirectory.present, true);
-    assert.equal(inspection.skillsDirectory.present, true);
-    assert.ok(inspection.capabilities.some((capability) => capability.id === "use-task-state"));
-    assert.ok(inspection.unsupportedCapabilities.some((capability) => capability.id === "open-pull-request"));
-    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
-    assert.throws(() => {
-      inspection.capabilities[0].summary = "mutated";
-    }, TypeError);
-
-    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-missing-"));
-    const missingInspection = inspectClaudeCodeWorkspace(repoWithoutInstructions);
-    assert.equal(missingInspection.instructionTarget.present, false);
-    assert.equal(missingInspection.settingsDirectory.present, false);
+  it("does not present CLI help examples as an account model catalog", () => {
+    assert.equal(claudeCodeHostProfile.modelDiscovery.support, "unsupported");
+    assert.match(claudeCodeHostProfile.modelDiscovery.description, /does not expose/);
+    assert.match(claudeCodeHostProfile.modelDiscovery.nextAction, /leaves the native review model unpinned/);
   });
 });

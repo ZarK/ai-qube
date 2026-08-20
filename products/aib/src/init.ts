@@ -32,7 +32,7 @@ export function createInitPlan(input: {
   const milestonesDir = config.paths?.milestonesDir ?? `${docsDir}/milestones`;
   const issuesDir = config.paths?.issuesDir ?? `${docsDir}/issues`;
   const sessionPath = defaultStatePath(target, stateDir);
-  const agentAssets = createAgentAssetPlan(config.agent?.host);
+  const agentAssets = createAgentAssetPlan(config.agent?.surfaces ?? config.agent?.host);
   const state = createBootstrapState({
     intent: input.idea,
     agentHost: config.agent?.host,

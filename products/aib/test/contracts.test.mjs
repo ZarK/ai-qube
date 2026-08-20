@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { test } from "node:test";
+
+import { getAllAgentHostProfiles } from "@tjalve/aie";
 
 import {
   capability,
@@ -65,22 +70,24 @@ test("capability reports represent policy-blocked operations", () => {
   });
 });
 
-test("agent asset plans cover supported host instruction surfaces", () => {
-  const codex = createAgentAssetPlan("codex");
-  assert.deepEqual(codex.map((file) => file.path), ["AGENTS.md"]);
-  assert.match(codex[0].body, /aib next --json/);
-  assert.match(codex[0].body, /qube autoresearch --help/);
+test("agent asset plans use canonical harness instruction targets", async () => {
+  const profiles = await getAllAgentHostProfiles();
+  for (const profile of profiles) {
+    const files = createAgentAssetPlan(profile.id);
+    assert.deepEqual(files.map((file) => file.path), [profile.instructionTarget.path], profile.id);
+    assert.deepEqual(files.map((file) => file.kind), ["instruction"], profile.id);
+    assert.match(files[0].body, new RegExp(profile.displayName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")), profile.id);
+    assert.match(files[0].body, /aib next --json/, profile.id);
+    assert.match(files[0].body, /qube autoresearch --help/, profile.id);
+    assert.equal(files.some((file) => file.path === profile.makeItSo.path), false, profile.id);
+  }
 
-  const opencode = createAgentAssetPlan("opencode");
-  assert.deepEqual(opencode.map((file) => file.path), ["AGENTS.md", ".opencode/commands/aib-bootstrap.md"]);
-  assert.match(opencode[1].body, /aib init --agent opencode --json/);
-  assert.match(opencode[1].body, /synthesize the arena before edits/);
-
-  const claude = createAgentAssetPlan("claude-code");
-  assert.deepEqual(claude.map((file) => file.path), ["CLAUDE.md"]);
-
-  const gemini = createAgentAssetPlan("gemini");
-  assert.deepEqual(gemini.map((file) => file.path), ["GEMINI.md"]);
+  const shared = createAgentAssetPlan(["cursor", "grok-build", "claude-code"]);
+  assert.deepEqual(shared.map((file) => file.path), ["AGENTS.md", "CLAUDE.md"]);
+  const agents = shared.find((file) => file.path === "AGENTS.md");
+  assert.ok(agents);
+  assert.match(agents.body, /Grok Build/);
+  assert.match(agents.body, /Cursor/);
 });
 
 test("agent asset writes reject paths outside the target", () => {
@@ -94,6 +101,64 @@ test("agent asset writes reject paths outside the target", () => {
     }]),
     /outside target/
   );
+});
+
+test("agent asset writes preserve normal files and remain idempotent", (context) => {
+  const target = mkdtempSync(join(tmpdir(), "aib-agent-assets-"));
+  context.after(() => rmSync(target, { force: true, recursive: true }));
+  const file = {
+    id: "codex:instructions",
+    host: "codex",
+    path: "nested/AGENTS.md",
+    kind: "instruction",
+    body: "Use AIB."
+  };
+
+  writeAgentAssetFiles(target, [file]);
+  const first = readFileSync(join(target, file.path), "utf8");
+  writeAgentAssetFiles(target, [file]);
+  const second = readFileSync(join(target, file.path), "utf8");
+
+  assert.equal(second, first);
+  assert.equal(second.match(/BEGIN QUBE BOOTSTRAP MANAGED SECTION/gu)?.length, 1);
+});
+
+test("agent asset writes reject dangling symlink destinations", (context) => {
+  const target = mkdtempSync(join(tmpdir(), "aib-agent-symlink-"));
+  const outside = join(tmpdir(), `${basename(target)}-outside.md`);
+  const destination = join(target, "AGENTS.md");
+  context.after(() => {
+    rmSync(target, { force: true, recursive: true });
+    rmSync(outside, { force: true });
+  });
+
+  try {
+    symlinkSync(outside, destination, "file");
+  } catch (error) {
+    if (
+      error !== null
+      && typeof error === "object"
+      && "code" in error
+      && ["EACCES", "ENOSYS", "ENOTSUP", "EPERM"].includes(error.code)
+    ) {
+      context.skip(`symlink creation is unavailable: ${error.code}`);
+      return;
+    }
+    throw error;
+  }
+
+  assert.equal(existsSync(outside), false);
+  assert.throws(
+    () => writeAgentAssetFiles(target, [{
+      id: "codex:instructions",
+      host: "codex",
+      path: "AGENTS.md",
+      kind: "instruction",
+      body: "Use AIB."
+    }]),
+    /symlink/
+  );
+  assert.equal(existsSync(outside), false);
 });
 
 test("markdown work item rendering does not require GitHub auth or IDs", () => {

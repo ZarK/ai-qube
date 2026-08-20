@@ -14,7 +14,6 @@ export function buildQualityGate(command: string, index: number): GateConfig {
   };
 }
 
-export function expandGateConfigs(gates: GateConfig[], qualityGates: string[], qualityControl: boolean): GateConfig[] {
-  return [...gates, ...qualityGates.map(buildQualityGate)]
-    .filter(gate => gate.kind !== 'aiq' || qualityControl);
+export function selectEnabledGates(gates: GateConfig[], qualityControl: boolean): GateConfig[] {
+  return gates.filter(gate => gate.kind !== 'aiq' || qualityControl);
 }

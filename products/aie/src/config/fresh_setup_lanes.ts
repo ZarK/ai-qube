@@ -12,15 +12,6 @@ export const FRESH_SETUP_PERFORMANCE_MATCH = [
   '**/*virtual*',
 ] as const;
 
-export const FRESH_SETUP_API_CONTRACT_MATCH = [
-  '**/gateway/**',
-  '**/api/**',
-  '**/*openapi*',
-  '**/mcp/**',
-  '**/*contract*',
-  'packages/**/schema*',
-] as const;
-
 export const FRESH_SETUP_UI_MATCH = [
   '**/*.css',
   '**/*.tsx',
@@ -105,13 +96,6 @@ export function defaultFreshSetupLanes(defaultHost: RoutedReviewHostId | null = 
       id: 'performance',
       required: 'when-matched',
       match: FRESH_SETUP_PERFORMANCE_MATCH,
-      rereview: 'delta',
-      carryForwardContext: 'scope',
-    }),
-    freshSetupLane({
-      id: 'api-contract-compatibility',
-      required: 'when-matched',
-      match: FRESH_SETUP_API_CONTRACT_MATCH,
       rereview: 'delta',
       carryForwardContext: 'scope',
     }),

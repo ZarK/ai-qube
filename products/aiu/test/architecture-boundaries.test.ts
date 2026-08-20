@@ -13,7 +13,7 @@ type SourceModule = {
 };
 
 describe("runtime architecture boundaries", () => {
-  it("keeps normal runtime paths isolated from migration and CLI implementation modules", async () => {
+  it("keeps normal runtime paths isolated from CLI implementation modules", async () => {
     const modules = await loadSourceModules();
     const normalRuntimeModules = [
       "config",
@@ -29,7 +29,7 @@ describe("runtime architecture boundaries", () => {
       "trusted_adapter",
       "whip",
     ];
-    const forbiddenRuntimeImports = new Set(["assets", "cli", "command_registry", "doctor", "init", "migrate"]);
+    const forbiddenRuntimeImports = new Set(["assets", "cli", "command_registry", "doctor", "init"]);
 
     for (const moduleName of normalRuntimeModules) {
       const module = moduleByName(modules, moduleName);
@@ -51,7 +51,6 @@ describe("runtime architecture boundaries", () => {
       "doctor",
       "hook_stop",
       "init",
-      "migrate",
       "opencode",
       "status",
       "trusted_adapter",
@@ -77,7 +76,6 @@ describe("runtime architecture boundaries", () => {
       "command_registry",
       "doctor",
       "init",
-      "migrate",
     ]);
 
     for (const moduleName of ["hook_stop", "opencode"]) {

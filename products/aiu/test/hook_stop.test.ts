@@ -6,6 +6,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { getDefaultAiuConfig } from "../dist/src/config.js";
+import { readAiuHostActivation, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
 import type * as HookStop from "../src/hook_stop.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,31 +36,15 @@ describe("provider-neutral stop hooks", () => {
       assert.match("reason" in result.stdoutJson ? result.stdoutJson.reason : "", /Continue active work/);
       assert.equal(result.continuationDecision?.kind, "continue");
       assert.deepEqual(result.continuationDecision?.reasonCodes, ["continue-active-work"]);
+      const activation = readAiuHostActivation(resolveAiuContinuationPaths(target, getDefaultAiuConfig()), "codex");
+      assert.equal(activation?.schemaVersion, 1);
+      assert.equal(activation?.host, "codex");
+      assert.equal(activation?.delivery, "stdout");
+      assert.equal(activation?.event, "stop-hook");
+      assert.match(activation?.trustedStateFingerprint ?? "", /^[a-f0-9]{64}$/);
+      assert.equal(activation?.observedAt, observedAt);
     } finally {
       await rm(target, { recursive: true, force: true });
-    }
-  });
-
-  it("fails closed when the Grok Build adapter is not installed", async () => {
-    const adapter = await import(pathToFileURL(path.join(repoRoot, "dist/src/grok_build_adapter.js")).href) as {
-      omitGrokBuildAdapterForTests: () => void;
-      resetGrokBuildAdapterForTests: () => void;
-    };
-    adapter.omitGrokBuildAdapterForTests();
-    try {
-      const { runAiuHookStop } = await loadHookStop();
-      const result = await runAiuHookStop({
-        tool: "grok-build",
-        cwd: repoRoot,
-        observedAt,
-        stdin: JSON.stringify({ cwd: repoRoot, hookEventName: "stop", sessionId: "s1" }),
-      });
-      assert.equal(result.decision, "block");
-      assert.equal(result.reason, "missing-adapter");
-      assert.match(result.stderr, /@tjalve\/qube-adapter-grok-build/);
-      assert.match(result.stderr, /not installed|requires/);
-    } finally {
-      adapter.resetGrokBuildAdapterForTests();
     }
   });
 
@@ -246,7 +232,8 @@ describe("provider-neutral stop hooks", () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-hook-stop-noisy-"));
     try {
       await mkdir(path.join(target, ".git"));
-      await writeFile(path.join(target, "aiu.config.json"), JSON.stringify({
+      await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+      await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
         version: 1,
         hosts: {
           enabled: ["codex"],
@@ -280,6 +267,7 @@ describe("provider-neutral stop hooks", () => {
     const target = await createRepo({
       tool: "codex",
       stopHookBlocking: false,
+      modes: ["stop"],
       trustedState: activeWorkState(),
     });
     try {
@@ -294,6 +282,30 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(result.reason, "stop-hook-blocking-disabled");
       assert.deepEqual(result.stdoutJson, {});
       assert.match(result.stderr, /stop-hook-blocking-disabled/);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not continue when the host policy allows only stop", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({
+      tool: "codex",
+      stopHookBlocking: true,
+      modes: ["stop"],
+      trustedState: activeWorkState(),
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "codex",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify(stopPayload(target, "codex-session")),
+      });
+
+      assert.equal(result.decision, "allow");
+      assert.equal(result.continuationDecision?.kind, "stop");
+      assert.equal(result.reason, "stop-safety-block");
     } finally {
       await rm(target, { recursive: true, force: true });
     }
@@ -419,6 +431,7 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(failingResult.reason, "trusted-state-load-failed");
       assert.match(failingResult.stderr, /trusted-command-non-zero-exit/);
       assert.doesNotMatch(failingResult.stderr, /ghp_[A-Z0-9_]+/);
+      assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(failing, getDefaultAiuConfig()), "codex"), undefined);
     } finally {
       await rm(clean, { recursive: true, force: true });
       await rm(failing, { recursive: true, force: true });
@@ -436,15 +449,17 @@ async function createRepo(options: {
   readonly trustedState?: Record<string, unknown>;
   readonly trustedCommand?: readonly [string, ...string[]];
   readonly whipEnabled?: boolean;
+  readonly modes?: readonly ("continue" | "repair" | "stop")[];
 }): Promise<string> {
   const target = await mkdtemp(path.join(tmpdir(), "aiu-hook-stop-"));
   await mkdir(path.join(target, ".git"));
+  await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
   const trustedCommand = options.trustedCommand ?? [
     process.execPath,
     "-e",
     `process.stdout.write(${JSON.stringify(JSON.stringify(options.trustedState ?? emptyWorkState()))})`,
   ] as const;
-  await writeFile(path.join(target, "aiu.config.json"), JSON.stringify({
+  await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
     version: 1,
     hosts: {
       enabled: [options.tool],
@@ -455,7 +470,7 @@ async function createRepo(options: {
         },
       },
       modes: {
-        [options.tool]: ["stop"],
+        [options.tool]: options.modes ?? ["continue", "repair", "stop"],
       },
       stopHookBlocking: options.stopHookBlocking ? { [options.tool]: true } : {},
     },

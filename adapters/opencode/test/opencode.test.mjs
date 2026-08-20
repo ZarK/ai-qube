@@ -1,126 +1,67 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 
-import {
-  assertOpenCodeOperationSupported,
-  getOpenCodeOperationSupport,
-  inspectOpenCodeWorkspace,
-  listOpenCodeOperationSupport,
-  opencodeAdapter,
-  opencodeSessionTarget,
-  probeOpenCodeReviewCapability,
-} from "../dist/index.js";
+import { opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
 
-const tempDirs = new Set();
-
-after(() => {
-  for (const dir of tempDirs) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-describe("opencode adapter contract", () => {
-  it("exposes a real OpenCode capability map", () => {
-    assert.equal(opencodeAdapter.id, "opencode");
-    assert.equal(opencodeAdapter.contractOnly, false);
-    assert.ok(opencodeAdapter.owns.includes("stop-hooks"));
-    assert.ok(opencodeAdapter.owns.includes("local-review-probes"));
-    assert.ok(opencodeAdapter.owns.includes("unsupported-capability-reporting"));
-    assert.match(opencodeAdapter.boundary, /explicit capability records/);
-    assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "install-project-command" && capability.support === "supported"));
-    assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "probe-local-review-runner" && capability.support === "unsupported"));
-    assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "run-aiq-plugin" && capability.support === "standalone"));
+describe("opencode adapter", () => {
+  it("exposes one canonical OpenCode host profile", () => {
+    assert.equal(opencodeHostProfile.id, "opencode");
+    assert.deepEqual(opencodeHostProfile.executables, { names: ["opencode"], windowsNames: ["opencode.exe"] });
+    assert.equal(opencodeHostProfile.instructionTarget.path, "AGENTS.md");
+    assert.equal(opencodeHostProfile.makeItSo.path, ".opencode/commands/make-it-so.md");
+    assert.equal(opencodeHostProfile.makeItSo.kind, "command");
+    assert.equal(opencodeHostProfile.makeItSo.invocation, "/make-it-so");
+    assert.equal("commandTargets" in opencodeHostProfile, false);
+    assert.equal("instructionTargets" in opencodeHostProfile, false);
+    assert.equal("todo" in opencodeHostProfile, false);
+    assert.equal("dialogue" in opencodeHostProfile, false);
+    assert.equal("hooks" in opencodeHostProfile, false);
+    assert.equal("supportsProjectCommands" in opencodeHostProfile, false);
+    assert.deepEqual(opencodeHostProfile.taskList.tools, ["todowrite", "todoread"]);
+    assert.equal(opencodeHostProfile.subagents.support, "supported");
+    assert.equal(opencodeHostProfile.review.local.support, "supported");
+    assert.equal(opencodeHostProfile.review.local.readOnly, true);
+    assert.match(opencodeHostProfile.review.local.description, /returns one candidate lane result to the main session/);
+    assert.doesNotMatch(opencodeHostProfile.review.local.description, /writes only named review evidence|invokes QUBE's configured publisher/);
+    assert.deepEqual(opencodeHostProfile.review.local.agents.map((target) => target.renderer), [
+      "opencode-review-focus-agent",
+      "opencode-review-explorer-agent",
+      "opencode-review-digest-agent",
+      "opencode-review-librarian-agent",
+    ]);
+    assert.equal(opencodeHostProfile.review.isolated.support, "unsupported");
+    assert.deepEqual(opencodeHostProfile.review.isolated.agents, []);
+    assert.equal("executableNames" in opencodeHostProfile.modelDiscovery, false);
+    assert.equal(opencodeHostProfile.umpire.continuation.delivery, "host");
+    assert.equal(opencodeHostProfile.umpire.continuation.currentIssueRecovery, true);
+    assert.deepEqual(opencodeHostProfile.umpire.probe.command, ["qube", "aiu", "doctor", "--json"]);
+    assert.equal(opencodeHostProfile.trust.required, true);
   });
 
-  it("reports supported and unsupported operations without mock success", () => {
-    const commandInstall = getOpenCodeOperationSupport("install-project-command");
-    assert.equal(commandInstall.support, "supported");
-    assert.match(commandInstall.nextAction, /qube aie init/);
+  it("discovers live OpenCode models without refreshing the remote catalog", () => {
+    assert.deepEqual(
+      parseOpenCodeModelCatalog([
+        "anthropic/claude-sonnet-4",
+        "\u001b[32mopenai/gpt-5.6-luna-high\u001b[0m",
+        "openrouter/anthropic/claude-sonnet-4",
+        "anthropic/claude-sonnet-4",
+        "not a model",
+      ].join("\n")),
+      ["anthropic/claude-sonnet-4", "openai/gpt-5.6-luna-high", "openrouter/anthropic/claude-sonnet-4"],
+    );
+    assert.equal(parseOpenCodeModelCatalog("warning: no authenticated providers"), null);
 
-    const aiqPlugin = assertOpenCodeOperationSupported("run-aiq-plugin");
-    assert.equal(aiqPlugin.support, "standalone");
-
-    const localReviewRunner = getOpenCodeOperationSupport("probe-local-review-runner");
-    assert.equal(localReviewRunner.support, "unsupported");
-    assert.match(localReviewRunner.nextAction, /probeOpenCodeReviewCapability/);
-    assert.throws(() => assertOpenCodeOperationSupported("probe-local-review-runner"), /Unsupported OpenCode capability/);
-
-    const review = getOpenCodeOperationSupport("request-external-review");
-    assert.equal(review.support, "unsupported");
-    assert.match(review.nextAction, /review gate/);
-    assert.throws(() => assertOpenCodeOperationSupported("request-external-review"), /Unsupported OpenCode capability/);
-
-    const unknown = getOpenCodeOperationSupport("launch-space-elevator");
-    assert.equal(unknown.support, "unsupported");
-    assert.match(unknown.summary, /No product package has registered real OpenCode behavior/);
-    assert.ok(listOpenCodeOperationSupport().length >= 8);
-  });
-
-  it("returns immutable operation descriptors", () => {
-    const operations = listOpenCodeOperationSupport();
-    assert.throws(() => operations.push(operations[0]), TypeError);
-    assert.throws(() => {
-      operations[0].summary = "mutated";
-    }, TypeError);
-
-    const detect = getOpenCodeOperationSupport("detect-host");
-    assert.throws(() => detect.paths.push("mutated"), TypeError);
-
-    assert.throws(() => opencodeAdapter.capabilities.push(opencodeAdapter.capabilities[0]), TypeError);
-    assert.throws(() => {
-      opencodeAdapter.capabilities[0].summary = "mutated";
-    }, TypeError);
-  });
-
-  it("discovers installed OpenCode instruction and command assets", () => {
-    const repo = makeRepo("qube-opencode-adapter-");
-    writeFileSync(path.join(repo, "AGENTS.md"), "OpenCode instructions\n");
-    mkdirSync(path.join(repo, ".opencode", "commands"), { recursive: true });
-    writeFileSync(path.join(repo, ".opencode", "commands", "make-it-so.md"), "Run QUBE\n");
-    writeFileSync(path.join(repo, ".opencode", "commands", "custom.md"), "Run custom command\n");
-
-    const inspected = inspectOpenCodeWorkspace(repo);
-
-    assert.equal(inspected.cwd, repo);
-    assert.equal(inspected.instructionTarget.present, true);
-    assert.equal(inspected.commandDirectory.present, true);
-    assert.deepEqual(inspected.commands.map((command) => command.name), ["custom.md", "make-it-so.md"]);
-    assert.equal(inspected.commands.find((command) => command.name === "make-it-so.md")?.known, true);
-    assert.equal(inspected.commands.find((command) => command.name === "custom.md")?.known, false);
-    assert.ok(inspected.capabilities.some((capability) => capability.id === "use-todos"));
-    assert.throws(() => inspected.capabilities.push(inspected.capabilities[0]), TypeError);
-    assert.throws(() => {
-      inspected.capabilities[0].summary = "mutated";
-    }, TypeError);
-  });
-
-  it("keeps OpenCode session targets normalized", () => {
-    assert.equal(opencodeSessionTarget("ses_123"), "opencode:ses_123");
-    assert.throws(() => opencodeSessionTarget(" ses_123"), /already normalized/);
-  });
-
-  it("reports explicit unsupported local review-runner capability", () => {
-    const capability = probeOpenCodeReviewCapability();
-
-    assert.equal(capability.host, "opencode");
-    assert.equal(capability.independentReviewer, false);
-    assert.equal(capability.freshContext, false);
-    assert.equal(capability.promptOnly, true);
-    assert.equal(capability.hooks, true);
-    assert.equal(capability.evidenceWriting, false);
-    assert.deepEqual(capability.missingCapabilities, ["opencode-local-review-runner-unsupported"]);
-    assert.match(capability.nextAction, /Codex local-host review lanes|local-command review runner/);
-    assert.throws(() => {
-      capability.missingCapabilities.push("mutated");
-    }, TypeError);
+    const calls = [];
+    const models = opencodeHostProfile.modelDiscovery.listModels({
+      executable: "node",
+      prefixArgs: ["opencode-script.js"],
+      runCommand(executable, args) {
+        calls.push([executable, args]);
+        return "anthropic/claude-sonnet-4\nopenai/gpt-5.6-luna-high\n";
+      },
+    });
+    assert.deepEqual(models, ["anthropic/claude-sonnet-4", "openai/gpt-5.6-luna-high"]);
+    assert.deepEqual(calls, [["node", ["opencode-script.js", "models"]]]);
+    assert.equal(calls[0][1].includes("--refresh"), false);
   });
 });
-
-function makeRepo(prefix) {
-  const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}

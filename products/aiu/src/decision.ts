@@ -264,7 +264,7 @@ function normalizeDecisionPolicy(input: AiuContinuationDecisionInput): DecisionP
   const allowedModes = statePolicy?.kind === "continuation-policy" ? statePolicy.allowedModes : undefined;
 
   return Object.freeze({
-    modes: normalizeModes(configured.modes ?? allowedModes),
+    modes: restrictModes(configured.modes, allowedModes),
     stopOnUnknownState: normalizeBoolean(configured.stopOnUnknownState, statePolicy?.kind === "continuation-policy" ? statePolicy.stopOnUnknownState : undefined, DEFAULT_POLICY.stopOnUnknownState),
     stopOnStaleState: normalizeBoolean(configured.stopOnStaleState, statePolicy?.kind === "continuation-policy" ? statePolicy.stopOnStaleState : undefined, DEFAULT_POLICY.stopOnStaleState),
     stopOnUnsafeState: configured.stopOnUnsafeState ?? DEFAULT_POLICY.stopOnUnsafeState,
@@ -281,6 +281,18 @@ function normalizeDecisionPolicy(input: AiuContinuationDecisionInput): DecisionP
 function normalizeModes(value: readonly AiuContinuationDecisionKind[] | undefined): readonly AiuContinuationDecisionKind[] {
   const modes = (value ?? DEFAULT_POLICY.modes).filter((item, index, all) => DEFAULT_POLICY.modes.includes(item) && all.indexOf(item) === index);
   return Object.freeze(modes.length === 0 ? [...DEFAULT_POLICY.modes] : modes);
+}
+
+function restrictModes(
+  configured: readonly AiuContinuationDecisionKind[] | undefined,
+  allowed: readonly AiuContinuationDecisionKind[] | undefined,
+): readonly AiuContinuationDecisionKind[] {
+  const configuredModes = normalizeModes(configured);
+  if (!allowed) return configuredModes;
+  const allowedModes = new Set(allowed.filter((mode) => DEFAULT_POLICY.modes.includes(mode)));
+  if (allowedModes.size === 0) return Object.freeze(["stop"]);
+  const restricted = configuredModes.filter((mode) => allowedModes.has(mode));
+  return Object.freeze(restricted.length > 0 ? restricted : ["stop"]);
 }
 
 function normalizeBoolean(
@@ -476,10 +488,10 @@ function findBusyHost(indexed: readonly IndexedState[]): AiuDecisionSelectedItem
 
 function findRepair(indexed: readonly IndexedState[]): { readonly reasonCode: AiuReasonCode; readonly selectedItem?: AiuDecisionSelectedItem; readonly nextAction: string } | undefined {
   const activeReviewRepair = indexed.find((item) => item.value.kind === "review" && (item.value.status === "fail" || item.value.reviewStatus === "blocked" || item.value.reviewStatus === "unknown"));
-  if (activeReviewRepair) {
+  if (activeReviewRepair?.value.kind === "review") {
     return {
       reasonCode: "repair-active-review",
-      selectedItem: selectState(activeReviewRepair),
+      selectedItem: selectReview(activeReviewRepair.value),
       nextAction: "Repair: refresh or reconcile the active review state.",
     };
   }
@@ -707,6 +719,7 @@ function selectWorkItem(item: AiuWorkItemState | undefined): AiuDecisionSelected
     id: item.id,
     ...(item.title ? { title: item.title } : {}),
     status: item.status,
+    ...(item.nextAction ? { command: item.nextAction } : {}),
   });
 }
 
@@ -716,6 +729,7 @@ function selectReview(item: AiuReviewState | undefined): AiuDecisionSelectedItem
     kind: "review",
     ...(item.targetId ? { id: item.targetId } : {}),
     status: item.reviewStatus,
+    ...(item.nextAction ? { command: item.nextAction } : {}),
   });
 }
 

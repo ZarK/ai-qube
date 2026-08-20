@@ -15,6 +15,7 @@ import {
   type AiuStateFreshness,
   type AiuStateFreshnessKind,
   type AiuStateValueKind,
+  type AiuContinuationPolicyState,
   type AiuPlanningAction,
   type AiuPlanningArtifact,
   type AiuPlanningDecision,
@@ -27,10 +28,13 @@ import {
   type AiuQualityStage,
   type AiuQualityState,
   type AiuQualityTargetKind,
+  type AiuReviewState,
   type AiuTrustLevel,
   type AiuTrustedStateCommandRef,
   type AiuTrustedStateEnvelope,
   type AiuTrustedStatePayload,
+  type AiuWorkItemState,
+  type AiuWorkQueueState,
 } from "./state.js";
 
 export const AIU_TRUSTED_COMMAND_DEFAULT_TIMEOUT_MS = 30_000;
@@ -359,6 +363,18 @@ function normalizeTrustedStateEntry(
 }
 
 function normalizeTrustedStateValue(value: Record<string, unknown>): AiuTrustedStatePayload {
+  if (value.kind === "work-queue") {
+    return normalizeWorkQueueState(value);
+  }
+  if (value.kind === "work-item") {
+    return normalizeWorkItemState(value);
+  }
+  if (value.kind === "review") {
+    return normalizeReviewState(value);
+  }
+  if (value.kind === "continuation-policy") {
+    return normalizeContinuationPolicyState(value);
+  }
   if (value.kind === "planning") {
     return normalizePlanningState(value);
   }
@@ -366,6 +382,74 @@ function normalizeTrustedStateValue(value: Record<string, unknown>): AiuTrustedS
     return normalizeQualityState(value);
   }
   return value as unknown as AiuTrustedStatePayload;
+}
+
+function normalizeWorkQueueState(value: Record<string, unknown>): AiuWorkQueueState {
+  const summary = readString(value.summary);
+  return Object.freeze({
+    kind: "work-queue",
+    status: value.status as AiuStateValueKind,
+    ...(summary ? { summary } : {}),
+    activeItems: normalizeWorkItems(value.activeItems),
+    readyItems: normalizeWorkItems(value.readyItems),
+    blockedItems: normalizeWorkItems(value.blockedItems),
+    unknownItems: normalizeWorkItems(value.unknownItems),
+  });
+}
+
+function normalizeWorkItems(value: unknown): readonly AiuWorkItemState[] {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  return Object.freeze(value.flatMap((item) => isRecord(item) && readString(item.id) ? [normalizeWorkItemState(item)] : []));
+}
+
+function normalizeWorkItemState(value: Record<string, unknown>): AiuWorkItemState {
+  const title = readString(value.title);
+  const summary = readString(value.summary);
+  const nextAction = normalizeCommandRef(value.nextAction);
+  return Object.freeze({
+    kind: "work-item",
+    status: isStateValueKind(value.status) ? value.status : "unknown",
+    ...(summary ? { summary } : {}),
+    id: readString(value.id) ?? "unknown",
+    ...(title ? { title } : {}),
+    lifecycle: isWorkItemLifecycle(value.lifecycle) ? value.lifecycle : "unknown",
+    ...(isWorkItemPriority(value.priority) ? { priority: value.priority } : {}),
+    blockers: Object.freeze(readStringArray(value.blockers)),
+    ...(nextAction ? { nextAction } : {}),
+  });
+}
+
+function normalizeReviewState(value: Record<string, unknown>): AiuReviewState {
+  const targetId = readString(value.targetId);
+  const summary = readString(value.summary);
+  const nextAction = normalizeCommandRef(value.nextAction);
+  const unresolvedFeedbackCount = readNonNegativeInteger(value.unresolvedFeedbackCount);
+  return Object.freeze({
+    kind: "review",
+    status: isStateValueKind(value.status) ? value.status : "unknown",
+    ...(summary ? { summary } : {}),
+    ...(targetId ? { targetId } : {}),
+    reviewStatus: isReviewStatus(value.reviewStatus) ? value.reviewStatus : "unknown",
+    ...(unresolvedFeedbackCount !== undefined ? { unresolvedFeedbackCount } : {}),
+    ...(nextAction ? { nextAction } : {}),
+  });
+}
+
+function normalizeContinuationPolicyState(value: Record<string, unknown>): AiuContinuationPolicyState {
+  const summary = readString(value.summary);
+  const modes = readStringArray(value.allowedModes).filter((mode) => ["continue", "repair", "wait", "stop"].includes(mode)) as AiuContinuationPolicyState["allowedModes"];
+  const allowedModes: AiuContinuationPolicyState["allowedModes"] = modes.length > 0 ? Object.freeze([...modes]) : Object.freeze(["stop"]);
+  return Object.freeze({
+    kind: "continuation-policy",
+    status: isStateValueKind(value.status) ? value.status : "unknown",
+    ...(summary ? { summary } : {}),
+    allowedModes,
+    stopOnUnknownState: readBooleanUnknownUnsupported(value.stopOnUnknownState, true),
+    stopOnStaleState: readBooleanUnknownUnsupported(value.stopOnStaleState, true),
+    stopOnSupplyChainApprovalBlock: readBooleanUnknownUnsupported(value.stopOnSupplyChainApprovalBlock, true),
+    allowProviderMutation: readBooleanUnknownUnsupported(value.allowProviderMutation, false),
+    allowBackgroundScheduling: readBooleanUnknownUnsupported(value.allowBackgroundScheduling, false),
+  });
 }
 
 function normalizePlanningState(value: Record<string, unknown>): AiuPlanningState {
@@ -702,6 +786,10 @@ function readPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+function readNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 function readTrustLevel(value: unknown): AiuTrustLevel {
   return AIU_TRUST_LEVELS.some((item) => item === value) ? value as AiuTrustLevel : "trusted";
 }
@@ -728,6 +816,18 @@ function isQualityTargetKind(value: unknown): value is AiuQualityTargetKind {
 
 function isQualitySeverity(value: unknown): value is AiuQualityFinding["severity"] {
   return value === "low" || value === "medium" || value === "high" || value === "critical" || value === "unknown";
+}
+
+function isWorkItemLifecycle(value: unknown): value is AiuWorkItemState["lifecycle"] {
+  return ["active", "ready", "blocked", "closed", "unknown", "unsupported"].includes(String(value));
+}
+
+function isWorkItemPriority(value: unknown): value is NonNullable<AiuWorkItemState["priority"]> {
+  return ["low", "normal", "high", "critical"].includes(String(value));
+}
+
+function isReviewStatus(value: unknown): value is AiuReviewState["reviewStatus"] {
+  return ["none", "active", "approved", "changes-requested", "blocked", "unknown", "unsupported"].includes(String(value));
 }
 
 function isPlanningQuestionCategory(value: unknown): value is NonNullable<AiuPlanningQuestion["category"]> {

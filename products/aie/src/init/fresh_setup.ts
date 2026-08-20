@@ -15,7 +15,6 @@ import type { InitPolicyOptions } from './types.js';
 
 export {
   defaultFreshSetupLanes,
-  FRESH_SETUP_API_CONTRACT_MATCH,
   FRESH_SETUP_PERFORMANCE_MATCH,
   FRESH_SETUP_SECURITY_MATCH,
   FRESH_SETUP_UI_MATCH,
@@ -67,10 +66,6 @@ function firstInstalledHost(machine: GuideMachine): ReviewModelHostId | null {
   return isolatedReviewHostsOnMachine(machine)[0] ?? null;
 }
 
-const CODEX_REVIEW_MODEL = 'gpt-5.6-terra';
-const CODEX_ECONOMY_MODEL = 'gpt-5.6-luna';
-const GROK_BUILD_MODEL = 'grok-4.6';
-
 function catalogOf(machine: GuideMachine, host: string): readonly string[] {
   return machine.liveModels?.[host as keyof NonNullable<GuideMachine['liveModels']>] ?? [];
 }
@@ -80,19 +75,6 @@ function modelsFromMachine(machine: GuideMachine): ReviewModelsPolicy | undefine
   const economy: ReviewModelsPolicy['economy'] = {};
   for (const host of isolatedReviewHostsOnMachine(machine)) {
     const catalog = catalogOf(machine, host);
-    if (host === 'codex') {
-      if (catalog.includes(CODEX_REVIEW_MODEL)) review.codex = { model: CODEX_REVIEW_MODEL, effort: 'medium' };
-      else if (catalog[0]) review.codex = { model: catalog[0], effort: null };
-      if (catalog.includes(CODEX_ECONOMY_MODEL)) economy.codex = { model: CODEX_ECONOMY_MODEL, effort: 'high' };
-      continue;
-    }
-    if (host === 'grok-build') {
-      if (catalog.includes(GROK_BUILD_MODEL)) {
-        review['grok-build'] = { model: GROK_BUILD_MODEL, effort: 'medium' };
-        economy['grok-build'] = { model: GROK_BUILD_MODEL, effort: 'low' };
-      }
-      continue;
-    }
     if (catalog[0]) review[host] = { model: catalog[0], effort: null };
   }
   if (Object.keys(review).length === 0 && Object.keys(economy).length === 0) return undefined;
@@ -183,7 +165,7 @@ export function applyFreshSetupPolicy(input: {
     if (next.manualUiAudit === undefined) next.manualUiAudit = recommendedManualUiAudit(input.machine);
     if (next.qualityControl === undefined) next.qualityControl = recommendedQualityControl(input.machine);
   }
-  if (next.gates === undefined && next.qualityGates === undefined && input.repoRoot) {
+  if (next.gates === undefined && input.repoRoot) {
     const gates: GateConfig[] = [];
     const repoGate = detectRepositoryQualityGate(input.repoRoot);
     if (repoGate) gates.push(repoGate);
@@ -201,12 +183,13 @@ function configuredReviewModels(config: Config): string[] {
     .filter((model): model is string => typeof model === 'string' && model.trim() !== '');
 }
 
-export function freshSetupConfigIdentity(config: Pick<Config, 'reviewMode' | 'reviewAdapter' | 'reviewProfile' | 'reviewLanes' | 'reviewRoute' | 'reviewModels'>): string {
+export function freshSetupConfigIdentity(config: Pick<Config, 'reviewMode' | 'reviewAdapter' | 'reviewProfile' | 'reviewLanes' | 'reviewRoute' | 'reviewModels' | 'reviewSources'>): string {
   const models = REVIEW_MODEL_HOST_IDS.flatMap(host => {
     const model = config.reviewModels.review[host]?.model;
     return model ? [`${host}:${model}`] : [];
   });
   const lanes = config.reviewLanes.map(lane => `${lane.id}:${lane.required}:${lane.match.join(',')}`).join('|');
+  const sources = config.reviewSources.map(source => `${source.id}:${source.identity}:${source.expected.join(',')}:${source.blocking}:${source.markers}:${source.enabled}`).join('|');
   return [
     config.reviewMode ?? 'inferred',
     config.reviewAdapter,
@@ -214,6 +197,7 @@ export function freshSetupConfigIdentity(config: Pick<Config, 'reviewMode' | 're
     config.reviewRoute ? `${config.reviewRoute.host}:${config.reviewRoute.tier}` : 'none',
     models.join(','),
     lanes,
+    sources,
   ].join(';');
 }
 
@@ -224,8 +208,13 @@ export function freshSetupFirstPullRequestReadiness(config: Config, changedPaths
   if (config.reviewAdapter !== 'local') reasons.push(`Review adapter is ${config.reviewAdapter}, not local.`);
   if (config.reviewProfile !== 'local-focused') reasons.push(`Review profile is ${config.reviewProfile}, not local-focused.`);
   const configuredAlways = new Set(config.reviewLanes.filter(lane => lane.required === 'always' && lane.optOut !== true).map(lane => lane.id));
+  const laneSource = config.reviewSources.find(source => source.enabled && source.blocking && source.identity === 'lane');
   if (!configuredAlways.has('issue-compliance')) reasons.push('issue-compliance is not configured as an always-on lane.');
   if (!configuredAlways.has('code-quality')) reasons.push('code-quality is not configured as an always-on lane.');
+  if (!laneSource) reasons.push('No enabled blocking lane review source is configured.');
+  else {
+    for (const lane of configuredAlways) if (!laneSource.expected.includes(lane)) reasons.push(`${lane} is missing from the blocking lane review source.`);
+  }
   const activated = activeLocalReviewFocusesForConfig(config, changedPaths);
   if (configuredAlways.has('issue-compliance') && !activated.includes('issue-compliance')) reasons.push('issue-compliance is not activated for this change set.');
   if (configuredAlways.has('code-quality') && !activated.includes('code-quality')) reasons.push('code-quality is not activated for this change set.');

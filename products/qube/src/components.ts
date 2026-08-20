@@ -1,32 +1,32 @@
 import {
-  claudeCodeAdapterContract,
-  codexAdapterContract,
-  cursorAdapterContract,
-  grokBuildAdapterContract,
+  AGENT_HOST_IDS,
+  AGENT_HOST_REGISTRATIONS,
   gitLabAdapterContract,
   githubAdapterContract,
   jenkinsAdapterContract,
   jiraAdapterContract,
   linearAdapterContract,
-  opencodeAdapterContract,
+  type AgentHostCapability,
+  type AgentHostProfile,
   type QubeAdapterCapability,
   type QubeAdapterContract,
   type QubeIntegrationSurface,
   type ConnectionContract,
 } from "@tjalve/qube-core";
+import { getAgentHostProfileSync } from "@tjalve/aie";
 
 import { dependencyVersion } from "./package.js";
 
 
 export type QubeOptionSupport = "installed" | "optional" | "unsupported";
-export type QubeDiscoveryCapabilitySupport = QubeAdapterCapability["support"] | "host-provided";
+export type QubeDiscoveryCapabilitySupport = QubeAdapterCapability["support"] | AgentHostCapability["support"] | "host-provided";
 
 export interface QubeDiscoveryOption {
   readonly id: string;
   readonly support: QubeOptionSupport;
   readonly packageName: string | null;
   readonly surface: QubeIntegrationSurface | "local";
-  readonly source: "adapter-contract" | "host-contract" | "local-option";
+  readonly source: "adapter-contract" | "agent-host-profile" | "local-option";
   readonly default: boolean;
   readonly summary: string;
   readonly capabilities: readonly QubeDiscoveryCapability[];
@@ -57,7 +57,6 @@ export interface QubeComponent {
   readonly capabilities?: {
     readonly localReview?: {
       readonly freshContextReviewerSupport: "host-provided" | "configured-command" | "prompt-only" | "unsupported";
-      readonly promptOnlyFallback: boolean;
       readonly manualEvidenceSatisfiesRequiredGate: boolean;
       readonly provenanceRequired: readonly string[];
       readonly provenanceAlternatives: readonly {
@@ -107,7 +106,7 @@ function hostOption(input: {
     support: input.support,
     packageName: input.packageName,
     surface: input.surface,
-    source: input.surface === "local" ? "local-option" : "host-contract",
+    source: input.surface === "local" ? "local-option" : "agent-host-profile",
     default: input.default ?? false,
     summary: input.summary,
     capabilities: Object.freeze(input.capabilities.map(capability => Object.freeze({
@@ -121,26 +120,53 @@ function hostOption(input: {
 }
 
 function normalizeCapabilitySupport(support: string): QubeDiscoveryCapabilitySupport {
-  if (support === "unsupported" || support === "standalone" || support === "host-provided") return support;
+  if (support === "unsupported" || support === "experimental" || support === "standalone" || support === "host-provided") return support;
   return "supported";
 }
 
-export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freeze([
-  hostOption({
-    id: "generic",
+function profileCapability(id: string, capability: AgentHostCapability, owner: string): QubeDiscoveryCapability {
+  return Object.freeze({
+    id,
+    support: capability.support,
+    owner,
+    summary: `${capability.description}${capability.nextAction ? ` Next: ${capability.nextAction}` : ""}`,
+  });
+}
+
+function agentHostOption(profile: AgentHostProfile): QubeDiscoveryOption {
+  const registration = AGENT_HOST_REGISTRATIONS[profile.id];
+  const trustActions = profile.trust.actions.map(action => action.description).join(" ");
+  return Object.freeze({
+    id: profile.id,
     support: "installed",
-    surface: "local",
-    packageName: null,
-    default: true,
-    summary: "Generic terminal setup makes no host-specific automation or file-layout assumptions.",
-    capabilities: [],
-  }),
-  adapterOption(codexAdapterContract, "installed", "Codex host capability reporting uses the Codex adapter contract and AGENTS.md host profile."),
-  adapterOption(claudeCodeAdapterContract, "installed", "Claude Code host capability reporting uses the Claude Code adapter contract."),
-  adapterOption(grokBuildAdapterContract, "optional", "Grok Build host capability reporting uses the Grok Build adapter contract."),
-  adapterOption(cursorAdapterContract, "optional", "Cursor supplies isolated read-only review compute through the official CLI."),
-  adapterOption(opencodeAdapterContract, "optional", "OpenCode host capability reporting uses the OpenCode adapter contract and remains explicit about unsupported PR and branch mutations."),
-]);
+    packageName: registration.packageName,
+    surface: profile.id,
+    source: "agent-host-profile",
+    default: profile.id === "codex",
+    summary: `${profile.displayName} reads ${profile.instructionTarget.path} and starts QUBE through ${profile.makeItSo.invocation}.`,
+    capabilities: Object.freeze([
+      Object.freeze({ id: "instructions", support: "supported", owner: registration.packageName, summary: profile.instructionTarget.description }),
+      Object.freeze({ id: "make-it-so", support: "supported", owner: registration.packageName, summary: `${profile.makeItSo.description} Invoke ${profile.makeItSo.invocation}.` }),
+      profileCapability("task-list", profile.taskList, registration.packageName),
+      profileCapability("subagents", profile.subagents, registration.packageName),
+      profileCapability("local-review", profile.review.local, registration.packageName),
+      profileCapability("isolated-review", profile.review.isolated, registration.packageName),
+      profileCapability("umpire-continuation", profile.umpire.continuation, registration.packageName),
+      profileCapability("live-models", profile.modelDiscovery, registration.packageName),
+      Object.freeze({
+        id: "trust-actions",
+        support: "supported",
+        owner: registration.packageName,
+        summary: profile.trust.required ? `${profile.trust.description} ${trustActions}`.trim() : profile.trust.description,
+      }),
+    ]),
+    connection: null,
+  });
+}
+
+export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freeze(
+  AGENT_HOST_IDS.map(id => agentHostOption(getAgentHostProfileSync(id))),
+);
 
 export const executorWorkProviders: readonly QubeDiscoveryOption[] = Object.freeze([
   adapterOption(githubAdapterContract, "installed", "GitHub issues, pull requests, checks, merge blockers, and review threads use the GitHub adapter contract.", true),
@@ -214,7 +240,6 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     capabilities: {
       localReview: {
         freshContextReviewerSupport: "host-provided",
-        promptOnlyFallback: true,
         manualEvidenceSatisfiesRequiredGate: false,
         provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "promptStackHash", "headSha", "providerPublishStatus"],
         provenanceAlternatives: [
@@ -225,7 +250,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
         ],
         evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
         hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
-        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."
+        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The selected agent harness must spawn an independent review subagent and record matching local-host provenance before a required gate can pass."
       },
       hostSurfaces: executorHostSurfaces,
       workProviders: executorWorkProviders,

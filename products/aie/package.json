@@ -40,12 +40,16 @@
     "bin/",
     "dist/",
     "assets/",
-    "docs/migration.md",
     "docs/review-modes.md",
     "prompts/",
     "README.md"
   ],
   "dependencies": {
+    "@tjalve/qube-adapter-claude-code": "0.1.5",
+    "@tjalve/qube-adapter-codex": "0.1.7",
+    "@tjalve/qube-adapter-cursor": "0.1.1",
+    "@tjalve/qube-adapter-grok-build": "0.1.7",
+    "@tjalve/qube-adapter-opencode": "0.1.5",
     "@tjalve/qube-cli": "0.2.1",
     "@tjalve/qube-core": "0.2.5"
   },
@@ -65,16 +69,11 @@
     "verify": "pnpm run lint && pnpm run test && pnpm run pack:check"
   },
   "devDependencies": {
-    "@tjalve/qube-adapter-claude-code": "workspace:*",
-    "@tjalve/qube-adapter-codex": "workspace:*",
     "@tjalve/qube-adapter-github": "workspace:*",
     "@tjalve/qube-adapter-gitlab": "workspace:*",
     "@tjalve/qube-adapter-jenkins": "workspace:*",
     "@tjalve/qube-adapter-jira": "workspace:*",
     "@tjalve/qube-adapter-linear": "workspace:*",
-    "@tjalve/qube-adapter-opencode": "workspace:*",
-    "@tjalve/qube-adapter-grok-build": "workspace:*",
-    "@tjalve/qube-adapter-cursor": "workspace:*",
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
   }

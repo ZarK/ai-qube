@@ -152,18 +152,11 @@ export interface AuditPolicy {
 }
 
 export interface InstructionPolicy {
-  opencodeCommandAlias: boolean;
   namingRules: boolean;
   promptInjectionWarning: boolean;
   noCreditWarning: boolean;
   implementationGuardrails: boolean;
   supplyChainSafety: boolean;
-}
-
-export interface MigrationPolicy {
-  legacyScripts: 'preserve' | 'install-wrappers' | 'cleanup';
-  compatibilityWrappers: boolean;
-  cleanupKnownHelpers: boolean;
 }
 
 export interface SupplyChainPolicy {
@@ -187,7 +180,6 @@ export interface ExecutorPolicy {
   gates: GatePolicy;
   audit: AuditPolicy;
   instructions: InstructionPolicy;
-  migration: MigrationPolicy;
   supplyChain: SupplyChainPolicy;
 }
 
@@ -297,7 +289,6 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { evidenceRoot: '', ...input.audit },
     instructions: { ...input.instructions },
-    migration: { ...input.migration },
     supplyChain: {
       ...input.supplyChain,
       packageAgeDays,

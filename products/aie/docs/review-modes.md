@@ -57,9 +57,8 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 - `policy.reviews.localAgents` is empty. Isolated review uses `route` and `models`. Host mode writes the installed review hosts here.
 - `policy.reviews.waitMinutes` is `0`. Isolated review does not wait for an external reviewer.
 - `policy.reviews.route` points at the first installed host, tier `review`, `timeoutSeconds` `900`, `maxTurns` `16`.
-- `policy.reviews.models.review` records a live catalog model for each installed host that can list models. Setup validates the model before write.
-- When the catalog lists `gpt-5.6-terra`, Codex review effort is `medium`. When it lists `gpt-5.6-luna`, Codex economy effort is `high`.
-- When the catalog lists `grok-4.6`, Grok Build review effort is `medium` and Grok Build economy effort is `low`. Setup does not default to `grok-4.5`.
+- `policy.reviews.models.review` records the first live catalog model for each installed host that can list models. Setup does not embed model identifiers that can become obsolete.
+- Setup leaves effort unset because the model catalog does not report effort support. You can select another listed model or an effort after init.
 - `policy.reviews.failover` is written only when a second installed host also has a live model.
 - `providers.review.publisher` stays `user` unless you pass a publisher flag. A user publisher that matches the pull request author cannot publish a formal GitHub review event. Isolated ship-ready uses lane evidence.
 - Init asks whether to install attribution hygiene rules. The recommended answer is yes. `--yes` writes `policy.instructions.noCreditWarning` true. `--no-credit-warning` omits the block.
@@ -71,7 +70,6 @@ The written `policy.reviews.lanes` list is:
 - `issue-compliance`: `required` `always`, runner `local-host`, `rereview` `always-rerun`, carry-forward `all`. This lane asks whether the change satisfies the issue.
 - `code-quality`: `required` `always`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. This lane asks whether the code is sound.
 - `performance`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/*indexer*`, `**/*embed*`, `**/*retrieval*`, `**/*queue*`, `**/*cache*`, `**/*worker*`, `**/*stream*`, `**/*scheduler*`, `**/*virtual*`.
-- `api-contract-compatibility`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/gateway/**`, `**/api/**`, `**/*openapi*`, `**/mcp/**`, `**/*contract*`, `packages/**/schema*`.
 - `ui-ux-accessibility`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `scope`. Match: `**/*.css`, `**/*.tsx`, `apps/**`, `design/**`.
 - `security`: `required` `when-matched`, runner `local-host`, `rereview` `delta`, carry-forward `config`, explicit route to the default review host. Match: `**/auth/**`, `**/security/**`, `**/crypto/**`, `**/gateway/**`, `.github/**`, `.qube/**`, `package.json`, lockfiles, `**/*trust*`, `**/*token*`, `**/*auth*`.
 
@@ -88,13 +86,8 @@ The written `policy.reviews.lanes` list is:
 - When `aiq` is not available, `policy.gates.qualityControl` stays `false`.
 - `policy.audit.manualUiAudit` is `true` only when the repository has user-facing UI and `agent-browser` is on PATH. The shipped static default is `false`.
 
-### Fallback when no review host is installed
+### When no review path is configured
 
-Isolated is not available. Init writes:
+QUBE does not emulate another agent harness or generate a manual fallback reviewer. Native review requires one of the five supported harness profiles: Codex, Claude Code, OpenCode, Grok Build, or Cursor. External review requires a configured reviewer.
 
-- `policy.reviews.mode` `external`
-- `policy.reviews.adapter` `github`
-- `policy.reviews.profile` `remote-compatible`
-- empty `policy.reviews.agents` and empty `policy.reviews.lanes`
-
-Doctor on this fallback reports no setup warnings. The first pull request does not get an isolated review until a host is installed and you rerun init.
+If neither path is configured, doctor and the review gate report review as unavailable. Configure a real harness or an external reviewer, then rerun init before you ship a pull request.

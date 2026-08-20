@@ -292,7 +292,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Do not read external prompt files/);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.agentType, 'qube-review-focus');
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.forkContext, false);
-    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal('publishCommand' in result.localReviewRunner.lanes[0].spawnContract, false);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, new RegExp(`Prompt stack hash for runnerProvenance\\.promptStackHash: ${result.localReviewRunner.lanes[0].promptStackHash}\\.`));
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
@@ -316,11 +316,36 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.localReviewRunner.lanes[0].promptText, /PR head SHA: abc123/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /\.git[\\/]qube[\\/]aie[\\/]host-provenance[\\/]93[\\/]12[\\/]abc123/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /evidenceSha256 is the canonical SHA-256 digest/);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /Writing the requested evidence and host-provenance files is allowed/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /Do not write the requested evidence or host-provenance files/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /The main session creates host provenance/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].spawnPrompt, /pr review publish/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /pr review publish/);
+    assert.match(result.localReviewRunner.lanes[0].summary, /then publish the lane with `qube aie pr review publish 12 --lane/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /QUBE context commands/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Issue #93 checklist:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Check ci:/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
+  });
+
+  it('keeps native review prompts and provenance bound to the selected harness', async () => {
+    const nativeHosts = ['codex', 'claude-code', 'opencode', 'grok-build'];
+
+    for (const host of nativeHosts) {
+      const repo = makeGitRepo();
+      const config = localHostConfig(null);
+      config.localReviewAgents = [host];
+      const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+      const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+      const lane = result.localReviewRunner.lanes[0];
+
+      assert.match(lane.spawnPrompt, new RegExp(`runnerProvenance with runnerKind local-host, host ${host},`));
+      assert.doesNotMatch(lane.promptText, /Fallback host mode/);
+      assert.ok(lane.promptFragmentIds.includes(host === 'codex' ? 'hosts/codex' : 'hosts/agent-harness'));
+      for (const otherHost of nativeHosts.filter(candidate => candidate !== host)) {
+        assert.doesNotMatch(lane.spawnPrompt, new RegExp(`runnerKind local-host, host ${otherHost},`));
+      }
+    }
   });
 
   it('renders repository fragments into every lane spawnPrompt and keeps per-lane prompts isolated', async () => {
@@ -482,7 +507,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(pendingResult.localReviewRunner.lanes[0].promptStackHash, passedResult.localReviewRunner.lanes[0].promptStackHash);
   });
 
-  it('uses installed qube aie in Codex spawn publish commands even when a workspace runner exists', async () => {
+  it('keeps the publish command in the main-session action and out of the subagent prompt', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'bin'), { recursive: true });
     writeFileSync(join(repo, 'products', 'aie', 'bin', 'run'), '');
@@ -491,11 +516,16 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
-    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal('publishCommand' in result.localReviewRunner.lanes[0].spawnContract, false);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
-    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, publish provider-visible feedback with: qube aie pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, return exactly one candidate lane evidence JSON object/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /The main session validates the returned result, writes its evidence and provenance, and then publishes provider-visible feedback\./);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].spawnPrompt, /pr review publish/);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Prompt stack hash for runnerProvenance\.promptStackHash: [a-f0-9]{64}\./);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `qube aie pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /After validation and persistence, the main session publishes provider-visible feedback\./);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /pr review publish/);
+    assert.match(result.localReviewRunner.lanes[0].summary, /then publish the lane with `qube aie pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /Do not write the requested evidence or host-provenance files/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /products\/aie\/bin\/run/);
   });
 
@@ -1294,7 +1324,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const cards = selectRiskCards({ issueText: riskCardIssueText, paths: changedPaths });
     assert.ok(cards.length > 0, 'fixture must activate risk cards');
     const fragments = cards.map(card => formatRiskCardReviewerFragment(card));
-    const cardStack = promptStack('code-quality', [`Run local review lane code-quality.`], fragments).promptStack.map(fragment => ({
+    const cardStack = promptStack('codex', 'code-quality', [`Run local review lane code-quality.`], fragments).promptStack.map(fragment => ({
       id: fragment.id,
       source: fragment.source,
       sourceCategory: fragment.sourceCategory,
@@ -1747,7 +1777,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
   it('does not accept matching local review metadata from another author as publish visibility', async () => {
     const repo = makeGitRepo();
-    const config = localReviewConfig();
+    const config = localHostConfig(null);
     const pr = approvedLocalPr({
       reviewDecision: 'APPROVED',
       comments: [qubeReviewRequestComment(), localReviewComment({ recommendation: 'approve', status: 'passed' })],
@@ -1755,7 +1785,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     pr.comments[1].author = { login: 'attacker' };
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
 
     assert.equal(result.localReviewPublish.status, 'disabled');
     assert.equal(result.status, 'pending');
@@ -1796,12 +1826,13 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('does not suppress spoofed QUBE local review marker comments', async () => {
+    const repo = userReviewRepo();
     const pr = cleanLocalPr({
       comments: [{ ...localReviewComment({ recommendation: 'approve', status: 'passed' }), author: { login: 'attacker' } }],
     });
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrViewService({ prNumber: 12, exec });
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(result.feedback.length, 1);
     assert.equal(result.feedback[0].author, 'attacker');

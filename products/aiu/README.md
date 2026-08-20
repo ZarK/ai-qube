@@ -87,26 +87,6 @@ completes a task.
 | Claude Code | Experimental | `aiu init --tool claude-code` | Project settings are preserved on conflict. |
 | Generic MCP, Git hooks, GitHub Actions | Not a continuation host | none | These are not interactive idle-session continuation surfaces. |
 
-## Migration
-
-Inspect migration plans before changing files:
-
-```sh
-pnpm exec aiu migrate --dry-run --json
-```
-
-Apply and cleanup are explicit:
-
-```sh
-pnpm exec aiu migrate --apply --json
-pnpm exec aiu migrate --cleanup --dry-run --json
-pnpm exec aiu migrate --cleanup --confirm scripts/aiu-stop.js --json
-```
-
-Migration preserves repository policy, trusted command descriptors, prompt
-customizations, and legacy durable state unless an explicit reviewed command
-changes them.
-
 ## Safe Uninstall
 
 Remove the package only after host files and trusted command descriptors no
@@ -117,15 +97,12 @@ pnpm remove @tjalve/aiu
 ```
 
 Review `pnpm exec aiu doctor --json`, `pnpm exec aiu paths --json`, and normal
-git diffs before deleting host configuration. For old copied helper assets, use
-`pnpm exec aiu migrate --cleanup --dry-run --json` first and confirm only the
-cleanup candidates you intend to remove.
+git diffs before deleting host configuration.
 
 ## Safety Notes
 
 - The package has no install lifecycle scripts.
-- `doctor`, `paths`, `config`, `status`, `init --dry-run`, and migration
-  dry-runs are inspection-first commands.
+- `doctor`, `paths`, `config`, `status`, and `init --dry-run` are inspection-first commands.
 - AIU does not stage, commit, push, open pull requests, close issues, delete
   files, install package managers, or create provider credentials.
 - Local `.qube/aiu/` state, locks, and logs are diagnostics, not provider truth.

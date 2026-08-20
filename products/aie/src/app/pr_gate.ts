@@ -508,7 +508,7 @@ function localReviewRunnerKind(localReviewRunner: LocalReviewRunResult): string 
 }
 
 function localReviewHost(localReviewRunner: LocalReviewRunResult): string {
-  return localReviewRunner.lanes.some(lane => lane.runner === 'local-host') ? localReviewRunner.codex.host : localReviewRunnerKind(localReviewRunner);
+  return localReviewRunner.lanes.some(lane => lane.runner === 'local-host') ? localReviewRunner.host : localReviewRunnerKind(localReviewRunner);
 }
 
 function localReviewEvidenceRunner(input: { localReviewRunner: LocalReviewRunResult; localReview: LocalReviewGate }): { runner: string; host: string } {
@@ -1014,7 +1014,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // source contract (further down): the same configured sources must drive
   // both, or a source could satisfy the contract while its findings never
   // reached the batch, or vice versa.
-  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const reviewSources = resolveReviewSources(config);
   let providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
   let fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
@@ -1171,7 +1171,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // current-head metadata. Delayed visibility remains pending on this read.
   if (roundSummary?.status === 'published') {
     try {
-      finalSnapshot = await provider.loadPullRequestReview(options.prNumber, { publishedRecord: roundSummary.publishedRecord ?? null });
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
     } catch (error: unknown) {
       publishUnavailable.push(`Published review feedback could not be reloaded from the provider: ${error instanceof Error ? error.message : String(error)}`);
     }

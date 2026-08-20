@@ -140,24 +140,24 @@ describe('gate model', () => {
 });
 
 describe('gate config validation', () => {
-  it('accepts structured gates while preserving legacy quality gate strings', () => {
+  it('rejects gate command strings outside structured definitions', () => {
     const result = validateConfig({
       ...cleanConfig(),
       policy: {
         ...cleanConfig().policy,
         gates: {
           definitions: [
-        { name: 'lint', kind: 'lint', command: 'npm run lint', stage: 'pre-pr', required: false, timeoutSeconds: 120, workingDirectory: '.', env: { NODE_ENV: 'test' }, externalService: false },
+            { name: 'lint', kind: 'lint', command: 'npm run lint', stage: 'pre-pr', required: false, timeoutSeconds: 120, workingDirectory: '.', env: { NODE_ENV: 'test' }, externalService: false },
           ],
           qualityGates: ['npm test'],
           qualityControl: false,
+          focusedSelectors: [],
         },
       },
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.config.gates[0].kind, 'lint');
-    assert.deepEqual(result.config.qualityGates, ['npm test']);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.gates.qualityGates' && error.kind === 'unknown'));
   });
 
   it('rejects malformed structured gates with actionable paths', () => {

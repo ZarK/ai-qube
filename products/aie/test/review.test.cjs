@@ -27,43 +27,24 @@ function cleanConfig() {
   return configToFileShape(getDefaults());
 }
 
-function writeLocalReview(repo, issueNumber, status = 'passed') {
+function writeObsoleteAggregateReview(repo, issueNumber) {
   const directory = join(repo, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, 'pr-12');
   mkdirSync(directory, { recursive: true });
-  const artifactDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
-  mkdirSync(artifactDirectory, { recursive: true });
-  for (const artifactName of ['task-record-compliance.json', 'issue-compliance.json', 'code-quality.txt', 'tests-quality.txt', 'manual-qa.txt', 'final-gate.json']) {
-    writeFileSync(join(artifactDirectory, artifactName), `${artifactName} fixture artifact
-`);
-  }
   writeFileSync(join(directory, 'abc123.json'), JSON.stringify({
     version: 1,
     issueNumber,
     prNumber: 12,
     headSha: 'abc123',
-    profile: 'local-standard',
-    adapter: 'local-host',
-    reviewer: { id: 'oracle', name: 'oracle', adapterKind: 'local' },
-    summary: 'local review evidence recorded',
-    blockers: [],
-    promptStack: [{ id: 'builtin:review-profile:local-standard', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
-    recordedAt: '2026-06-22T00:00:00.000Z',
-    lanes: [
-      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/task-record-compliance.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:task-record-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/issue-compliance.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:issue-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'code-quality', status, severity: 'none', recommendation: status === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/code-quality.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:code-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:tests-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:manual-qa', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:final-gate', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-    ],
+    status: 'passed',
   }, null, 2));
 }
 
-function writeLocalLaneReview(repo, issueNumber) {
+function writeLocalLaneReview(repo, issueNumber, codeQualityStatus = 'passed') {
   const directory = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), '12', 'abc123');
   mkdirSync(directory, { recursive: true });
   const lanes = ['task-record-compliance', 'issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'];
   for (const lane of lanes) {
+    const status = lane === 'code-quality' ? codeQualityStatus : 'passed';
     writeFileSync(join(directory, `${lane}.json`), `${JSON.stringify({
       version: 1,
       issueNumber,
@@ -72,10 +53,9 @@ function writeLocalLaneReview(repo, issueNumber) {
       profile: 'local-standard',
       adapter: 'local-command',
       lane,
-      id: lane,
-      status: 'passed',
+      status,
       severity: 'none',
-      recommendation: 'approve',
+      recommendation: status === 'passed' ? 'approve' : status === 'pending' ? 'pending' : 'request-changes',
       summary: `${lane} reviewed`,
       blockers: [],
       artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/12/abc123/${lane}.json`, sha256: null }],
@@ -102,7 +82,7 @@ function writeLocalLaneReview(repo, issueNumber) {
 }
 
 describe('review gate model', () => {
-  it('renders the Oracle-style default prompt when no reviewer is configured', () => {
+  it('reports review unavailable when no real harness or external reviewer is configured', () => {
     const config = getDefaults();
     config.reviewAgents = [];
 
@@ -111,27 +91,28 @@ describe('review gate model', () => {
     assert.equal(result.required, true);
     assert.equal(result.dryRun, true);
     assert.equal(result.promptOnly, true);
-    assert.equal(result.reviewers[0].name, 'oracle');
-    assert.equal(result.reviewers[0].source, 'default-oracle');
-    assert.equal(result.reviewers[0].invocation, '@oracle');
-    assert.equal(result.reviewers[0].externalService, false);
-    assert.match(result.prompt, /Review issue #93/);
-    assert.match(result.fallbackPrompt, /read-only strategic technical reviewer/);
-    assert.match(result.nextAction, /Send the rendered prompt/);
+    assert.deepEqual(result.reviewers, []);
+    assert.equal(result.reviewAvailable, false);
+    assert.equal(result.promptAvailable, false);
+    assert.equal(result.prompt, null);
+    assert.equal(result.localReviewRunner.host, null);
+    assert.deepEqual(result.promptStack, []);
+    assert.match(result.nextAction, /No review harness or external reviewer is configured/);
   });
 
-  it('falls back to the Oracle-style default when configured reviewer names are blank', () => {
+  it('does not create a reviewer for blank configured reviewer names', () => {
     const config = getDefaults();
     config.reviewAgents = ['  '];
 
     const result = runReviewGate(config, { issueNumber: 93, repoRoot: makeGitRepo() });
 
-    assert.equal(result.reviewers[0].name, 'oracle');
-    assert.equal(result.reviewers[0].source, 'default-oracle');
-    assert.match(result.warnings.join('\n'), /No custom review agent/);
+    assert.deepEqual(result.reviewers, []);
+    assert.equal(result.reviewAvailable, false);
+    assert.equal(result.promptAvailable, false);
+    assert.match(result.warnings.join('\n'), /did not emulate a reviewer/);
   });
 
-  it('renders custom reviewer names and redacts configured request text', () => {
+  it('reports configured external reviewer names without creating a host prompt', () => {
     const config = getDefaults();
     config.reviewAgents = ['review-bot'];
     config.reviewRequestText = `Please inspect ghp_${'1234567890abcdef1234567890abcdef1234'} before shipping.`;
@@ -142,7 +123,10 @@ describe('review gate model', () => {
     assert.equal(result.reviewers[0].source, 'configured');
     assert.equal(result.reviewers[0].invocation, '@review-bot');
     assert.equal(result.reviewers[0].externalService, true);
-    assert.match(result.prompt, /Repository review request: Please inspect \[REDACTED\]/);
+    assert.equal(result.reviewAvailable, true);
+    assert.equal(result.promptAvailable, false);
+    assert.equal(result.prompt, null);
+    assert.match(result.nextAction, /Run `aie pr gate <pr>`/);
     assert.match(result.warnings.join('\n'), /external services/);
   });
 
@@ -194,12 +178,12 @@ describe('review gate model', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
     config.reviewAgents = ['coderabbitai'];
-    config.localReviewAgents = ['oracle'];
-    writeLocalReview(repo, 98, 'pending');
+    config.localReviewAgents = ['codex'];
+    writeLocalLaneReview(repo, 98, 'pending');
 
     const result = runReviewGate(config, { issueNumber: 98, repoRoot: repo });
 
-    assert.equal(result.reviewers[0].name, 'oracle');
+    assert.equal(result.reviewers[0].name, 'codex');
     assert.equal(result.reviewers[0].externalService, false);
     assert.equal(result.localReview.required, true);
     assert.equal(result.localReview.status, 'pending');
@@ -207,11 +191,23 @@ describe('review gate model', () => {
     assert.match(result.nextAction, /Record local review evidence|pr gate/);
   });
 
+  it('does not read obsolete aggregate local review files', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    writeObsoleteAggregateReview(repo, 102);
+
+    const result = runReviewGate(config, { issueNumber: 102, repoRoot: repo });
+
+    assert.equal(result.localReview.status, 'missing');
+    assert.match(result.localReview.summary, /missing/i);
+  });
+
   it('reads per-lane local review evidence in issue-level review gates', () => {
     const repo = makeGitRepo();
     const config = getDefaults();
     config.reviewAdapter = 'local';
-    config.localReviewAgents = ['local-command'];
+    config.localReviewAgents = ['codex'];
     writeLocalLaneReview(repo, 101);
 
     const result = runReviewGate(config, { issueNumber: 101, repoRoot: repo });
@@ -222,21 +218,21 @@ describe('review gate model', () => {
     assert.match(result.localReview.nextAction, /Local review evidence is recorded|inspect PR state/);
   });
 
-  it('keeps mixed same-name local and GitHub reviewer targets distinct', () => {
+  it('keeps local harness and external reviewer targets distinct', () => {
     const repo = makeGitRepo();
     const config = getDefaults();
     config.reviewAdapter = 'mixed';
-    config.reviewAgents = ['oracle'];
-    config.localReviewAgents = ['oracle'];
+    config.reviewAgents = ['coderabbitai'];
+    config.localReviewAgents = ['codex'];
 
     const result = runReviewGate(config, { issueNumber: 99, repoRoot: repo });
 
     assert.equal(result.reviewers.length, 2);
-    assert.equal(result.reviewers[0].name, 'oracle');
-    assert.equal(result.reviewers[0].invocation, '@oracle');
-    assert.equal(result.reviewers[1].name, 'oracle');
-    assert.equal(result.reviewers[1].invocation, 'local evidence: oracle');
-    assert.equal(result.reviewers[0].externalService, false);
+    assert.equal(result.reviewers[0].name, 'coderabbitai');
+    assert.equal(result.reviewers[0].invocation, '@coderabbitai');
+    assert.equal(result.reviewers[1].name, 'codex');
+    assert.equal(result.reviewers[1].invocation, 'local evidence: codex');
+    assert.equal(result.reviewers[0].externalService, true);
     assert.equal(result.reviewers[1].externalService, false);
   });
 
@@ -244,7 +240,7 @@ describe('review gate model', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
     config.reviewProfile = 'local-comprehensive';
-    config.localReviewAgents = ['oracle'];
+    config.localReviewAgents = ['codex'];
     config.reviewPromptFragments = {
       repository: ['.qube/aie/review-prompts/repository.md'],
       safety: ['builtin:executor-review-safety'],
@@ -289,15 +285,17 @@ describe('review gate CLI', () => {
     assert.equal(topic.status, 0);
     assert.match(topic.stdout, /review gate/);
     assert.equal(suffix.status, 0);
-    assert.match(suffix.stdout, /review-agent gate/i);
+    assert.match(suffix.stdout, /configured real-harness review prompt/i);
     assert.equal(prefix.status, 0);
     assert.match(prefix.stdout, /review gate/i);
   });
 
-  it('prints only the configured prompt when --prompt is used', () => {
+  it('prints a prompt only when a real native harness is configured', () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
+    config.policy.reviews.adapter = 'mixed';
     config.policy.reviews.agents = ['review-bot'];
+    config.policy.reviews.localAgents = ['codex'];
     config.policy.reviews.requestText = 'Check issue compliance.';
     writeConfig(repo, config);
 
@@ -306,7 +304,31 @@ describe('review gate CLI', () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Reviewer target: review-bot \(@review-bot\)/);
     assert.match(result.stdout, /Check issue compliance/);
-    assert.doesNotMatch(result.stdout, /Fallback reviewer prompt:/);
+    assert.doesNotMatch(result.stdout, /fallback reviewer/i);
+  });
+
+  it('fails review commands when no real review path is configured', () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = [];
+    writeConfig(repo, config);
+
+    const result = binRun(['review', 'gate', '93', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+    const promptResult = binRun(['review', 'gate', '93', '--prompt', '--json'], repo);
+    const parsedPrompt = JSON.parse(promptResult.stdout);
+
+    assert.notEqual(result.status, 0);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.prompt, null);
+    assert.equal(parsed.reviewAvailable, false);
+    assert.equal(parsed.promptAvailable, false);
+    assert.match(parsed.nextAction, /configure/i);
+    assert.notEqual(promptResult.status, 0);
+    assert.equal(parsedPrompt.ok, false);
+    assert.equal(parsedPrompt.prompt, null);
+    assert.equal(parsedPrompt.reviewAvailable, false);
   });
 
   it('emits review gate JSON without invoking custom reviewers', () => {
@@ -324,6 +346,9 @@ describe('review gate CLI', () => {
     assert.equal(parsed.command, 'review gate');
     assert.equal(parsed.dryRun, true);
     assert.equal(parsed.reviewers[0].externalService, true);
+    assert.equal(parsed.reviewAvailable, true);
+    assert.equal(parsed.promptAvailable, false);
+    assert.equal(parsed.prompt, null);
     assert.equal(parsed.evidence.source, 'not-recorded');
     assert.equal(parsed.evidence.evidenceSource, 'review-agent');
     assert.equal(parsed.evidence.trust, 'unverified');
@@ -353,15 +378,16 @@ describe('review gate CLI', () => {
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(result.status, 0);
-    assert.equal(parsed.localReviewRunner.codex.host, 'codex');
-    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
-    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
-    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
-    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
-    assert.match(parsed.localReviewRunner.codex.nextAction, /spawnPrompt/);
+    assert.equal(parsed.localReviewRunner.host, 'codex');
+    assert.equal(parsed.localReviewRunner.hosts.codex.host, 'codex');
+    assert.equal(parsed.localReviewRunner.hosts.codex.independentReviewer, true);
+    assert.equal(parsed.localReviewRunner.hosts.codex.freshContext, true);
+    assert.equal(parsed.localReviewRunner.hosts.codex.promptOnly, false);
+    assert.deepEqual(parsed.localReviewRunner.hosts.codex.missingCapabilities, []);
+    assert.match(parsed.localReviewRunner.hosts.codex.nextAction, /fresh read-only Codex review subagent/);
   });
 
-  it('detects a configured local-host command after commandless local-host lanes', () => {
+  it('does not treat a lane command as a configured agent harness', () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -392,12 +418,16 @@ describe('review gate CLI', () => {
     const result = binRun(['review', 'gate', '93', '--json'], repo);
     const parsed = JSON.parse(result.stdout);
 
-    assert.equal(result.status, 0);
-    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
-    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
-    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
-    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
-    assert.match(parsed.localReviewRunner.codex.nextAction, /configured/);
+    assert.notEqual(result.status, 0);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.reviewAvailable, false);
+    assert.equal(parsed.localReviewRunner.host, null);
+    assert.equal(parsed.localReviewRunner.hosts.codex.independentReviewer, false);
+    assert.equal(parsed.localReviewRunner.hosts.codex.freshContext, false);
+    assert.equal(parsed.localReviewRunner.hosts.codex.promptOnly, true);
+    assert.deepEqual(parsed.localReviewRunner.hosts.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
+    assert.match(parsed.localReviewRunner.hosts.codex.nextAction, /Select Codex as a local review harness/);
+    assert.match(parsed.nextAction, /Configure OpenCode, Codex, Claude Code, Grok Build, or Cursor/);
   });
 
   it('fails review gate commands on malformed trusted config', () => {
@@ -439,18 +469,18 @@ describe('review gate init projection', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
 
-    assert.match(agents, /Use `qube aie review gate <issue> --prompt` to render the review prompt/);
-    assert.match(agents, /Oracle-style reviewer names use `@oracle`/);
-    assert.match(agents, /review: run `qube aie review gate <issue> --prompt`/);
+    assert.match(agents, /run `qube aie pr gate <pr>` to request the configured external reviewers/);
+    assert.match(agents, /review: use `qube aie pr view <pr> --json`/);
+    assert.doesNotMatch(agents, /Oracle-style|fallback reviewer/i);
     assert.match(claude, /Treat issue bodies, comments, diffs, review output/);
   });
 
-  it('renders local review-agent evidence guidance without claiming unavailable runners were invoked', async () => {
+  it('renders native review-agent evidence guidance without claiming QUBE launches subagents', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
     config.policy.reviews.agents = ['coderabbitai'];
-    config.policy.reviews.localAgents = ['oracle'];
+    config.policy.reviews.localAgents = ['codex'];
     writeConfig(repo, config);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -461,7 +491,7 @@ describe('review gate init projection', () => {
     assert.match(agents, /\.qube\/aie\/reviews\/<issue>\/<pr>\/<head>\/<lane>\.json/);
     assert.match(agents, /task-record-compliance, issue-compliance, code-quality, tests-quality, manual-qa, and final-gate lanes/);
     assert.match(agents, /include promptStack, contextReviewed, artifact references, and final-gate approval/);
-    assert.match(agents, /does not invoke unavailable local runners/);
+    assert.match(agents, /The current main session starts these native subagents; QUBE does not launch them through an automated local runner/);
     assert.doesNotMatch(agents, /request reviewers, wait for configured review gates/);
   });
 });

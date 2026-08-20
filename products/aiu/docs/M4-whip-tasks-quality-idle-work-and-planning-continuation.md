@@ -87,7 +87,7 @@ Repositories can disable idle whip prompts with committed config:
 }
 ```
 
-When disabled, existing `.qube/aiu/whip.json` state is preserved and legacy `.umpire/whip.json` state remains a migration input rather than being deleted. Repositories can replace package defaults with `whip.usePackageDefaults: false` plus a repo-owned `whip.tasks` list. Prompt delivery alone never completes a task; completion requires explicit task state transition evidence.
+When disabled, existing `.qube/aiu/whip.json` state is preserved. Repositories can replace package defaults with `whip.usePackageDefaults: false` plus a repo-owned `whip.tasks` list. Prompt delivery alone never completes a task; completion requires explicit task state transition evidence.
 
 ### 1.2 - Task Commands
 

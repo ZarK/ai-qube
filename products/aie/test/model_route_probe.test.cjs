@@ -104,13 +104,22 @@ describe('model route probe', () => {
     assert.match(check.diagnostic, /gpt-missing/);
   });
 
-  it('stays ready when the Codex catalog cannot be read', () => {
-    const check = probeModelRoute('codex', 'gpt-5.6-luna', (_executable, args) => {
+  it('blocks when the Codex catalog cannot be read or parsed', () => {
+    const unreadable = probeModelRoute('codex', 'gpt-5.6-luna', (_executable, args) => {
       if (args[0] === '--version') return 'codex-cli 0.1.0\n';
       throw new Error('debug models failed');
     }, () => 'codex-cli');
-    assert.equal(check.status, 'ready');
-    assert.equal(check.modelListed, null);
+    assert.equal(unreadable.status, 'blocked');
+    assert.equal(unreadable.modelListed, null);
+    assert.match(unreadable.diagnostic, /model catalog could not be read/);
+
+    const unparsed = probeModelRoute('codex', 'gpt-5.6-luna', (_executable, args) => {
+      if (args[0] === '--version') return 'codex-cli 0.1.0\n';
+      return 'totally unexpected output';
+    }, () => 'codex-cli');
+    assert.equal(unparsed.status, 'blocked');
+    assert.equal(unparsed.modelListed, null);
+    assert.match(unparsed.diagnostic, /catalog output was unrecognized/);
   });
 
   it('blocks when the grok catalog cannot be read or parsed', () => {

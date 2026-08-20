@@ -1,58 +1,11 @@
-export {
-  assertClaudeCodeHostCapabilityAvailable,
-  formatClaudeCodeUnsupportedCapabilityMessage,
-  getClaudeCodeHostCapability,
-  inspectClaudeCodeWorkspace,
-  listClaudeCodeHostCapabilities,
-  listClaudeCodeInstallFiles,
-  listClaudeCodeInstallNotes,
-} from "./claude_code_host.js";
-export type {
-  ClaudeCodeHostCapability,
-  ClaudeCodeHostCapabilityId,
-  ClaudeCodeHostSupport,
-  ClaudeCodeWorkspaceInspection,
-  ClaudeCodeWorkspaceTarget,
-} from "./claude_code_host.js";
-export {
-  assertCodexHostCapabilityAvailable,
-  formatCodexUnsupportedCapabilityMessage,
-  getCodexHostCapability,
-  inspectCodexWorkspace,
-  listCodexInstallFiles,
-  listCodexInstallNotes,
-  listCodexHostCapabilities,
-} from "./codex_host.js";
-export type {
-  CodexHostCapability,
-  CodexHostCapabilityId,
-  CodexHostSupport,
-  CodexWorkspaceInspection,
-} from "./codex_host.js";
-export {
-  assertGrokBuildHostCapabilityAvailable,
-  formatGrokBuildUnsupportedCapabilityMessage,
-  getGrokBuildHostCapability,
-  inspectGrokBuildWorkspace,
-  listGrokBuildHostCapabilities,
-  listGrokBuildInstallFiles,
-  listGrokBuildInstallNotes,
-} from "./grok_build_host.js";
-export type {
-  GrokBuildCapabilityCategory,
-  GrokBuildHostCapability,
-  GrokBuildHostCapabilityId,
-  GrokBuildHostSupport,
-  GrokBuildWorkspaceInspection,
-  GrokBuildWorkspaceTarget,
-} from "./grok_build_host.js";
 export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 export { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
-export { modelRoutingPromptPlan } from "./runtime.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
 export {
+  applyUmpireHostProbes,
+  composeHostToolkitManifest,
   composeHostToolkitManifests,
   createInitRecord,
   formatHostToolkits,
@@ -76,12 +29,19 @@ export type {
   QubeInitRecord,
   ToolkitAsset,
   ToolkitAssetKind,
+  ToolkitCapability,
   ToolkitCliDependency,
+  ToolkitContinuationCapability,
+  ToolkitExecutables,
   ToolkitHostId,
+  ToolkitHostCapabilities,
   ToolkitHostStatus,
   ToolkitMcpState,
+  ToolkitReviewCapabilities,
+  ToolkitTrustCapability,
+  ToolkitUmpireCapabilities,
 } from "./host_toolkit.js";
-export { probeInstallState, instructionTargetsForHosts } from "./install_state.js";
+export { hostSetupTargets, probeInstallState } from "./install_state.js";
 export type { InstallStateSelections, InstallStepState, InstallStepStatus } from "./install_state.js";
 export {
   adapterPackageVersion,

@@ -62,40 +62,11 @@ aie init . --dry-run --json
 aie init . --defaults --yes
 ```
 
-## Migration
-
-Repositories that already have copied issue-workflow helpers can inspect a
-package-backed migration plan before changing files:
-
-```sh
-aie migrate map
-aie migrate legacy --dry-run --json
-```
-
-Apply only the migration action you intend:
-
-```sh
-aie migrate legacy --apply --dry-run
-aie migrate legacy --apply
-aie migrate legacy --install-wrappers --dry-run
-aie migrate legacy --install-wrappers --apply
-aie migrate legacy --cleanup --dry-run
-aie migrate legacy --cleanup --apply
-```
-
-The migration commands report detected legacy paths, instruction references,
-compatibility wrappers, cleanup candidates, preserved files, conflicts, required
-confirmations, and next commands. Review the resulting git diff before committing
-any migration output.
-
 ## Safety Notes
 
 - The package has no install lifecycle scripts.
-- `doctor`, `schema`, `queue`, and migration dry-runs are inspection-first
-  commands.
+- `doctor`, `schema`, `queue`, and init dry-runs are inspection-first commands.
 - Executor does not create credentials or bypass repository policy.
-- Cleanup removes only known legacy helper files unless exact paths and force
-  behavior are explicitly selected.
 
 ## Development
 
@@ -108,4 +79,3 @@ pnpm --filter @tjalve/aie run verify
 Design details live in the repository spec:
 
 - https://github.com/ZarK/ai-qube/tree/main/products/aie/docs/spec.md
-- https://github.com/ZarK/ai-qube/tree/main/products/aie/docs/migration.md

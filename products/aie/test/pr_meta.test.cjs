@@ -625,7 +625,7 @@ describe('PR body service', { concurrency: 4 }, () => {
   });
 
   it('directs the issue-compliance lane to verify the criterion-to-proof map', () => {
-    const stack = promptStack('issue-compliance', []);
+    const stack = promptStack('codex', 'issue-compliance', []);
     assert.match(stack.text, /Criterion-to-proof map entries left \[UNFILLED\], pointing at the wrong location, or naming a test that mirrors the implementation instead of asserting the criterion\./);
     assert.match(stack.text, /Negative-case coverage: does a named counterexample test exist, or is there a concrete stated reason none applies\./);
   });
@@ -770,20 +770,19 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.match(result.body, /GitHub review state is CHANGES_REQUESTED/);
   });
 
-  it('keeps stale review-agent evidence pending in readiness details', async () => {
+  it('keeps stale local review lane evidence pending in readiness details', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '98.json'), JSON.stringify({ status: 'stale', summary: 'review is stale' }));
-    const config = getDefaults();
+    const config = localReviewConfig();
     config.manualUiAudit = false;
-    config.reviewAgents = [];
-    const exec = async args => issueViewResponse(args, 98) ?? { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+    writeLocalEvidence(repo, localEvidence({ issueNumber: 98, headSha: 'oldsha' }));
+    const pr = cleanLocalPr({ closingIssuesReferences: [{ number: 98 }] });
+    const { exec } = makePrExec({ prViews: [pr], issueBodies: { 98: '' } });
 
     const result = await buildPrBody(config, { issueNumber: 98, repoRoot: repo, exec });
 
-    assert.equal(result.reviewGate.evidence.status, 'stale');
+    assert.equal(result.prReviewGate.result.localReview.status, 'stale');
     assert.equal(result.readiness.status, 'pending');
-    assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'stale-evidence' && item.source === 'review-agent'));
+    assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'local-review-stale' && item.source === 'review-agent'));
   });
 
   it('keeps readiness pending when PR review-gate inspection is unavailable', async () => {

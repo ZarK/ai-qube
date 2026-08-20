@@ -82,7 +82,7 @@ describe('review learnings', () => {
     assert.equal(fragment.trust, 'repo-doc');
     assert.match(fragment.text, /Do not re-raise brace-style nits as blockers/);
     assert.match(fragment.text, /cannot approve a lane/);
-    const rendered = promptStack('code-quality', ['Run local review lane code-quality.'], [], repo);
+    const rendered = promptStack('codex', 'code-quality', ['Run local review lane code-quality.'], [], repo);
     assert.ok(rendered.promptStack.some(entry => entry.id === 'repo-configured/review-learnings' && entry.trust === 'repo-doc'));
     assert.match(rendered.text, /Do not re-raise brace-style nits as blockers/);
   });
@@ -109,7 +109,7 @@ describe('review learnings', () => {
   it('omits the fragment when no learnings file exists', () => {
     const repo = tempRepo();
     assert.equal(loadReviewLearnings(repo), null);
-    const rendered = promptStack('code-quality', ['Run local review lane code-quality.'], [], repo);
+    const rendered = promptStack('codex', 'code-quality', ['Run local review lane code-quality.'], [], repo);
     assert.equal(rendered.promptStack.some(entry => entry.id === 'repo-configured/review-learnings'), false);
   });
 });

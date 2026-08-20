@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+
+import { getAgentHostProfileSync } from "@tjalve/aie";
+import { AGENT_HOST_IDS, type AgentHostProfile } from "@tjalve/qube-core";
 
 import type { AgentHostKind } from "./contracts.js";
 
-export type AgentAssetKind = "instruction" | "command";
+export type AgentAssetKind = "instruction";
 
 export interface AgentAssetFile {
   readonly id: string;
@@ -13,18 +16,31 @@ export interface AgentAssetFile {
   readonly body: string;
 }
 
-export function createAgentAssetPlan(host: AgentHostKind | undefined): readonly AgentAssetFile[] {
-  if (!host) return [];
-  if (host === "codex") return [instruction("codex", "AGENTS.md", codexBody())];
-  if (host === "opencode") {
-    return [
-      instruction("opencode", "AGENTS.md", opencodeBody()),
-      command("opencode", ".opencode/commands/aib-bootstrap.md", opencodeCommandBody())
-    ];
+const MANAGED_START = "<!-- BEGIN QUBE BOOTSTRAP MANAGED SECTION -->";
+const MANAGED_END = "<!-- END QUBE BOOTSTRAP MANAGED SECTION -->";
+
+export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKind[] | undefined): readonly AgentAssetFile[] {
+  const selected = typeof hosts === "string" ? [hosts] : [...(hosts ?? [])];
+  if (selected.length === 0) return [];
+
+  const selectedIds = new Set(selected);
+  const profiles = AGENT_HOST_IDS
+    .filter((host) => selectedIds.has(host))
+    .map((host) => getAgentHostProfileSync(host));
+  const profilesByPath = new Map<string, AgentHostProfile[]>();
+  for (const profile of profiles) {
+    const grouped = profilesByPath.get(profile.instructionTarget.path) ?? [];
+    grouped.push(profile);
+    profilesByPath.set(profile.instructionTarget.path, grouped);
   }
-  if (host === "claude-code") return [instruction("claude-code", "CLAUDE.md", claudeBody())];
-  if (host === "gemini") return [instruction("gemini", "GEMINI.md", geminiBody())];
-  return [instruction("other", "AGENTS.md", sharedBody("Generic agent host"))];
+  const files = [...profilesByPath.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, grouped]) => instruction(
+      grouped[0]!.id,
+      path,
+      sharedBody(grouped.map((profile) => profile.displayName).join(", "))
+    ));
+  return Object.freeze(files);
 }
 
 export function writeAgentAssetFiles(target: string, files: readonly AgentAssetFile[]): readonly { readonly path: string }[] {
@@ -34,11 +50,45 @@ export function writeAgentAssetFiles(target: string, files: readonly AgentAssetF
   const written: { path: string }[] = [];
   for (const file of files) {
     const path = safeAssetPath(realBaseDir, file.path);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, file.body);
+    const current = readAssetFile(path);
+    const next = mergeManagedInstruction(current, file.body);
+    if (current !== next) {
+      assertSafeAssetFile(path);
+      writeFileSync(path, next);
+    }
     written.push({ path });
   }
   return written;
+}
+
+function readAssetFile(path: string): string {
+  const status = assertSafeAssetFile(path);
+  return status === undefined ? "" : readFileSync(path, "utf8");
+}
+
+function assertSafeAssetFile(path: string): ReturnType<typeof lstatSync> | undefined {
+  const status = lstatSync(path, { throwIfNoEntry: false });
+  if (status?.isSymbolicLink()) {
+    throw new TypeError(`refusing to write agent asset through a symlink: ${path}`);
+  }
+  if (status !== undefined && !status.isFile()) {
+    throw new TypeError(`refusing to replace a non-file agent asset: ${path}`);
+  }
+  return status;
+}
+
+function mergeManagedInstruction(current: string, body: string): string {
+  const block = `${MANAGED_START}\n${body.trim()}\n${MANAGED_END}`;
+  const start = current.indexOf(MANAGED_START);
+  const end = current.indexOf(MANAGED_END);
+  if ((start === -1) !== (end === -1) || (start !== -1 && end < start)) {
+    throw new TypeError("refusing to replace an incomplete QUBE Bootstrap managed section");
+  }
+  if (start !== -1 && end !== -1) {
+    return `${current.slice(0, start)}${block}${current.slice(end + MANAGED_END.length)}`;
+  }
+  const prefix = current.trimEnd();
+  return prefix === "" ? `${block}\n` : `${prefix}\n\n${block}\n`;
 }
 
 function safeAssetPath(realBaseDir: string, assetPath: string): string {
@@ -55,7 +105,14 @@ function safeAssetPath(realBaseDir: string, assetPath: string): string {
     if (!inside(realBaseDir, next)) {
       throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
     }
-    if (!existsSync(next)) mkdirSync(next);
+    const status = lstatSync(next, { throwIfNoEntry: false });
+    if (status?.isSymbolicLink()) {
+      throw new TypeError(`refusing to follow an agent asset directory symlink: ${assetPath}`);
+    }
+    if (status !== undefined && !status.isDirectory()) {
+      throw new TypeError(`refusing to use a non-directory agent asset path: ${assetPath}`);
+    }
+    if (status === undefined) mkdirSync(next);
     current = realpathSync(next);
     if (!inside(realBaseDir, current)) {
       throw new TypeError(`refusing to follow agent asset directory outside target: ${assetPath}`);
@@ -83,16 +140,6 @@ function instruction(host: AgentHostKind, path: string, body: string): AgentAsse
   };
 }
 
-function command(host: AgentHostKind, path: string, body: string): AgentAssetFile {
-  return {
-    id: `${host}:aib-bootstrap-command`,
-    host,
-    path,
-    kind: "command",
-    body
-  };
-}
-
 function sharedBody(hostName: string): string {
   return `# AIB Bootstrap Workflow
 
@@ -112,47 +159,5 @@ This repository uses \`aib\` as an agent-operated planning engine. The human tal
 ## ${hostName}
 
 Use this file as the local host instruction surface. Host-specific todo or command tools are convenience surfaces; the durable workflow is the \`aib\` state machine.
-`;
-}
-
-function codexBody(): string {
-  return `${sharedBody("Codex")}
-Codex should use its visible plan/todo support when useful, while keeping durable progress in \`aib\` state and provider records.
-`;
-}
-
-function opencodeBody(): string {
-  return `${sharedBody("OpenCode")}
-OpenCode can use the local project command at \`.opencode/commands/aib-bootstrap.md\` to start or resume the bootstrap flow.
-`;
-}
-
-function claudeBody(): string {
-  return `${sharedBody("Claude Code")}
-Claude Code should use its host todo tools when useful, while treating \`aib next --json\` as the source of truth for the next planning action.
-`;
-}
-
-function geminiBody(): string {
-  return `${sharedBody("Gemini CLI")}
-Gemini CLI should keep conversation text concise and use the structured \`aib\` JSON output to decide when to ask, inspect, draft, generate, render, or stop.
-`;
-}
-
-function opencodeCommandBody(): string {
-  return `---
-description: Start or resume an aib bootstrap planning session.
----
-
-Use \`aib\` as the planning state machine for this repository.
-
-1. Run \`aib status --json\`; if state is missing, run \`aib init --agent opencode --json\`.
-2. Run \`aib next --json\`.
-3. Perform exactly the returned action: ask the human, inspect context, draft or validate specs, generate milestones, generate work-item drafts, render provider outputs, or stop.
-4. Record human answers with \`aib answer --field <field> --value <answer> --json\`.
-5. Keep implementation work out of Bootstrap planning until accepted work items exist.
-6. For autoresearch requests, run \`qube autoresearch --help\`, translate natural language to \`<target>\` plus \`<goal>\`, and synthesize the arena before edits.
-
-Do not install global commands or mutate providers unless the relevant \`aib\` command reports that mutation is planned and allowed.
 `;
 }

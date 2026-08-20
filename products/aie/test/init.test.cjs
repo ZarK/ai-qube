@@ -1,11 +1,10 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
-const { execFileSync, spawnSync } = require('node:child_process');
-const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, posix: pathPosix } = require('node:path');
-const { pathToFileURL } = require('node:url');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults } = require('../dist/config/index.js');
@@ -73,16 +72,15 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
   });
 
-  it('writes Claude Code command and skill assets without installing unselected review agents', async () => {
+  it('writes the Claude Code command without duplicate skill or review assets', async () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const command = readFileSync(join(repo, '.claude', 'commands', 'make-it-so.md'), 'utf8');
-    const skill = readFileSync(join(repo, '.claude', 'skills', 'make-it-so', 'SKILL.md'), 'utf8');
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
     assert.match(command, /Continue repository development/);
-    assert.match(skill, /Continue repository development/);
     assert.match(claude, /\.claude\/commands\/make-it-so\.md/);
+    assert.equal(existsSync(join(repo, '.claude', 'skills', 'make-it-so', 'SKILL.md')), false);
     assert.doesNotMatch(claude, /\.claude\/agents\/qube-review-focus\.md/);
     assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-focus.md')), false);
   });
@@ -97,19 +95,17 @@ describe('init service', () => {
       '.gitignore',
       'AGENTS.md',
       '.grok/commands/make-it-so.md',
-      '.grok/skills/make-it-so/SKILL.md',
     ]);
 
     const result = await runInit({ target: '.', tool: 'grok-build', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Grok Build:/);
-    assert.match(agents, /Do not invent a Grok todo tool/);
+    assert.match(agents, /Do not invent a Grok task tool/);
     assert.match(agents, /\.grok\/commands\/make-it-so\.md/);
-    assert.match(agents, /\.grok\/skills\/make-it-so\/SKILL.md/);
     assert.doesNotMatch(agents, /\.codex\//);
     assert.equal(existsSync(join(repo, '.grok', 'commands', 'make-it-so.md')), true);
-    assert.equal(existsSync(join(repo, '.grok', 'skills', 'make-it-so', 'SKILL.md')), true);
+    assert.equal(existsSync(join(repo, '.grok', 'skills', 'make-it-so', 'SKILL.md')), false);
     assert.equal(existsSync(join(repo, '.codex')), false);
     assert.equal(existsSync(join(repo, '.claude')), false);
     assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
@@ -132,18 +128,20 @@ describe('init service', () => {
     assert.equal((agents.match(/<!-- BEGIN EXECUTOR MANAGED SECTION -->/g) || []).length, 1);
     assert.match(agents, /Grok Build:/);
     assert.match(agents, /Codex:/);
-    assert.match(agents, /\.codex\/prompts\/make-it-so\.md/);
-    assert.equal(existsSync(join(repo, '.codex', 'prompts', 'make-it-so.md')), true);
+    assert.match(agents, /\.agents\/skills\/make-it-so\/SKILL\.md/);
+    assert.equal(existsSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md')), true);
   });
 
-  it('writes the Codex make-it-so prompt for a Codex-only init', async () => {
+  it('writes the Codex Make It So skill for a Codex-only init', async () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
-    const prompt = readFileSync(join(repo, '.codex', 'prompts', 'make-it-so.md'), 'utf8');
+    const skill = readFileSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md'), 'utf8');
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assert.match(prompt, /Continue repository development/);
-    assert.match(agents, /\.codex\/prompts\/make-it-so\.md/);
+    assert.match(skill, /Continue repository development/);
+    assert.match(skill, /^name: make-it-so$/m);
+    assert.match(agents, /\.agents\/skills\/make-it-so\/SKILL\.md/);
+    assert.match(agents, /invoked as `\$make-it-so`/);
     assert.doesNotMatch(agents, /\.codex\/agents\/qube-review-focus\.toml/);
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
   });
@@ -163,6 +161,7 @@ describe('init service', () => {
       guide: true,
       installedHosts: ['grok-build'],
       policy: {
+        reviewMode: 'external',
         reviewModels: {
           review: { 'grok-build': { model: 'grok-4.5', effort: null } },
           economy: {},
@@ -188,10 +187,10 @@ describe('init service', () => {
     assert.match(agents, /synthesize the arena before edits/);
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(command, /Continue repository development/);
-    assert.match(command, /run `qube aie pr gate <pr>` to request reviewers/);
+    assert.match(command, /inspect required reviews and checks/);
     assert.match(command, /configured gates cannot run/);
-    assert.match(agents, /Review mode: isolated\./);
-    assert.match(agents, /pr-review-wait/);
+    assert.match(agents, /Review mode: external\./);
+    assert.doesNotMatch(agents, /pr-review-wait/);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.version, 1);
     assert.equal(config.providers.work.kind, 'github');
@@ -201,12 +200,12 @@ describe('init service', () => {
     assert.equal(config.policy.lifecycle.assignOnStart, true);
     assert.equal(config.policy.lifecycle.commentOnStart, true);
     assert.deepEqual(config.policy.reviews.agents, []);
-    assert.equal(config.policy.reviews.adapter, 'local');
-    assert.equal(config.policy.reviews.mode, 'isolated');
-    assert.equal(config.policy.reviews.profile, 'local-focused');
+    assert.equal(config.policy.reviews.adapter, 'github');
+    assert.equal(config.policy.reviews.mode, 'external');
+    assert.equal(config.policy.reviews.profile, 'remote-compatible');
     assert.deepEqual(config.policy.reviews.localAgents, []);
-    assert.equal(config.policy.reviews.waitMinutes, 0);
-    assert.equal(config.policy.instructions.opencodeCommandAlias, false);
+    assert.equal(config.policy.reviews.waitMinutes, 10);
+    assert.equal('opencodeCommandAlias' in config.policy.instructions, false);
     assert.equal(config.policy.instructions.namingRules, false);
     assert.equal(config.policy.supplyChain.packageAgeDays, 7);
     assert.equal(config.policy.supplyChain.pinCiActions, true);
@@ -354,10 +353,11 @@ describe('init service', () => {
     config.policy.branch.naming = 'work/<number>/<slug>';
     config.policy.branch.noWorktree = false;
     config.policy.branch.requireBaseBranchFreshness = false;
-    config.policy.gates.qualityGates = ['npm test'];
+    config.policy.gates.definitions = [
+      { name: 'test', kind: 'custom', command: 'npm test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
+    ];
     config.policy.reviews.agents = ['review-bot'];
     config.policy.reviews.requestText = 'Please\nreview\tthis  policy-sensitive change.';
-    config.policy.instructions.opencodeCommandAlias = true;
     config.policy.audit.manualUiAudit = false;
     config.policy.shipping.autonomousMode = false;
     config.policy.milestoneOrdering = { enabled: true, order: ['Alpha', 'Beta'], missingAssignment: 'warn' };
@@ -378,7 +378,7 @@ describe('init service', () => {
     assert.match(agents, /Autonomous shipping mode is disabled/);
     assert.match(agents, /GitHub milestone ordering is enabled/);
     assert.doesNotMatch(agents, /primary checkout, no blocking open pull requests, and a current local base branch/);
-    assert.match(agents, /Configured quality gate commands: `npm test`/);
+    assert.match(agents, /Configured quality gate commands: test \(custom\/pre-pr\): `npm test`/);
     assert.match(agents, /Configured review agents: review-bot/);
     assert.match(agents, /Review request text: Please review this policy-sensitive change\./);
     assert.match(agents, /Naming rules:/);
@@ -386,40 +386,37 @@ describe('init service', () => {
     assert.doesNotMatch(command, /`upstream\/develop` is current/);
     assert.match(command, /autonomous shipping mode is disabled/);
     assert.doesNotMatch(command, /commit -> push -> pull request/);
-    assert.match(readFileSync(join(repo, '.opencode', 'commands', 'makeitso.md'), 'utf8'), /Continue repository development/);
+    assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), false);
   });
 
-  it('installs optional OpenCode command alias and reports host command fallbacks', async () => {
+  it('installs exactly one canonical Make It So surface for each host', async () => {
     const repo = makeGitRepo();
 
-    const planned = await buildInitPlan({ target: '.', tool: 'all', dryRun: true, force: false, cwd: repo, policy: { opencodeCommandAlias: true } });
+    const planned = await buildInitPlan({ target: '.', tool: 'all', dryRun: true, force: false, cwd: repo });
 
     assert.equal(planned.ok, true);
-    assert.equal(planned.policy.opencodeCommandAlias, true);
     assert.deepEqual(planned.actions.map(action => action.path), [
       join('.qube', 'aie', 'config.json'),
       '.gitignore',
       'AGENTS.md',
       'CLAUDE.md',
       opencodeCommandPath('make-it-so.md'),
-      opencodeCommandPath('makeitso.md'),
-      pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
+      pathPosix.join('.agents', 'skills', 'make-it-so', 'SKILL.md'),
       pathPosix.join('.claude', 'commands', 'make-it-so.md'),
-      pathPosix.join('.claude', 'skills', 'make-it-so', 'SKILL.md'),
       pathPosix.join('.grok', 'commands', 'make-it-so.md'),
-      pathPosix.join('.grok', 'skills', 'make-it-so', 'SKILL.md'),
+      pathPosix.join('.cursor', 'commands', 'make-it-so.md'),
     ]);
-    assert.doesNotMatch(planned.warnings.join('\n'), /Codex project command files are configured but none are enabled/);
-    assert.doesNotMatch(planned.warnings.join('\n'), /Claude Code project command files are not installed/);
+    assert.deepEqual(planned.warnings, []);
 
-    const applied = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo, policy: { opencodeCommandAlias: true } });
+    const applied = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
     assert.equal(applied.ok, true);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'make-it-so.md')), true);
-    assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), true);
-    assert.equal(readFileSync(join(repo, '.opencode', 'commands', 'makeitso.md'), 'utf8'), readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'));
+    assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), false);
+    assert.equal(existsSync(join(repo, '.claude', 'skills', 'make-it-so', 'SKILL.md')), false);
+    assert.equal(existsSync(join(repo, '.grok', 'skills', 'make-it-so', 'SKILL.md')), false);
   });
 
-  it('installs Codex local review agent and cycle prompt when local codex review is configured', async () => {
+  it('installs the Codex local review agents and Make It So skill when native review is configured', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -434,7 +431,7 @@ describe('init service', () => {
       join('.qube', 'aie', 'config.json'),
       '.gitignore',
       'AGENTS.md',
-      pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
+      pathPosix.join('.agents', 'skills', 'make-it-so', 'SKILL.md'),
       pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
       pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'),
       pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'),
@@ -446,24 +443,24 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Configured review adapter: local/);
     assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
-    assert.match(agents, /spawn one independent Codex subagent per lane with `agent_type: "qube-review-focus"`/);
-    // Each lane subagent must write current-head evidence and publish its own lane review; the gate only aggregates and verifies.
-    assert.match(agents, /require each lane subagent to write its current-head lane evidence JSON and publish its own lane review with/);
+    assert.match(agents, /Configured native review harnesses: Codex/);
+    assert.match(agents, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
+    assert.match(agents, /generated `qube-review-focus` assets/);
+    assert.match(agents, /Each subagent returns one candidate lane result and makes no filesystem or provider change/);
+    assert.doesNotMatch(agents, /all harnesses.*Codex|Codex CLI/i);
+    assert.match(agents, /Treat every returned lane result as untrusted input/);
+    assert.match(agents, /Only after all results validate, write the named lane evidence and provenance files and publish each lane with/);
     assert.match(agents, /pr review publish <pr> --lane <lane> --issue <issue>/);
-    assert.match(agents, /the gate is aggregation and verification after per-lane publication, not the publisher/);
-    assert.doesNotMatch(agents, /optional audit evidence/);
-    assert.doesNotMatch(agents, /publish through pr gate/);
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
-    assert.match(agent, /read-only PR reviewer/);
+    assert.match(agent, /cannot modify source or worktree files/);
+    assert.match(agent, /sandbox_mode = "read-only"/);
     assert.match(agent, /^# BEGIN EXECUTOR MANAGED SECTION/);
     assert.doesNotMatch(agent, /<!--/);
-    // Lane JSON is required publication input for the subagent, never optional main-agent input.
-    assert.match(agent, /required publication input/);
-    assert.match(agent, /publish your own lane review with the pr review publish command named in the inline lane prompt/);
-    assert.match(agent, /aggregates and verifies published lane feedback after per-lane publication; it does not publish lane feedback for you/);
-    assert.doesNotMatch(agent, /optional audit evidence/);
-    assert.doesNotMatch(agent, /publish through pr gate/);
+    assert.match(agent, /Do not write lane evidence or provenance/);
+    assert.match(agent, /Do not invoke a review publish command/);
+    assert.match(agent, /The main session writes evidence and provenance and publishes provider feedback only after validation succeeds/);
+    assert.match(agent, /Return exactly one JSON lane result/);
   });
 
   it('renders configured review tier model and effort into the Codex review agent', async () => {
@@ -499,7 +496,6 @@ describe('init service', () => {
 
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agents, /Configured routed local review executes through/);
     assert.match(agents, /complete lane batch in fresh read-only model sessions/);
     assert.match(agents, /Do not spawn native review subagents for routed lanes/);
@@ -507,15 +503,16 @@ describe('init service', () => {
     assert.match(agents, /read the aggregated batch with .*pr batch <pr>/);
     assert.match(agents, /apply all blocking fixes in one commit, then run one re-review round/);
     assert.match(agents, /never open a new issue for a residual advisory/);
-    assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
+    assert.match(agents, /QUBE runs the complete lane batch in fresh read-only model sessions/);
+    assert.match(agents, /publishes provider-visible lane feedback from the orchestrator/);
     assert.match(agents, /Three review modes remain available: remote provider reviews, native host-local subagents with pinned review-tier models, and routed isolated model hosts/);
     assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
     assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
     assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
-    assert.doesNotMatch(reviewAgent, /model = /);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
   });
 
-  it('pins the Codex review model in native review-focus assets while routed review is enabled', async () => {
+  it('does not install native review-focus assets while routed review is enabled', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -536,12 +533,10 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
 
     assert.equal(result.ok, true);
-    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
-    assert.match(reviewAgent, /model = "gpt-5\.5-codex"/);
-    assert.match(reviewAgent, /model_reasoning_effort = "high"/);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
   });
 
-  it('keeps native review assets pinned after the routed route is removed', async () => {
+  it('installs pinned native review assets after the routed route is removed', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -556,6 +551,7 @@ describe('init service', () => {
     config.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
     assert.equal((await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo })).ok, true);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
 
     delete config.policy.reviews.route;
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
@@ -589,10 +585,14 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const claudeAgent = readFileSync(join(repo, '.claude', 'agents', 'qube-review-focus.md'), 'utf8');
     assert.match(claudeAgent, /name: qube-review-focus/);
+    assert.match(claudeAgent, /^tools: Read, Grep, Glob$/m);
     assert.match(claudeAgent, /model: claude-sonnet-5/);
     assert.match(claudeAgent, /effort: low/);
     const opencodeAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
     assert.match(opencodeAgent, /mode: subagent/);
+    assert.match(opencodeAgent, /^permission:$/m);
+    assert.match(opencodeAgent, /^  "\*": deny$/m);
+    assert.match(opencodeAgent, /^  read: allow$/m);
     assert.match(opencodeAgent, /model: anthropic\/claude-sonnet-5/);
     assert.match(opencodeAgent, /reasoningEffort: high/);
   });
@@ -627,13 +627,13 @@ describe('init service', () => {
     assert.equal(existsSync(join(opencodeRepo, '.codex', 'agents', 'qube-review-digest.toml')), false);
   });
 
-  it('renders economy catalog agents for codex, claude-code, and opencode hosts', async () => {
+  it('renders read-only economy catalog agents for native review hosts', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
     config.policy.reviews.profile = 'local-focused';
     config.policy.reviews.agents = [];
-    config.policy.reviews.localAgents = ['codex', 'claude-code', 'opencode'];
+    config.policy.reviews.localAgents = ['codex', 'claude-code', 'opencode', 'grok-build'];
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
@@ -661,11 +661,19 @@ describe('init service', () => {
 
     const opencodeDigest = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-digest.md'), 'utf8');
     assert.match(opencodeDigest, /mode: subagent/);
+    assert.match(opencodeDigest, /^permission:$/m);
+    assert.match(opencodeDigest, /^  "\*": deny$/m);
+    assert.match(opencodeDigest, /^  read: allow$/m);
     assert.match(opencodeDigest, /read-only economy delegation helper/);
 
     const opencodeLibrarian = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-librarian.md'), 'utf8');
     assert.match(opencodeLibrarian, /mode: subagent/);
     assert.match(opencodeLibrarian, /Locate files, symbols, and prior review evidence/);
+
+    const grokExplorer = readFileSync(join(repo, '.grok', 'agents', 'qube-review-explorer.md'), 'utf8');
+    assert.match(grokExplorer, /^tools: Read, Grep, Glob$/m);
+    assert.match(grokExplorer, /^capabilityMode: read-only$/m);
+    assert.match(grokExplorer, /^mcpInheritance: none$/m);
   });
 
   it('resolves the economy tier model and effort into the Codex review catalog agents', async () => {
@@ -725,7 +733,7 @@ describe('init service', () => {
     assert.match(librarian, /model_reasoning_effort = "low"/);
   });
 
-  it('keeps economy catalog bindings truthful under routed review configurations', async () => {
+  it('does not render native economy agents under routed review configurations', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -739,19 +747,13 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
 
     assert.equal(result.ok, true);
-    // No codex binding resolves for the economy tier, so model lines are omitted.
-    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
-    assert.doesNotMatch(explorer, /model = /);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml')), false);
 
-    // A configured economy binding renders even in a routed configuration:
-    // economy helpers only spawn natively, so the global routed flag never blanks their bindings.
     config.policy.reviews.models = { review: { 'grok-build': { model: 'grok-4.5', effort: null } }, economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } }, synthesis: {} };
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
-    const mixed = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
-    assert.equal(mixed.ok, true);
-    const mixedExplorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
-    assert.match(mixedExplorer, /model = "gpt-5\.5-mini"/);
-    assert.match(mixedExplorer, /model_reasoning_effort = "low"/);
+    const rerun = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
+    assert.equal(rerun.ok, true);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml')), false);
   });
 
   it('mentions the economy catalog in host instructions only for hosts with rendered catalog assets', async () => {
@@ -782,7 +784,7 @@ describe('init service', () => {
     assert.doesNotMatch(routedAgents, /Economy review catalog agents available/);
   });
 
-  it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
+  it('projects harness-neutral review lane wording into another harness instructions file', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -794,13 +796,14 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
-    assert.match(claude, /spawn one independent fresh-context review subagent per lane that runs the lane through the Codex CLI/);
-    assert.match(claude, /pass each lane `spawnPrompt` verbatim as the Codex prompt/);
+    assert.match(claude, /Configured native review harnesses: Codex/);
+    assert.match(claude, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
+    assert.match(claude, /paste each lane `spawnPrompt` verbatim/);
     assert.match(claude, /complete the implementer self-check rendered in the dry-run output — confirm or fix every lane digest and risk card it lists — and address those gaps before creating the review session lock/);
-    assert.doesNotMatch(claude, /agent_type: "qube-review-focus"/);
+    assert.doesNotMatch(claude, /Codex CLI|agent_type: "qube-review-focus"/);
   });
 
-  it('documents OpenCode local review-runner boundary when local opencode review is configured', async () => {
+  it('documents OpenCode as a supported native review harness', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -815,11 +818,44 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(agents, /Configured review adapter: local/);
-    assert.match(agents, /OpenCode local-host review-runner automation is explicitly unsupported/);
-    assert.match(agents, /Configure Codex local-host review lanes or trusted local-command review lane commands/);
-    assert.match(agents, /OpenCode: instructions target `AGENTS\.md`/);
-    assert.match(agents, /does not currently have a tested OpenCode fresh-context review-runner API/);
+    assert.match(agents, /Configured native review harnesses: OpenCode/);
+    assert.match(agents, /The current main session starts these native subagents; QUBE does not launch them through an automated local runner/);
+    assert.match(agents, /Use that harness's generated `qube-review-focus` asset/);
+    assert.match(agents, /Keep each subagent read-only/);
+    assert.match(agents, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
+    const focusAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
+    assert.match(focusAgent, /Do not write lane evidence or provenance/);
+    assert.match(focusAgent, /Return one candidate lane result to the main session/);
+    assert.match(focusAgent, /^permission:$/m);
+    assert.match(focusAgent, /^  "\*": deny$/m);
+    for (const permission of ['read', 'glob', 'grep', 'list', 'lsp']) {
+      assert.match(focusAgent, new RegExp(`^  ${permission}: allow$`, 'm'));
+    }
+    assert.doesNotMatch(agents, /OpenCode native review is unsupported/i);
+    assert.doesNotMatch(agents, /Configure Codex|Codex local-host/i);
+    assert.match(agents, /OpenCode: instructions `AGENTS\.md`/);
     assert.match(command, /Continue repository development/);
+  });
+
+  it('fails closed when the configured harness does not support native review', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['cursor'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'cursor', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /Configured native review harnesses: Cursor/);
+    assert.match(agents, /profiles report native local review as unsupported/);
+    assert.match(agents, /Do not create the review session lock, spawn native review lanes, or publish local evidence/);
+    assert.match(agents, /Cursor: .*native review unsupported;/);
+    assert.doesNotMatch(agents, /installed agents|Economy review catalog agents available to this host/);
+    assert.doesNotMatch(agents, /spawn one fresh-context review subagent per lane through a configured harness/);
   });
 
   it('renders full always-loaded workflow instructions with host projections', async () => {
@@ -842,12 +878,12 @@ describe('init service', () => {
     assert.match(agents, /standing authorization under repository policy to run tests, commit, push, create non-draft PRs/);
     assert.match(agents, /Keep at most one open issue in progress/);
     assert.match(agents, /For OpenCode, use `todowrite` and `todoread` directly/);
-    assert.match(agents, /For Codex, use `update_plan` or the host plan\/todo tool directly/);
+    assert.match(agents, /For Codex, use `update_plan` or the host plan or task-list tool directly/);
     assert.match(claude, /For Claude Code, use `TodoWrite` and `TodoRead`/);
     assert.match(agents, /Host capability profile:/);
-    assert.match(agents, /OpenCode: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
-    assert.match(agents, /Codex: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
-    assert.match(claude, /Claude Code: instructions target `CLAUDE\.md`, project commands or agents are installed when configured \(\.claude\/commands\/make-it-so\.md, \.claude\/skills\/make-it-so\/SKILL\.md\)/);
+    assert.match(agents, /OpenCode: instructions `AGENTS\.md`; Make It So command `\.opencode\/commands\/make-it-so\.md`, invoked as `\/make-it-so`/);
+    assert.match(agents, /Codex: instructions `AGENTS\.md`; Make It So skill `\.agents\/skills\/make-it-so\/SKILL\.md`, invoked as `\$make-it-so`/);
+    assert.match(claude, /Claude Code: instructions `CLAUDE\.md`; Make It So command `\.claude\/commands\/make-it-so\.md`, invoked as `\/make-it-so`/);
     assert.doesNotMatch(claude, /\.claude\/agents\/qube-review-focus\.md/);
     assert.match(agents, /Protected workflow todo ids are `branch-check`, `ship`, `pr-review-wait`, `next`/);
     assert.match(agents, /BOOTSTRAP NEXT ISSUE - DO NOT COMPLETE UNTIL NEW TODOS EXIST/);
@@ -876,7 +912,8 @@ describe('init service', () => {
     assert.match(agents, /capture screenshots/);
     assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
     assert.match(agents, /Do not claim UI audit success from CLI JSON, API health, notes, or status checks/);
-    assert.match(agents, /review: run `qube aie review gate <issue> --prompt`, use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
+    assert.match(agents, /run `qube aie review gate <issue> --prompt` for review-agent QA when configured or needed/);
+    assert.match(agents, /review: use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
     assert.match(agents, /test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`/);
     assert.match(agents, /at the final head run the complete configured gate set before merge/);
     assert.match(agents, /PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the PR body before opening the pull request and update entries when review fixes move code or tests, open a non-draft, ready-for-review pull request that closes the issue/);
@@ -909,7 +946,7 @@ describe('init service', () => {
     assert.match(agents, /Stop for explicit user approval when package age, identity, source\/provenance, integrity, or execution risk cannot be verified/);
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
-    assert.match(command, /explicit full authorization under repository policy to commit, push, create non-draft PRs, run `qube aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `qube aie complete <issue>`, pull the configured base branch, and continue/);
+    assert.match(command, /Repository policy authorizes you to commit, push, create non-draft PRs, run `qube aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `qube aie complete <issue>`, pull the configured base branch, and continue/);
     assert.match(command, /Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
     assert.match(command, /Use `qube aie pr view <pr> --json`, `qube aie pr gate <pr>`, and `qube aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
     assert.match(command, /Use the Executor local app runner/);
@@ -1056,69 +1093,6 @@ describe('init service', () => {
     assert.match(readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
   });
 
-  it('detects legacy helper files and installs alongside without cleanup', async () => {
-    const repo = makeGitRepo();
-    mkdirSync(join(repo, 'scripts', 'lib'), { recursive: true });
-    writeFileSync(join(repo, 'scripts', 'gh-workflow.sh'), '#!/bin/sh\n# issue work helper\n');
-    writeFileSync(join(repo, 'scripts', 'lib', 'gh-priority-order.sh'), '#!/bin/sh\n# queue helper\n');
-    writeFileSync(join(repo, 'scripts', 'gh-pr-review-gate.sh'), '#!/bin/sh\n# pull request helper\n');
-
-    const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
-    const legacyByCategory = new Map(result.legacy.map(item => [item.category, item]));
-
-    assert.equal(result.ok, true);
-    assert.equal(legacyByCategory.get('lifecycle').action, 'install-alongside');
-    assert.equal(legacyByCategory.get('queue').paths.includes(join('scripts', 'lib', 'gh-priority-order.sh')), true);
-    assert.equal(legacyByCategory.get('pull-request').paths.includes(join('scripts', 'gh-pr-review-gate.sh')), true);
-    assert.deepEqual(result.legacy.map(item => item.category), ['queue', 'lifecycle', 'pull-request']);
-    assert.deepEqual(legacyByCategory.get('queue').choices, ['leave-untouched', 'install-alongside', 'install-compatibility-wrappers', 'cleanup-and-replace', 'defer-to-migration']);
-    assert.match(result.warnings.join('\n'), /installs Executor alongside and leaves existing files untouched/);
-    assert.equal(readFileSync(join(repo, 'scripts', 'gh-workflow.sh'), 'utf8'), '#!/bin/sh\n# issue work helper\n');
-    assert.equal(readFileSync(join(repo, 'scripts', 'lib', 'gh-priority-order.sh'), 'utf8'), '#!/bin/sh\n# queue helper\n');
-    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-  });
-
-  it('blocks legacy instruction content until force is supplied', async () => {
-    const repo = makeGitRepo();
-    writeFileSync(join(repo, 'AGENTS.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
-
-    const blocked = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
-
-    assert.equal(blocked.ok, false);
-    assert.equal(blocked.legacy[0].category, 'instructions');
-    assert.equal(blocked.legacy[0].action, 'defer-to-migration');
-    assert.match(blocked.errors.join('\n'), /leave untouched, install alongside managed Executor files, install compatibility wrappers, clean up and replace known helpers, or defer to migration/);
-    assert.doesNotMatch(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-
-    const forced = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: true, cwd: repo });
-
-    assert.equal(forced.ok, true);
-    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /Use gh-workflow\.sh for issue work/);
-    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-  });
-
-  it('scopes legacy instruction detection to selected init tools', async () => {
-    const repo = makeGitRepo();
-    writeFileSync(join(repo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
-
-    const opencode = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
-
-    assert.equal(opencode.ok, true);
-    assert.deepEqual(opencode.legacy, []);
-    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-    assert.doesNotMatch(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-
-    const claudeRepo = makeGitRepo();
-    writeFileSync(join(claudeRepo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
-
-    const blocked = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: claudeRepo });
-
-    assert.equal(blocked.ok, false);
-    assert.equal(blocked.legacy[0].category, 'instructions');
-    assert.deepEqual(blocked.legacy[0].paths, ['CLAUDE.md']);
-    assert.doesNotMatch(readFileSync(join(claudeRepo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
-  });
-
   it('requires force for managed sections with missing checksums', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'AGENTS.md'), [
@@ -1191,11 +1165,7 @@ describe('init service', () => {
     assert.match(invalid.errors[0], /Unsupported init tool/);
   });
 
-  it('models supported host capabilities and uses migration policy choices in init plans', async () => {
-    const repo = makeGitRepo();
-    mkdirSync(join(repo, 'scripts'), { recursive: true });
-    writeFileSync(join(repo, 'scripts', 'gh-issue-start.sh'), '#!/bin/sh\n');
-
+  it('models each host through the canonical capability profile', async () => {
     const { getAllAgentHostProfiles, hostIdsForInstructionPath } = require('../dist/agent_hosts.js');
     const profiles = await getAllAgentHostProfiles();
     const opencode = profiles.find(profile => profile.id === 'opencode');
@@ -1209,78 +1179,34 @@ describe('init service', () => {
     const grok = profiles.find(profile => profile.id === 'grok-build');
     const cursor = profiles.find(profile => profile.id === 'cursor');
     assert.ok(cursor);
-    assert.equal(cursor.subagents.supported, false);
-    assert.equal(cursor.hooks.supported, false);
+    assert.equal(cursor.subagents.support, 'unsupported');
+    assert.equal(cursor.umpire.continuation.support, 'unsupported');
     assert.ok(grok);
-    assert.equal(grok.supportsProjectCommands, true);
-    assert.ok(grok.commandTargets.some(target => target.path === pathPosix.join('.grok', 'commands', 'make-it-so.md')));
-    assert.ok(grok.commandTargets.some(target => target.path === pathPosix.join('.grok', 'skills', 'make-it-so', 'SKILL.md')));
-    assert.equal(opencode.supportsProjectCommands, true);
-    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
-    assert.equal(codex.supportsProjectCommands, true);
-    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'prompts', 'make-it-so.md'), pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'), pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'), pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'), pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml')]);
-    assert.ok(claude.commandTargets.some(target => target.path === pathPosix.join('.claude', 'commands', 'make-it-so.md')));
-    assert.ok(claude.commandTargets.some(target => target.path === pathPosix.join('.claude', 'skills', 'make-it-so', 'SKILL.md')));
-    assert.equal(claude.supportsProjectCommands, true);
-    assert.equal(codex.todo.tools.includes('update_plan'), true);
-    assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
+    assert.deepEqual(profiles.map(profile => profile.makeItSo.path), [
+      pathPosix.join('.opencode', 'commands', 'make-it-so.md'),
+      pathPosix.join('.agents', 'skills', 'make-it-so', 'SKILL.md'),
+      pathPosix.join('.claude', 'commands', 'make-it-so.md'),
+      pathPosix.join('.grok', 'commands', 'make-it-so.md'),
+      pathPosix.join('.cursor', 'commands', 'make-it-so.md'),
+    ]);
+    assert.deepEqual(opencode.review.local.agents.map(target => target.path), [pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
+    assert.deepEqual(codex.review.local.agents.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'), pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'), pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'), pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml')]);
+    assert.equal(grok.review.local.agents.length, 4);
+    assert.equal(cursor.review.local.agents.length, 0);
+    assert.equal(codex.taskList.tools.includes('update_plan'), true);
+    assert.equal(claude.instructionTarget.path, 'CLAUDE.md');
     const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');
     assert.deepEqual(agentsHosts, ['opencode', 'codex', 'grok-build', 'cursor']);
-
-    const wrapperPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { legacyScripts: 'install-wrappers' } } });
-    const cleanupPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { cleanupKnownHelpers: true } } });
-    assert.equal(wrapperPlan.ok, true);
-    assert.equal(cleanupPlan.ok, true);
-    assert.ok(Array.isArray(wrapperPlan.legacy));
-    assert.ok(Array.isArray(cleanupPlan.legacy));
-    const wrapperLifecycle = wrapperPlan.legacy.find(item => item.category === 'lifecycle');
-    const cleanupLifecycle = cleanupPlan.legacy.find(item => item.category === 'lifecycle');
-    assert.ok(wrapperLifecycle);
-    assert.ok(cleanupLifecycle);
-
-    assert.equal(wrapperLifecycle.action, 'install-compatibility-wrappers');
-    assert.match(wrapperLifecycle.nextCommand, /--install-wrappers --dry-run/);
-    assert.equal(cleanupLifecycle.action, 'cleanup-and-replace');
-    assert.match(cleanupLifecycle.nextCommand, /--cleanup --dry-run/);
   });
 
-  it('skips missing optional host adapters during generic instruction discovery', () => {
-    const isolated = mkdtempSync(join(tmpdir(), 'aie-host-adapters-'));
-    const isolatedModule = join(isolated, 'agent_host_adapters.mjs');
-    const distDir = join(__dirname, '..', 'dist');
-    copyFileSync(join(distDir, 'agent_host_adapters.js'), isolatedModule);
-    copyFileSync(join(distDir, 'missing_adapter_package.js'), join(isolated, 'missing_adapter_package.js'));
+  it('loads all required host profiles for instruction discovery', async () => {
+    const { getAllAgentHostProfiles, getInstructionTargetPaths, hostIdsForInstructionPath } = require('../dist/agent_hosts.js');
+    const profiles = await getAllAgentHostProfiles();
 
-    const script = `
-      const mod = await import(${JSON.stringify(pathToFileURL(isolatedModule).href)});
-      const profiles = await mod.getAllAgentHostProfiles();
-      const paths = await mod.getInstructionTargetPaths();
-      const agentsHosts = await mod.hostIdsForInstructionPath('AGENTS.md');
-      const claudeHosts = await mod.hostIdsForInstructionPath('CLAUDE.md');
-      let explicitClaudeMessage = '';
-      try {
-        await mod.getAgentHostProfile('claude-code');
-      } catch (error) {
-        explicitClaudeMessage = error instanceof Error ? error.message : String(error);
-      }
-      console.log(JSON.stringify({
-        profiles: profiles.map(profile => profile.id),
-        paths,
-        agentsHosts,
-        claudeHosts,
-        explicitClaudeMessage,
-      }));
-    `;
-
-    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { cwd: isolated, encoding: 'utf8' });
-
-    assert.equal(result.status, 0, result.stderr);
-    const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.profiles, ['opencode']);
-    assert.deepEqual(parsed.paths, ['AGENTS.md']);
-    assert.deepEqual(parsed.agentsHosts, ['opencode']);
-    assert.equal(parsed.claudeHosts, null);
-    assert.match(parsed.explicitClaudeMessage, /Claude Code host profile adapter @tjalve\/qube-adapter-claude-code is not installed/);
+    assert.deepEqual(profiles.map(profile => profile.id), ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    assert.deepEqual(await getInstructionTargetPaths(), ['AGENTS.md', 'CLAUDE.md']);
+    assert.deepEqual(await hostIdsForInstructionPath('AGENTS.md'), ['opencode', 'codex', 'grok-build', 'cursor']);
+    assert.deepEqual(await hostIdsForInstructionPath('CLAUDE.md'), ['claude-code']);
   });
 });
 
@@ -1302,7 +1228,7 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--publisher'));
     assert.ok(metadata.flags.includes('--tool'));
     assert.ok(metadata.flags.includes('--naming-rules'));
-    assert.ok(metadata.flags.includes('--opencode-command-alias'));
+    assert.equal(metadata.flags.includes('--opencode-command-alias'), false);
     assert.ok(metadata.flags.includes('--pin-ci-actions'));
     assert.ok(metadata.flags.includes('--package-manager-defaults'));
     assert.equal(metadata.mutates, true);
@@ -1330,7 +1256,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);
@@ -1352,6 +1278,36 @@ describe('init command metadata', () => {
     assert.equal(parsed.policy.namingRules, false);
     assert.equal(parsed.actions.length, 4);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
+  });
+
+  it('initializes a comma-separated agent harness set through the real CLI', () => {
+    const repo = makeGitRepo();
+    const requested = 'opencode,codex,claude-code,grok-build,cursor';
+
+    const result = binRun(['init', '.', '--tool', requested, '--yes', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    assert.equal(existsSync(join(repo, '.opencode', 'commands', 'make-it-so.md')), true);
+    assert.equal(existsSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md')), true);
+    assert.equal(existsSync(join(repo, '.claude', 'commands', 'make-it-so.md')), true);
+    assert.equal(existsSync(join(repo, '.grok', 'commands', 'make-it-so.md')), true);
+    assert.equal(existsSync(join(repo, '.cursor', 'commands', 'make-it-so.md')), true);
+  });
+
+  it('rejects an unknown id in a comma-separated agent harness set', () => {
+    for (const requested of ['opencode,unknown', 'all,unknown']) {
+      const repo = makeGitRepo();
+      const result = binRun(['init', '.', '--tool', requested, '--yes', '--json'], repo);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(parsed.ok, false);
+      assert.match(parsed.errors[0], /Unsupported init tool/);
+      assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+    }
   });
 
   it('runs defaults and yes mode without prompts and writes default policy', () => {
@@ -1392,7 +1348,6 @@ describe('init command metadata', () => {
       '--no-pin-ci-actions',
       '--review-agent',
       'review-bot',
-      '--opencode-command-alias',
     ], repo);
     const parsed = JSON.parse(result.stdout);
 
@@ -1401,8 +1356,7 @@ describe('init command metadata', () => {
     assert.equal(parsed.policy.namingRules, true);
     assert.equal(parsed.policy.milestoneOrdering, true);
     assert.equal(parsed.policy.missingMilestonePolicy, 'ignore');
-    assert.equal(parsed.policy.opencodeCommandAlias, true);
-    assert.equal(parsed.actions.some((action) => action.path === '.opencode/commands/makeitso.md'), true);
+    assert.equal(parsed.actions.some((action) => action.path === '.opencode/commands/makeitso.md'), false);
     assert.equal(parsed.actions.some((action) => action.path === 'CLAUDE.md'), true);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
@@ -1429,13 +1383,15 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--no-milestone-ordering'));
     assert.ok(metadata.flags.includes('--pin-ci-actions'));
     assert.ok(metadata.flags.includes('--no-pin-ci-actions'));
-    assert.ok(metadata.flags.includes('--opencode-command-alias'));
-    assert.ok(metadata.flags.includes('--no-opencode-command-alias'));
+    assert.equal(metadata.flags.includes('--opencode-command-alias'), false);
+    assert.equal(metadata.flags.includes('--no-opencode-command-alias'), false);
     assert.ok(metadata.flags.includes('--no-package-manager-defaults'));
     const tool = metadata.flagDetails.find(flag => flag.name === '--tool');
     const missingMilestone = metadata.flagDetails.find(flag => flag.name === '--missing-milestone');
     const age = metadata.flagDetails.find(flag => flag.name === '--package-age-days');
-    assert.deepEqual(tool.options, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor', 'all']);
+    assert.equal(tool.type, 'string');
+    assert.equal(tool.options, undefined);
+    assert.match(tool.description, /Comma-separated agent harness ids/);
     assert.deepEqual(missingMilestone.options, ['ignore', 'warn', 'block']);
     assert.equal(age.type, 'integer');
   });
@@ -1459,8 +1415,7 @@ describe('init command metadata', () => {
 });
 
 describe('managed section checksum normalization', () => {
-  const { createHash } = require('node:crypto');
-  const { planManagedUpdate, renderManagedSection, getManagedSectionHealth, MANAGED_START, MANAGED_END } = require('../dist/managed_file.js');
+  const { planManagedUpdate, renderManagedSection, getManagedSectionHealth } = require('../dist/managed_file.js');
 
   it('does not report conflicts for CRLF-only differences', () => {
     const body = 'Line one.\nLine two.\nLine three.\n';
@@ -1483,24 +1438,6 @@ describe('managed section checksum normalization', () => {
     assert.equal(update.conflict, false);
   });
 
-  it('accepts legacy checksums so existing managed files migrate without spurious conflicts', () => {
-    // A pre-normalization managed section stored its checksum over the CRLF-collapsed body including per-line trailing whitespace.
-    const legacyBody = 'Line one.  \nLine two.\n';
-    const legacyChecksum = createHash('sha256').update(legacyBody).digest('hex');
-    const legacyContent = [
-      MANAGED_START,
-      '<!-- executor-managed-version: 1 -->',
-      `<!-- executor-managed-checksum: ${legacyChecksum} -->`,
-      legacyBody.trimEnd(),
-      MANAGED_END,
-      '',
-    ].join('\n');
-    assert.equal(getManagedSectionHealth(legacyContent).checksumValid, true);
-    const update = planManagedUpdate({ existingContent: legacyContent, generatedBody: 'Line one.  \nLine two.\n', allowAppend: true, force: false });
-    assert.equal(update.operation === 'blocked', false);
-    assert.equal(update.conflict, false);
-  });
-
   it('shows a bounded diff for real conflicts and still requires explicit force', () => {
     const rendered = renderManagedSection('Keep this line.\nOriginal instruction.\n');
     const editedContent = rendered.replace('Original instruction.', 'Hand-edited instruction.');
@@ -1517,7 +1454,7 @@ describe('managed section checksum normalization', () => {
     assert.equal(forced.ok, true);
     assert.equal(forced.operation, 'replace-managed');
     assert.match(forced.content, /Original instruction\./);
-    // A checksum matching neither the strict nor the legacy form still blocks.
+    // A checksum that does not match the managed body blocks.
     const forgedContent = rendered.replace(/executor-managed-checksum: [a-f0-9]+/, 'executor-managed-checksum: deadbeef');
     const forged = planManagedUpdate({ existingContent: forgedContent, generatedBody: 'Keep this line.\nOriginal instruction.\n', allowAppend: true, force: false });
     assert.equal(forged.operation, 'blocked');

@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+
+import { claudeCodeHostProfile } from "@tjalve/qube-adapter-claude-code";
+import { codexHostProfile } from "@tjalve/qube-adapter-codex";
+import { grokBuildHostProfile } from "@tjalve/qube-adapter-grok-build";
+import { opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
 
 import { loadAiuConfig } from "../dist/src/config.js";
 import {
@@ -11,6 +16,7 @@ import {
   getAllAiuHostCapabilityProfiles,
   getDefaultHostCapabilityOverrides,
   getDefaultHostModes,
+  getDefaultStopHookBlocking,
 } from "../dist/src/host_policy.js";
 
 describe("host runtime policy", () => {
@@ -31,9 +37,37 @@ describe("host runtime policy", () => {
     assert.match(grokBuild.managedFiles[0]?.content ?? "", /hook-stop --tool grok-build/);
   });
 
+  it("derives continuation, probe, recovery, and trust facts from canonical host profiles", () => {
+    const canonical = [
+      ["opencode", opencodeHostProfile],
+      ["codex", codexHostProfile],
+      ["claude-code", claudeCodeHostProfile],
+      ["grok-build", grokBuildHostProfile],
+    ] as const;
+    for (const [host, shared] of canonical) {
+      const profile = getAiuHostCapabilityProfile(host);
+      assert.equal(shared.id, host);
+      assert.equal(profile.supportLevel, shared.umpire.continuation.support, host);
+      assert.equal(profile.capabilities.promptDelivery.delivery, shared.umpire.continuation.delivery, host);
+      assert.equal(profile.currentIssueRecovery, shared.umpire.continuation.currentIssueRecovery, host);
+      assert.equal(profile.probe.support, shared.umpire.probe.support, host);
+      assert.deepEqual(profile.probe.command, shared.umpire.probe.support === "unsupported" ? undefined : shared.umpire.probe.command, host);
+      assert.deepEqual(profile.trustSteps, shared.trust.actions.map((action) => action.description), host);
+      assert.deepEqual(
+        profile.managedFiles.map((file) => file.relativePath.replaceAll("\\", "/")).sort(),
+        shared.trust.actions.flatMap((action) => action.kind === "review-files" ? action.paths : []).sort(),
+        host,
+      );
+    }
+  });
+
   it("uses safe init defaults for host modes and capability overrides", () => {
     assert.deepEqual(getDefaultHostModes("opencode"), ["continue", "repair", "wait", "stop"]);
-    assert.deepEqual(getDefaultHostModes("codex"), ["stop"]);
+    assert.deepEqual(getDefaultHostModes("codex"), ["continue", "repair", "stop"]);
+    assert.deepEqual(getDefaultHostModes("claude-code"), ["continue", "repair", "stop"]);
+    assert.deepEqual(getDefaultHostModes("grok-build"), ["continue", "repair", "stop"]);
+    assert.equal(getDefaultStopHookBlocking("opencode"), false);
+    assert.equal(getDefaultStopHookBlocking("codex"), true);
     assert.equal(getDefaultHostCapabilityOverrides("opencode").promptDelivery, "host");
     assert.equal(getDefaultHostCapabilityOverrides("codex").promptDelivery, "stdout");
     assert.equal(Object.hasOwn(getDefaultHostCapabilityOverrides("codex"), "userActivity"), false);
@@ -54,7 +88,7 @@ describe("host runtime policy", () => {
         enabled: ["codex"],
         capabilities: {},
         modes: { codex: ["continue"] },
-        stopHookBlocking: {},
+        stopHookBlocking: { codex: true },
       },
       ["continue", "repair", "wait", "stop"],
     );
@@ -69,7 +103,7 @@ describe("host runtime policy", () => {
         enabled: ["codex"],
         capabilities: {},
         modes: {},
-        stopHookBlocking: {},
+        stopHookBlocking: { codex: true },
       },
       ["continue", "stop"],
     );
@@ -95,7 +129,8 @@ describe("host runtime policy", () => {
   it("surfaces host policy diagnostics during config validation", async () => {
     const repoRoot = await mkdtemp(path.join(tmpdir(), "aiu-host-policy-"));
     try {
-      await writeFile(path.join(repoRoot, "aiu.config.json"), JSON.stringify({
+      await mkdir(path.join(repoRoot, ".qube", "aiu"), { recursive: true });
+      await writeFile(path.join(repoRoot, ".qube", "aiu", "config.json"), JSON.stringify({
         version: 1,
         hosts: {
           enabled: ["opencode", "codex"],
@@ -108,7 +143,7 @@ describe("host runtime policy", () => {
             opencode: ["continue", "stop"],
             codex: ["continue"],
           },
-          stopHookBlocking: {},
+          stopHookBlocking: { codex: true },
         },
       }));
 
@@ -121,5 +156,20 @@ describe("host runtime policy", () => {
     } finally {
       await rm(repoRoot, { recursive: true, force: true });
     }
+  });
+
+  it("reports stdout continuation as unavailable when Stop hook blocking is off", () => {
+    const report = evaluateAiuHostRuntimePolicy(
+      {
+        enabled: ["codex"],
+        capabilities: {},
+        modes: { codex: ["continue", "repair", "stop"] },
+        stopHookBlocking: { codex: false },
+      },
+      ["continue", "repair", "wait", "stop"],
+    );
+
+    assert.deepEqual(report.errors.map((item) => item.mode), ["continue", "repair"]);
+    assert.match(report.errors[0]?.suggestedNextAction ?? "", /hosts\.stopHookBlocking\.codex/);
   });
 });

@@ -6,13 +6,6 @@ export interface ExecutorCommandExtensions extends MetadataExtensions {
   readonly supportsCheckOnly?: boolean;
   readonly stageValues?: readonly string[];
   readonly reviewAgentValues?: readonly string[];
-  readonly migrationModeValues?: readonly string[];
-  readonly migrationActionValues?: readonly string[];
-  readonly migrationConfidenceValues?: readonly string[];
-}
-
-interface ExecutorFlagExtensions extends MetadataExtensions {
-  readonly legacyForms?: readonly string[];
 }
 
 export interface ExecutorCommandDefinition {
@@ -30,9 +23,6 @@ export interface ExecutorCommandDefinition {
   exitCodes?: number[];
   stageValues?: string[];
   reviewAgentValues?: string[];
-  migrationModeValues?: string[];
-  migrationActionValues?: string[];
-  migrationConfidenceValues?: string[];
   examples: string[];
 }
 
@@ -41,7 +31,7 @@ const FLAG_SHORT_NAMES: Readonly<Record<string, string>> = {
   'dry-run': 'd',
 };
 
-const LEGACY_NEGATED_ONLY_FLAGS: ReadonlySet<string> = new Set(['--no-assign', '--no-comment']);
+const NEGATED_FLAGS: ReadonlySet<string> = new Set(['--no-assign', '--no-comment']);
 
 function stripLongFlagPrefix(flag: string): string {
   return flag.startsWith('--') ? flag.slice(2) : flag;
@@ -74,22 +64,21 @@ function inferFlagType(flag: string): CommandFlagSchema['type'] {
   return flag === '--from' || flag === '--stage' ? 'string' : 'boolean';
 }
 
-function toFlagMetadata(command: ExecutorCommandDefinition, flag: string): FlagMetadata<ExecutorFlagExtensions> {
+function toFlagMetadata(command: ExecutorCommandDefinition, flag: string): FlagMetadata {
   const details = findFlagDetails(command, flag);
-  const legacyNegatedOnly = LEGACY_NEGATED_ONLY_FLAGS.has(flag);
-  const name = hasPositiveAndNegativeFlags(command.flags, flag) || legacyNegatedOnly ? toNegatableFlagName(flag) : stripLongFlagPrefix(flag);
+  const negatable = hasPositiveAndNegativeFlags(command.flags, flag) || NEGATED_FLAGS.has(flag);
+  const name = negatable ? toNegatableFlagName(flag) : stripLongFlagPrefix(flag);
   const type = details?.type ?? inferFlagType(flag);
   const base = {
     name,
     description: details?.description ?? `See \`aie ${command.name} --help\` for ${flag}.`,
     type: type === 'string' && details?.options ? 'option' : type,
     ...(FLAG_SHORT_NAMES[name] ? { short: FLAG_SHORT_NAMES[name] } : {}),
-    ...(hasPositiveAndNegativeFlags(command.flags, flag) || legacyNegatedOnly ? { negatable: true } : {}),
-    ...(legacyNegatedOnly ? { extensions: { legacyForms: [stripLongFlagPrefix(flag)] } } : {}),
+    ...(negatable ? { negatable: true } : {}),
     ...(details?.multiple === true ? { multiple: true } : {}),
     ...(details?.options ? { options: [...details.options] } : {}),
     ...(details && Object.hasOwn(details, 'default') ? { defaultValue: details.default } : {}),
-  } satisfies FlagMetadata<ExecutorFlagExtensions>;
+  } satisfies FlagMetadata;
   return defineFlag(base);
 }
 
@@ -178,7 +167,7 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       dryRun: command.supportsDryRun ? { supported: true } : { supported: false, reason: 'Command does not support dry-run mode.' },
       noColor: false,
       nonInteractive: true,
-      ttyPrompt: command.name === 'review setup github-app' || command.name === 'review setup token',
+      ttyPrompt: command.name === 'review setup github-app',
     },
     mutation: command.mutationTargets.length > 0 ? { categories: command.mutationTargets } : undefined,
     externalServices: (command.externalServices ?? []).map(service => ({
@@ -200,9 +189,6 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       ...(command.supportsCheckOnly === true ? { supportsCheckOnly: true } : {}),
       ...(command.stageValues ? { stageValues: [...command.stageValues] } : {}),
       ...(command.reviewAgentValues ? { reviewAgentValues: [...command.reviewAgentValues] } : {}),
-      ...(command.migrationModeValues ? { migrationModeValues: [...command.migrationModeValues] } : {}),
-      ...(command.migrationActionValues ? { migrationActionValues: [...command.migrationActionValues] } : {}),
-      ...(command.migrationConfidenceValues ? { migrationConfidenceValues: [...command.migrationConfidenceValues] } : {}),
     },
   });
 }

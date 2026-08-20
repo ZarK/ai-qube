@@ -14,7 +14,6 @@ import type { AiuTrustedStateAdapterResult, AiuTrustedCommandExecutionRecord } f
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workspaceRoot = path.resolve(repoRoot, "..", "..");
 const aiuBin = path.join(repoRoot, "dist/src/bin/aiu.js");
 const observedAt = "2026-05-23T00:00:00.000Z";
 
@@ -91,7 +90,9 @@ describe("status reporting", () => {
   it("emits clean status JSON and records adapter errors without live providers", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "aiu-status-"));
     try {
-      const configPath = path.join(dir, "aiu.config.json");
+      await mkdir(path.join(dir, ".git"));
+      await mkdir(path.join(dir, ".qube", "aiu"), { recursive: true });
+      const configPath = path.join(dir, ".qube", "aiu", "config.json");
       await writeFile(configPath, JSON.stringify({
         version: 1,
         trustedStateCommands: {
@@ -103,7 +104,7 @@ describe("status reporting", () => {
         },
       }));
 
-      const result = await runCli(["status", "--config", configPath, "--json"]);
+      const result = await runCli(["status", "--config", configPath, "--json"], dir);
       const parsed = JSON.parse(result.stdout) as {
         ok: boolean;
         command: string;
@@ -119,9 +120,9 @@ describe("status reporting", () => {
       assert.ok(parsed.status.errors.some((error) => error.code === "trusted-command-malformed-json"));
       assert.deepEqual(parsed.status.decision.reasonCodes, ["stop-malformed-input"]);
       assert.equal(parsed.status.inputEnvelopes.length, 0);
-      assert.equal(parsed.status.paths.stateDir, path.join(workspaceRoot, ".qube", "aiu", "state"));
-      assert.equal(parsed.status.paths.lockDir, path.join(workspaceRoot, ".qube", "aiu", "locks"));
-      assert.equal(parsed.status.paths.logDir, path.join(workspaceRoot, ".qube", "aiu", "logs"));
+      assert.equal(parsed.status.paths.stateDir, path.join(dir, ".qube", "aiu", "state"));
+      assert.equal(parsed.status.paths.lockDir, path.join(dir, ".qube", "aiu", "locks"));
+      assert.equal(parsed.status.paths.logDir, path.join(dir, ".qube", "aiu", "logs"));
       assert.match(parsed.status.paths.continuationState, /continuation\.json$/);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -467,27 +468,39 @@ function policyState(overrides: Partial<State.AiuContinuationPolicyState> = {}):
   };
 }
 
-async function runCli(input: readonly string[]) {
+async function runCli(input: readonly string[], cwd?: string) {
+  const temporaryRoot = cwd === undefined ? await mkdtemp(path.join(tmpdir(), "aiu-status-cli-")) : undefined;
+  const executionRoot = cwd ?? temporaryRoot;
+  assert.ok(executionRoot);
+  if (temporaryRoot !== undefined) {
+    await mkdir(path.join(temporaryRoot, ".git"));
+  }
   try {
-    const result = await execFileAsync(process.execPath, [aiuBin, ...input], {
-      cwd: repoRoot,
-    });
-    return {
-      exitCode: 0,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  } catch (error) {
-    assert(error !== null && typeof error === "object");
-    const failed = error as {
-      code?: number;
-      stdout?: string;
-      stderr?: string;
-    };
-    return {
-      exitCode: failed.code ?? 1,
-      stdout: failed.stdout ?? "",
-      stderr: failed.stderr ?? "",
-    };
+    try {
+      const result = await execFileAsync(process.execPath, [aiuBin, ...input], {
+        cwd: executionRoot,
+      });
+      return {
+        exitCode: 0,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    } catch (error) {
+      assert(error !== null && typeof error === "object");
+      const failed = error as {
+        code?: number;
+        stdout?: string;
+        stderr?: string;
+      };
+      return {
+        exitCode: failed.code ?? 1,
+        stdout: failed.stdout ?? "",
+        stderr: failed.stderr ?? "",
+      };
+    }
+  } finally {
+    if (temporaryRoot !== undefined) {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   }
 }

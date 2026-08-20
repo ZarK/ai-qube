@@ -8,21 +8,20 @@ import { createCliError } from "@tjalve/qube-cli/errors";
 import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
+import { promptConfirm } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "./model_routing_local.js";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
-import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
-import { qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
+import { getAgentHostProfileSync } from "@tjalve/aie";
+import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
+import { AGENT_HOST_IDS, qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
 
-import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 import { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
-import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
-import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
 import {
+  applyUmpireHostProbes,
   composeHostToolkitManifests,
   createInitRecord,
   formatHostToolkits,
@@ -59,6 +58,7 @@ export interface DispatchRequest {
   readonly commandPath: string;
   readonly resolution: CommandResolution;
   readonly args: readonly string[];
+  readonly cwd: string;
 }
 
 export interface CliEnvironment {
@@ -69,11 +69,9 @@ export interface CliEnvironment {
 
 export interface CommandResolution {
   readonly commandPath: string;
-  readonly source: "install" | "workspace" | "path";
+  readonly source: "install" | "workspace";
   readonly packageJsonPath?: string;
   readonly packageVersion?: string;
-  readonly error?: string;
-  readonly warning?: string;
 }
 
 const passthroughExtensions = defineExtensions({ passthrough: true });
@@ -102,11 +100,10 @@ const offlineFlag = defineFlag({
 
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
-type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
+type InstallHost = "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
 type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
 type InstallCiProvider = "github" | "gitlab" | "jenkins" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
-type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
 
 interface InstallSelections {
@@ -121,7 +118,6 @@ interface InstallSelections {
   readonly withComponents: readonly string[];
   readonly lifecycleScripts: InstallLifecycleScripts;
   readonly docs: boolean;
-  readonly migration: InstallMigration;
   readonly reviewMode: InstallReviewMode;
   readonly uiAuditEvidenceRoot: string;
   readonly creditWarning: boolean;
@@ -432,7 +428,6 @@ const packageManagerChoices = defineInstallerChoiceGroup({
 });
 
 const installOptionLabels: Readonly<Record<string, string>> = Object.freeze({
-  "generic": "Generic terminal",
   "codex": "Codex",
   "opencode": "OpenCode",
   "claude-code": "Claude Code",
@@ -460,20 +455,20 @@ function discoveryOptionValues(options: readonly QubeDiscoveryOption[]): string[
 }
 
 const hostChoices = defineInstallerChoiceGroup({
-  name: "host surface",
-  message: "Which host surface should the install notes target?",
-  defaultValue: "generic",
+  name: "agent harness",
+  message: "Which agent harness should QUBE configure?",
+  defaultValue: "codex",
   choices: discoveryChoices<InstallHost>(executorHostSurfaces)
 });
 const workProviderChoices = defineInstallerChoiceGroup({
-  name: "work provider",
-  message: "Which work provider should the notes target?",
+  name: "issue tracker",
+  message: "Which issue tracker should QUBE use?",
   defaultValue: "github",
   choices: discoveryChoices<InstallWorkProvider>(executorWorkProviders)
 });
 const ciProviderChoices = defineInstallerChoiceGroup({
-  name: "ci provider",
-  message: "Which CI provider should the notes target?",
+  name: "automated checks",
+  message: "Which provider runs this repository's automated checks (CI)?",
   defaultValue: "github",
   choices: discoveryChoices<InstallCiProvider>(executorCiProviders)
 });
@@ -519,24 +514,6 @@ const docsChoices = defineInstallerChoiceGroup({
     }
   ]
 });
-const migrationChoices = defineInstallerChoiceGroup({
-  name: "migration path",
-  message: "Is this replacing standalone global package commands?",
-  defaultValue: "none",
-  choices: [
-    {
-      value: "none",
-      label: "Fresh QUBE install",
-      description: "Keep the plan focused on installing the composer package.",
-      recommended: true
-    },
-    {
-      value: "standalone-globals",
-      label: "Migrate standalone globals",
-      description: "Include notes for moving from direct aib, aie, aiq, or aiu globals."
-    }
-  ]
-});
 const evidenceRootChoices = defineInstallerChoiceGroup({
   name: "UI audit evidence root",
   message: "Where should this machine keep local UI audit evidence?",
@@ -547,11 +524,6 @@ const evidenceRootChoices = defineInstallerChoiceGroup({
       label: "QUBE user default",
       description: "Store UI audit evidence under ~/.qube/verification/.",
       recommended: true
-    },
-    {
-      value: "legacy",
-      label: "Existing legacy path",
-      description: "Keep using ~/github-verification/ when that tree already exists."
     }
   ]
 });
@@ -591,11 +563,6 @@ const installCommand = defineCommand({
     applyFlag,
     offlineFlag,
     defineFlag({
-      name: "force",
-      description: "Accepted for compatibility. Does not override registry identity, age, provenance, or lifecycle gates.",
-      type: "boolean"
-    }),
-    defineFlag({
       name: "scope",
       description: "Install scope to plan.",
       type: "option",
@@ -609,7 +576,7 @@ const installCommand = defineCommand({
     }),
     defineFlag({
       name: "host",
-      description: `Comma-separated host surfaces to select; the first is active. Default: generic. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      description: `Comma-separated agent harnesses to select; the first is active. Default: codex. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
@@ -638,12 +605,6 @@ const installCommand = defineCommand({
       description: "Include README and configuration guidance in the generated plan.",
       type: "boolean",
       negatable: true
-    }),
-    defineFlag({
-      name: "migration",
-      description: "Migration posture for users moving from standalone package globals.",
-      type: "option",
-      options: ["none", "standalone-globals"]
     }),
     defineFlag({
       name: "review-mode",
@@ -918,7 +879,6 @@ const oneshotCommand = defineCommand({
 const makeItSoCommand = defineCommand({
   kind: "command",
   name: "make-it-so",
-  aliases: ["makeitso"],
   description: "Map an intent to the safest real QUBE workflow.",
   arguments: [
     defineArgument({
@@ -982,7 +942,6 @@ interface DirectQubeCommand {
   readonly command: ReturnType<typeof defineCommand>;
   readonly component: QubeComponent["command"];
   readonly targetCommand: string;
-  readonly canonicalName: string;
   readonly supportsJson: boolean;
   readonly passthroughJson?: boolean;
   readonly qubePrimaryHelp?: boolean;
@@ -1036,7 +995,7 @@ const initCommand = defineCommand({
     defaultsFlag,
     defineFlag({
       name: "host",
-      description: `Comma-separated host surfaces to initialize. Default: generic. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      description: `Comma-separated agent harnesses to initialize. Default: codex. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
@@ -1061,7 +1020,7 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "primary-host",
-      description: "Primary modelRouting host: codex, claude-code, opencode, or grok-build. Must be installed.",
+      description: "Primary modelRouting host: codex, claude-code, opencode, grok-build, or cursor. Must be installed.",
       type: "string"
     }),
     defineFlag({
@@ -1162,7 +1121,6 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
     }),
     component: "aib",
     targetCommand: "init",
-    canonicalName: "idea",
     supportsJson: true,
     mapArgs(args) {
       return mapIdeaArgs(args);
@@ -1196,9 +1154,8 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("audit", "Show Executor audit helpers.", "aie", "audit", { supportsJson: false }),
   createDirectCommand("audit ui", "Plan or check manual UI audit evidence.", "aie", "audit ui"),
   createDirectCommand("review", "Set up and validate provider publishing or show host-run Executor review helpers.", "aie", "review", { supportsJson: false, qubePrimaryHelp: true }),
-  createDirectCommand("review setup", "Show guided reviewer publisher setup paths.", "aie", "review setup", { supportsJson: false, qubePrimaryHelp: true }),
-  createDirectCommand("review setup github-app", "Configure a user-owned GitHub App reviewer publisher with safe secret references.", "aie", "review setup github-app", { passthroughJson: true, qubePrimaryHelp: true }),
-  createDirectCommand("review setup token", "Configure a separate-user fine-grained token reviewer publisher with an env reference.", "aie", "review setup token", { passthroughJson: true, qubePrimaryHelp: true }),
+  createDirectCommand("review setup", "Explain the current GitHub account publisher and QUBE Reviewer App setup.", "aie", "review setup", { supportsJson: false, qubePrimaryHelp: true }),
+  createDirectCommand("review setup github-app", "Configure the QUBE Reviewer GitHub App with safe secret references.", "aie", "review setup github-app", { passthroughJson: true, qubePrimaryHelp: true }),
   createDirectCommand("review doctor", "Validate reviewer publisher readiness and permissions without exposing secrets.", "aie", "review doctor", { passthroughJson: true, qubePrimaryHelp: true }),
   createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate", { qubePrimaryHelp: true }),
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
@@ -1229,8 +1186,6 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("watch", "Run AIQ continuously for explicit paths.", "aiq", "watch", { translateJson: true }),
   createDirectCommand("serve", "Start the standalone AIQ quality server.", "aiq", "serve", { translateJson: true }),
   createDirectCommand("continue", "Show Umpire continuation status and resume guidance.", "aiu", "status"),
-  createDirectCommand("status", "Show Umpire continuation status and resume guidance.", "aiu", "status", { hidden: true, aliasOf: "continue" }),
-  createDirectCommand("continue status", "Show Umpire continuation status and resume guidance.", "aiu", "status", { hidden: true, aliasOf: "continue" }),
   createDirectCommand("whip", "Inspect and manage durable idle whip tasks.", "aiu", "whip"),
 ];
 
@@ -1240,7 +1195,6 @@ const sortedDirectCommandDefinitions = [...directCommandDefinitions].sort((left,
 
 const ambiguousCommandGuidance: Readonly<Record<string, string>> = {
   config: "Config exists in multiple components. Use qube aiq config, qube aiu config, or qube aie init for Executor config setup.",
-  migrate: "Migration exists in Executor and Umpire. Use qube aie migrate ... for Executor migration or qube aiu migrate ... for Umpire migration.",
   labels: "Label management is Executor-specific. Use qube aie labels setup ... when you need repository label administration.",
   repo: "Repository preparation is Executor-specific administration. Use qube aie repo prime ... when you need it.",
   paths: "Path inspection is Umpire-specific. Use qube aiu paths ... when you need package and state paths.",
@@ -1310,8 +1264,6 @@ let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, inst
 
 export function renderCommandSurfacesDoc(): string {
   const composerCommands = [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
-  const visibleDirect = directCommandDefinitions.filter(definition => definition.command.hidden !== true);
-  const hiddenDirect = directCommandDefinitions.filter(definition => definition.command.hidden === true);
   const lines: string[] = [
     "# QUBE Command Surfaces",
     "",
@@ -1331,15 +1283,7 @@ export function renderCommandSurfacesDoc(): string {
     "",
     "| Command | Routes to | Description |",
     "| --- | --- | --- |",
-    ...visibleDirect.map(definition => `| \`qube ${definition.command.name}\` | \`${definition.component} ${definition.targetCommand}\` | ${definition.command.description} |`),
-    "",
-    "## Hidden synonyms",
-    "",
-    "These names stay dispatchable for compatibility but are excluded from help listings; their help renders the canonical composer-facing command.",
-    "",
-    "| Synonym | Canonical command |",
-    "| --- | --- |",
-    ...hiddenDirect.map(definition => `| \`qube ${definition.command.name}\` | \`qube ${definition.canonicalName}\` |`),
+    ...directCommandDefinitions.map(definition => `| \`qube ${definition.command.name}\` | \`${definition.component} ${definition.targetCommand}\` | ${definition.command.description} |`),
     "",
     "## Component passthroughs",
     "",
@@ -1388,7 +1332,7 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   if (args[0] === "oneshot") {
     return planOneshot(args.slice(1), environment);
   }
-  if (args[0] === "make-it-so" || args[0] === "makeitso") {
+  if (args[0] === "make-it-so") {
     return planMakeItSo(args.slice(1), environment);
   }
 
@@ -1418,8 +1362,7 @@ export async function runQubeCli(input: readonly string[] = process.argv.slice(2
 export function resolveCommand(command: string, environment: CliEnvironment = defaultEnvironment()): string | undefined {
   const component = qubeComponents.find(candidate => candidate.command === command);
   if (component) {
-    const resolution = resolveComponentCommand(component, environment);
-    return resolution && !resolution.error ? resolution.commandPath : undefined;
+    return resolveComponentCommand(component, environment)?.commandPath;
   }
   return resolveCommandFromEntries(command, [path.join(environment.cwd, "node_modules", ".bin"), ...pathEntries(environment.env)], environment);
 }
@@ -1434,31 +1377,14 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
 
   const workspacePath = resolveCommandFromEntries(component.command, [path.join(environment.cwd, "node_modules", ".bin")], environment);
   if (workspacePath) {
-    return withPackageMetadata(component, workspacePath, "workspace", findNearestPackageJson(workspacePath));
+    return withPackageMetadata(
+      component,
+      workspacePath,
+      "workspace",
+      path.join(environment.cwd, "node_modules", ...component.packageName.split("/"), "package.json")
+    );
   }
-
-  const pathPath = resolveCommandFromEntries(component.command, pathEntries(environment.env), environment);
-  if (!pathPath) {
-    return undefined;
-  }
-
-  const resolution = withPackageMetadata(component, pathPath, "path", findCommandPackageJson(pathPath, component.packageName));
-  if (!resolution.packageVersion) {
-    return {
-      ...resolution,
-      error: `Refusing ${component.command} from PATH at ${pathPath}: unable to verify ${component.packageName}@${component.packageVersion}.`
-    };
-  }
-  if (resolution.packageVersion && resolution.packageVersion !== component.packageVersion) {
-    return {
-      ...resolution,
-      error: `Refusing ${component.command} from PATH at ${pathPath}: expected ${component.packageName}@${component.packageVersion}, found ${resolution.packageVersion}.`
-    };
-  }
-  return {
-    ...resolution,
-    warning: `Warning: ${component.command} resolved from PATH at ${pathPath}; install-scoped ${component.packageName}@${component.packageVersion} was not found.`
-  };
+  return undefined;
 }
 
 function createQubeCli(environment: CliEnvironment) {
@@ -1617,10 +1543,14 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   const modelRoutingPromise = runModelRoutingDoctor(environment.cwd);
   const workflowPromise = collectWorkflowReadiness(offline, environment);
   const continuationPromise = collectContinuationHealth(offline, environment);
-  const hosts = probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline });
+  const [baseHosts, continuation] = await Promise.all([
+    probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline }),
+    continuationPromise,
+  ]);
+  const hosts = applyUmpireHostProbes(baseHosts, continuation.report);
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const [connections, permutation, modelRouting, workflow, continuation] = await Promise.all([connectionsPromise, permutationPromise, modelRoutingPromise, workflowPromise, continuationPromise]);
+    const [connections, permutation, modelRouting, workflow] = await Promise.all([connectionsPromise, permutationPromise, modelRoutingPromise, workflowPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0
       ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
@@ -1646,13 +1576,12 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const [connections, permutation, modelRouting, quality, workflow, continuation] = await Promise.all([
+  const [connections, permutation, modelRouting, quality, workflow] = await Promise.all([
     connectionsPromise,
     permutationPromise,
     modelRoutingPromise,
     dispatchCommandCaptured(planned.dispatch),
     workflowPromise,
-    continuationPromise,
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
@@ -1701,13 +1630,28 @@ interface QubeInitChildResult {
   readonly error?: string;
 }
 
+function normalizeInitQuestionState(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.questions) || !Array.isArray(record.unansweredQuestionIds)) return value;
+  const answeredIds = new Set(record.questions.flatMap(question => {
+    if (question === null || typeof question !== "object" || Array.isArray(question)) return [];
+    const candidate = question as Record<string, unknown>;
+    return candidate.answered === true && typeof candidate.id === "string" ? [candidate.id] : [];
+  }));
+  return {
+    ...record,
+    unansweredQuestionIds: record.unansweredQuestionIds.filter(id => typeof id !== "string" || !answeredIds.has(id)),
+  };
+}
+
 /** Every init child is dispatched with its own JSON flag and parsed defensively; a failed, unavailable, or non-envelope child is never coerced into ok:true. */
-async function dispatchInitChild(componentName: string, args: readonly string[], environment: CliEnvironment): Promise<QubeInitChildResult> {
+async function dispatchInitChild(componentName: string, args: readonly string[], environment: CliEnvironment, cwd = environment.cwd): Promise<QubeInitChildResult> {
   const planned = planQubeDispatch(componentName, args, environment);
   if (!planned.dispatch) {
     return { component: componentName, args, ok: false, exitCode: planned.exitCode || 1, error: planned.stderr.trim() || `${componentName} is unavailable.` };
   }
-  const captured = await dispatchCommandCaptured(planned.dispatch);
+  const captured = await dispatchCommandCaptured({ ...planned.dispatch, cwd });
   if (captured.truncated) {
     return { component: componentName, args, ok: false, exitCode: captured.exitCode || 1, stderr: captured.stderr, error: `${componentName} output exceeded the capture limit; truncated output is never accepted.` };
   }
@@ -1717,14 +1661,15 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   } catch {
     return { component: componentName, args, ok: false, exitCode: captured.exitCode === 0 ? 1 : captured.exitCode, stderr: captured.stderr, error: `${componentName} did not return a single JSON envelope.` };
   }
-  const isEnvelope = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
-  const ok = isEnvelope && (parsed as { ok?: unknown }).ok !== false && captured.exitCode === 0;
+  const normalized = normalizeInitQuestionState(parsed);
+  const isEnvelope = normalized !== null && typeof normalized === "object" && !Array.isArray(normalized);
+  const ok = isEnvelope && (normalized as { ok?: unknown }).ok === true && captured.exitCode === 0;
   return {
     component: componentName,
     args,
     ok,
     exitCode: captured.exitCode,
-    ...(isEnvelope ? { json: parsed } : {}),
+    ...(isEnvelope ? { json: normalized } : {}),
     stderr: captured.stderr,
     ...(ok ? {} : { error: `${componentName} ${args[0] ?? ""} did not report success.`.trim() })
   };
@@ -1763,6 +1708,7 @@ function buildAiuInitArgs(tool: AieInitTool | undefined, options: { readonly dry
 
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const target = readString(args.target) ?? ".";
+  const targetPath = path.resolve(environment.cwd, target);
   const json = flags.json === true;
   const dryRun = flags["dry-run"] === true;
   const force = flags.force === true;
@@ -1801,7 +1747,9 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     yes: yes || defaults
   });
 
-  const routingSelections = await collectModelRoutingSelections(flags, json, yes, defaults, initCommand);
+  const routingSelections = await collectModelRoutingSelections(flags);
+  const primaryModel = routingSelections.primaryModel;
+  const primaryHost = primaryModel ? routingSelections.primaryHost ?? hosts[0] : undefined;
   const aieToolTargets = resolveAieInitToolTargets(hosts);
   const aiuToolTargets = resolveAiuInitToolTargets(hosts);
   const reviewProvider = workProviders[0] === "gitlab" ? "gitlab" : "github";
@@ -1813,8 +1761,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     workProvider: workProviders[0],
     reviewProvider,
     ciProvider: ciProviders[0],
-    primaryHost: routingSelections.primaryHost,
-    primaryModel: routingSelections.primaryModel,
+    primaryHost,
+    primaryModel,
     mechanical: routingSelections.mechanical,
     exploration: routingSelections.exploration,
     synthesis: routingSelections.synthesis,
@@ -1828,19 +1776,15 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]
     : aieToolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
   const withRuns: Array<Promise<QubeInitChildResult>> = [];
-  if (withComponents.includes("aib")) {
-    withRuns.push(dispatchInitChild("aib", ["init", target, "--json", ...(dryRun ? ["--dry-run"] : [])], environment));
-  }
   if (withComponents.includes("aiq")) {
     withRuns.push(dispatchInitChild("aiq", ["setup", "--format", "json"], environment));
   }
 
-  // Umpire init merges hosts.enabled in one process. Run those children one after another
-  // so two tools cannot overwrite the same config file.
+  // Umpire plans the complete selected harness set in one apply. Separate child
+  // runs would compete for the same config file and make later hosts conflict.
   const aiu: QubeInitChildResult[] = [];
-  const aiuTools = aiuToolTargets.length === 0 ? [undefined] : aiuToolTargets;
-  for (const tool of aiuTools) {
-    aiu.push(await dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
+  for (const tool of aiuToolTargets) {
+    aiu.push(await dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment, targetPath));
   }
 
   const [aie, withResults] = await Promise.all([
@@ -1848,7 +1792,22 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     Promise.all(withRuns)
   ]);
 
-  const allRuns = [...aie, ...aiu, ...withResults];
+  // Bootstrap owns a separate managed instruction section. Run it after
+  // Executor so concurrent writes cannot lose either managed section.
+  const aib = withComponents.includes("aib")
+    ? [await dispatchInitChild("aib", [
+        "init",
+        target,
+        "--json",
+        "--agent",
+        hosts[0],
+        "--surfaces",
+        hosts.join(","),
+        ...(dryRun ? ["--dry-run"] : [])
+      ], environment)]
+    : [];
+  const componentResults = [...aib, ...withResults];
+  const allRuns = [...aie, ...aiu, ...componentResults];
   const ok = allRuns.every(run => run.ok);
   const exitCode = ok ? 0 : Math.max(1, ...allRuns.filter(run => !run.ok).map(run => run.exitCode || 1));
   const selections = {
@@ -1861,8 +1820,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     withComponents,
     mcp: mcpOptIn
   };
-  const hostToolkits = composeHostToolkitManifests(hosts, { workProviders, ciProviders, mcpOptIn });
-  const targetPath = path.resolve(environment.cwd, target);
+  const hostToolkits = await composeHostToolkitManifests(hosts, { workProviders, ciProviders, mcpOptIn });
   if (!dryRun && ok) {
     writeInitRecord(targetPath, createInitRecord({
       hosts,
@@ -1874,7 +1832,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const stderr = allRuns.map(run => run.stderr ?? "").filter(text => text.length > 0).join("");
 
   if (json) {
-    const payload = { ok, command: "init", selections, hosts: hostToolkits, aie, aiu, with: withResults };
+    const payload = { ok, command: "init", selections, hosts: hostToolkits, aie, aiu, with: componentResults };
     return { exitCode, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   }
 
@@ -4287,23 +4245,16 @@ function planQubeDispatch(componentName: string | undefined, componentArgs: read
       stderr: `Cannot find ${component.command} for ${component.packageName}@${component.packageVersion}.\nInstall QUBE with its component dependencies or install the matching standalone package version.\n`
     };
   }
-  if (resolution.error) {
-    return {
-      exitCode: 4,
-      stdout: "",
-      stderr: `${resolution.error}\n`
-    };
-  }
-
   return {
     exitCode: 0,
     stdout: "",
-    stderr: resolution.warning ? `${resolution.warning}\n` : "",
+    stderr: "",
     dispatch: {
       component,
       commandPath: resolution.commandPath,
       resolution,
-      args: componentArgs
+      args: componentArgs,
+      cwd: environment.cwd
     }
   };
 }
@@ -4360,17 +4311,21 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
 
 function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): string | null {
   const primaryHost = readString(flags["primary-host"]);
+  const primaryModel = readString(flags["primary-model"]);
   const routeFlags = [
     readString(flags["route-mechanical-implementation"]),
     readString(flags["route-exploration-investigation"]),
     readString(flags["route-synthesis-judgment"]),
     readString(flags["route-independent-review"]),
   ];
-  if (!primaryHost && routeFlags.every(value => value === undefined)) return null;
+  if (!primaryHost && !primaryModel && routeFlags.every(value => value === undefined)) return null;
+  if (!primaryModel) {
+    return "Model routing requires --primary-model when --primary-host or route overrides are set.";
+  }
   const installed = detectInstalledRoutingHostsOnPath();
   if (primaryHost) {
     if (!isModelRoutingHost(primaryHost)) {
-      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok-build.`;
+      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok-build, cursor.`;
     }
     if (!installed.includes(primaryHost)) {
       return `Host CLI for ${primaryHost} is not installed. Install and authenticate that host, or choose an installed host.`;
@@ -4381,7 +4336,7 @@ function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): st
     if (!value) continue;
     const host = value.split(":")[0];
     if (!isModelRoutingHost(host)) {
-      return `--${flag} must be host:model using codex, claude-code, opencode, or grok-build.`;
+      return `--${flag} must be host:model using codex, claude-code, opencode, grok-build, or cursor.`;
     }
     if (!installed.includes(host)) {
       return `Host CLI for ${host} is not installed. Install and authenticate that host, or choose an installed host.`;
@@ -4394,23 +4349,8 @@ function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): st
   return null;
 }
 
-export function modelRoutingPromptPlan(installedHosts: readonly string[]): readonly string[] {
-  return Object.freeze([
-    "primary-host",
-    "primary-model",
-    "mechanical-implementation",
-    "exploration-investigation",
-    "synthesis-judgment",
-    "independent-review",
-  ].filter((item, index) => index === 0 ? installedHosts.length > 0 : true));
-}
-
 async function collectModelRoutingSelections(
   flags: Readonly<Record<string, unknown>>,
-  json: boolean,
-  yes: boolean,
-  defaults: boolean,
-  command: typeof initCommand,
 ): Promise<{
   primaryHost?: string;
   primaryModel?: string;
@@ -4419,7 +4359,7 @@ async function collectModelRoutingSelections(
   synthesis?: string;
   independentReview?: string;
 }> {
-  const fromFlags = {
+  return {
     primaryHost: readString(flags["primary-host"]),
     primaryModel: readString(flags["primary-model"]),
     mechanical: readString(flags["route-mechanical-implementation"]),
@@ -4427,78 +4367,6 @@ async function collectModelRoutingSelections(
     synthesis: readString(flags["route-synthesis-judgment"]),
     independentReview: readString(flags["route-independent-review"]),
   };
-  if (json || yes || defaults || fromFlags.primaryHost) return fromFlags;
-  const installed = detectInstalledRoutingHostsOnPath();
-  if (installed.length === 0) return fromFlags;
-  const primaryHost = await promptInstallerChoice({
-    command,
-    promptName: "primary modelRouting host",
-    message: "Which installed host should be the primary modelRouting target?",
-    choices: installed.map(host => ({ value: host, label: host, description: `Use the installed ${host} CLI.` })),
-    defaultValue: installed[0],
-    jsonMode: false,
-    yes: false,
-  });
-  const primaryModel = await promptText({
-    command,
-    promptName: "primary model",
-    jsonMode: false,
-    clack: { message: "Primary model identifier for fallback chains:", defaultValue: "default" },
-  });
-  const mechanical = await promptDelegatedRoute(command, "mechanical-implementation", installed, primaryHost, primaryModel);
-  const exploration = await promptDelegatedRoute(command, "exploration-investigation", installed, primaryHost, primaryModel);
-  const synthesis = await promptDelegatedRoute(command, "synthesis-judgment", installed, primaryHost, primaryModel);
-  const independentReview = await promptInstallerChoice({
-    command,
-    promptName: "independent-review tier",
-    message: "Which reviewModels tier should independent-review use?",
-    choices: [
-      { value: "review", label: "review", description: "Use the review tier from policy.reviews.models." },
-      { value: "economy", label: "economy", description: "Use the economy tier from policy.reviews.models." },
-      { value: "synthesis", label: "synthesis", description: "Use the synthesis tier from policy.reviews.models." },
-    ],
-    defaultValue: "review",
-    jsonMode: false,
-    yes: false,
-  });
-  return {
-    primaryHost,
-    primaryModel,
-    mechanical,
-    exploration,
-    synthesis,
-    independentReview,
-  };
-}
-
-async function promptDelegatedRoute(
-  command: typeof initCommand,
-  routeClass: "mechanical-implementation" | "exploration-investigation" | "synthesis-judgment",
-  installed: readonly string[],
-  primaryHost: string,
-  primaryModel: string,
-): Promise<string> {
-  const host = await promptInstallerChoice({
-    command,
-    promptName: `${routeClass} host`,
-    message: `Which installed host should ${routeClass} prefer?`,
-    choices: installed.map(value => ({
-      value,
-      label: value,
-      description: value === primaryHost ? "Use the primary host." : `Use the installed ${value} CLI.`,
-    })),
-    defaultValue: primaryHost,
-    jsonMode: false,
-    yes: false,
-  });
-  if (host === primaryHost) return `${primaryHost}:${primaryModel}`;
-  const model = await promptText({
-    command,
-    promptName: `${routeClass} model`,
-    jsonMode: false,
-    clack: { message: `Model identifier for ${routeClass} on ${host}:`, defaultValue: "default" },
-  });
-  return `${host}:${model}`;
 }
 
 function readString(value: unknown): string | undefined {
@@ -4801,7 +4669,7 @@ function mappedArgsRequestJson(args: readonly string[]): boolean {
 
 function rewriteDirectCommandHelp(output: string, definition: DirectQubeCommand): string {
   const componentPath = `${definition.component} ${definition.targetCommand}`;
-  const primary = output.split(componentPath).join(`qube ${definition.canonicalName}`).trimEnd();
+  const primary = output.split(componentPath).join(`qube ${definition.command.name}`).trimEnd();
   return `${primary}\n\nEquivalent paths: \`qube ${componentPath}\` or \`${componentPath}\`.\n`;
 }
 
@@ -4920,10 +4788,6 @@ function collectInstallMismatches(selections: InstallSelections, environment: Cl
     const resolution = resolveComponentCommand(component, environment);
     if (!resolution) {
       mismatches.push(`Missing ${component.packageName}@${component.packageVersion}.`);
-      continue;
-    }
-    if (resolution.error) {
-      mismatches.push(resolution.error);
       continue;
     }
     if (resolution.packageVersion && resolution.packageVersion !== component.packageVersion) {
@@ -5369,7 +5233,7 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
   }
 
   const target = positional[0] ?? ".";
-  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
+  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
   const toolTargets = resolveAieInitToolTargets(hosts);
   const dispatchArgs = buildAieInitArgs(target, toolTargets[0], {
     dryRun: flags["dry-run"] === true,
@@ -5415,7 +5279,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly hidden?: boolean; readonly aliasOf?: string } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -5423,8 +5287,6 @@ function createDirectCommand(
       kind: "command",
       name,
       description,
-      hidden: options.hidden === true,
-      aliasOf: options.aliasOf,
       arguments: [
         defineArgument({
           name: "args",
@@ -5449,7 +5311,6 @@ function createDirectCommand(
     }),
     component,
     targetCommand,
-    canonicalName: options.aliasOf ?? name,
     supportsJson,
     passthroughJson: options.passthroughJson === true,
     qubePrimaryHelp: options.qubePrimaryHelp === true,
@@ -5510,7 +5371,6 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
   );
   const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
   const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
-  const migration = await resolveInstallChoice(migrationChoices, readOption<InstallMigration>(flags, "migration"), flags);
   const withComponents = await promptInstallerChoices({
     command: installCommand,
     promptName: "optional components",
@@ -5525,7 +5385,7 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
   return {
     scope,
     packageManager,
-    host: hosts[0] ?? "generic",
+    host: hosts[0] ?? "codex",
     hosts,
     workProvider: workProviders[0] ?? "github",
     workProviders,
@@ -5534,7 +5394,6 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
     withComponents,
     lifecycleScripts,
     docs: docsValue === "yes",
-    migration,
     reviewMode,
     uiAuditEvidenceRoot,
     creditWarning: creditWarningValue === "true"
@@ -5543,7 +5402,6 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
 
 function mapEvidenceRootChoice(value: string): string {
   if (value === "qube") return DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT;
-  if (value === "legacy") return "~/github-verification";
   return value;
 }
 
@@ -5560,15 +5418,16 @@ async function resolveInstallChoice<Value extends string>(
   flags: Readonly<Record<string, unknown>>,
   command: Parameters<typeof promptInstallerChoice>[0]["command"] = installCommand
 ): Promise<Value> {
+  const useDefaults = flags.yes === true || flags.defaults === true;
   return promptInstallerChoice({
     command,
     promptName: group.name,
     message: group.message,
     choices: group.choices,
     value,
-    defaultValue: flags.yes === true ? group.defaultValue : undefined,
+    defaultValue: useDefaults ? group.defaultValue : undefined,
     jsonMode: flags.json === true,
-    yes: flags.yes === true
+    yes: useDefaults
   });
 }
 
@@ -5578,27 +5437,29 @@ async function resolveInstallChoices<Value extends string>(
   flags: Readonly<Record<string, unknown>>,
   command: Parameters<typeof promptInstallerChoices>[0]["command"] = installCommand
 ): Promise<readonly Value[]> {
-  return promptInstallerChoices({
+  const useDefaults = flags.yes === true || flags.defaults === true;
+  const selected = await promptInstallerChoices({
     command,
     promptName: group.name,
     message: group.message,
     choices: group.choices,
     value: values,
-    defaultValue: flags.yes === true && group.defaultValue !== undefined ? [group.defaultValue] : undefined,
+    defaultValue: useDefaults && group.defaultValue !== undefined ? [group.defaultValue] : undefined,
     jsonMode: flags.json === true,
-    yes: flags.yes === true
+    yes: useDefaults
   });
+  return Object.freeze([...new Set(selected)]);
 }
 
 function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>, cwd = process.cwd()): InstallSelections {
   // Keep these synchronous fallbacks aligned with the choice group defaults above.
-  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
+  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
   const workProviders = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? ["github"];
   const ciProviders = readOptionList<InstallCiProvider>(flags, "ci-provider") ?? ["github"];
   return {
     scope: readOption<InstallScope>(flags, "scope") ?? "local",
     packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? recommendedInstallPackageManager(cwd),
-    host: hosts[0] ?? "generic",
+    host: hosts[0] ?? "codex",
     hosts,
     workProvider: workProviders[0] ?? "github",
     workProviders,
@@ -5607,7 +5468,6 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
     withComponents: readOptionList<string>(flags, "with") ?? [],
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
-    migration: readOption<InstallMigration>(flags, "migration") ?? "none",
     reviewMode: readOption<InstallReviewMode>(flags, "review-mode") ?? recommendedInstallReviewMode(hosts),
     uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root") ?? DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
     creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : true
@@ -5663,45 +5523,34 @@ function createInstallConnections(selections: InstallSelections): readonly Conne
   return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
 }
 
-const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code", "grok-build", "cursor"] as const);
-const AIE_INIT_ALL_TOOLS = Object.freeze(["opencode", "codex", "claude-code"] as const);
-type AieInitHostTool = (typeof AIE_INIT_HOST_TOOLS)[number];
-type AieInitTool = AieInitHostTool | "all" | "all,grok-build" | `${AieInitHostTool},${string}`;
+const AIE_INIT_HOST_TOOLS = AGENT_HOST_IDS;
+type AieInitHostTool = AgentHostId;
+type AieInitTool = AieInitHostTool | "all" | `${AieInitHostTool},${string}`;
 
 function mapSelectedInitTools(hosts: readonly InstallHost[]): Set<AieInitHostTool> {
   const mapped = new Set<AieInitHostTool>();
   for (const host of hosts) {
-    if (host === "claude-code") mapped.add("claude-code");
-    else if (host === "codex") mapped.add("codex");
-    else if (host === "grok-build") mapped.add("grok-build");
-    else if (host === "cursor") mapped.add("cursor");
-    else if (host === "opencode") mapped.add("opencode");
+    mapped.add(host);
   }
   return mapped;
-}
-
-function hasClassicAllTools(mapped: ReadonlySet<AieInitHostTool>): boolean {
-  return AIE_INIT_ALL_TOOLS.every(tool => mapped.has(tool));
 }
 
 /** Executor accepts one --tool value that may list several hosts so shared AGENTS.md is written once. */
 function resolveAieInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
   const mapped = mapSelectedInitTools(hosts);
   if (mapped.size === 0) return [];
-  if (hasClassicAllTools(mapped)) return ["all"];
   return Object.freeze([AIE_INIT_HOST_TOOLS.filter(tool => mapped.has(tool)).join(",") as AieInitTool]);
 }
 
-/** Umpire accepts one enumerated --tool value, so host tools fan out. */
+/** Umpire receives the complete supported selection so it can apply one idempotent config plan. */
 function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
   const mapped = mapSelectedInitTools(hosts);
   if (mapped.size === 0) return [];
-  if (hasClassicAllTools(mapped)) return Object.freeze(["all"]);
-  const tools: AieInitTool[] = [];
-  for (const tool of AIE_INIT_HOST_TOOLS) {
-    if (tool !== "cursor" && mapped.has(tool)) tools.push(tool);
-  }
-  return Object.freeze(tools);
+  const tools = AIE_INIT_HOST_TOOLS.filter(tool =>
+    mapped.has(tool) && getAgentHostProfileSync(tool).umpire.continuation.support !== "unsupported"
+  );
+  if (tools.length === 0) return [];
+  return Object.freeze([tools.join(",") as AieInitTool]);
 }
 
 function buildQubeInitCommand(selections: InstallSelections): string {
@@ -5765,17 +5614,19 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
     return [];
   }
   const files = ["README.md install snippet"];
-  if (selections.hosts.includes("codex")) {
-    files.push(...listCodexInstallFiles());
-  }
-  if (selections.hosts.includes("claude-code")) {
-    files.push(...listClaudeCodeInstallFiles());
-  }
-  if (selections.hosts.includes("grok-build")) {
-    files.push(...listGrokBuildInstallFiles());
-  }
-  if (selections.hosts.includes("opencode")) {
-    files.push(".opencode command notes");
+  for (const host of selections.hosts) {
+    const profile = getAgentHostProfileSync(host as AgentHostId);
+    files.push(`${profile.instructionTarget.path} agent instructions`);
+    files.push(`${profile.makeItSo.path} Make It So ${profile.makeItSo.kind}`);
+    if (selections.reviewMode === "host") {
+      for (const agent of profile.review.local.agents) {
+        files.push(`${agent.path} native review agent`);
+      }
+    }
+    for (const action of profile.trust.actions) {
+      if (action.kind !== "review-files") continue;
+      for (const actionPath of action.paths) files.push(`${actionPath} trust review`);
+    }
   }
   if (selections.workProviders.some(id => id === "github" || id === "gitlab" || id === "linear" || id === "jira")) {
     files.push(".qube/aie/config.json provider notes");
@@ -5814,17 +5665,13 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   if (selections.withComponents.length > 0) {
     notes.push(`qube init also initializes: ${selections.withComponents.join(", ")}.`);
   }
-  if (selections.hosts.includes("codex")) {
-    notes.push(...listCodexInstallNotes());
-  }
-  if (selections.hosts.includes("claude-code")) {
-    notes.push(...listClaudeCodeInstallNotes());
-  }
-  if (selections.hosts.includes("grok-build")) {
-    notes.push(...listGrokBuildInstallNotes());
-  }
-  if (selections.migration === "standalone-globals") {
-    notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");
+  for (const host of selections.hosts) {
+    const profile = getAgentHostProfileSync(host as AgentHostId);
+    notes.push(`${profile.displayName}: reads ${profile.instructionTarget.path}; start with ${profile.makeItSo.invocation}.`);
+    notes.push(`${profile.displayName} capabilities: task list ${profile.taskList.support}; subagents ${profile.subagents.support}; native review ${profile.review.local.support}; isolated review ${profile.review.isolated.support}; Umpire continuation ${profile.umpire.continuation.support}; live models ${profile.modelDiscovery.support}.`);
+    if (profile.trust.required) {
+      notes.push(`${profile.displayName} requires trust after you review the installed files: ${profile.trust.actions.map(action => action.description).join(" ")}`);
+    }
   }
   return notes;
 }
@@ -5853,12 +5700,11 @@ function renderInstallPlan(plan: InstallPlan): string {
     `Package: ${plan.package.name}@${plan.package.version}`,
     `Scope: ${plan.selections.scope}`,
     `Package manager: ${plan.selections.packageManager}`,
-    `Host surface: ${plan.selections.hosts.join(", ")}`,
+    `Agent harnesses: ${plan.selections.hosts.join(", ")}`,
     `Work provider: ${plan.selections.workProviders.join(", ")}`,
     `CI provider: ${plan.selections.ciProviders.join(", ")}`,
     `Lifecycle scripts: ${plan.selections.lifecycleScripts}`,
     `Docs/config notes: ${plan.selections.docs ? "included" : "omitted"}`,
-    `Migration path: ${plan.selections.migration}`,
     "",
     "Commands to run:",
     ...(plan.commands.length > 0
@@ -5869,7 +5715,7 @@ function renderInstallPlan(plan: InstallPlan): string {
     ...plan.steps.map(step => `- ${step.stage}: ${step.status} — ${step.reason}`),
     "",
     "Current options:",
-    renderOptionSummary("Host surfaces", plan.options.hosts),
+    renderOptionSummary("Agent harnesses", plan.options.hosts),
     renderOptionSummary("Work providers", plan.options.workProviders),
     renderOptionSummary("CI providers", plan.options.ciProviders),
     "",
@@ -5912,8 +5758,7 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
   const singleGroups = [
     { key: "scope", choices: scopeChoices.choices },
     { key: "package-manager", choices: packageManagerChoices.choices },
-    { key: "lifecycle-scripts", choices: lifecycleChoices.choices },
-    { key: "migration", choices: migrationChoices.choices }
+    { key: "lifecycle-scripts", choices: lifecycleChoices.choices }
   ];
   for (const group of singleGroups) {
     const value = flags[group.key];
@@ -6084,7 +5929,7 @@ function parseOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "migration", "review-mode", "ui-audit-evidence-root"]) {
+  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "review-mode", "ui-audit-evidence-root"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -6116,12 +5961,10 @@ function installOptionValues(key: string): readonly string[] {
       return withChoices.map(choice => choice.value);
     case "lifecycle-scripts":
       return lifecycleChoices.choices.map(choice => choice.value);
-    case "migration":
-      return migrationChoices.choices.map(choice => choice.value);
     case "review-mode":
       return ["isolated", "host", "external"];
     case "ui-audit-evidence-root":
-      return [DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT, "~/github-verification"];
+      return [DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT];
     default:
       return [];
   }
@@ -6185,59 +6028,6 @@ function readPackageVersion(packageName: string, packageJsonPath: string | undef
   } catch {
     return undefined;
   }
-}
-
-function findNearestPackageJson(commandPath: string): string | undefined {
-  let current = path.dirname(realpathSync.native(commandPath));
-  for (;;) {
-    const packageJson = path.join(current, "package.json");
-    if (existsSync(packageJson)) return packageJson;
-    const next = path.dirname(current);
-    if (next === current) return undefined;
-    current = next;
-  }
-}
-
-function commandDirectory(commandPath: string): string {
-  try {
-    return path.dirname(realpathSync.native(commandPath));
-  } catch {
-    return path.dirname(path.resolve(commandPath));
-  }
-}
-
-function packageNameSegments(packageName: string): string[] | undefined {
-  const segments = packageName.split("/");
-  if (segments.length === 0 || segments.some(segment => segment === "" || segment === "." || segment === "..")) {
-    return undefined;
-  }
-  return segments;
-}
-
-function packageJsonBesideCommand(commandPath: string, packageName: string): string | undefined {
-  const segments = packageNameSegments(packageName);
-  if (!segments) {
-    return undefined;
-  }
-  const commandDir = commandDirectory(commandPath);
-  const candidate = path.join(commandDir, "node_modules", ...segments, "package.json");
-  const relative = path.relative(commandDir, candidate);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    return undefined;
-  }
-  return existsSync(candidate) ? candidate : undefined;
-}
-
-function findCommandPackageJson(commandPath: string, packageName: string): string | undefined {
-  const nearest = findNearestPackageJson(commandPath);
-  if (nearest && readPackageVersion(packageName, nearest)) {
-    return nearest;
-  }
-  const beside = packageJsonBesideCommand(commandPath, packageName);
-  if (beside && readPackageVersion(packageName, beside)) {
-    return beside;
-  }
-  return nearest;
 }
 
 function dispatchCommand(request: DispatchRequest): Promise<number> {
@@ -6327,12 +6117,7 @@ function spawnCapturedPath(
   let command: string;
   let spawnArgs: string[];
   try {
-    [command, spawnArgs] = spawnInput({
-      component: qubeComponents[0]!,
-      commandPath,
-      resolution: { commandPath, source: "path" },
-      args
-    });
+    [command, spawnArgs] = spawnInput({ commandPath, args });
   } catch (err: unknown) {
     return Promise.resolve({
       exitCode: 2,
@@ -6364,6 +6149,7 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<CapturedProc
     });
   }
   return captureChildOutput(spawn(command, args, {
+    cwd: request.cwd,
     stdio: ["inherit", "pipe", "pipe"],
     shell: false
   }));
@@ -6371,7 +6157,7 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<CapturedProc
 
 const CMD_UNSAFE_ARGUMENT = /[&|<>^%!"\r\n]/;
 
-function spawnInput(request: DispatchRequest): [string, string[]] {
+function spawnInput(request: Pick<DispatchRequest, "commandPath" | "args">): [string, string[]] {
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(request.commandPath)) {
     // cmd.exe parses metacharacters inside forwarded arguments regardless of
     // Node's quoting, so arguments that could splice commands are refused

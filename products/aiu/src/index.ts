@@ -12,7 +12,6 @@ export {
   configCommand,
   doctorCommand,
   initCommand,
-  migrateCommand,
   pathsCommand,
   statusCommand,
   whipCommand,
@@ -35,9 +34,13 @@ export {
   continuationPromptIsDuplicate,
   continuationPromptOwnedByOtherSession,
   continuationPromptTargetsSameItem,
+  createAiuTrustedStateFingerprint,
+  readAiuHostActivation,
   readAiuContinuationState,
   releaseAiuContinuationLock,
   resolveAiuContinuationPaths,
+  resolveAiuHostActivationPath,
+  writeAiuHostActivation,
   writeAiuContinuationState,
 } from "./continuation_store.js";
 export {
@@ -69,11 +72,8 @@ export {
   getAllAiuHostCapabilityProfiles,
   getDefaultHostCapabilityOverrides,
   getDefaultHostModes,
+  getDefaultStopHookBlocking,
 } from "./host_policy.js";
-export {
-  formatMigrationPlan,
-  planAiuMigration,
-} from "./migrate.js";
 export {
   renderAiuContinuationPrompt,
 } from "./prompt.js";
@@ -151,6 +151,7 @@ export type {
   AiuContinuationLogEntry,
   AiuContinuationPaths,
   AiuContinuationState,
+  AiuHostActivation,
 } from "./continuation_store.js";
 export type {
   AiuContinuationDecision,
@@ -164,8 +165,10 @@ export type {
   AiuDoctorCheck,
   AiuDoctorReport,
   AiuHealthStatus,
+  AiuHostContinuationProbe,
   AiuHostFilePath,
   AiuHostPathSet,
+  AiuHostProbeState,
   AiuInspectionOptions,
   AiuPackageBinPath,
   AiuResolvedPaths,
@@ -183,13 +186,6 @@ export type {
   AiuInitPlan,
   AiuInitTool,
 } from "./init.js";
-export type {
-  AiuMigrationFinding,
-  AiuMigrationManagedSection,
-  AiuMigrationOptions,
-  AiuMigrationPlan,
-  AiuMigrationStatePreservation,
-} from "./migrate.js";
 export type {
   AiuContinuationPrompt,
   AiuContinuationPromptInput,

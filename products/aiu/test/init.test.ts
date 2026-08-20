@@ -61,7 +61,7 @@ describe("init planner", () => {
       const result = await runCli(target, ["init", "--tool", tool, "--json"]);
       const parsed = JSON.parse(result.stdout) as InitEnvelope;
       const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
-        hosts: { enabled: string[] };
+        hosts: { enabled: string[]; modes: Record<string, string[]>; stopHookBlocking: Record<string, boolean> };
       };
 
       assert.equal(result.exitCode, 0, tool);
@@ -69,6 +69,8 @@ describe("init planner", () => {
       assert.deepEqual(parsed.init.tools, [tool], tool);
       assert.equal(existsSync(path.join(target, file)), true, tool);
       assert.deepEqual(config.hosts.enabled, [tool], tool);
+      assert.deepEqual(config.hosts.modes[tool], tool === "opencode" ? ["continue", "repair", "wait", "stop"] : ["continue", "repair", "stop"], tool);
+      assert.equal(config.hosts.stopHookBlocking[tool], tool !== "opencode", tool);
 
       if (tool === "opencode") {
         assert.match(
@@ -104,6 +106,223 @@ describe("init planner", () => {
     }
   });
 
+  it("initializes an arbitrary supported harness subset in one plan", async () => {
+    const target = await createRepoRoot();
+    const result = await runCli(target, ["init", "--tool", "opencode,claude-code", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+      hosts: { enabled: string[] };
+    };
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(parsed.init.ok, true);
+    assert.deepEqual(parsed.init.tools, ["opencode", "claude-code"]);
+    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.tool), ["opencode", "claude-code"]);
+    assert.deepEqual(config.hosts.enabled, ["opencode", "claude-code"]);
+    assert.deepEqual(
+      parsed.init.files.map((file) => file.relativePath),
+      [
+        path.join(".opencode", "plugins", "ai-umpire-continuation.ts"),
+        path.join(".claude", "settings.json"),
+      ],
+    );
+    assert.equal(existsSync(path.join(target, ".agents", "plugins", "marketplace.json")), false);
+    assert.equal(existsSync(path.join(target, ".grok", "hooks", "ai-umpire.json")), false);
+  });
+
+  it("applies all supported harnesses once and reports a repeat as a no-op", async () => {
+    const target = await createRepoRoot();
+    const selection = "opencode,codex,claude-code,grok-build";
+
+    const first = await runCli(target, ["init", "--tool", selection, "--json"]);
+    const firstPlan = JSON.parse(first.stdout) as InitEnvelope;
+    const second = await runCli(target, ["init", "--tool", selection, "--json"]);
+    const secondPlan = JSON.parse(second.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+      hosts: { enabled: string[] };
+    };
+
+    assert.equal(first.exitCode, 0);
+    assert.equal(firstPlan.init.ok, true);
+    assert.deepEqual(firstPlan.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.equal(firstPlan.init.config.operation, "create");
+    assert.ok(firstPlan.init.files.every((file) => file.operation === "create"));
+    assert.equal(second.exitCode, 0);
+    assert.equal(secondPlan.ok, true);
+    assert.equal(secondPlan.init.ok, true);
+    assert.deepEqual(secondPlan.init.tools, firstPlan.init.tools);
+    assert.equal(secondPlan.init.config.operation, "skip");
+    assert.ok(secondPlan.init.files.every((file) => file.operation === "skip"));
+    assert.deepEqual(config.hosts.enabled, firstPlan.init.tools);
+  });
+
+  it("uses the selected harness subset as the exact enabled set", async () => {
+    const target = await createRepoRoot();
+    await runCli(target, ["init", "--tool", "all", "--json"]);
+
+    const result = await runCli(target, ["init", "--tool", "codex,grok-build", "--force", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+      hosts: { enabled: string[] };
+    };
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(parsed.init.config.operation, "update");
+    assert.deepEqual(parsed.init.tools, ["codex", "grok-build"]);
+    assert.deepEqual(parsed.init.config.hosts, ["codex", "grok-build"]);
+    assert.deepEqual(config.hosts.enabled, ["codex", "grok-build"]);
+  });
+
+  it("rejects Cursor because Umpire continuation is unavailable", async () => {
+    const target = await createRepoRoot();
+    const result = await runCli(target, ["init", "--tool", "cursor", "--json"]);
+    const parsed = JSON.parse(result.stdout) as { error: { kind: string; likelyCause: string } };
+
+    assert.equal(result.exitCode, 2);
+    assert.equal(parsed.error.kind, "invalid-command-usage");
+    assert.match(parsed.error.likelyCause, /--tool=cursor/);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("merges the AI Umpire plugin into a shared Codex marketplace", async () => {
+    const target = await createRepoRoot();
+    const marketplacePath = path.join(target, ".agents", "plugins", "marketplace.json");
+    await mkdir(path.dirname(marketplacePath), { recursive: true });
+    await writeFile(marketplacePath, JSON.stringify({
+      interface: { displayName: "Team tools" },
+      name: "team-tools",
+      schemaVersion: 7,
+      plugins: [
+        { name: "lint", source: { path: "./plugins/lint", source: "local" } },
+        { category: "Old", name: "ai-umpire", source: { path: "./old-aiu", source: "local" } },
+        { name: "renamed-aiu", source: { path: "./plugins/ai-umpire", source: "local" } },
+        { name: "format", source: { path: "./plugins/format", source: "local" } },
+      ],
+    }), "utf8");
+
+    const first = await runCli(target, ["init", "--tool", "codex", "--json"]);
+    const firstPlan = JSON.parse(first.stdout) as InitEnvelope;
+    const firstContent = await readFile(marketplacePath, "utf8");
+    const marketplace = JSON.parse(firstContent) as {
+      interface: { displayName: string };
+      name: string;
+      schemaVersion: number;
+      plugins: Array<{
+        category?: string;
+        name: string;
+        policy?: { authentication: string; installation: string };
+        source: { path: string; source: string };
+      }>;
+    };
+
+    assert.equal(first.exitCode, 0);
+    assert.equal(firstPlan.init.ok, true);
+    assert.equal(findFile(firstPlan, path.join(".agents", "plugins", "marketplace.json")).operation, "update");
+    assert.equal(marketplace.name, "team-tools");
+    assert.equal(marketplace.interface.displayName, "Team tools");
+    assert.equal(marketplace.schemaVersion, 7);
+    assert.deepEqual(marketplace.plugins.map((plugin) => plugin.name), ["lint", "ai-umpire", "format"]);
+    const managedPlugins = marketplace.plugins.filter((plugin) => plugin.name === "ai-umpire" || plugin.source.path === "./plugins/ai-umpire");
+    assert.equal(managedPlugins.length, 1);
+    assert.equal(managedPlugins[0]?.category, "Coding");
+    assert.deepEqual(managedPlugins[0]?.policy, { authentication: "ON_INSTALL", installation: "AVAILABLE" });
+    assert.deepEqual(managedPlugins[0]?.source, { path: "./plugins/ai-umpire", source: "local" });
+
+    const second = await runCli(target, ["init", "--tool", "codex", "--json"]);
+    const secondPlan = JSON.parse(second.stdout) as InitEnvelope;
+
+    assert.equal(second.exitCode, 0);
+    assert.equal(secondPlan.init.ok, true);
+    assert.equal(findFile(secondPlan, path.join(".agents", "plugins", "marketplace.json")).operation, "skip");
+    assert.equal(await readFile(marketplacePath, "utf8"), firstContent);
+  });
+
+  it("merges the AI Umpire Stop hook into shared Claude Code settings", async () => {
+    const target = await createRepoRoot();
+    const settingsPath = path.join(target, ".claude", "settings.json");
+    const managedCommand = "pnpm exec aiu hook-stop --tool claude-code";
+    const preToolUse = [{ matcher: "Bash", hooks: [{ type: "command", command: "echo inspect" }] }];
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({
+      env: { KEEP: "yes" },
+      permissions: { allow: ["Read"] },
+      hooks: {
+        PreToolUse: preToolUse,
+        Stop: [
+          {
+            matcher: "first",
+            hooks: [
+              { type: "command", command: "echo before" },
+              { type: "command", command: managedCommand, timeout: 1 },
+            ],
+          },
+          { hooks: [{ type: "command", command: managedCommand }] },
+          { matcher: "other", hooks: [{ type: "command", command: "echo after" }] },
+        ],
+      },
+    }), "utf8");
+
+    const first = await runCli(target, ["init", "--tool", "claude-code", "--json"]);
+    const firstPlan = JSON.parse(first.stdout) as InitEnvelope;
+    const firstContent = await readFile(settingsPath, "utf8");
+    const settings = JSON.parse(firstContent) as {
+      env: { KEEP: string };
+      permissions: { allow: string[] };
+      hooks: {
+        PreToolUse: typeof preToolUse;
+        Stop: Array<{ matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> }>;
+      };
+    };
+
+    assert.equal(first.exitCode, 0);
+    assert.equal(firstPlan.init.ok, true);
+    assert.equal(findFile(firstPlan, path.join(".claude", "settings.json")).operation, "update");
+    assert.deepEqual(settings.env, { KEEP: "yes" });
+    assert.deepEqual(settings.permissions, { allow: ["Read"] });
+    assert.deepEqual(settings.hooks.PreToolUse, preToolUse);
+    assert.deepEqual(
+      settings.hooks.Stop.flatMap((group) => group.hooks).filter((hook) => hook.command !== managedCommand).map((hook) => hook.command),
+      ["echo before", "echo after"],
+    );
+    const managedHooks = settings.hooks.Stop.flatMap((group) => group.hooks).filter((hook) => hook.command === managedCommand);
+    assert.deepEqual(managedHooks, [{ command: managedCommand, type: "command" }]);
+
+    const second = await runCli(target, ["init", "--tool", "claude-code", "--json"]);
+    const secondPlan = JSON.parse(second.stdout) as InitEnvelope;
+
+    assert.equal(second.exitCode, 0);
+    assert.equal(secondPlan.init.ok, true);
+    assert.equal(findFile(secondPlan, path.join(".claude", "settings.json")).operation, "skip");
+    assert.equal(await readFile(settingsPath, "utf8"), firstContent);
+  });
+
+  it("does not replace malformed shared JSON when --force is provided", async () => {
+    const cases = [
+      { tool: "codex", file: path.join(".agents", "plugins", "marketplace.json") },
+      { tool: "claude-code", file: path.join(".claude", "settings.json") },
+    ];
+
+    for (const { tool, file } of cases) {
+      const target = await createRepoRoot();
+      const sharedPath = path.join(target, file);
+      await mkdir(path.dirname(sharedPath), { recursive: true });
+      await writeFile(sharedPath, "{not-json\n", "utf8");
+
+      const result = await runCli(target, ["init", "--tool", tool, "--force", "--json"]);
+      const parsed = JSON.parse(result.stdout) as InitEnvelope;
+
+      assert.equal(result.exitCode, 3, tool);
+      assert.equal(parsed.ok, false, tool);
+      assert.equal(parsed.error?.kind, "init-conflict", tool);
+      assert.equal(parsed.error?.category, "validation", tool);
+      assert.equal(parsed.init.ok, false, tool);
+      assert.equal(findFile(parsed, file).operation, "conflict", tool);
+      assert.match(findFile(parsed, file).reason ?? "", /will not replace/, tool);
+      assert.equal(await readFile(sharedPath, "utf8"), "{not-json\n", tool);
+      assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false, tool);
+    }
+  });
+
   it("initializes Grok Build without Codex or Claude Code files", async () => {
     const target = await createRepoRoot();
     const result = await runCli(target, ["init", "--tool", "grok-build", "--json"]);
@@ -129,7 +348,7 @@ describe("init planner", () => {
     const result = await runCli(target, ["init", "--tool", "all", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
-      hosts: { enabled: string[]; capabilities: Record<string, unknown>; modes: Record<string, string[]> };
+      hosts: { enabled: string[]; capabilities: Record<string, unknown>; modes: Record<string, string[]>; stopHookBlocking: Record<string, boolean> };
       trustedStateCommands: Record<string, { argv: string[] }>;
     };
 
@@ -142,9 +361,10 @@ describe("init planner", () => {
     assert.ok(config.hosts.capabilities["claude-code"]);
     assert.ok(config.hosts.capabilities["grok-build"]);
     assert.deepEqual(config.hosts.modes.opencode, ["continue", "repair", "wait", "stop"]);
-    assert.deepEqual(config.hosts.modes.codex, ["stop"]);
-    assert.deepEqual(config.hosts.modes["claude-code"], ["stop"]);
-    assert.deepEqual(config.hosts.modes["grok-build"], ["stop"]);
+    assert.deepEqual(config.hosts.modes.codex, ["continue", "repair", "stop"]);
+    assert.deepEqual(config.hosts.modes["claude-code"], ["continue", "repair", "stop"]);
+    assert.deepEqual(config.hosts.modes["grok-build"], ["continue", "repair", "stop"]);
+    assert.deepEqual(config.hosts.stopHookBlocking, { opencode: false, codex: true, "claude-code": true, "grok-build": true });
     assert.deepEqual(config.trustedStateCommands.work.argv, ["aie", "status", "--json"]);
   });
 
@@ -163,6 +383,9 @@ describe("init planner", () => {
         modes: {
           codex: [],
         },
+        stopHookBlocking: {
+          codex: false,
+        },
       },
     }), "utf8");
 
@@ -172,6 +395,7 @@ describe("init planner", () => {
       hosts: {
         capabilities: { codex: { promptDelivery?: string; stopHook?: boolean } };
         modes: { codex: string[] };
+        stopHookBlocking: { codex: boolean };
       };
     };
 
@@ -180,6 +404,7 @@ describe("init planner", () => {
     assert.equal(config.hosts.capabilities.codex.promptDelivery, "none");
     assert.equal(config.hosts.capabilities.codex.stopHook, true);
     assert.deepEqual(config.hosts.modes.codex, []);
+    assert.equal(config.hosts.stopHookBlocking.codex, false);
   });
 
   it("preserves conflicting host files unless --force is explicit", async () => {
@@ -191,7 +416,10 @@ describe("init planner", () => {
     const blocked = await runCli(target, ["init", "--tool", "opencode", "--json"]);
     const blockedPlan = JSON.parse(blocked.stdout) as InitEnvelope;
 
-    assert.equal(blocked.exitCode, 0);
+    assert.equal(blocked.exitCode, 3);
+    assert.equal(blockedPlan.ok, false);
+    assert.equal(blockedPlan.error?.kind, "init-conflict");
+    assert.equal(blockedPlan.error?.exitCode, 3);
     assert.equal(blockedPlan.init.ok, false);
     assert.equal(blockedPlan.init.files[0]?.operation, "conflict");
     assert.equal(await readFile(wrapper, "utf8"), "user content\n");
@@ -233,7 +461,9 @@ describe("init planner", () => {
     const result = await runCli(target, ["init", "--tool", "opencode", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
 
-    assert.equal(result.exitCode, 0);
+    assert.equal(result.exitCode, 3);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.kind, "init-conflict");
     assert.equal(parsed.init.ok, false);
     assert.equal(parsed.init.files[0]?.operation, "conflict");
     assert.match(parsed.init.files[0]?.reason ?? "", /could not be read/);
@@ -270,15 +500,26 @@ describe("init planner", () => {
 interface InitEnvelope {
   readonly ok: boolean;
   readonly command: string;
+  readonly error?: {
+    readonly kind: string;
+    readonly category: string;
+    readonly exitCode: number;
+  };
   readonly init: {
     readonly ok: boolean;
     readonly dryRun: boolean;
     readonly tools: string[];
     readonly hostProfiles: Array<{ tool: string; supportLevel: string }>;
-    readonly files: Array<{ operation: string; reason?: string }>;
+    readonly files: Array<{ relativePath: string; operation: string; reason?: string }>;
     readonly config: { operation: string; hosts: string[]; trustedStateCommands: string[] };
     readonly recommendedNextCommand: string;
   };
+}
+
+function findFile(plan: InitEnvelope, relativePath: string): InitEnvelope["init"]["files"][number] {
+  const file = plan.init.files.find((candidate) => candidate.relativePath === relativePath);
+  assert(file, `Expected init plan to contain ${relativePath}`);
+  return file;
 }
 
 interface InitPlan {

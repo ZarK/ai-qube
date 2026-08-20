@@ -60,7 +60,6 @@ describe('fresh setup defaults', () => {
       'issue-compliance:always',
       'code-quality:always',
       'performance:when-matched',
-      'api-contract-compatibility:when-matched',
       'ui-ux-accessibility:when-matched',
       'security:when-matched',
     ]);
@@ -76,14 +75,13 @@ describe('fresh setup defaults', () => {
       'issue-compliance',
       'code-quality',
       'performance',
-      'api-contract-compatibility',
       'ui-ux-accessibility',
       'security',
       'when-matched',
       'package.json',
       'qualityControl',
       'qube aiq --up-to 2',
-      'grok-4.6',
+      'first live catalog model',
       'waitMinutes` is `0`',
       'localAgents` is empty',
       'two rounds',
@@ -129,6 +127,14 @@ describe('fresh setup defaults', () => {
     assert.equal(config.reviewProfile, 'local-focused');
     assert.deepEqual(config.reviewAgents, []);
     assert.deepEqual(config.localReviewAgents, []);
+    assert.deepEqual(config.reviewSources, [{
+      id: 'local-lanes',
+      identity: 'lane',
+      expected: ['issue-compliance', 'code-quality'],
+      blocking: true,
+      markers: 'trusted',
+      enabled: true,
+    }]);
     assert.equal(config.reviewRoute.host, 'grok-build');
     assert.equal(config.reviewModels.review['grok-build'].model, 'grok-4.5');
     assert.equal(config.manualUiAudit, false);
@@ -220,6 +226,26 @@ describe('fresh setup defaults', () => {
     assert.deepEqual(collectSetupDoctorRecommendations(repo, config), []);
   });
 
+  it('writes configured external reviewers as an explicit review source', async () => {
+    const repo = makeTsRepo();
+    const result = await initTypicalTs(repo, {
+      policy: { reviewMode: 'external', reviewAgents: ['coderabbitai'] },
+    });
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    const config = validateConfig(JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'))).config;
+
+    assert.equal(config.reviewMode, 'external');
+    assert.equal(config.reviewAdapter, 'github');
+    assert.deepEqual(config.reviewSources, [{
+      id: 'provider-reviewers',
+      identity: 'reviewer',
+      expected: ['coderabbitai'],
+      blocking: true,
+      markers: 'provider',
+      enabled: true,
+    }]);
+  });
+
   it('does not let --defaults write the old remote-compatible CodeRabbit setup when a host exists', async () => {
     const repo = makeTsRepo();
     const result = await initTypicalTs(repo, { useDefaults: true });
@@ -254,7 +280,6 @@ describe('fresh setup defaults', () => {
       'issue-compliance',
       'code-quality',
       'performance',
-      'api-contract-compatibility',
       'ui-ux-accessibility',
       'security',
     ]);
@@ -273,13 +298,12 @@ describe('fresh setup defaults', () => {
       'issue-compliance',
       'code-quality',
       'performance',
-      'api-contract-compatibility',
       'ui-ux-accessibility',
       'security',
     ]);
   });
 
-  it('writes catalog-backed Codex and Grok efforts and turns Quality Control on when AIQ is available', async () => {
+  it('uses current Codex and Grok catalog entries and turns Quality Control on when AIQ is available', async () => {
     const repo = makeTsRepo();
     const { applyFreshSetupPolicy, defaultAiqLintFormatGate } = require('../dist/init/fresh_setup.js');
     const policy = applyFreshSetupPolicy({
@@ -290,8 +314,8 @@ describe('fresh setup defaults', () => {
         aiqAvailable: true,
         hasUserFacingUi: false,
         liveModels: {
-          'grok-build': ['grok-4.6', 'grok-4.5'],
-          codex: ['gpt-5.6-terra', 'gpt-5.6-luna'],
+          'grok-build': ['grok-next'],
+          codex: ['codex-next'],
         },
       },
       repoRoot: repo,
@@ -299,10 +323,9 @@ describe('fresh setup defaults', () => {
     });
     assert.equal(policy.reviewMode, 'isolated');
     assert.equal(policy.qualityControl, true);
-    assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-4.6', effort: 'medium' });
-    assert.deepEqual(policy.reviewModels.economy['grok-build'], { model: 'grok-4.6', effort: 'low' });
-    assert.deepEqual(policy.reviewModels.review.codex, { model: 'gpt-5.6-terra', effort: 'medium' });
-    assert.deepEqual(policy.reviewModels.economy.codex, { model: 'gpt-5.6-luna', effort: 'high' });
+    assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-next', effort: null });
+    assert.deepEqual(policy.reviewModels.review.codex, { model: 'codex-next', effort: null });
+    assert.deepEqual(policy.reviewModels.economy, {});
     assert.ok(policy.gates.some(gate => gate.kind === 'aiq' && gate.command === defaultAiqLintFormatGate().command));
     assert.ok(!policy.gates.some(gate => /changed-files|git diff --name-only/.test(gate.command)));
   });
@@ -326,7 +349,7 @@ describe('fresh setup defaults', () => {
     assert.deepEqual(policy.reviewModels.review.cursor, { model: 'gpt-5.6-luna-high', effort: null });
   });
 
-  it('does not default Grok review to grok-4.5 and leaves Quality Control off without AIQ', () => {
+  it('uses a new Grok catalog model and leaves Quality Control off without AIQ', () => {
     const { applyFreshSetupPolicy } = require('../dist/init/fresh_setup.js');
     const policy = applyFreshSetupPolicy({
       policy: {},
@@ -335,13 +358,13 @@ describe('fresh setup defaults', () => {
         agentBrowserAvailable: false,
         aiqAvailable: false,
         hasUserFacingUi: false,
-        liveModels: { 'grok-build': ['grok-4.5'] },
+        liveModels: { 'grok-build': ['grok-next'] },
       },
       repoRoot: null,
       fromAdopted: false,
     });
     assert.equal(policy.qualityControl, false);
-    assert.equal(policy.reviewModels, undefined);
+    assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-next', effort: null });
   });
 
   it('does not rewrite an adopted existing config', () => {

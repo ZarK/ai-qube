@@ -69,20 +69,19 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | ID | Requirement | Status |
 |----|-------------|--------|
 | FR-03-001 | `aie init .` initializes the current repository for the Executor issue workflow. | Required |
-| FR-03-002 | Initialization supports `--tool opencode`, `--tool codex`, `--tool claude-code`, and `--tool all`. | Required |
-| FR-03-003 | OpenCode is the first-class and most-tested install target. | Required |
+| FR-03-002 | Initialization supports `--tool opencode`, `--tool codex`, `--tool claude-code`, `--tool grok-build`, `--tool cursor`, and `--tool all`. | Required |
+| FR-03-003 | Each selected agent harness uses its adapter capability profile as the source of truth. | Required |
 | FR-03-004 | Initialization appends a full Executor section to `AGENTS.md` unless configured otherwise. | Required |
 | FR-03-005 | Initialization appends a full Executor section to `CLAUDE.md` when Claude Code support is requested. | Required |
 | FR-03-006 | Installed always-loaded instructions include the complete autonomous issue work cycle, todo-list expectations for hosts that support todos, quality gates, review gates, PR shipping authority, and continuation rules. | Required |
 | FR-03-007 | Initialization installs `.opencode/commands/make-it-so.md` for OpenCode. | Required |
-| FR-03-008 | Initialization may also install `.opencode/commands/makeitso.md` as a convenience alias. | Desired |
+| FR-03-008 | Initialization installs exactly one Make It So entry point for each selected agent harness. | Required |
 | FR-03-009 | The `/make-it-so` command tells the agent to continue the autonomous GitHub issue workflow until the queue is empty or blocked, using concise imperative wording that grants trust, autonomy, and authority within configured repository policy. | Required |
 | FR-03-010 | The `/make-it-so` command continues the issue workflow, uses the configured `aie` queue and lifecycle commands, follows installed repository instructions, executes without unnecessary pauses, explicitly authorizes normal git and GitHub shipping actions when autonomous mode is enabled, and ships when gates pass. | Required |
 | FR-03-011 | For tools that support project commands, initialization installs equivalent "make it so" commands. For tools without project command support, initialization relies on always-loaded instruction files. | Required |
 | FR-03-012 | Initialization gathers or accepts repository policy settings for branch naming, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, component labels, optional GitHub milestone ordering, enabled review agents, manual UI audit behavior, review wait duration, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-03-013 | Initialization can run non-interactively using defaults and config flags so agents can bootstrap repositories without a manual prompt when the user requests that mode. | Desired |
 | FR-03-014 | Initialization never silently overwrites existing repository instructions or config. It appends managed sections or requires `--force` for replacement. | Required |
-| FR-03-015 | Initialization detects legacy copied workflow scripts and old agent instructions, explains what it found, and offers a migration path to the package-backed `aie` commands. | Required |
 | FR-03-016 | Installed always-loaded instructions include implementation guardrails: agents must implement only real requested behavior, avoid fake commands/stubs/no-op tests, keep implementation artifacts in product language, avoid milestone/phase/reference leakage, avoid agent-created meta docs, keep generated build output out of commits unless policy allows it, and use issue comments or PRs for durable implementation notes. | Required |
 | FR-03-017 | Initialization can make the implementation guardrail instruction block mandatory by default and configurable only through an explicit repository policy choice. | Desired |
 | FR-03-018 | Installed always-loaded instructions include supply-chain safety rules for dependency work, package-manager commands, project generators, CI actions/workflows, release automation, IDE tooling, MCP servers, and AI-agent tools. | Required |
@@ -93,7 +92,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `.qube/aie/config.json` with legacy `aie.config.json` discovery for existing repositories. | Required |
+| FR-04-001 | Executor stores repository-specific workflow policy in `.qube/aie/config.json`. | Required |
 | FR-04-002 | Configuration includes provider selection, provider capability policy, priority labels, status labels, component labels, optional GitHub milestone ordering policy, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-04-003 | Priority labels are fixed by default to `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`. | Required |
 | FR-04-004 | Status labels are fixed by default to `S-Ready`, `S-InProgress`, `S-Blocked`, and `S-Blocking`. | Required |
@@ -211,8 +210,8 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-09-005 | Playwright or other browser automation may be used as a fallback when `agent-browser` is unavailable or insufficient. | Required |
 | FR-09-006 | Manual UI audit evidence must be real and based on a running application, not fabricated or inferred. | Required |
 | FR-09-007 | Executor supports a configurable review-agent gate before tests or before shipping. | Required |
-| FR-09-008 | The default review-agent gate supports the OpenCode/Oh-My-OpenAgents `@oracle` pattern when available. | Required |
-| FR-09-009 | Executor may provide a fallback Oracle-style reviewer prompt or skill for repositories that do not have Oh-My-OpenAgents installed. | Desired |
+| FR-09-008 | The review-agent gate renders prompts only for a configured OpenCode, Codex, Claude Code, Grok Build, or Cursor harness. | Required |
+| FR-09-009 | If no real harness or external reviewer is configured, Executor reports review as unavailable and does not emulate a reviewer. | Required |
 | FR-09-010 | Executor can configure and render `aiq` as an additional agent-run quality gate when `@tjalve/aiq` is installed and enabled. | Desired |
 | FR-09-011 | Executor reports which gates are configured, which gates the agent has recorded or reported as run, and which gates are still pending in command output or PR body templates. | Desired |
 
@@ -297,23 +296,6 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 
 ---
 
-## FR-14 - Migration From Script-Based Repositories
-
-| ID | Requirement | Status |
-|----|-------------|--------|
-| FR-14-001 | Executor can initialize repositories that previously used copied legacy shell helpers for issue execution. | Required |
-| FR-14-002 | Executor provides migration mappings from legacy queue, start, switch, view, dependency, completion, and PR-gate helper commands to the corresponding `aie` commands. | Required |
-| FR-14-003 | Executor can optionally install compatibility wrappers for existing agent instructions that still call legacy helper paths. | Desired |
-| FR-14-004 | Executor migration preserves existing queue labels, blocker metadata, sequence metadata, GitHub milestone assignments, issue state, and branch state. | Required |
-| FR-14-005 | Executor does not require repositories to keep copied script implementations after migration. | Required |
-| FR-14-006 | Executor provides `aie migrate legacy` or an equivalent command that audits copied scripts, old workflow docs, old project commands, and old agent instruction blocks before changing anything. | Required |
-| FR-14-007 | Legacy migration has a dry-run mode that shows files to remove, files to preserve, instruction blocks to replace, and compatibility wrappers to install. | Required |
-| FR-14-008 | `aie init` detects legacy repositories and asks whether to leave legacy files untouched, install compatibility wrappers, or clean up and replace them with package-backed Executor instructions. | Required |
-| FR-14-009 | Legacy cleanup never deletes project-specific scripts or docs unless they match known workflow helper fingerprints or the user explicitly confirms the paths. | Required |
-| FR-14-010 | Legacy cleanup updates old helper-command references in installed agent instructions to the corresponding `aie` commands. | Required |
-
----
-
 ## FR-15 - CLI UX Standards
 
 These requirements define the user-facing behavior of the Executor CLI. They do not prescribe the implementation library.
@@ -361,7 +343,7 @@ Executor does not replace package-manager controls, vulnerability scanners, regi
 | FR-16-009 | Instructions require CI actions and reusable workflows to be treated as dependencies, with third-party actions pinned to immutable full-length commit SHAs where the platform supports it. | Required |
 | FR-16-010 | Instructions require existing-project installs to prefer frozen or locked commands with lifecycle scripts disabled where supported, and to avoid broad upgrade commands unless dependency updates are the explicit task. | Required |
 | FR-16-011 | Initialization captures supply-chain policy settings, including package-age thresholds, lifecycle-script default, exact-version preference, lockfile behavior, CI action pinning preference, and whether project-level package-manager secure defaults may be written. | Required |
-| FR-16-012 | Executor may offer project-level secure default files such as `.npmrc` only during explicit init/migration actions or with explicit flags. It must never write user-level package-manager, shell, editor, or machine configuration. | Required |
+| FR-16-012 | Executor may offer project-level secure default files such as `.npmrc` only during explicit init actions or with explicit flags. It must never write user-level package-manager, shell, editor, or machine configuration. | Required |
 | FR-16-013 | `aie gates plan` marks configured package-manager, generator, CI, MCP, IDE, or agent-tool commands as supply-chain-sensitive and tells agents what review evidence is expected before execution. | Required |
 | FR-16-014 | `aie doctor` reports supply-chain policy status, detected package managers and lockfiles, package lifecycle-script default visibility where practical, third-party CI action pinning visibility where practical, and recommended next commands without mutating. | Required |
 | FR-16-015 | When the user names a suspected supply-chain attack, compromised package, malware campaign, or suspicious dependency, installed instructions tell agents to fetch current advisories, compare manifests and lockfiles against exact package names/versions/tarballs/Git URLs/integrity hashes, stop installs/builds if exposure is possible, preserve evidence, and recommend token/credential rotation before resuming. | Required |
@@ -379,7 +361,7 @@ These requirements define Executor's internal architecture boundary. GitHub rema
 | FR-17-002 | GitHub is the only production work provider required for v1. It maps GitHub Issues, labels, issue bodies, comments, milestones, and issue state into provider-neutral work items. | Required |
 | FR-17-003 | GitHub is the only production review provider required for v1. It maps GitHub pull requests, review requests, review comments, pull request comments, review threads, mergeability, and review decisions into provider-neutral review items and feedback. | Required |
 | FR-17-004 | Local git is the only production repository provider required for v1. It maps checkout root, remotes, base branch, active branch, dirty state, linked worktree state, and branch operations into provider-neutral repository state and action plans. | Required |
-| FR-17-005 | Config stores current provider selections and policy in one clean current-version shape. v1 does not include migration code for unreleased config shapes. | Required |
+| FR-17-005 | Config stores current provider selections and policy in one clean shape. Pre-v1 releases do not include schema migration code. | Required |
 | FR-17-006 | Unsupported provider kinds are rejected with actionable configuration errors. Executor must not register placeholder providers or runtime "not implemented" adapters. | Required |
 | FR-17-007 | Queue ordering, dependency computation, lifecycle transition planning, branch policy checks, gate evidence aggregation, and continuation status are implemented in core modules that do not import GitHub provider code, `gh` execution code, CLI runtime adapter modules, child-process APIs, or filesystem APIs. | Required |
 | FR-17-008 | Provider modules are responsible for translating provider-specific state and mutations into core models and action results. GitHub label names, GitHub API field names, GraphQL review-thread details, and PR comment marker formats stay inside GitHub provider modules. | Required |

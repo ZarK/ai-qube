@@ -5,12 +5,10 @@ import { redact } from '../redact.js';
 
 const reportCandidates = [
   '.qube/aiq/out/aiq.report.json',
-  '.aiq/out/aiq.report.json',
 ] as const;
 
 const reportSearchDirs = [
   '.qube/aiq/out',
-  '.aiq/out',
 ] as const;
 
 /** Hard caps so multi-lane prompt planning cannot explode with large AIQ reports. */

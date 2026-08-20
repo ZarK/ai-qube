@@ -177,7 +177,7 @@ All QUBE CLIs should be explorable by humans and deterministic for agents:
 
 ## Shared Config Concepts
 
-Each package should have a small versioned config file and strict validation. Installed package defaults use QUBE-prefixed paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and `.qube/aiu/config.json`; legacy root config files remain compatibility and migration inputs where each package documents them.
+Each package should have a small versioned config file and strict validation. Installed package defaults use QUBE-prefixed paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and `.qube/aiu/config.json`. Before v1, each package accepts only its current canonical path and config shape.
 
 Reusable config areas:
 
@@ -251,7 +251,7 @@ QUBE package implications:
 
 ## Cross-Package Command Shape
 
-Executor's GitHub-first command style should evolve toward provider-neutral names while keeping compatibility aliases:
+Executor's GitHub-first command style should use provider-neutral names:
 
 - `aie doctor`
 - `aie schema`
@@ -278,11 +278,11 @@ Executor's GitHub-first command style should evolve toward provider-neutral name
 - `aie deps fix --dry-run`
 - `aie pr gate <pr>`
 - `aie review gate <review-item>`
-- `aie migrate legacy`
+- `aie init`
 
-Other QUBE packages should mirror the same style: short package command, noun/topic subcommands, predictable work-item/review arguments, `doctor`, `schema`, `completion`, `init`, and `migrate legacy` where relevant.
+Other QUBE packages should mirror the same style: short package command, noun/topic subcommands, predictable work-item/review arguments, `doctor`, `schema`, `completion`, and `init` where relevant.
 
-The historical `aie pr` and `aie labels` command names can remain as GitHub-compatible aliases. New provider-neutral surfaces should prefer `review`, `work`, `repo inspect`, `repo affected`, and provider capability reporting in JSON output.
+Provider-neutral surfaces should use `review`, `work`, `repo inspect`, `repo affected`, and provider capability reporting in JSON output. Replaced names are removed before v1.
 
 ## Agent Instruction Concepts
 
@@ -458,7 +458,7 @@ Tooling packages own agent-host integrations:
 - dialogue/question primitives and deferred human decision handling
 - hooks, stop/continue behavior, permissions, sandbox policy, and session/headless execution surfaces
 - tool-specific continuation prompts such as OpenCode's `make-it-so` command
-- tool-specific agent/category descriptor compilation, such as OpenCode subagent config, Codex subagent prompts, Claude Code task prompts, Gemini/Qwen task prompts, Cursor rules/prompts, or fallback prompt-only exports
+- tool-specific agent/category descriptor compilation, such as OpenCode subagent config, Codex subagent prompts, Claude Code task prompts, Gemini/Qwen task prompts, or Cursor rules/prompts; unsupported hosts report unavailable capabilities
 
 Product packages consume capabilities rather than concrete integrations:
 
@@ -537,7 +537,7 @@ Category descriptors can be simpler than named agents:
 | `review` | `qa-reviewer` | Diff review, regression risk, missing tests, and evidence quality. |
 | `research` | `explorer` or `librarian` | Internal codebase search or external docs/source research. |
 
-Adapters should probe host support before using these routes. OpenCode may compile them into subagent config and commands; Codex may compile them into subagent prompts with model/effort hints where supported; Claude Code, Gemini CLI, Qwen Code, Copilot, Cline, Cursor, and other hosts should receive the closest supported task/rule/prompt form. If no subagent mechanism exists, QUBE can still use the same descriptors to generate a strong single-agent prompt.
+Adapters should probe host support before using these routes. OpenCode may compile them into subagent config and commands; Codex may compile them into subagent prompts with model/effort hints where supported; Claude Code and Cursor should receive their supported task, rule, or prompt form. If a configured harness cannot provide the required capability, QUBE reports that capability as unavailable instead of emulating another host.
 
 ## Review Model Tiers
 
@@ -585,11 +585,11 @@ Agent tooling capability map:
 | Permissions/safety | host permissions and hooks | sandbox/hooks vary | tool permissions and hooks | IDE approvals |
 | Initial QUBE role | first tested tooling package | later high-priority adapter | later high-priority adapter | prompt/rules adapter |
 
-The practical extraction test is simple: after GitHub and OpenCode are packages, core product code should not need direct `gh`, GitHub issue-number, GitHub PR-number, `S-*` label, GitHub milestone, `.opencode`, `todowrite`, or OpenCode command-path assumptions except through compatibility aliases and adapter-owned renderers.
+The practical extraction test is simple: after GitHub and OpenCode are packages, core product code should not need direct `gh`, GitHub issue-number, GitHub PR-number, `S-*` label, GitHub milestone, `.opencode`, `todowrite`, or OpenCode command-path assumptions. Adapter-owned renderers contain provider and harness details.
 
 ## Open Questions
 
 - Should QUBE eventually have a wrapper command, for example `qube`, or should each package remain directly invoked by `aiq`, `aiu`, `aib`, and `aie`?
 - Should shared CLI metadata, output envelopes, config validation, provider schemas, and default GitHub label definitions live in a small common package?
 - Should Bootstrap own the first shared QUBE spec format, or should the format live outside all four packages?
-- How much of the mature shell helper behavior should remain as compatibility wrappers during migration versus being replaced immediately by package commands?
+- Which mature shell helper behaviors belong in canonical package commands before v1?

@@ -26,7 +26,6 @@ import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGat
 import { inspectAffected } from './repo/index.js';
 import { runInit } from './init/index.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';
-import { buildMigrationMap, formatMigrationMap, formatMigrationPlan, runMigration } from './migrate/index.js';
 import { computeQueue, getNextIssue } from './queue/index.js';
 import { buildRepoPrimePlan, runRepoAffected, runRepoInspect } from './repo/index.js';
 import { formatDoctorHuman } from './renderers/doctor_renderer.js';
@@ -312,8 +311,8 @@ async function handleView(context: Parameters<RuntimeCommandHandler>[0]) {
 async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
   const target = stringArg(context, 'target');
   if (!target || isHelpToken(target)) {
-    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
-      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|cursor|all] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app|token] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+    return usageResult(context, 'init', 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
+      'Usage: aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       commandDescription('init'),
       '',
       'Behavior:',
@@ -390,7 +389,6 @@ async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], 
       installationId: stringFlag(context, 'installation-id'),
       privateKeyEnv: stringFlag(context, 'private-key-env'),
       privateKeyPath: stringFlag(context, 'private-key-path'),
-      tokenEnv: stringFlag(context, 'token-env'),
       login: stringFlag(context, 'login'),
       yes: readBooleanFlag(context, 'yes'),
       dryRun: readBooleanFlag(context, 'dry-run'),
@@ -532,7 +530,10 @@ async function handleReviewGate(context: Parameters<RuntimeCommandHandler>[0]) {
   if (!loaded.ok) return configLoadFailure(context, 'review gate', loaded, 'Fix the selected Executor config, then run the review gate again.');
   const promptOnly = readBooleanFlag(context, 'prompt');
   const result = runReviewGate(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run'), promptOnly });
-  return commandResult(context, result, promptOnly ? result.prompt : formatReviewGate(result));
+  if (!result.reviewAvailable || (promptOnly && result.prompt === null)) {
+    return commandFailure(context, { ...result, ok: false, error: result.nextAction }, result.nextAction);
+  }
+  return commandResult(context, result, promptOnly ? result.prompt ?? result.nextAction : formatReviewGate(result));
 }
 
 async function handlePrView(context: Parameters<RuntimeCommandHandler>[0]) {
@@ -836,7 +837,7 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
     'Usage: aie pr gate <pr> [--dry-run] [--local-review-prompts] [--full-review] [--json]',
     '',
     'Request configured PR reviewers idempotently, wait the configured duration, and inspect review state before merge.',
-    'Required local review quality depends on independent fresh-context reviewer execution; prompt rendering alone is fallback guidance and cannot satisfy required local review gates.',
+    'Required local review quality depends on independent fresh-context reviewer execution; prompt rendering alone cannot satisfy required local review gates.',
     'Use --local-review-prompts to include explicit lane prompt bodies for a host subagent/task/session, then record local-host evidence with matching provenance.',
     'Use --full-review to force a full-diff pass instead of a delta re-review.',
     'Examples:',
@@ -947,15 +948,6 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   init: handleInit,
   labels: topic(['Use `aie labels setup` to create or update labels defined in the selected Executor config (or the built-in defaults) idempotently.', 'This command and its subcommands can mutate GitHub labels when not in --dry-run mode.']),
   'labels setup': handleLabelsSetup,
-  migrate: topic(['Use `aie migrate map` to inspect legacy command mappings, or `aie migrate legacy --dry-run` to inspect legacy Executor state without mutation.', 'Migration planning preserves repository files, git history, branches, issue state, labels, and GitHub milestone assignments while reporting inventory and planned changes.']),
-  'migrate legacy': async context => {
-    const plan = await runMigration({ dryRun: readBooleanFlag(context, 'dry-run'), apply: readBooleanFlag(context, 'apply'), force: readBooleanFlag(context, 'force'), instructionPaths: stringListFlag(context, 'instruction'), legacyPaths: stringListFlag(context, 'path'), cleanup: readBooleanFlag(context, 'cleanup'), installWrappers: readBooleanFlag(context, 'install-wrappers') });
-    return commandResult(context, plan, formatMigrationPlan(plan), plan.ok ? 0 : 1);
-  },
-  'migrate map': context => {
-    const map = buildMigrationMap();
-    return commandResult(context, map, formatMigrationMap(map));
-  },
   next: async context => {
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
@@ -1024,9 +1016,9 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'run stop': handleRunStop,
   review: topic([
     'Review publisher and host-run review paths:',
-    '  aie review setup github-app  Preferred distinct GitHub App publisher identity.',
-    '  aie review setup token       Separate-user fine-grained token fallback.',
-    '  aie review doctor            Validate publisher readiness and permissions.',
+    '  Current authenticated GitHub account  Used when no reviewer app is configured.',
+    '  aie review setup github-app            Configure the QUBE Reviewer App identity.',
+    '  aie review doctor                      Validate publisher readiness and permissions.',
     '  aie review stats             Compute bounded review convergence metrics.',
     '  aie review gate <issue>      Render host-run review prompts and evidence requirements.',
     '  aie review feedback          Record accepted or rejected findings into repo-owned learnings.',
@@ -1034,13 +1026,12 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.',
   ]),
   'review setup': topic([
-    'Reviewer publisher setup paths:',
-    '  aie review setup github-app  Preferred user-owned GitHub App installation.',
-    '  aie review setup token       Separate-user fine-grained token fallback.',
-    'Run either command without flags for concrete guidance, or use --help for non-interactive flags.',
+    'Reviewer publisher options:',
+    '  Current authenticated GitHub account  Used without additional setup.',
+    '  aie review setup github-app            Configure the QUBE Reviewer App installation.',
+    'Run the GitHub App command without flags for concrete guidance, or use --help for non-interactive flags.',
   ]),
   'review setup github-app': context => handleReviewSetup(context, 'github-app'),
-  'review setup token': context => handleReviewSetup(context, 'token'),
   'review doctor': handleReviewDoctor,
   'review stats': context => handleConfigCommand(context, 'review stats'),
   'review gate': context => handleConfigCommand(context, 'review gate'),

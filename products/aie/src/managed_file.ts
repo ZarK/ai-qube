@@ -89,10 +89,9 @@ function normalizeForChecksum(body: string): string {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-// Accept the strict normalized checksum or the legacy checksum so existing managed files migrate without spurious conflicts.
 function managedChecksumMatches(stored: string | null, body: string): boolean {
   if (stored === null) return false;
-  return stored === checksum(normalizeForChecksum(body)) || stored === checksum(normalizeBody(body));
+  return stored === checksum(normalizeForChecksum(body));
 }
 
 const CONFLICT_DIFF_LINE_LIMIT = 60;

@@ -96,6 +96,16 @@ describe("packed QUBE install smoke", () => {
     assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"));
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
+    assert.deepEqual(
+      executor.capabilities.hostSurfaces.map(host => [host.id, host.source, host.default]),
+      [
+        ["opencode", "agent-host-profile", false],
+        ["codex", "agent-host-profile", true],
+        ["claude-code", "agent-host-profile", false],
+        ["grok-build", "agent-host-profile", false],
+        ["cursor", "agent-host-profile", false],
+      ],
+    );
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
@@ -120,12 +130,15 @@ describe("packed QUBE install smoke", () => {
 
     const qubeTarball = await packPackage(packageRoot, packDir);
     const githubAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "github");
+    const codexAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "codex");
     const githubTarball = await packPackage(githubAdapterRoot, packDir);
+    const codexTarball = await packPackage(codexAdapterRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
     const tarballByName = new Map([
       [qubePackageName, qubeTarball],
-      ["@tjalve/qube-adapter-github", githubTarball]
+      ["@tjalve/qube-adapter-github", githubTarball],
+      ["@tjalve/qube-adapter-codex", codexTarball],
     ]);
     for (const component of fakeComponents) {
       tarballByName.set(component.name, await createFakeComponentTarball(component, root, packDir));
@@ -194,7 +207,7 @@ describe("packed QUBE install smoke", () => {
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -202,8 +215,6 @@ describe("packed QUBE install smoke", () => {
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ];
     const env = {
       ...process.env,
@@ -229,6 +240,7 @@ describe("packed QUBE install smoke", () => {
     const manifest = JSON.parse(await readFile(path.join(target, "package.json"), "utf8"));
     assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
     assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
+    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-codex"], adapterPackageVersions["@tjalve/qube-adapter-codex"]);
     assert.equal(manifest.devDependencies["@tjalve/qube-adapter-claude-code"], undefined);
     assert.equal(manifest.dependencies?.["@tjalve/qube-adapter-claude-code"], undefined);
     assert.equal(existsSync(path.join(target, ".qube", "aie", "config.json")), true);
@@ -262,12 +274,28 @@ async function writeApplyComponentStubs(packageRootDir) {
     }
   };
   await writeNodeShim(binDir, "aie", `
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+const writeManaged = (file, body) => {
+  const normalized = body.trimEnd() + "\\n";
+  const digest = createHash("sha256").update(normalized).digest("hex");
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, [
+    "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
+    "<!-- executor-managed-version: 1 -->",
+    "<!-- executor-managed-checksum: " + digest + " -->",
+    body.trimEnd(),
+    "<!-- END EXECUTOR MANAGED SECTION -->",
+    ""
+  ].join("\\n"));
+};
 const args = process.argv.slice(2).join(" ");
 if (args.includes("init")) {
   mkdirSync(path.join(process.cwd(), ".qube", "aie"), { recursive: true });
   writeFileSync(path.join(process.cwd(), ".qube", "aie", "config.json"), ${JSON.stringify(`${JSON.stringify(initConfig, null, 2)}\n`)});
+  writeManaged(path.join(process.cwd(), "AGENTS.md"), "Team rules.");
+  writeManaged(path.join(process.cwd(), ".agents", "skills", "make-it-so", "SKILL.md"), "Run QUBE Make It So.");
   process.stdout.write(JSON.stringify({ ok: true, command: "init" }) + "\\n");
   process.exit(0);
 }
@@ -280,7 +308,6 @@ process.stdout.write(JSON.stringify({
   command: "doctor",
   workflowReadiness: {
     stages: [],
-    review: { state: "fallback-only", fallbackPromptAvailable: true, fallbackEnforcesReview: false },
     shipping: { mode: "manual" },
     selectedHosts: []
   }
@@ -408,6 +435,35 @@ async function createFakeComponentTarball(component, root, packDir) {
       [
         "export function validateConfig(config) { return { ok: true, errors: [], config }; }",
         "export function detectInstalledReviewHostsOnPath() { return []; }",
+        "const cap = (support, description) => ({ support, description, ...(support === 'supported' ? {} : { nextAction: 'Select a supported harness capability.' }) });",
+        "const profile = (id, displayName, instructionPath, makeItSoPath, makeItSoKind, invocation, support) => ({",
+        "  id, displayName,",
+        "  executables: { names: [id], windowsNames: [id + '.exe'] },",
+        "  instructionTarget: { id: id + '-instructions', path: instructionPath, description: displayName + ' instructions.' },",
+        "  makeItSo: { id: id + '-make-it-so', path: makeItSoPath, kind: makeItSoKind, invocation, description: displayName + ' Make It So entry point.' },",
+        "  taskList: { ...cap(support.taskList, displayName + ' task-list support.'), tools: [], fallback: 'Keep a visible checklist.', instruction: 'Keep task state in the main session.' },",
+        "  subagents: { ...cap(support.subagents, displayName + ' subagent support.'), instruction: 'Use only tested host subagents.' },",
+        "  review: {",
+        "    local: { ...cap(support.localReview, displayName + ' native review support.'), freshContext: support.localReview !== 'unsupported', readOnly: false, agents: [] },",
+        "    isolated: { ...cap(support.isolatedReview, displayName + ' isolated review support.'), freshContext: support.isolatedReview !== 'unsupported', readOnly: support.isolatedReview !== 'unsupported', agents: [] },",
+        "  },",
+        "  modelDiscovery: { ...cap(support.models, displayName + ' live model discovery.'), listModels() { return []; } },",
+        "  umpire: {",
+        "    continuation: { ...cap(support.umpire, displayName + ' Umpire continuation.'), delivery: support.umpire === 'unsupported' ? 'none' : 'stdout', currentIssueRecovery: support.umpire !== 'unsupported' },",
+        "    probe: { ...cap(support.umpire, displayName + ' Umpire probe.'), ...(support.umpire === 'unsupported' ? {} : { command: ['qube', 'aiu', 'doctor', '--json'] }) },",
+        "  },",
+        "  trust: { required: false, description: 'No smoke-test trust action.', actions: [] },",
+        "});",
+        "const profiles = {",
+        "  opencode: profile('opencode', 'OpenCode', 'AGENTS.md', '.opencode/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'supported', umpire: 'supported' }),",
+        "  codex: profile('codex', 'Codex', 'AGENTS.md', '.agents/skills/make-it-so/SKILL.md', 'skill', '$make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'experimental' }),",
+        "  'claude-code': profile('claude-code', 'Claude Code', 'CLAUDE.md', '.claude/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'unsupported', umpire: 'experimental' }),",
+        "  'grok-build': profile('grok-build', 'Grok Build', 'AGENTS.md', '.grok/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'experimental' }),",
+        "  cursor: profile('cursor', 'Cursor', 'AGENTS.md', '.cursor/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'unsupported', localReview: 'unsupported', isolatedReview: 'supported', models: 'supported', umpire: 'unsupported' }),",
+        "};",
+        "export function getAgentHostProfileSync(id) { const value = profiles[id]; if (!value) throw new Error('Unknown host: ' + id); return value; }",
+        "export async function getAgentHostProfile(id) { return getAgentHostProfileSync(id); }",
+        "export async function getAgentHostProfiles(ids) { return ids.map(getAgentHostProfileSync); }",
         "",
       ].join("\n")
     );

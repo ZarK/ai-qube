@@ -52,9 +52,8 @@ Each direct command is the composer-facing name for one component command.
 | `qube audit` | `aie audit` | Show Executor audit helpers. |
 | `qube audit ui` | `aie audit ui` | Plan or check manual UI audit evidence. |
 | `qube review` | `aie review` | Set up and validate provider publishing or show host-run Executor review helpers. |
-| `qube review setup` | `aie review setup` | Show guided reviewer publisher setup paths. |
-| `qube review setup github-app` | `aie review setup github-app` | Configure a user-owned GitHub App reviewer publisher with safe secret references. |
-| `qube review setup token` | `aie review setup token` | Configure a separate-user fine-grained token reviewer publisher with an env reference. |
+| `qube review setup` | `aie review setup` | Explain the current GitHub account publisher and QUBE Reviewer App setup. |
+| `qube review setup github-app` | `aie review setup github-app` | Configure the QUBE Reviewer GitHub App with safe secret references. |
 | `qube review doctor` | `aie review doctor` | Validate reviewer publisher readiness and permissions without exposing secrets. |
 | `qube review gate` | `aie review gate` | Render configured review-agent gate prompts. |
 | `qube pr` | `aie pr` | Show Executor pull request helpers. |
@@ -87,15 +86,6 @@ Each direct command is the composer-facing name for one component command.
 | `qube continue` | `aiu status` | Show Umpire continuation status and resume guidance. |
 | `qube whip` | `aiu whip` | Inspect and manage durable idle whip tasks. |
 
-## Hidden synonyms
-
-These names stay dispatchable for compatibility but are excluded from help listings; their help renders the canonical composer-facing command.
-
-| Synonym | Canonical command |
-| --- | --- |
-| `qube status` | `qube continue` |
-| `qube continue status` | `qube continue` |
-
 ## Component passthroughs
 
 `qube components` exposes the package-level component CLIs only. Standalone-only package commands remain valid on each component CLI without being required for composer dispatch or component discovery.
@@ -114,7 +104,7 @@ Package-level classification from the core contracts: which package command patt
 | Package | Command pattern | Classification | QUBE-facing | Schema required | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `@tjalve/aib` | `aib init\|status\|next\|answer\|spec *\|milestones *\|work-items *` | qube-facing workflow command | yes | yes | Bootstrap planning commands are safe to discover through QUBE and keep provider mutation behind dry-run or local-file guards. |
-| `@tjalve/aie` | `aie queue\|start\|switch\|branch *\|pr *\|complete\|review\|doctor\|schema\|init\|migrate` | qube-facing workflow command | yes | yes | Executor owns GitHub issue, PR, and review workflow behavior plus host instruction init/migration. |
+| `@tjalve/aie` | `aie queue\|start\|switch\|branch *\|pr *\|complete\|review\|doctor\|schema\|init` | qube-facing workflow command | yes | yes | Executor owns GitHub issue, PR, and review workflow behavior plus host instruction setup. |
 | `@tjalve/aiq` | `aiq run\|check\|plan\|doctor\|setup\|status\|config\|evidence\|schema` | qube-facing workflow command | yes | yes | Quality workflow commands are discoverable by QUBE; mutating or tool-running commands expose dry-run and supply-chain metadata. |
 | `@tjalve/aiq` | `aiq bench\|watch\|serve\|hook install\|ci setup\|ignore write` | standalone package command | no | yes | AIQ benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such. |
-| `@tjalve/aiu` | `aiu config\|doctor\|status\|paths\|init\|migrate\|hook-stop\|whip` | qube-facing workflow command | yes | yes | Umpire exposes continuation policy, trusted-state, OpenCode host integration, and local whip state commands. |
+| `@tjalve/aiu` | `aiu config\|doctor\|status\|paths\|init\|hook-stop\|whip` | qube-facing workflow command | yes | yes | Umpire exposes continuation policy, trusted-state, OpenCode host integration, and local whip state commands. |

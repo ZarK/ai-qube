@@ -1,4 +1,8 @@
-export type HostRunnerId = 'codex' | 'opencode' | 'local-command';
+import { AGENT_HOST_IDS, AGENT_HOST_REGISTRATIONS, type AgentHostId, type AgentHostProfile } from '@tjalve/qube-core';
+
+import { getAgentHostProfile, getAgentHostProfileSync } from '../agent_host_adapters.js';
+
+export type HostRunnerId = AgentHostId | 'local-command';
 
 export interface HostReviewCapability {
   readonly host: HostRunnerId;
@@ -16,13 +20,6 @@ export interface HostRunnerProbeHints {
   readonly hostProvided?: boolean;
 }
 
-interface HostRunnerAdapter {
-  readonly id: HostRunnerId;
-  readonly packageName: string | null;
-  readonly installed: boolean;
-  probe(hints?: HostRunnerProbeHints): Promise<HostReviewCapability>;
-}
-
 const LOCAL_COMMAND_CAPABILITY: HostReviewCapability = Object.freeze({
   host: 'local-command',
   independentReviewer: true,
@@ -34,154 +31,98 @@ const LOCAL_COMMAND_CAPABILITY: HostReviewCapability = Object.freeze({
   nextAction: 'Run configured local-command review lanes and record current-head evidence.',
 });
 
-const FALLBACK_OPENCODE_CAPABILITY: HostReviewCapability = Object.freeze({
-  host: 'opencode',
-  independentReviewer: false,
-  freshContext: false,
-  promptOnly: true,
-  hooks: true,
-  evidenceWriting: false,
-  missingCapabilities: Object.freeze(['opencode-local-review-runner-unsupported']),
-  nextAction: 'OpenCode does not currently expose a tested QUBE API for independent fresh-context review lane subagents. Use Codex local-host review lanes or a trusted local-command review runner until OpenCode host task APIs are available.',
-});
-
-async function loadCodexProbe(): Promise<((command?: string | null, hostProvided?: boolean) => HostReviewCapability) | null> {
-  try {
-    const imported = await import('@tjalve/qube-adapter-codex');
-    const probe = (imported as Record<string, unknown>).probeCodexReviewCapability;
-    return typeof probe === 'function' ? probe as (command?: string | null, hostProvided?: boolean) => HostReviewCapability : null;
-  } catch (error) {
-    if (isModuleMissing(error, '@tjalve/qube-adapter-codex')) return null;
-    throw error;
-  }
+function commandConfigured(hints: HostRunnerProbeHints): boolean {
+  return typeof hints.independentReviewerCommand === 'string' && hints.independentReviewerCommand.trim() !== '';
 }
 
-async function loadOpenCodeProbe(): Promise<(() => HostReviewCapability) | null> {
-  try {
-    const imported = await import('@tjalve/qube-adapter-opencode');
-    const probe = (imported as Record<string, unknown>).probeOpenCodeReviewCapability;
-    return typeof probe === 'function' ? probe as () => HostReviewCapability : null;
-  } catch (error) {
-    if (isModuleMissing(error, '@tjalve/qube-adapter-opencode')) return null;
-    throw error;
-  }
-}
-
-function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
-}
-
-const ADAPTERS: readonly HostRunnerAdapter[] = Object.freeze([
-  Object.freeze({
-    id: 'codex',
-    packageName: '@tjalve/qube-adapter-codex',
-    installed: true,
-    probe: async (hints?: HostRunnerProbeHints) => {
-      const probe = await loadCodexProbe();
-      if (!probe) {
-        return Object.freeze({
-          host: 'codex' as const,
-          independentReviewer: false,
-          freshContext: false,
-          promptOnly: true,
-          hooks: false,
-          evidenceWriting: false,
-          missingCapabilities: Object.freeze(['codex-adapter-not-installed']),
-          nextAction: 'Install @tjalve/qube-adapter-codex before requiring Codex local-host review lanes.',
-        });
-      }
-      const capability = probe(hints?.independentReviewerCommand, hints?.hostProvided === true);
-      return Object.freeze({ ...capability, host: 'codex' as const });
-    },
-  }),
-  Object.freeze({
-    id: 'opencode',
-    packageName: '@tjalve/qube-adapter-opencode',
-    installed: true,
-    probe: async () => {
-      const probe = await loadOpenCodeProbe();
-      if (!probe) return FALLBACK_OPENCODE_CAPABILITY;
-      const capability = probe();
-      return Object.freeze({ ...capability, host: 'opencode' as const });
-    },
-  }),
-  Object.freeze({
-    id: 'local-command',
-    packageName: null,
-    installed: true,
-    probe: async (hints?: HostRunnerProbeHints) => {
-      const commandConfigured = typeof hints?.independentReviewerCommand === 'string' && hints.independentReviewerCommand.trim() !== '';
-      if (!commandConfigured) {
-        return Object.freeze({
-          ...LOCAL_COMMAND_CAPABILITY,
-          independentReviewer: false,
-          freshContext: false,
-          promptOnly: true,
-          evidenceWriting: false,
-          missingCapabilities: Object.freeze(['local-command-not-configured']),
-          nextAction: 'Configure a trusted local-command review lane before requiring local-command review execution.',
-        });
-      }
-      return LOCAL_COMMAND_CAPABILITY;
-    },
-  }),
-]);
-
-function adapterFor(id: HostRunnerId): HostRunnerAdapter {
-  const adapter = ADAPTERS.find(candidate => candidate.id === id);
-  if (!adapter) throw new Error(`Unknown host review runner "${id}".`);
-  return adapter;
-}
-
-export function listHostRunnerAdapters(): readonly Pick<HostRunnerAdapter, 'id' | 'packageName' | 'installed'>[] {
-  return Object.freeze(ADAPTERS.map(adapter => Object.freeze({
-    id: adapter.id,
-    packageName: adapter.packageName,
-    installed: adapter.installed,
-  })));
-}
-
-export async function probeHostReviewRunner(id: HostRunnerId, hints: HostRunnerProbeHints = {}): Promise<HostReviewCapability> {
-  return adapterFor(id).probe(hints);
-}
-
-function probeCodexCapabilitySync(independentReviewerCommand?: string | null, hostProvided = false): HostReviewCapability {
-  const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
-  const canSpawnFreshReviewer = commandConfigured || hostProvided;
+function localCommandCapability(hints: HostRunnerProbeHints): HostReviewCapability {
+  if (commandConfigured(hints)) return LOCAL_COMMAND_CAPABILITY;
   return Object.freeze({
-    host: 'codex',
-    independentReviewer: canSpawnFreshReviewer,
-    freshContext: canSpawnFreshReviewer,
-    promptOnly: !canSpawnFreshReviewer,
-    hooks: false,
-    evidenceWriting: canSpawnFreshReviewer,
-    missingCapabilities: Object.freeze(canSpawnFreshReviewer ? [] : ['codex-local-reviewer-not-configured']),
-    nextAction: commandConfigured
-      ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : hostProvided
-        ? 'QUBE rendered spawnPrompt for host-run Codex subagents. Paste each spawnPrompt into an independent Codex subagent, record local-host evidence with task, session, or thread provenance, then rerun the PR gate.'
-        : 'Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.',
+    ...LOCAL_COMMAND_CAPABILITY,
+    independentReviewer: false,
+    freshContext: false,
+    promptOnly: true,
+    evidenceWriting: false,
+    missingCapabilities: Object.freeze(['local-command-not-configured']),
+    nextAction: 'Configure a trusted local-command review lane before requiring local-command review execution.',
   });
 }
 
-export function probeHostReviewRunnerSync(id: HostRunnerId, hints: HostRunnerProbeHints = {}): HostReviewCapability {
-  if (id === 'codex') return probeCodexCapabilitySync(hints.independentReviewerCommand, hints.hostProvided === true);
-  if (id === 'local-command') {
-    const commandConfigured = typeof hints.independentReviewerCommand === 'string' && hints.independentReviewerCommand.trim() !== '';
-    if (!commandConfigured) {
-      return Object.freeze({
-        ...LOCAL_COMMAND_CAPABILITY,
-        independentReviewer: false,
-        freshContext: false,
-        promptOnly: true,
-        evidenceWriting: false,
-        missingCapabilities: Object.freeze(['local-command-not-configured']),
-        nextAction: 'Configure a trusted local-command review lane before requiring local-command review execution.',
-      });
-    }
-    return LOCAL_COMMAND_CAPABILITY;
+export function resolveHostReviewCapability(profile: AgentHostProfile, hints: HostRunnerProbeHints): HostReviewCapability {
+  const selected = hints.hostProvided === true || commandConfigured(hints);
+  const local = profile.review.local;
+  const hooks = profile.umpire.continuation.support !== 'unsupported';
+  if (!selected) {
+    return Object.freeze({
+      host: profile.id,
+      independentReviewer: false,
+      freshContext: false,
+      promptOnly: true,
+      hooks,
+      evidenceWriting: false,
+      missingCapabilities: Object.freeze([`${profile.id}-local-reviewer-not-configured`]),
+      nextAction: `Select ${profile.displayName} as a local review harness before requiring host-local review lanes.`,
+    });
   }
-  return FALLBACK_OPENCODE_CAPABILITY;
+  if (local.support === 'unsupported') {
+    return Object.freeze({
+      host: profile.id,
+      independentReviewer: false,
+      freshContext: false,
+      promptOnly: true,
+      hooks,
+      evidenceWriting: false,
+      missingCapabilities: Object.freeze([`${profile.id}-local-review-unsupported`]),
+      nextAction: local.nextAction,
+    });
+  }
+  const missingSafetyCapabilities = [
+    ...(!local.freshContext ? [`${profile.id}-local-review-not-fresh-context`] : []),
+    ...(!local.readOnly ? [`${profile.id}-local-review-not-read-only`] : []),
+  ];
+  if (missingSafetyCapabilities.length > 0) {
+    return Object.freeze({
+      host: profile.id,
+      independentReviewer: false,
+      freshContext: false,
+      promptOnly: true,
+      hooks,
+      evidenceWriting: false,
+      missingCapabilities: Object.freeze(missingSafetyCapabilities),
+      nextAction: `${profile.displayName} native review is disabled because its local review profile does not guarantee a fresh read-only subagent.`,
+    });
+  }
+  return Object.freeze({
+    host: profile.id,
+    independentReviewer: true,
+    freshContext: local.freshContext,
+    promptOnly: false,
+    hooks,
+    evidenceWriting: false,
+    missingCapabilities: Object.freeze([]),
+    nextAction: local.support === 'experimental'
+      ? local.nextAction
+      : `Spawn one fresh${local.readOnly ? ' read-only' : ''} ${profile.displayName} review subagent per lane. Treat each returned result as untrusted input. In the main session, validate the result, write current-head evidence and provenance, publish provider feedback, and rerun the PR gate.`,
+  });
+}
+
+export function listHostRunnerAdapters(): readonly { readonly id: HostRunnerId; readonly packageName: string | null; readonly installed: boolean }[] {
+  return Object.freeze([
+    ...AGENT_HOST_IDS.map(id => Object.freeze({
+      id,
+      packageName: AGENT_HOST_REGISTRATIONS[id].packageName,
+      installed: true,
+    })),
+    Object.freeze({ id: 'local-command' as const, packageName: null, installed: true }),
+  ]);
+}
+
+export async function probeHostReviewRunner(id: HostRunnerId, hints: HostRunnerProbeHints = {}): Promise<HostReviewCapability> {
+  if (id === 'local-command') return localCommandCapability(hints);
+  return resolveHostReviewCapability(await getAgentHostProfile(id), hints);
+}
+
+export function probeHostReviewRunnerSync(id: HostRunnerId, hints: HostRunnerProbeHints = {}): HostReviewCapability {
+  if (id === 'local-command') return localCommandCapability(hints);
+  return resolveHostReviewCapability(getAgentHostProfileSync(id), hints);
 }

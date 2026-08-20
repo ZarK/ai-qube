@@ -97,16 +97,32 @@ export type {
   WorkProviderId,
 } from "./work_provider.js";
 export type {
+  AgentHostCapability,
+  AgentHostCapabilitySupport,
+  AgentHostCommandRunner,
+  AgentHostContinuationDelivery,
+  AgentHostExperimentalCapability,
+  AgentHostExecutables,
   AgentHostId,
+  AgentHostModelDiscoveryCapability,
+  AgentHostModelDiscoveryContext,
   AgentHostProfile,
-  CodexReviewCapability,
-  CommandRenderer,
-  CommandTarget,
-  DialogueCapability,
-  HookCapability,
-  HostReviewRunnerAdapter,
-  HostReviewRunnerCapabilities,
-  HostReviewRunnerId,
+  AgentHostRegistration,
+  AgentHostReviewAgentRenderer,
+  AgentHostReviewAgentTarget,
+  AgentHostReviewCapability,
+  AgentHostReviewModeCapability,
+  AgentHostSubagentCapability,
+  AgentHostSubagentDetails,
+  AgentHostSupportedCapability,
+  AgentHostTaskListCapability,
+  AgentHostTaskListDetails,
+  AgentHostTrustAction,
+  AgentHostTrustCapability,
+  AgentHostUmpireCapability,
+  AgentHostUmpireContinuationCapability,
+  AgentHostUmpireProbeCapability,
+  AgentHostUnsupportedCapability,
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
   IsolatedReviewHostCapabilities,
@@ -118,16 +134,14 @@ export type {
   IsolatedReviewHostProbeContext,
   IsolatedReviewHostProbeResult,
   InstructionTarget,
-  SubagentCapability,
-  TodoCapability,
+  MakeItSoSurface,
+  MakeItSoSurfaceKind,
 } from "./agent_host.js";
 export {
+  AGENT_HOST_CAPABILITY_SUPPORT,
   AGENT_HOST_IDS,
-  GROK_BUILD_EXECUTABLE_NAMES,
-  GROK_BUILD_WINDOWS_EXECUTABLE_NAMES,
-  ISOLATED_REVIEW_HOST_PACKAGE_NAMES,
-  RETIRED_GROK_HOST_ID,
-  retiredGrokHostIdMessage,
+  AGENT_HOST_REGISTRATIONS,
+  defineAgentHostProfile,
 } from "./agent_host.js";
 export type {
   EvidenceSource,
@@ -293,8 +307,7 @@ export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "j
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
-  | "internal adapter command"
-  | "compatibility command";
+  | "internal adapter command";
 export type QubePathClassification =
   | "shared QUBE namespace"
   | "standalone product config"
@@ -642,103 +655,6 @@ export const jenkinsAdapterContract = defineQubeAdapter({
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
-export const codexAdapterContract = defineQubeAdapter({
-  id: "codex",
-  packageName: "@tjalve/qube-adapter-codex",
-  surface: "codex",
-  owns: ["host-detection", "instruction-targets", "review-subagents", "local-review-probes", "unsupported-capability-reporting"],
-  boundary: "Codex host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: Object.freeze([
-    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-codex", "Detect Codex repository affordances from AGENTS.md and .codex/agents."),
-    adapterCapability("probe-local-review-runner", "supported", "@tjalve/aie", "Probe whether Codex can run independent fresh-context local review lanes."),
-    adapterCapability("spawn-review-subagent", "supported", "Codex host", "Codex can spawn independent qube-review-focus subagents from rendered lane spawnPrompt."),
-    adapterCapability("install-review-focus-agent", "unsupported", "@tjalve/aie", "Codex review-focus agent installation is owned by Executor init, not the adapter runtime."),
-  ]),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
-
-export const grokBuildAdapterContract = defineQubeAdapter({
-  id: "grok-build",
-  packageName: "@tjalve/qube-adapter-grok-build",
-  surface: "grok-build",
-  owns: [
-    "host-detection",
-    "instruction-targets",
-    "isolated-review-invocation",
-    "grok-model-catalog",
-    "windows-grok-resolution",
-    "umpire-stop-hook-parse",
-    "unsupported-capability-reporting",
-  ],
-  boundary: "Grok Build host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: Object.freeze([
-    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-grok-build", "Detect Grok Build repository affordances from AGENTS.md and .grok assets."),
-    adapterCapability("isolated-review", "supported", "@tjalve/qube-adapter-grok-build", "Build the isolated Grok review invocation and parse the Grok envelope."),
-    adapterCapability("list-models", "supported", "@tjalve/qube-adapter-grok-build", "Read the grok models catalog through the adapter probe."),
-  ]),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
-
-export const cursorAdapterContract = defineQubeAdapter({
-  id: "cursor",
-  packageName: "@tjalve/qube-adapter-cursor",
-  surface: "cursor",
-  owns: ["isolated-review-invocation", "cursor-model-catalog", "windows-cursor-resolution", "unsupported-capability-reporting"],
-  boundary: "Cursor supplies read-only review compute only; QUBE validates evidence, protects the checkout, and owns every provider mutation.",
-  capabilities: Object.freeze([
-    adapterCapability("isolated-review", "supported", "@tjalve/qube-adapter-cursor", "Build a fresh Cursor Ask-mode invocation and parse one terminal JSON result."),
-    adapterCapability("list-models", "supported", "@tjalve/qube-adapter-cursor", "Read the official Cursor CLI model catalog without reading stored credentials."),
-    adapterCapability("publish-review", "unsupported", "@tjalve/aie", "Cursor has no provider publication capability; Executor owns formal review publication."),
-  ]),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
-
-export const claudeCodeAdapterContract = defineQubeAdapter({
-  id: "claude-code",
-  packageName: "@tjalve/qube-adapter-claude-code",
-  surface: "claude-code",
-  owns: ["host-detection", "instruction-targets", "todo-tools", "hooks", "slash-command-boundaries", "unsupported-capability-reporting"],
-  boundary: "Claude Code host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: Object.freeze([
-    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-claude-code", "Detect Claude Code-oriented repository instructions from CLAUDE.md and .claude assets without assuming Codex or OpenCode assets."),
-    adapterCapability("read-instructions", "supported", "@tjalve/aib and @tjalve/aie", "Claude Code project instructions use CLAUDE.md with repository policy precedence."),
-    adapterCapability("inspect-repository-state", "supported", "@tjalve/aie", "Executor checks branch policy, worktree state, base-branch freshness, and blocking pull requests before issue work."),
-    adapterCapability("use-task-state", "standalone", "Claude Code host", "Claude Code todo state is host session state; durable QUBE state stays in GitHub issues, pull requests, and .qube artifacts."),
-    adapterCapability("run-commands", "standalone", "Claude Code host", "Claude Code command execution follows the active permission mode, settings, hooks, and repository policy."),
-    adapterCapability("use-hooks", "standalone", "Claude Code host", "Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop."),
-    adapterCapability("use-slash-commands", "standalone", "Claude Code host", "Claude Code slash commands and skills are host customization assets, separate from Codex AGENTS.md and OpenCode project commands."),
-    adapterCapability("use-subagents", "standalone", "Claude Code host", "Claude Code can delegate bounded work to subagents, but protected QUBE issue workflow state stays in the main session."),
-    adapterCapability("continue-session", "standalone", "Claude Code host", "Claude Code can continue or resume host conversations, while QUBE continuation remains anchored in provider and .qube state."),
-    adapterCapability("install-slash-command", "unsupported", "@tjalve/qube-adapter-claude-code", "QUBE composer install notes do not create Claude Code slash command or skill assets."),
-    adapterCapability("request-external-review", "unsupported", "@tjalve/aie", "Claude Code host support does not directly invoke configured external PR reviewers."),
-    adapterCapability("create-git-branch", "unsupported", "@tjalve/aie repository provider", "Claude Code host support does not bypass QUBE branch policy."),
-    adapterCapability("open-pull-request", "unsupported", "@tjalve/aie GitHub provider", "Claude Code host support does not open pull requests without the configured repository workflow."),
-  ]),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
-
-export const opencodeAdapterContract = defineQubeAdapter({
-  id: "opencode",
-  packageName: "@tjalve/qube-adapter-opencode",
-  surface: "opencode",
-  owns: ["host-detection", "instruction-targets", "project-commands", "todo-tools", "session-prompts", "stop-hooks", "local-review-probes", "unsupported-capability-reporting"],
-  boundary: "OpenCode host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: Object.freeze([
-    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-opencode", "Detect OpenCode repository affordances from AGENTS.md and .opencode/commands."),
-    adapterCapability("read-instructions", "supported", "@tjalve/aib and @tjalve/aie", "OpenCode reads AGENTS.md as the repository instruction target for QUBE workflows."),
-    adapterCapability("install-project-command", "supported", "@tjalve/aib and @tjalve/aie", "AIB and AIE install concrete OpenCode project commands under .opencode/commands."),
-    adapterCapability("use-todos", "supported", "OpenCode host", "OpenCode todo state is available through host todo tools, not through a hidden adapter store."),
-    adapterCapability("probe-local-review-runner", "unsupported", "@tjalve/qube-adapter-opencode", "OpenCode local-host review lanes require a tested independent fresh-context host task API; the adapter reports the unsupported boundary explicitly."),
-    adapterCapability("deliver-session-prompt", "supported", "@tjalve/aiu", "AIU can route continuation prompts from trusted state through an explicit OpenCode prompt deliverer."),
-    adapterCapability("handle-stop-hook", "supported", "@tjalve/aiu", "AIU owns OpenCode stop-hook and idle-session continuation decisions."),
-    adapterCapability("run-aiq-plugin", "standalone", "@tjalve/aiq OpenCode plugin package", "AIQ exposes OpenCode quality tools as a standalone adapter package, not as a QUBE-facing host command."),
-    adapterCapability("request-external-review", "unsupported", "OpenCode host", "OpenCode does not provide a QUBE API for requesting external reviewers."),
-    adapterCapability("create-git-branch", "unsupported", "@tjalve/aie", "OpenCode host support does not create repository branches."),
-    adapterCapability("open-pull-request", "unsupported", "@tjalve/aie GitHub provider", "OpenCode host support does not open or approve pull requests."),
-  ]),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
-
 export interface QubeCommandSurfaceContract {
   readonly productId: QubeProductId;
   readonly packageName: string;
@@ -754,7 +670,7 @@ export interface QubePathContract {
   readonly pathPattern: string;
   readonly classification: QubePathClassification;
   readonly committed: boolean;
-  readonly migrationPolicy: string;
+  readonly writePolicy: string;
 }
 
 export interface QubeRepoArtifactContract {
@@ -795,7 +711,7 @@ export const qubeProductContracts = [
     commandName: "aiu",
     role: "Coordinate safe agent continuation and host stop hooks.",
     standalone: true,
-    surfaces: ["cli", "opencode", "claude-code", "grok-build"],
+    surfaces: ["cli", "opencode", "codex", "claude-code", "grok-build"],
   },
 ] as const satisfies readonly QubeProductContract[];
 
@@ -812,11 +728,11 @@ export const qubeCommandSurfaceContracts = [
   {
     productId: "executor",
     packageName: "@tjalve/aie",
-    commandPattern: "aie queue|start|switch|branch *|pr *|complete|review|doctor|schema|init|migrate",
+    commandPattern: "aie queue|start|switch|branch *|pr *|complete|review|doctor|schema|init",
     classification: "qube-facing workflow command",
     qubeFacing: true,
     schemaRequired: true,
-    notes: "Executor owns GitHub issue, PR, and review workflow behavior plus host instruction init/migration.",
+    notes: "Executor owns GitHub issue, PR, and review workflow behavior plus host instruction setup.",
   },
   {
     productId: "quality",
@@ -839,7 +755,7 @@ export const qubeCommandSurfaceContracts = [
   {
     productId: "umpire",
     packageName: "@tjalve/aiu",
-    commandPattern: "aiu config|doctor|status|paths|init|migrate|hook-stop|whip",
+    commandPattern: "aiu config|doctor|status|paths|init|hook-stop|whip",
     classification: "qube-facing workflow command",
     qubeFacing: true,
     schemaRequired: true,
@@ -853,49 +769,42 @@ export const qubePathContracts = [
     pathPattern: ".qube/",
     classification: "shared QUBE namespace",
     committed: false,
-    migrationPolicy: "Shared namespace for package config, state, logs, locks, cache, and generated artifacts; product migrations preserve legacy paths unless explicitly applied.",
+    writePolicy: "Each product writes only its owned namespace under the shared QUBE root.",
   },
   {
     owner: "bootstrap",
     pathPattern: ".qube/aib/session.json",
     classification: "standalone product state",
     committed: false,
-    migrationPolicy: "AIB defaults write QUBE-prefixed state; explicit legacy .bootstrap/session.json paths remain readable and migration must preserve existing state.",
+    writePolicy: "Bootstrap writes its local planning session state here. Runtime state is not committed.",
   },
   {
     owner: "quality",
     pathPattern: ".qube/aiq/config.json, .qube/aiq/progress.json, and .qube/aiq/out/",
     classification: "standalone product config",
     committed: true,
-    migrationPolicy: "AIQ setup creates missing QUBE-prefixed files only; legacy .aiq/ and aiq.config.json discovery remain migration/backward-compatible inputs.",
+    writePolicy: "Quality writes repository configuration and progress under its QUBE namespace and keeps generated output below the same namespace.",
   },
   {
     owner: "umpire",
     pathPattern: ".qube/aiu/config.json",
     classification: "standalone product config",
     committed: true,
-    migrationPolicy: "AIU init and migrate prefer QUBE-prefixed config, fall back to legacy aiu.config.json, and preserve existing config unless explicit replacement is confirmed.",
+    writePolicy: "Umpire writes repository continuation policy only to this canonical config path.",
   },
   {
     owner: "umpire",
     pathPattern: ".qube/aiu/state, .qube/aiu/locks, .qube/aiu/logs, and .qube/aiu/whip.json",
     classification: "standalone product state",
     committed: false,
-    migrationPolicy: "AIU defaults write QUBE-prefixed state; migration detects and preserves legacy .umpire state unless cleanup is explicitly confirmed.",
+    writePolicy: "Umpire writes runtime state, locks, logs, and whip state below its QUBE namespace. Runtime state is not committed.",
   },
   {
     owner: "executor",
     pathPattern: ".qube/aie/config.json, .qube/aie/gates/, .qube/aie/reviews/, and .qube/aie/runs/",
     classification: "standalone product config",
     committed: true,
-    migrationPolicy: "AIE init writes QUBE-prefixed product config and runtime evidence; legacy aie.config.json remains a repo-policy fallback and copied workflow files remain separate.",
-  },
-  {
-    owner: "repository",
-    pathPattern: "products/*/AGENTS.md and products/*/aie.config.json",
-    classification: "implementation-time workflow policy",
-    committed: true,
-    migrationPolicy: "Repository-local implementation artifacts are not package-installed product surfaces unless a product command documents and writes them.",
+    writePolicy: "Executor writes repository policy and runtime evidence only below its QUBE namespace.",
   },
 ] as const satisfies readonly QubePathContract[];
 
@@ -911,12 +820,6 @@ export const qubeRepoArtifactContracts = [
     classification: "implementation-time workflow policy",
     productInstalledSurface: false,
     notes: "Package-directory agent policies guide repo work on that package; they do not imply installed package behavior.",
-  },
-  {
-    pathPattern: "products/*/aie.config.json",
-    classification: "implementation-time workflow policy",
-    productInstalledSurface: false,
-    notes: "Copied Executor config under package directories is local workflow policy, not evidence that those products own review-agent config.",
   },
   {
     pathPattern: "products/*/test-projects/**",

@@ -119,10 +119,6 @@ export interface ReviewForgePublishedRecord {
   id: string;
 }
 
-export interface ReviewForgeSnapshotLoadOptions {
-  publishedRecord?: ReviewForgePublishedRecord | null;
-}
-
 export interface ReviewForgeRoundStatusPublishInput extends CoreReviewRoundStatusPublishInput {}
 
 export interface ReviewForgeRoundStatusPublishResult extends CoreReviewRoundStatusPublishResult {
@@ -162,13 +158,12 @@ export interface ReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
   loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
-  loadPullRequestReview(prNumber: number, options?: ReviewForgeSnapshotLoadOptions): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<ActionResult[]>;
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
-  publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
-  publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  publishLaneReviewFeedback(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
   /** Returns null when the provider cannot compute a diff index for this PR; callers must then treat every finding as unanchored. */

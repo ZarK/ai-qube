@@ -1,13 +1,19 @@
 import { homedir } from "node:os";
 import { join, posix as pathPosix } from "node:path";
 
+import { defineAgentHostProfile } from "@tjalve/qube-core";
 import type {
+  AgentHostModelDiscoveryContext,
+  AgentHostProfile,
+  AgentHostReviewAgentTarget,
+  InstructionTarget,
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
   IsolatedReviewHostInvocationContext,
   IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
   IsolatedReviewHostProbeResult,
+  MakeItSoSurface,
 } from "@tjalve/qube-core";
 
 const GROK_BUILD_EXECUTABLE_NAMES = ["grok"] as const;
@@ -16,118 +22,128 @@ const GROK_BUILD_WINDOWS_EXECUTABLE_NAMES = ["grok.exe"] as const;
 export const GROK_BUILD_HOST_ID = "grok-build" as const;
 export const grokBuildRouteRunnerPath = pathPosix.join(".grok", "agents", "qube-route-runner.md");
 
-export interface InstructionTarget {
-  readonly id: string;
-  readonly path: string;
-  readonly description: string;
-}
-
-export type CommandRenderer =
-  | "make-it-so"
-  | "grok-review-focus-agent"
-  | "grok-review-explorer-agent"
-  | "grok-review-digest-agent"
-  | "grok-review-librarian-agent";
-
-export interface CommandTarget {
-  readonly id: string;
-  readonly path: string;
-  readonly description: string;
-  readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
-  readonly renderer: CommandRenderer;
-}
-
-export interface AgentHostProfile {
-  readonly id: "grok-build";
-  readonly displayName: string;
-  readonly instructionTargets: readonly InstructionTarget[];
-  readonly commandTargets: readonly CommandTarget[];
-  readonly todo: { readonly tools: readonly string[]; readonly fallback: string; readonly instruction: string };
-  readonly dialogue: { readonly expectation: string };
-  readonly subagents: { readonly supported: boolean; readonly instruction: string };
-  readonly hooks: { readonly supported: boolean; readonly description: string };
-  readonly supportsProjectCommands: boolean;
-}
-
 const AGENTS_INSTRUCTIONS: InstructionTarget = Object.freeze({
   id: "agents-instructions",
   path: "AGENTS.md",
   description: "Always-loaded Executor instructions for AGENTS.md hosts.",
 });
 
-export const grokBuildHostProfile: AgentHostProfile = Object.freeze({
+const GROK_MAKE_IT_SO: MakeItSoSurface = Object.freeze({
+  id: "grok-make-it-so",
+  path: pathPosix.join(".grok", "commands", "make-it-so.md"),
+  description: "Grok Build project command that starts or resumes the autonomous Executor workflow.",
+  kind: "command",
+  invocation: "/make-it-so",
+});
+
+const GROK_REVIEW_TARGETS: readonly AgentHostReviewAgentTarget[] = Object.freeze([
+  Object.freeze({
+    id: "grok-review-focus-agent",
+    path: pathPosix.join(".grok", "agents", "qube-review-focus.md"),
+    description: "Grok Build read-only subagent for one focused local PR review lane.",
+    renderer: "grok-review-focus-agent",
+  }),
+  Object.freeze({
+    id: "grok-review-explorer-agent",
+    path: pathPosix.join(".grok", "agents", "qube-review-explorer.md"),
+    description: "Grok Build read-only economy subagent that reads and summarizes large texts for a review lane.",
+    renderer: "grok-review-explorer-agent",
+  }),
+  Object.freeze({
+    id: "grok-review-digest-agent",
+    path: pathPosix.join(".grok", "agents", "qube-review-digest.md"),
+    description: "Grok Build read-only economy subagent that condenses diffs and test output for a review lane.",
+    renderer: "grok-review-digest-agent",
+  }),
+  Object.freeze({
+    id: "grok-review-librarian-agent",
+    path: pathPosix.join(".grok", "agents", "qube-review-librarian.md"),
+    description: "Grok Build read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.",
+    renderer: "grok-review-librarian-agent",
+  }),
+]);
+
+const GROK_TASK_LIST = Object.freeze({
+  support: "unsupported" as const,
+  description: "QUBE has no tested Grok Build task-list integration.",
+  nextAction: "Keep the visible checklist and configured provider records current.",
+  tools: Object.freeze([] as string[]),
+  fallback: "Keep the visible checklist and configured provider records current.",
+  instruction: "For Grok Build, keep local tasks in the visible checklist and durable state in configured provider records. Do not invent a Grok task tool.",
+});
+
+export const grokBuildHostProfile: AgentHostProfile = defineAgentHostProfile({
   id: "grok-build",
   displayName: "Grok Build",
-  instructionTargets: Object.freeze([AGENTS_INSTRUCTIONS]),
-  commandTargets: Object.freeze([
-    Object.freeze({
-      id: "grok-make-it-so",
-      path: pathPosix.join(".grok", "commands", "make-it-so.md"),
-      description: "Grok Build project command that starts or resumes the autonomous Executor workflow.",
-      optional: false,
-      enabledBy: "always",
-      renderer: "make-it-so",
-    }),
-    Object.freeze({
-      id: "grok-make-it-so-skill",
-      path: pathPosix.join(".grok", "skills", "make-it-so", "SKILL.md"),
-      description: "Grok Build skill that starts or resumes the autonomous Executor workflow.",
-      optional: false,
-      enabledBy: "always",
-      renderer: "make-it-so",
-    }),
-    Object.freeze({
-      id: "grok-review-focus-agent",
-      path: pathPosix.join(".grok", "agents", "qube-review-focus.md"),
-      description: "Grok Build read-only subagent for one focused local PR review lane.",
-      optional: false,
-      enabledBy: "hostLocalReview",
-      renderer: "grok-review-focus-agent",
-    }),
-    Object.freeze({
-      id: "grok-review-explorer-agent",
-      path: pathPosix.join(".grok", "agents", "qube-review-explorer.md"),
-      description: "Grok Build read-only economy subagent that reads and summarizes large texts for a review lane.",
-      optional: false,
-      enabledBy: "hostLocalReview",
-      renderer: "grok-review-explorer-agent",
-    }),
-    Object.freeze({
-      id: "grok-review-digest-agent",
-      path: pathPosix.join(".grok", "agents", "qube-review-digest.md"),
-      description: "Grok Build read-only economy subagent that condenses diffs and test output for a review lane.",
-      optional: false,
-      enabledBy: "hostLocalReview",
-      renderer: "grok-review-digest-agent",
-    }),
-    Object.freeze({
-      id: "grok-review-librarian-agent",
-      path: pathPosix.join(".grok", "agents", "qube-review-librarian.md"),
-      description: "Grok Build read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.",
-      optional: false,
-      enabledBy: "hostLocalReview",
-      renderer: "grok-review-librarian-agent",
-    }),
-  ]),
-  todo: Object.freeze({
-    tools: Object.freeze([] as string[]),
-    fallback: "Keep durable todos in the visible checklist plus GitHub issue checkboxes and comments.",
-    instruction: "For Grok Build, keep durable todos in the visible checklist plus provider records. Do not invent a Grok todo tool.",
+  executables: Object.freeze({
+    names: Object.freeze([...GROK_BUILD_EXECUTABLE_NAMES]),
+    windowsNames: Object.freeze([...GROK_BUILD_WINDOWS_EXECUTABLE_NAMES]),
   }),
-  dialogue: Object.freeze({
-    expectation: "Operate autonomously in the main Grok Build session. Provider-visible PR reviews and GitHub issue comments remain the durable communication channel for review results.",
+  instructionTarget: AGENTS_INSTRUCTIONS,
+  makeItSo: GROK_MAKE_IT_SO,
+  taskList: GROK_TASK_LIST,
+  review: Object.freeze({
+    local: Object.freeze({
+      support: "supported",
+      description: "Grok Build can run a fresh read-only review subagent that returns one candidate lane result to the main session. The main session validates the result, writes evidence and provenance, and publishes provider feedback.",
+      freshContext: true,
+      readOnly: true,
+      agents: GROK_REVIEW_TARGETS,
+    }),
+    isolated: Object.freeze({
+      support: "supported",
+      description: "QUBE can start a fresh Grok Build review process with strict read-only controls and validate its structured result.",
+      freshContext: true,
+      readOnly: true,
+      agents: Object.freeze([]),
+    }),
+  }),
+  modelDiscovery: Object.freeze({
+    support: "supported",
+    description: "Grok Build lists the models available to the signed-in user through its live CLI catalog.",
+    listModels({ executable, prefixArgs, runCommand }: AgentHostModelDiscoveryContext) {
+      return parseGrokModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
+    },
+  }),
+  umpire: Object.freeze({
+    continuation: Object.freeze({
+      support: "experimental",
+      description: "A managed Grok Build Stop hook can emit a continuation prompt for current-issue recovery while Continuous Shipping is enabled.",
+      nextAction: "Run `qube aiu init --tool grok-build`, review the hook, and trust it with `/hooks-trust`.",
+      delivery: "stdout",
+      currentIssueRecovery: true,
+    }),
+    probe: Object.freeze({
+      support: "experimental",
+      description: "QUBE can inspect Grok Build Umpire setup through AIU doctor.",
+      nextAction: "Run `qube aiu doctor --json` and address any reported setup problems.",
+      command: Object.freeze(["qube", "aiu", "doctor", "--json"] as const),
+    }),
+  }),
+  trust: Object.freeze({
+    required: true,
+    description: "Grok Build must trust the managed project Stop hook before Umpire continuation can run.",
+    actions: Object.freeze([
+      Object.freeze({
+        id: "review-grok-hook",
+        kind: "review-files",
+        description: "Review the managed Grok Build Stop hook.",
+        paths: Object.freeze([".grok/hooks/ai-umpire.json"]),
+      }),
+      Object.freeze({
+        id: "trust-grok-hook",
+        kind: "run-command",
+        description: "Trust the project Stop hook from Grok Build.",
+        command: "/hooks-trust",
+      }),
+    ]),
   }),
   subagents: Object.freeze({
-    supported: true,
+    support: "supported",
+    description: "Grok Build supports bounded native subagents with fresh task contexts.",
     instruction: "Grok Build subagents may be used for bounded support work. Routed review already has a Grok host adapter. Local review-agent files are installed when local review includes this host.",
   }),
-  hooks: Object.freeze({
-    supported: true,
-    description: "Grok Build Stop hooks are host-provided. Executor init writes Grok command, skill, and review-agent files, not hook files.",
-  }),
-  supportsProjectCommands: true,
-});
+} satisfies AgentHostProfile);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -345,25 +361,6 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
 
 export const reviewHostAdapter = isolatedReviewHostAdapter;
 
-export {
-  assertGrokBuildHostCapabilityAvailable,
-  formatGrokBuildUnsupportedCapabilityMessage,
-  getGrokBuildHostCapability,
-  inspectGrokBuildWorkspace,
-  listGrokBuildHostCapabilities,
-  listGrokBuildInstallFiles,
-  listGrokBuildInstallNotes,
-} from "./host_capabilities.js";
-export type {
-  GrokBuildCapabilityCategory,
-  GrokBuildHostCapability,
-  GrokBuildHostCapabilityId,
-  GrokBuildHostSupport,
-  GrokBuildWorkspaceInspection,
-  GrokBuildWorkspaceTarget,
-} from "./host_capabilities.js";
-export { grokBuildHostFiles } from "./host_files.js";
-export type { GrokBuildHostFile } from "./host_files.js";
 export {
   grokBuildStopHookFile,
   isGrokSessionEndReason,

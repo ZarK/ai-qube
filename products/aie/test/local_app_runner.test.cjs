@@ -46,8 +46,8 @@ describe('local app runner service', () => {
     assert.equal(paths.metadataPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'metadata.json'));
     assert.equal(paths.currentAttemptPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'current-attempt.json'));
     assert.equal(paths.attemptId, null);
-    assert.equal(paths.stdoutPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stdout.log'));
-    assert.equal(paths.stderrPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stderr.log'));
+    assert.equal(paths.stdoutPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stdout-not-started.log'));
+    assert.equal(paths.stderrPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stderr-not-started.log'));
   });
 
   it('resolves Windows launcher scripts and escapes them through cmd.exe', async () => {
@@ -101,8 +101,15 @@ describe('local app runner service', () => {
     assert.equal(planned.pid, null);
     assert.equal(planned.spawnPlan.windowsHide, true);
 
-    const paths = runPaths(root, 'ui-audit');
+    const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.currentAttemptPath, JSON.stringify({
+      version: 1,
+      attemptId: paths.attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: '2026-06-18T00:00:00.000Z',
+    }, null, 2));
     writeFileSync(paths.metadataPath, JSON.stringify({
       version: 1,
       name: 'ui-audit',
@@ -111,6 +118,7 @@ describe('local app runner service', () => {
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
+      attemptId: paths.attemptId,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
       metadataPath: paths.metadataPath,
@@ -127,8 +135,15 @@ describe('local app runner service', () => {
   it('does not treat substring executable names as the expected process', async () => {
     const { runStatus, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const paths = runPaths(root, 'ui-audit');
+    const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.currentAttemptPath, JSON.stringify({
+      version: 1,
+      attemptId: paths.attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: '2026-06-18T00:00:00.000Z',
+    }, null, 2));
     writeFileSync(paths.metadataPath, JSON.stringify({
       version: 1,
       name: 'ui-audit',
@@ -137,6 +152,7 @@ describe('local app runner service', () => {
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
+      attemptId: paths.attemptId,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
       metadataPath: paths.metadataPath,
@@ -172,8 +188,15 @@ describe('local app runner service', () => {
   it('fails bounded readiness waits with captured log tails', async () => {
     const { runPaths, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const paths = runPaths(root, 'ui-audit');
+    const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.currentAttemptPath, JSON.stringify({
+      version: 1,
+      attemptId: paths.attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: '2026-06-18T00:00:00.000Z',
+    }, null, 2));
     writeFileSync(paths.metadataPath, JSON.stringify({
       version: 1,
       name: 'ui-audit',
@@ -182,6 +205,7 @@ describe('local app runner service', () => {
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
+      attemptId: paths.attemptId,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
       metadataPath: paths.metadataPath,
@@ -387,17 +411,18 @@ describe('local app runner service', () => {
     assert.match(result.error, /run attempt id must contain only letters, numbers, dot, underscore, or dash/);
   });
 
-  it('ignores malformed current-attempt pointers', async () => {
+  it('ignores unversioned logs when the current-attempt pointer is malformed', async () => {
     const { runPaths, runStatus } = await import('../dist/local_app_runner.js');
     const root = repo();
     const paths = runPaths(root, 'ui-audit');
     mkdirSync(paths.directory, { recursive: true });
     writeFileSync(paths.currentAttemptPath, '{not-json');
-    writeFileSync(paths.stderrPath, 'legacy noise\n');
+    writeFileSync(join(paths.directory, 'stderr.log'), 'unversioned noise\n');
     const status = runStatus({ repoRoot: root, name: 'ui-audit' });
     assert.equal(status.ok, true);
     assert.equal(status.attemptId, null);
-    assert.deepEqual(status.logTail.stderr, ['legacy noise']);
+    assert.deepEqual(status.logTail.stderr, []);
+    assert.deepEqual(status.paths.historicalLogs, []);
   });
 
   it('isolates a live missing-command spawn error from a later successful start', async () => {
@@ -442,8 +467,15 @@ describe('local app runner service', () => {
   it('waits for a hostname URL when the server answers on IPv6 localhost', async (t) => {
     const { runPaths, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const paths = runPaths(root, 'ui-audit');
+    const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.currentAttemptPath, JSON.stringify({
+      version: 1,
+      attemptId: paths.attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: '2026-06-18T00:00:00.000Z',
+    }, null, 2));
     writeFileSync(paths.metadataPath, JSON.stringify({
       version: 1,
       name: 'ui-audit',
@@ -452,6 +484,7 @@ describe('local app runner service', () => {
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
+      attemptId: paths.attemptId,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
       metadataPath: paths.metadataPath,
@@ -498,8 +531,15 @@ describe('local app runner service', () => {
   it('waits for an IPv4 localhost URL when the server answers on 127.0.0.1', async () => {
     const { runPaths, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const paths = runPaths(root, 'ui-audit');
+    const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.currentAttemptPath, JSON.stringify({
+      version: 1,
+      attemptId: paths.attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: '2026-06-18T00:00:00.000Z',
+    }, null, 2));
     writeFileSync(paths.metadataPath, JSON.stringify({
       version: 1,
       name: 'ui-audit',
@@ -508,6 +548,7 @@ describe('local app runner service', () => {
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
+      attemptId: paths.attemptId,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
       metadataPath: paths.metadataPath,

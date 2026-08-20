@@ -1,9 +1,8 @@
 import type { GateKind, GateStage, ValidationError } from '../config/index.js';
-import type { LegacyState } from '../init/index.js';
 import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, MilestoneSummary, PlanningStatus, PullRequestSummary } from '../repo/index.js';
 import type { GateStatusResult } from '../gates/index.js';
-import type { MigrationReadinessDiagnostics } from '../migration_diagnostics.js';
 import type { WorkflowReadinessDiagnostics } from './workflow_readiness.js';
+import type { ReviewModelHostId } from '../core/policy.js';
 
 export interface DoctorDiagnostics {
   ok: boolean;
@@ -33,14 +32,12 @@ export interface DoctorDiagnostics {
   lifecycle: LifecycleDiagnostics;
   instructions: InstructionStatus;
   planning: PlanningStatus;
-  legacy: LegacyState[];
   providerHealth: ProviderHealthDiagnostics;
   instructionPolicy: InstructionPolicyDiagnostics;
   repositoryPolicy: RepositoryPolicyDiagnostics;
   gateReadiness: GateReadinessDiagnostics;
   workflowReadiness: WorkflowReadinessDiagnostics;
   reviewSessionLocks: ReviewSessionLockDiagnostics[];
-  migrationReadiness: MigrationReadinessDiagnostics;
   baseRef: BaseRefStatus;
   openPullRequests: PullRequestSummary[];
   blockingPullRequests: PullRequestSummary[];
@@ -234,8 +231,6 @@ export interface GateReadinessDiagnostics {
       prComments: string;
       reviewThreads: string;
     };
-    defaultOracle: boolean;
-    fallbackPromptAvailable: boolean;
     localEvidenceRoot: string;
     localRunner: {
       configured: boolean;
@@ -256,22 +251,15 @@ export interface GateReadinessDiagnostics {
         supportsIncrementalReview: boolean;
       };
       missingTools: string[];
-      codex: {
+      host: ReviewModelHostId;
+      hosts: Record<ReviewModelHostId, {
         independentReviewer: boolean;
         freshContext: boolean;
         promptOnly: boolean;
         hooks: boolean;
         evidenceWriting: boolean;
         missingCapabilities: string[];
-      };
-      opencode: {
-        independentReviewer: boolean;
-        freshContext: boolean;
-        promptOnly: boolean;
-        hooks: boolean;
-        evidenceWriting: boolean;
-        missingCapabilities: string[];
-      };
+      }>;
       nextAction: string;
     };
     externalServices: string[];

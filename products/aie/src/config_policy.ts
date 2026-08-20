@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import { normalizeExecutorPolicy, type ExecutorPolicy, type ReviewContextSources } from './core/policy.js';
-import { expandGateConfigs } from './gate_config.js';
+import { selectEnabledGates } from './gate_config.js';
 import { isSupplyChainSensitive } from './gate_sensitivity.js';
 
 export function prThreadContextMode(sources: ReviewContextSources): ReviewContextSources['reviewThreads'] {
@@ -8,7 +8,7 @@ export function prThreadContextMode(sources: ReviewContextSources): ReviewContex
 }
 
 export function configToExecutorPolicy(config: Config): ExecutorPolicy {
-  const gates = expandGateConfigs(config.gates, config.qualityGates, config.qualityControl);
+  const gates = selectEnabledGates(config.gates, config.qualityControl);
   return normalizeExecutorPolicy({
     labels: {
       priorities: config.priorityLabels.map(name => ({ name, description: '', color: '' })),
@@ -68,8 +68,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
     },
     gates: { definitions: gates.map(gate => ({ key: gate.name, name: gate.name, command: gate.command, stage: gate.stage, required: gate.required, externalService: gate.externalService, supplyChainSensitive: isSupplyChainSensitive(gate.command) })) },
     audit: { manualUiAudit: config.manualUiAudit, appLaunch: config.uiAuditAppLaunch, target: config.uiAuditTarget, evidenceRoot: config.uiAuditEvidenceRoot },
-    instructions: { ...config.instructions, opencodeCommandAlias: config.opencodeCommandAlias },
-    migration: { ...config.migration },
+    instructions: { ...config.instructions },
     supplyChain: { ...config.supplyChain },
   });
 }

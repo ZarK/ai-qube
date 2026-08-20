@@ -46,6 +46,63 @@ describe("trusted command adapters", () => {
     assert.equal(result.states[0]?.value.status, "pass");
   });
 
+  it("accepts AIE status states and normalizes current-issue recovery commands", async () => {
+    const { parseAiuTrustedStateJson, toAiuTrustedStateCommandRef } = await loadTrustedAdapter();
+    const result = parseAiuTrustedStateJson({
+      sourceId: "work",
+      command: toAiuTrustedStateCommandRef("work", { argv: ["aie", "status", "--json"] }),
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        states: [
+          {
+            kind: "continuation-policy",
+            status: "pass",
+            allowedModes: ["continue", "repair", "wait", "stop"],
+            stopOnUnknownState: true,
+            stopOnStaleState: true,
+            stopOnSupplyChainApprovalBlock: true,
+            allowProviderMutation: false,
+            allowBackgroundScheduling: false,
+          },
+          {
+            kind: "work-queue",
+            status: "pass",
+            activeItems: [{
+              kind: "work-item",
+              status: "pass",
+              id: "638",
+              title: "Improve init",
+              lifecycle: "active",
+              priority: "high",
+              blockers: [],
+              nextAction: { id: "continue-active-work", argv: ["aie", "branch", "check", "638"] },
+            }],
+            readyItems: [],
+            blockedItems: [],
+            unknownItems: [],
+          },
+          {
+            kind: "review",
+            status: "fail",
+            targetId: "90",
+            reviewStatus: "changes-requested",
+            unresolvedFeedbackCount: 1,
+            nextAction: { id: "review-changes-requested", argv: ["aie", "pr", "gate", "90", "--json"] },
+          },
+        ],
+      }),
+      observedAt,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.states[0]?.value.kind, "continuation-policy");
+    const queue = result.states[1]?.value;
+    assert.equal(queue?.kind, "work-queue");
+    assert.deepEqual(queue?.kind === "work-queue" ? queue.activeItems[0]?.nextAction?.argv : [], ["aie", "branch", "check", "638"]);
+    const review = result.states[2]?.value;
+    assert.deepEqual(review?.kind === "review" ? review.nextAction?.argv : [], ["aie", "pr", "gate", "90", "--json"]);
+  });
+
   it("records non-zero exits and redacts token-like stderr", async () => {
     const { executeAiuTrustedCommand } = await loadTrustedAdapter();
     const token = `ghp_${"A".repeat(36)}`;

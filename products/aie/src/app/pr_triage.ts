@@ -146,7 +146,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   // findings join the same triage report with source attribution.
   const reviewProvider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const reviewSnapshot = await reviewProvider.loadPullRequestReview(pr.number);
-  const reviewSources = resolveReviewSources(config, { activeLaneIds: requiredLaneIds });
+  const reviewSources = resolveReviewSources(config);
   const providerFindings = reviewSnapshot.pr.headRefOid === pr.headSha ? ingestProviderReviewFindings(reviewSnapshot.item, reviewSources) : [];
   const blockingProviderSources = [...new Set(providerFindings.filter(finding => finding.severity === 'blocking').map(finding => finding.sourceId))];
   for (const finding of providerFindings.filter(entry => entry.severity === 'advisory')) {

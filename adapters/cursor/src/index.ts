@@ -2,7 +2,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { win32 as windowsPath } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { defineAgentHostProfile } from "@tjalve/qube-core";
 import type {
+  AgentHostModelDiscoveryContext,
+  AgentHostProfile,
+  InstructionTarget,
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
   IsolatedReviewHostExecutable,
@@ -10,28 +14,95 @@ import type {
   IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
   IsolatedReviewHostProbeResult,
+  MakeItSoSurface,
 } from "@tjalve/qube-core";
 
 export const CURSOR_HOST_ID = "cursor" as const;
 export const CURSOR_MINIMUM_DATE_VERSION = "2026.08.11";
 
-export const cursorHostProfile = Object.freeze({
+const CURSOR_INSTRUCTIONS: InstructionTarget = Object.freeze({
+  id: "agents-instructions",
+  path: "AGENTS.md",
+  description: "Always-loaded Executor instructions for Cursor.",
+});
+
+const CURSOR_MAKE_IT_SO: MakeItSoSurface = Object.freeze({
+  id: "cursor-make-it-so",
+  path: ".cursor/commands/make-it-so.md",
+  description: "Cursor project command that starts or resumes the autonomous Executor workflow.",
+  kind: "command",
+  invocation: "/make-it-so",
+});
+
+const CURSOR_TASK_LIST = Object.freeze({
+  support: "unsupported" as const,
+  description: "QUBE has no tested Cursor task-list integration.",
+  nextAction: "Keep the visible checklist and configured provider records current.",
+  tools: Object.freeze([] as string[]),
+  fallback: "Keep the visible checklist and configured provider records current.",
+  instruction: "Cursor has no QUBE task-list integration. Keep local working state in the visible checklist and durable state in configured provider records.",
+});
+
+export const cursorHostProfile = defineAgentHostProfile({
   id: CURSOR_HOST_ID,
   displayName: "Cursor",
-  instructionTargets: Object.freeze([{ id: "agents-instructions", path: "AGENTS.md", description: "Always-loaded Executor instructions for AGENTS.md hosts." }]),
-  commandTargets: Object.freeze([]),
-  todo: Object.freeze({
-    tools: Object.freeze([] as string[]),
-    fallback: "Keep the visible checklist and GitHub issue records current.",
-    instruction: "Cursor has no QUBE todo integration. Keep local working state in the visible checklist and durable state in GitHub.",
+  executables: Object.freeze({
+    names: Object.freeze(["cursor-agent", "agent"]),
+    windowsNames: Object.freeze(["cursor-agent.exe", "agent.exe"]),
   }),
-  dialogue: Object.freeze({
-    expectation: "Use Cursor only as isolated review compute. QUBE owns evidence validation and provider publication.",
+  instructionTarget: CURSOR_INSTRUCTIONS,
+  makeItSo: CURSOR_MAKE_IT_SO,
+  taskList: CURSOR_TASK_LIST,
+  review: Object.freeze({
+    local: Object.freeze({
+      support: "unsupported",
+      description: "QUBE has no tested Cursor native subagent integration for local review lanes.",
+      nextAction: "Use Cursor through its isolated review adapter or select a host with tested native review subagents.",
+      freshContext: false,
+      readOnly: false,
+      agents: Object.freeze([]),
+    }),
+    isolated: Object.freeze({
+      support: "supported",
+      description: "QUBE starts a fresh Cursor review session with read-only controls and validates one structured result.",
+      freshContext: true,
+      readOnly: true,
+      agents: Object.freeze([]),
+    }),
   }),
-  subagents: Object.freeze({ supported: false, instruction: "Do not use Cursor subagents for QUBE routed review. QUBE starts one fresh sandboxed Cursor process per lane." }),
-  hooks: Object.freeze({ supported: false, description: "QUBE does not install Cursor hooks." }),
-  supportsProjectCommands: false,
-});
+  modelDiscovery: Object.freeze({
+    support: "supported",
+    description: "Cursor lists the models available to the signed-in user through its live CLI catalog.",
+    listModels({ executable, prefixArgs, runCommand }: AgentHostModelDiscoveryContext) {
+      return parseCursorModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
+    },
+  }),
+  umpire: Object.freeze({
+    continuation: Object.freeze({
+      support: "unsupported",
+      description: "QUBE has no tested Cursor continuation hook or prompt-delivery integration.",
+      nextAction: "Continue the current issue from the Cursor session or use a harness with supported Umpire continuation.",
+      delivery: "none",
+      currentIssueRecovery: false,
+    }),
+    probe: Object.freeze({
+      support: "unsupported",
+      description: "QUBE has no Cursor Umpire integration to inspect.",
+      nextAction: "No Cursor Umpire probe is available.",
+    }),
+  }),
+  trust: Object.freeze({
+    required: false,
+    description: "QUBE does not install Cursor hooks or other trust-gated runtime assets.",
+    actions: Object.freeze([]),
+  }),
+  subagents: Object.freeze({
+    support: "unsupported",
+    description: "QUBE has no tested Cursor subagent integration.",
+    nextAction: "Use the main Cursor session or a harness with tested native subagents.",
+    instruction: "Do not use Cursor subagents for QUBE routed review. QUBE starts one fresh isolated Cursor process per lane.",
+  }),
+} satisfies AgentHostProfile);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -121,6 +192,9 @@ export function buildCursorInvocation(
   context: IsolatedReviewHostInvocationContext,
   platform: NodeJS.Platform = process.platform,
 ): IsolatedReviewHostBuiltInvocation {
+  if (context.effort !== null) {
+    throw new Error("Cursor review routing does not support a separate reasoning effort. Select the exact model from the Cursor catalog and set effort to null.");
+  }
   if (platform === "win32") {
     const args = ["--acp-review"];
     if (context.model) args.push("--model", context.model);

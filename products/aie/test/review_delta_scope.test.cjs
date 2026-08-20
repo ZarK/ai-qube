@@ -37,12 +37,12 @@ describe('review delta scope', () => {
       headSha: 'bbb222',
       promptStackHash: 'abc',
       promptText: 'Lane body',
-      publishCommand: 'aie pr review publish 509 --lane code-quality --issue 319',
       reviewScope: selection,
     });
     assert.match(prompt, /Delta re-review since approved head aaa111/);
     assert.match(prompt, /empty tokens were dropped/);
     assert.match(prompt, /products\/aie\/src\/gates\/index\.ts/);
+    assert.doesNotMatch(prompt, /pr review publish/);
     assert.doesNotMatch(prompt, /Inspect the full current-head diff for this lane\./);
   });
 
@@ -313,14 +313,13 @@ describe('review delta scope', () => {
       root,
       join(root, '.qube', 'aie', 'reviews', '319', '509', 'bbb222', 'code-quality.json'),
       [],
-      'aie pr review publish 509 --lane code-quality --issue 319',
       async (args) => {
         const bundlePath = args[args.indexOf('--review-bundle') + 1];
         bundlePrompt = JSON.parse(readFileSync(bundlePath, 'utf8')).promptText;
         return { args, exitCode: 1, stdout: '', stderr: 'forced fail' };
       },
       [],
-      undefined,
+      { host: 'codex' },
       selection,
     );
     assert.match(bundlePrompt, /Delta re-review since approved head aaa111/);

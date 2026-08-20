@@ -407,5 +407,6 @@ async function createRepoRoot(): Promise<string> {
 }
 
 async function writeConfig(repoRoot: string, config: unknown): Promise<void> {
-  await writeFile(path.join(repoRoot, "aiu.config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await mkdir(path.join(repoRoot, ".qube", "aiu"), { recursive: true });
+  await writeFile(path.join(repoRoot, ".qube", "aiu", "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

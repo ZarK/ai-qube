@@ -1,14 +1,12 @@
 import { join, relative, resolve } from 'path';
-import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
+import { AIE_CONFIG_FILENAME, type Config, type ReviewSourceConfig, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { resolveModelRouting } from '../core/model_routing.js';
 import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
-import { getAgentHostProfiles, getAllAgentHostProfiles } from '../agent_hosts.js';
+import { getAgentHostProfiles } from '../agent_hosts.js';
 import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
 import { renderInitFiles } from '../init_renderer.js';
 import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
 import { getRepoRoot } from '../repo/index.js';
-import { DEFAULT_UI_AUDIT_EVIDENCE_ROOT, legacyUiAuditRepositoryDirectory, legacyUiAuditTreeExists } from '../audit.js';
-import { homedir } from 'node:os';
 import { reviewModeOf } from '../review_mode.js';
 import { adoptFromSource } from './from_source.js';
 import { applyFreshSetupPolicy } from './fresh_setup.js';
@@ -22,9 +20,7 @@ import {
   isolatedReviewHostsOnMachine,
   unansweredQuestionIds,
 } from './questions.js';
-import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
 import { planLocalRuntimeGitignoreUpdate } from './local_runtime_gitignore.js';
-export { detectLegacyState } from './legacy_state.js';
 export { collectSetupDoctorRecommendations } from './setup_readiness.js';
 export { resolveContainedFromPath, parseAdoptedConfig, classifyFromSpec } from './from_source.js';
 export {
@@ -45,10 +41,8 @@ export type {
   InitQuestionId,
   InitResult,
   InitSetupSummary,
-  LegacyChoice,
-  LegacyState,
 } from './types.js';
-import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPolicyOptions, InitPolicySummary, InitQuestion, InitResult, LegacyState } from './types.js';
+import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPolicyOptions, InitPolicySummary, InitQuestion, InitResult } from './types.js';
 
 interface PlannedWrite {
   actionId: string;
@@ -68,16 +62,7 @@ interface ConfigMergeResult {
   reason: string;
   config: Config;
 }
-function selectionRequestsAll(value: string | undefined): boolean {
-  return typeof value === 'string' && value.split(',').some(part => part.trim() === 'all');
-}
-
-async function resolveInitTools(tool: string | undefined): Promise<InitTool[]> {
-  if (selectionRequestsAll(tool)) {
-    const installed = (await getAllAgentHostProfiles()).map(profile => profile.id);
-    const extras = parseInitTool((tool ?? '').split(',').filter(part => part.trim() !== 'all').join(',')) ?? [];
-    return uniqueTools([...installed, ...extras]);
-  }
+function resolveInitTools(tool: string | undefined): InitTool[] {
   return parseInitTool(tool ?? '') ?? [];
 }
 
@@ -97,7 +82,6 @@ function policySummary(config: Config): InitPolicySummary {
     supplyChainSafety: config.instructions.supplyChainSafety,
     projectPackageManagerDefaults: config.supplyChain.writePackageManagerDefaults,
     autonomousMode: config.autonomousMode,
-    opencodeCommandAlias: config.opencodeCommandAlias,
   };
 }
 
@@ -193,10 +177,9 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
     record.providers = providers;
   }
 
-  if (policy.gates !== undefined || policy.qualityGates !== undefined || policy.qualityControl !== undefined) {
+  if (policy.gates !== undefined || policy.qualityControl !== undefined) {
     policyRecord.gates = mergeNestedRecord(policyRecord.gates, {
       ...(policy.gates !== undefined ? { definitions: policy.gates } : {}),
-      ...(policy.qualityGates !== undefined ? { qualityGates: policy.qualityGates } : {}),
       ...(policy.qualityControl !== undefined ? { qualityControl: policy.qualityControl } : {}),
     });
   }
@@ -210,15 +193,13 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
     });
   }
 
-  if (policy.opencodeCommandAlias !== undefined || policy.instructions) {
+  if (policy.instructions) {
     policyRecord.instructions = mergeNestedRecord(policyRecord.instructions, {
-      ...(policy.opencodeCommandAlias !== undefined ? { opencodeCommandAlias: policy.opencodeCommandAlias } : {}),
-      ...(policy.instructions ? policy.instructions : {}),
+      ...policy.instructions,
     });
   }
 
   if (policy.milestoneOrdering) policyRecord.milestoneOrdering = mergeNestedRecord(policyRecord.milestoneOrdering, policy.milestoneOrdering as Record<string, unknown>);
-  if (policy.migration) policyRecord.migration = mergeNestedRecord(policyRecord.migration, policy.migration as Record<string, unknown>);
   if (policy.supplyChain) policyRecord.supplyChain = mergeNestedRecord(policyRecord.supplyChain, policy.supplyChain as Record<string, unknown>);
   if (policy.modelRouting) policyRecord.modelRouting = policy.modelRouting as unknown as Record<string, unknown>;
 }
@@ -229,6 +210,36 @@ function defaultsRecord(): Record<string, unknown> {
 
 function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function configuredReviewSources(config: Config): ReviewSourceConfig[] {
+  const sources: ReviewSourceConfig[] = [];
+  const localEnabled = (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.reviewProfile !== 'local-shadow';
+  if (localEnabled) {
+    const expected = config.reviewLanes
+      .filter(lane => lane.required === 'always' && lane.optOut !== true)
+      .map(lane => lane.id);
+    if (expected.length > 0) {
+      sources.push({ id: 'local-lanes', identity: 'lane', expected, blocking: true, markers: 'trusted', enabled: true });
+    }
+  }
+  const providerEnabled = config.reviewAdapter === 'github' || config.reviewAdapter === 'remote' || config.reviewAdapter === 'mixed';
+  const reviewers = config.reviewAgents.map(reviewer => reviewer.trim()).filter(reviewer => reviewer !== '');
+  if (providerEnabled && reviewers.length > 0) {
+    sources.push({ id: 'provider-reviewers', identity: 'reviewer', expected: reviewers, blocking: true, markers: 'provider', enabled: true });
+  }
+  return sources;
+}
+
+function persistReviewSources(record: Record<string, unknown>): void {
+  const validation = validateConfig(record);
+  if (!validation.config || validation.config.reviewSources.length > 0) return;
+  const sources = configuredReviewSources(validation.config);
+  if (sources.length === 0) return;
+  const policy = mergeNestedRecord(record.policy, {});
+  const reviews = mergeNestedRecord(policy.reviews, { sources });
+  policy.reviews = reviews;
+  record.policy = policy;
 }
 
 function emptyGuideFields(): Pick<InitResult, 'questions' | 'unansweredQuestionIds' | 'setupSummary' | 'from' | 'awaitingAnswers'> {
@@ -248,6 +259,7 @@ function generatedConfigInvalidReason(operation: string, path: string, message: 
 function configFromPolicy(policy: InitPolicyOptions | undefined): Config {
   const defaults = defaultsRecord();
   applyPolicyToRecord(defaults, policy);
+  persistReviewSources(defaults);
   const validation = validateConfig(defaults);
   return validation.config ?? getDefaults();
 }
@@ -261,6 +273,7 @@ function mergeConfig(
 ): ConfigMergeResult {
   const defaults = cloneRecord(base);
   applyPolicyToRecord(defaults, policy);
+  persistReviewSources(defaults);
   const defaultValidation = validateConfig(defaults);
   if (!defaultValidation.ok || !defaultValidation.config) {
     const first = defaultValidation.errors[0];
@@ -299,6 +312,7 @@ function mergeConfig(
     ? configToFileShape(validation.config) as unknown as Record<string, unknown>
     : defaults;
   applyPolicyToRecord(next, policy);
+  persistReviewSources(next);
   const nextValidation = validateConfig(next);
   if (!nextValidation.ok || !nextValidation.config) {
     const first = nextValidation.errors[0];
@@ -328,22 +342,6 @@ function relativePath(repoRoot: string, path: string): string {
 
 function actionText(action: InitAction): string {
   return `${action.operation} ${action.path}: ${action.reason}`;
-}
-
-function legacyActions(legacy: LegacyState[]): InitAction[] {
-  return legacy.map(item => makeAction({
-    id: `legacy-${item.category}`,
-    path: `legacy/${item.category}`,
-    kind: 'legacy',
-    operation: 'unchanged',
-    managedSection: false,
-    conflict: item.action === 'defer-to-migration' || item.action === 'leave-untouched',
-    reason: `${item.reason} Next action: ${item.nextCommand}`,
-  }));
-}
-
-function legacyInstructionConflictPatterns(legacy: LegacyState[]): RegExp[] {
-  return legacy.some(item => item.category === 'instructions') ? [/\bgh-[\w-]+\.sh\b/i, /legacy issue workflow/i, /legacy workflow helper/i] : [];
 }
 
 async function readConfig(path: string): Promise<{ raw: Record<string, unknown> | null; parseError: string | null; fileExists: boolean }> {
@@ -457,7 +455,7 @@ async function planManagedFile(input: {
   repoRoot: string;
   id: string;
   relativePath: string;
-  kind: 'instruction' | 'command';
+  kind: 'instruction' | 'command' | 'skill' | 'subagent';
   body: string;
   allowAppend: boolean;
   force: boolean;
@@ -503,7 +501,6 @@ function answersFromRecord(record: Record<string, unknown>): ReturnType<typeof a
     reviewMode: reviewModeOf(config),
     reviewers: [...config.reviewAgents],
     publisher: config.providers.review.publisher?.mode ?? 'user',
-    qualityGates: [...config.qualityGates],
     qualityControl: config.qualityControl,
     manualUiAudit: config.manualUiAudit,
     uiAuditEvidenceRoot: config.uiAuditEvidenceRoot === '' ? undefined : config.uiAuditEvidenceRoot,
@@ -522,13 +519,14 @@ function publisherSummary(config: Config): string {
 async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
   const repoRoot = getRepoRoot(targetPath);
-  const selectedTools = uniqueTools(await resolveInitTools(options.tool));
+  const selectedTools = uniqueTools(resolveInitTools(options.tool));
   const warnings: string[] = [];
   const actions: InitAction[] = [];
   const writes: PlannedWrite[] = [];
+  const selectedInstalledHosts = options.installedHosts ?? selectedTools;
   const machine = detectGuideMachine({
     repoRoot,
-    installedHosts: options.installedHosts,
+    installedHosts: selectedInstalledHosts,
     agentBrowserAvailable: options.agentBrowserAvailable,
     aiqAvailable: options.aiqAvailable,
   });
@@ -557,7 +555,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
           policy: policySummary(fallbackConfig),
           configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
           actions,
-          legacy: [],
           plannedChanges: [],
           completedChanges: [],
           skippedActions: [],
@@ -577,18 +574,11 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const flagAnswers = answersFromPolicy(policy);
   const fromAnswers = options.from ? answersFromRecord(baseRecord) : {};
   const answers = { ...fromAnswers, ...flagAnswers };
-  const homeDirectory = options.homeDirectory ?? homedir();
-  if (legacyUiAuditTreeExists(repoRoot ?? undefined, homeDirectory) && !answers.uiAuditEvidenceRoot) {
-    warnings.push(
-      `Existing UI audit evidence was found at ${legacyUiAuditRepositoryDirectory(repoRoot ?? undefined, homeDirectory)}. Choose that path or ${DEFAULT_UI_AUDIT_EVIDENCE_ROOT}. Init will not copy or delete those files.`,
-    );
-  }
   const askedQuestions = buildInitQuestions({
     machine,
     answers,
     useDefaults: options.useDefaults,
     repoRoot,
-    homeDirectory,
   });
   const fillAnswers = Boolean(options.guide) || Boolean(options.yes) || Boolean(options.useDefaults);
   const questions = fillAnswers ? fillUnansweredQuestions(askedQuestions) : askedQuestions;
@@ -601,8 +591,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       fromAdopted: Boolean(options.from),
     });
   }
-  const unanswered = unansweredQuestionIds(askedQuestions);
   const awaitingAnswers = Boolean(options.guide) && !options.yes;
+  const unanswered = unansweredQuestionIds(awaitingAnswers ? askedQuestions : questions);
   if (policy.reviewMode === 'isolated' && isolatedReviewHostsOnMachine(machine).length === 0 && answers.reviewMode === 'isolated') {
     const fallbackConfig = configFromPolicy(policy);
     return {
@@ -617,7 +607,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         policy: policySummary(fallbackConfig),
         configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
         actions,
-        legacy: [],
         plannedChanges: [],
         completedChanges: [],
         skippedActions: [],
@@ -649,7 +638,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         policy: policySummary(fallbackConfig),
         configPath,
         actions,
-        legacy: [],
         plannedChanges: [],
         completedChanges: [],
         skippedActions: [],
@@ -680,7 +668,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         policy: policySummary(fallbackConfig),
         configPath,
         actions,
-        legacy: [],
         plannedChanges: [],
         completedChanges: [],
         skippedActions: [],
@@ -715,7 +702,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         policy: policySummary(config),
         configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
         actions,
-        legacy: [],
         plannedChanges: [],
         completedChanges: [],
         skippedActions: [],
@@ -734,11 +720,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   actions.push(gitignorePlan.action);
   if (gitignorePlan.write) writes.push(gitignorePlan.write);
 
-  const legacy = await detectLegacyState(repoRoot, config, selectedTools);
-  actions.push(...legacyActions(legacy));
-  warnings.push(...legacy.map(item => item.reason));
-  const legacyInstructionPatterns = legacyInstructionConflictPatterns(legacy);
-
   if (config.supplyChain.writePackageManagerDefaults) {
     const planned = await planPackageManagerDefaults(repoRoot, options.force);
     actions.push(planned.action);
@@ -756,8 +737,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       body: renderedFile.body,
       allowAppend: renderedFile.allowAppend,
       force: options.force,
-      conflictPatterns: renderedFile.kind === 'instruction' ? [/##\s+Executor Issue Workflow/i, /BEGIN EXECUTOR MANAGED SECTION/i, ...legacyInstructionPatterns] : undefined,
-      conflictReason: renderedFile.kind === 'instruction' ? `Existing legacy instruction content was found. Choices: ${LEGACY_CHOICE_TEXT}. Rerun with --force to add the managed section intentionally.` : undefined,
+      conflictPatterns: renderedFile.kind === 'instruction' ? [/##\s+Executor Issue Workflow/i, /BEGIN EXECUTOR MANAGED SECTION/i] : undefined,
+      conflictReason: renderedFile.kind === 'instruction' ? 'Existing QUBE instruction content conflicts with the managed section. Rerun with --force to replace the managed section intentionally.' : undefined,
     });
     actions.push(planned.action);
     if (planned.write) writes.push(planned.write);
@@ -768,7 +749,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     reviewMode: reviewModeOf(config),
     reviewers: config.reviewAgents,
     publisher: publisherSummary(config),
-    qualityGates: config.qualityGates,
     qualityControl: config.qualityControl,
     manualUiAudit: config.manualUiAudit,
     tools: selectedTools,
@@ -785,7 +765,6 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       policy: policySummary(config),
       configPath: join(repoRoot, AIE_CONFIG_FILENAME),
       actions,
-      legacy,
       plannedChanges: actions.filter(action => action.status === 'planned').map(actionText),
       completedChanges: [],
       skippedActions: actions.filter(action => action.status === 'skipped').map(actionText),
