@@ -8,6 +8,19 @@ const { describe, it } = require('node:test');
 const { normalizeHelpArgs } = require('../dist/bin/run.js');
 const pkg = require('../package.json');
 const tsconfig = require('../tsconfig.json');
+const runtimeAdapterPackages = [
+  '@tjalve/qube-adapter-claude-code',
+  '@tjalve/qube-adapter-codex',
+  '@tjalve/qube-adapter-cursor',
+  '@tjalve/qube-adapter-grok-build',
+  '@tjalve/qube-adapter-opencode',
+];
+
+function copyPackageSurface(source, target) {
+  mkdirSync(target, { recursive: true });
+  copyFileSync(join(source, 'package.json'), join(target, 'package.json'));
+  cpSync(join(source, 'dist'), join(target, 'dist'), { recursive: true });
+}
 
 describe('package publish surface safety', () => {
   it('does not declare any install lifecycle scripts', () => {
@@ -23,7 +36,8 @@ describe('package publish surface safety', () => {
   });
 
   it('declares the intended package surface and dry-run pack check', () => {
-    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'assets/', 'docs/migration.md', 'docs/review-modes.md', 'prompts/', 'README.md']);
+    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'assets/', 'docs/review-modes.md', 'prompts/', 'README.md']);
+    assert.equal(pkg.files.includes('docs/migration.md'), false);
     assert.equal(pkg.bin.aie, 'bin/run');
     assert.equal(pkg.main, './dist/index.js');
     assert.equal(pkg.types, './dist/index.d.ts');
@@ -46,9 +60,12 @@ describe('package publish surface safety', () => {
     assert.ok(pkg.files.includes('dist/'));
     cpSync(join(packageRoot, 'dist'), join(stagedRoot, 'dist'), { recursive: true });
     copyFileSync(join(packageRoot, 'package.json'), join(stagedRoot, 'package.json'));
-    const stagedCore = join(stagedRoot, 'node_modules', '@tjalve', 'qube-core');
-    mkdirSync(join(stagedRoot, 'node_modules', '@tjalve'), { recursive: true });
-    cpSync(join(packageRoot, '..', '..', 'packages', 'qube-core'), stagedCore, { recursive: true });
+    const stagedScope = join(stagedRoot, 'node_modules', '@tjalve');
+    copyPackageSurface(join(packageRoot, '..', '..', 'packages', 'qube-core'), join(stagedScope, 'qube-core'));
+    for (const packageName of runtimeAdapterPackages) {
+      const directory = packageName.slice('@tjalve/qube-adapter-'.length);
+      copyPackageSurface(join(packageRoot, '..', '..', 'adapters', directory), join(stagedScope, `qube-adapter-${directory}`));
+    }
 
     const routedRuntime = await import(pathToFileURL(join(stagedRoot, 'dist', 'app', 'model_review_runner.js')).href);
     assert.equal(typeof routedRuntime.runModelReview, 'function');
@@ -78,7 +95,15 @@ describe('package publish surface safety', () => {
   });
 
   it('keeps dependencies minimal and exact', () => {
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli', '@tjalve/qube-core']);
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), [
+      ...runtimeAdapterPackages,
+      '@tjalve/qube-cli',
+      '@tjalve/qube-core',
+    ].sort());
+    assert.deepEqual(
+      Object.keys(pkg.dependencies).filter(name => name.startsWith('@tjalve/qube-adapter-')).sort(),
+      runtimeAdapterPackages,
+    );
     assert.equal(pkg.optionalDependencies, undefined);
     const devNames = Object.keys(pkg.devDependencies).sort();
     const adapterDevs = devNames.filter(name => name.startsWith('@tjalve/qube-adapter-'));

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { AgentHostKind } from "./contracts.js";
@@ -13,18 +13,28 @@ export interface AgentAssetFile {
   readonly body: string;
 }
 
-export function createAgentAssetPlan(host: AgentHostKind | undefined): readonly AgentAssetFile[] {
-  if (!host) return [];
-  if (host === "codex") return [instruction("codex", "AGENTS.md", codexBody())];
-  if (host === "opencode") {
-    return [
-      instruction("opencode", "AGENTS.md", opencodeBody()),
-      command("opencode", ".opencode/commands/aib-bootstrap.md", opencodeCommandBody())
-    ];
+const MANAGED_START = "<!-- BEGIN QUBE BOOTSTRAP MANAGED SECTION -->";
+const MANAGED_END = "<!-- END QUBE BOOTSTRAP MANAGED SECTION -->";
+
+export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKind[] | undefined): readonly AgentAssetFile[] {
+  const selected = typeof hosts === "string" ? [hosts] : [...(hosts ?? [])];
+  if (selected.length === 0) return [];
+
+  const files: AgentAssetFile[] = [];
+  const agentsHosts = selected.filter((host) => host === "codex" || host === "opencode" || host === "grok-build" || host === "cursor" || host === "other");
+  if (agentsHosts.length > 0) {
+    files.push(instruction(agentsHosts[0], "AGENTS.md", sharedBody(agentsHosts.map(displayName).join(", "))));
   }
-  if (host === "claude-code") return [instruction("claude-code", "CLAUDE.md", claudeBody())];
-  if (host === "gemini") return [instruction("gemini", "GEMINI.md", geminiBody())];
-  return [instruction("other", "AGENTS.md", sharedBody("Generic agent host"))];
+  if (selected.includes("claude-code")) {
+    files.push(instruction("claude-code", "CLAUDE.md", sharedBody("Claude Code")));
+  }
+  if (selected.includes("gemini")) {
+    files.push(instruction("gemini", "GEMINI.md", sharedBody("Gemini CLI")));
+  }
+  if (selected.includes("opencode")) {
+    files.push(command("opencode", ".opencode/commands/aib-bootstrap.md", opencodeCommandBody()));
+  }
+  return Object.freeze(files);
 }
 
 export function writeAgentAssetFiles(target: string, files: readonly AgentAssetFile[]): readonly { readonly path: string }[] {
@@ -35,10 +45,33 @@ export function writeAgentAssetFiles(target: string, files: readonly AgentAssetF
   for (const file of files) {
     const path = safeAssetPath(realBaseDir, file.path);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, file.body);
+    const current = existsSync(path) ? readAssetFile(path) : "";
+    const next = file.kind === "instruction" ? mergeManagedInstruction(current, file.body) : file.body;
+    if (current !== next) writeFileSync(path, next);
     written.push({ path });
   }
   return written;
+}
+
+function readAssetFile(path: string): string {
+  if (lstatSync(path).isSymbolicLink()) {
+    throw new TypeError(`refusing to write agent asset through a symlink: ${path}`);
+  }
+  return readFileSync(path, "utf8");
+}
+
+function mergeManagedInstruction(current: string, body: string): string {
+  const block = `${MANAGED_START}\n${body.trim()}\n${MANAGED_END}`;
+  const start = current.indexOf(MANAGED_START);
+  const end = current.indexOf(MANAGED_END);
+  if ((start === -1) !== (end === -1) || (start !== -1 && end < start)) {
+    throw new TypeError("refusing to replace an incomplete QUBE Bootstrap managed section");
+  }
+  if (start !== -1 && end !== -1) {
+    return `${current.slice(0, start)}${block}${current.slice(end + MANAGED_END.length)}`;
+  }
+  const prefix = current.trimEnd();
+  return prefix === "" ? `${block}\n` : `${prefix}\n\n${block}\n`;
 }
 
 function safeAssetPath(realBaseDir: string, assetPath: string): string {
@@ -115,28 +148,14 @@ Use this file as the local host instruction surface. Host-specific todo or comma
 `;
 }
 
-function codexBody(): string {
-  return `${sharedBody("Codex")}
-Codex should use its visible plan/todo support when useful, while keeping durable progress in \`aib\` state and provider records.
-`;
-}
-
-function opencodeBody(): string {
-  return `${sharedBody("OpenCode")}
-OpenCode can use the local project command at \`.opencode/commands/aib-bootstrap.md\` to start or resume the bootstrap flow.
-`;
-}
-
-function claudeBody(): string {
-  return `${sharedBody("Claude Code")}
-Claude Code should use its host todo tools when useful, while treating \`aib next --json\` as the source of truth for the next planning action.
-`;
-}
-
-function geminiBody(): string {
-  return `${sharedBody("Gemini CLI")}
-Gemini CLI should keep conversation text concise and use the structured \`aib\` JSON output to decide when to ask, inspect, draft, generate, render, or stop.
-`;
+function displayName(host: AgentHostKind): string {
+  if (host === "claude-code") return "Claude Code";
+  if (host === "grok-build") return "Grok Build";
+  if (host === "opencode") return "OpenCode";
+  if (host === "codex") return "Codex";
+  if (host === "cursor") return "Cursor";
+  if (host === "gemini") return "Gemini CLI";
+  return "Other agent harness";
 }
 
 function opencodeCommandBody(): string {

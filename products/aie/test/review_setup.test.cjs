@@ -10,7 +10,6 @@ const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { getDefaults } = require('../dist/config/index.js');
 const {
   buildGitHubAppSetupGuidance,
-  buildTokenSetupGuidance,
   normalizeReviewAvatarUrl,
   runReviewDoctor,
 } = require('../dist/review_setup.js');
@@ -60,25 +59,28 @@ describe('review publisher setup guidance', () => {
 
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /review setup github-app/);
-    assert.match(help.stdout, /review setup token/);
+    assert.doesNotMatch(help.stdout, /review setup token|separate-user fine-grained token/i);
     assert.match(help.stdout, /review doctor/);
     assert.match(help.stdout, /review gate/);
     assert.match(help.stdout, /review feedback/);
     assert.equal(setupHelp.status, 0, setupHelp.stderr);
     assert.match(setupHelp.stdout, /review setup github-app/);
-    assert.match(setupHelp.stdout, /review setup token/);
-    for (const command of ['review setup', 'review setup github-app', 'review setup token', 'review doctor', 'review gate', 'review feedback']) {
+    assert.match(setupHelp.stdout, /current GitHub account publisher/i);
+    assert.match(setupHelp.stdout, /guided QUBE Reviewer App setup/i);
+    assert.doesNotMatch(setupHelp.stdout, /review setup token|separate-user fine-grained token/i);
+    for (const command of ['review setup', 'review setup github-app', 'review doctor', 'review gate', 'review feedback']) {
       assert.ok(names.includes(command), `expected ${command} in schema`);
     }
+    assert.equal(names.includes('review setup token'), false);
     const appSetup = schema.commands.find(command => command.name === 'review setup github-app');
-    const tokenSetup = schema.commands.find(command => command.name === 'review setup token');
     assert.equal(appSetup.flags.find(flag => flag.name === 'app-id').type, 'string');
     assert.equal(appSetup.flags.find(flag => flag.name === 'private-key-env').type, 'string');
-    assert.equal(tokenSetup.flags.find(flag => flag.name === 'token-env').type, 'string');
+    const init = schema.commands.find(command => command.name === 'init');
+    assert.deepEqual(init.flags.find(flag => flag.name === 'publisher').options, ['github-app', 'user']);
   });
 
   it('renders the role boundary without claiming hosted review compute', () => {
-    const guidance = `${JSON.stringify(buildGitHubAppSetupGuidance())}\n${JSON.stringify(buildTokenSetupGuidance())}`;
+    const guidance = JSON.stringify(buildGitHubAppSetupGuidance());
     assert.match(guidance, /Review compute remains host-run through local agents\/subagents/);
     assert.match(guidance, /Never send host\/subagent credentials to GitHub/);
     assert.match(guidance, /Do not rename the app/);
@@ -133,46 +135,16 @@ describe('review publisher setup execution', () => {
       mode: 'github-app', config: null, configPath, root,
       appId: '123', installationId: '456', privateKeyEnv: '-----BEGIN PRIVATE KEY-----fixture', yes: true,
     });
-    const rejectedToken = await runReviewSetup({
-      mode: 'token', config: null, configPath, root, tokenEnv: 'github_pat_fixture_value', yes: true,
-    });
-    const rejectedOauthToken = await runReviewSetup({
-      mode: 'token', config: null, configPath, root, tokenEnv: 'gho_FAKE_REVIEW_CREDENTIAL_1234567890', yes: true,
-    });
-    const rejectedAppToken = await runReviewSetup({
-      mode: 'token', config: null, configPath, root, tokenEnv: 'ghs_FAKE_INSTALLATION_TOKEN_1234567890', yes: true,
-    });
     assert.equal(rejectedPem.ok, false);
-    assert.equal(rejectedToken.ok, false);
-    assert.equal(rejectedOauthToken.ok, false);
-    assert.equal(rejectedAppToken.ok, false);
     assert.match(rejectedPem.validationErrors.join('\n'), /environment variable name/);
-    assert.match(rejectedToken.validationErrors.join('\n'), /environment variable name/);
-    assert.match(rejectedOauthToken.validationErrors.join('\n'), /environment variable name/);
-    assert.match(rejectedAppToken.validationErrors.join('\n'), /environment variable name/);
 
     const rejectedLogin = await runReviewSetup({
-      mode: 'token', config: null, configPath, root, tokenEnv: 'QUBE_REVIEW_TOKEN', login: 'gho_FAKE_LOGIN_TOKEN_1234567890', yes: true,
+      mode: 'github-app', config: null, configPath, root,
+      appId: '123', installationId: '456', privateKeyEnv: 'QUBE_REVIEW_APP_KEY',
+      login: 'gho_FAKE_LOGIN_TOKEN_1234567890', yes: true,
     });
     assert.equal(rejectedLogin.ok, false);
     assert.match(rejectedLogin.validationErrors.join('\n'), /public identifier|credential/i);
-  });
-
-  it('explains token fallback and stores only the environment variable name', async () => {
-    const root = makeDirectory();
-    const configPath = join(root, '.qube', 'aie', 'config.json');
-    const result = await runReviewSetup({
-      mode: 'token', config: getDefaults(), configPath, root,
-      tokenEnv: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot', yes: true, noProbe: true,
-      resolvePublisher: readyResolver,
-    });
-    const written = readFileSync(configPath, 'utf8');
-
-    assert.equal(result.applied, true);
-    assert.deepEqual(result.secretReferences, { tokenEnv: 'QUBE_REVIEW_TOKEN' });
-    assert.match(result.guidance.limitation, /pull request author|formal review event/i);
-    assert.match(written, /QUBE_REVIEW_TOKEN/);
-    assert.doesNotMatch(written, /ghp_|github_pat_|token value/i);
   });
 
   it('completes interactive setup through an injected prompt without requesting secrets', async () => {
@@ -436,7 +408,8 @@ describe('review publisher doctor', () => {
     assert.equal(resolverCalls, 0);
     assert.equal(result.readiness, 'unconfigured');
     assert.equal(result.probe.attempted, false);
-    assert.match(result.nextAction, /review setup github-app|review setup token/i);
+    assert.match(result.nextAction, /current authenticated GitHub account|review setup github-app/i);
+    assert.doesNotMatch(result.nextAction, /review setup token|separate-user/i);
   });
 
   it('does not treat missing credential secrets as failures under --no-probe', async () => {
@@ -528,7 +501,8 @@ describe('review publisher doctor', () => {
   it('keeps existing review gate help available', () => {
     const gate = binRun(['review', 'gate', '--help']);
     assert.equal(gate.status, 0, gate.stderr);
-    assert.match(gate.stdout, /review-agent gate/i);
+    assert.match(gate.stdout, /configured real-harness review prompt/i);
+    assert.match(gate.stdout, /harness capabilities/i);
   });
 
   it('review doctor reads a working-tree publisher from a local, never-committed config overlay', () => {

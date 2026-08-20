@@ -16,7 +16,7 @@ M1 delivers five things:
 4. **Diagnostics foundation** - `aie doctor` infrastructure for local runtime, git, GitHub CLI, and config checks.
 5. **Supply-chain-safe posture** - no install lifecycle scripts, minimal justified dependencies, pinned-version documentation, and safe execution expectations.
 
-The important success condition is not feature breadth. The important success condition is that later milestones can add GitHub queue, lifecycle, init, PR gate, and migration behavior without reworking the package, CLI, config, or safety model.
+The important success condition is not feature breadth. The important success condition is that later milestones can add GitHub queue, lifecycle, init, and PR gate behavior without reworking the package, CLI, config, or safety model.
 
 ---
 
@@ -41,7 +41,6 @@ M1 intentionally does not complete:
 - `aie labels setup`, `aie repo prime`, `aie queue`, and `aie next`. Those are M2.
 - `aie start`, `aie switch`, `aie view`, `aie complete`, and dependency commands. Those are M3.
 - PR review gates, Oracle prompts, manual UI audit guidance, and optional `aiq` quality gate guidance. Those are M5.
-- Legacy migration and cleanup. Those are M6.
 
 ---
 
@@ -277,7 +276,7 @@ Implement config discovery for the documented default path:
 
 - `.qube/aie/config.json`
 
-Legacy `aie.config.json` remains a compatibility discovery path for existing repositories.
+Repository config is read only from `.qube/aie/config.json`.
 
 ### 3.2 - Config Schema
 
@@ -350,7 +349,7 @@ M1 `aie doctor` must check:
 - whether `git` is available
 - whether `gh` is available
 - whether `gh auth status` appears usable
-- whether `.qube/aie/config.json` exists or a legacy `aie.config.json` fallback is in use
+- whether `.qube/aie/config.json` exists
 - whether config parses and validates
 - whether Node.js runtime satisfies the package requirement
 
@@ -389,7 +388,6 @@ M1 commands must not mutate:
 - local instruction files
 - git branches
 - git history
-- copied legacy scripts
 
 The CLI must not mutate user repositories in M1.
 
@@ -443,7 +441,7 @@ Acceptance:
 
 ### M1.3 - Implement Config Discovery, Defaults, And Validation
 
-Create the repository config model around `.qube/aie/config.json`, including legacy `aie.config.json` fallback, defaults, and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, agent-run quality gates, and instruction toggles.
+Create the repository config model around `.qube/aie/config.json`, including defaults and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, agent-run quality gates, and instruction toggles.
 
 Primary FRs: FR-04-001, FR-04-002, FR-04-003 through FR-04-009, FR-04-016 through FR-04-018.
 
@@ -496,7 +494,7 @@ M1 is complete when:
 - `aie schema --json` provides a machine-readable command contract for agents.
 - config discovery, defaults, and validation are implemented.
 - JSON output conventions and exit-code behavior are established.
-- M1 commands do not mutate GitHub, git state, instruction files, or legacy files.
+- M1 commands do not mutate GitHub, git state, instruction files, or unowned repository files.
 - package install has no lifecycle side effects.
 - safe install documentation exists.
 - automated tests cover CLI parsing, config validation, diagnostics, JSON output, and package safety checks.

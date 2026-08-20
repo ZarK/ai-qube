@@ -44,13 +44,15 @@ describe('modelRouting schema', () => {
     assert.ok(result.errors.some(error => /host/.test(error.message)));
   });
 
-  it('keeps review-only hosts out of delegated model routing', () => {
-    const file = withRouting({
-      catalog: [{ id: 'cursor-review', host: 'cursor', transport: 'cli', costRank: 1, notes: 'review only' }],
+  it('accepts Cursor as a model-routing host', () => {
+    const file = configToFileShape(getDefaults());
+    file.policy.modelRouting = buildModelRoutingFromSelections({
+      primaryHost: 'cursor',
+      primaryModel: 'default',
     });
     const result = validateConfig(file);
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.some(error => /host/.test(error.message)));
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.modelRouting.catalog[0].host, 'cursor');
   });
 
   it('rejects a fallback chain that does not end at primary', () => {
@@ -113,7 +115,17 @@ describe('modelRouting resolver', () => {
     assert.equal(resolved.routes['mechanical-implementation'].substitutions.length, 0);
   });
 
-  it('resolves Cursor for independent review without enabling delegated Cursor routes', () => {
+  it('uses Cursor as the primary host', () => {
+    const policy = buildModelRoutingFromSelections({
+      primaryHost: 'cursor',
+      primaryModel: 'default',
+    });
+    const resolved = resolveModelRouting(policy, getDefaults().reviewModels, ['cursor']);
+    assert.equal(resolved.primary.host, 'cursor');
+    assert.equal(resolved.routes['mechanical-implementation'].selected.host, 'cursor');
+  });
+
+  it('resolves Cursor for independent review without changing delegated route selections', () => {
     const policy = buildModelRoutingFromSelections({
       primaryHost: 'codex',
       primaryModel: 'default',
@@ -145,6 +157,18 @@ describe('modelRouting host assets', () => {
     assert.match(instructions, /reviewModels/);
     const runners = renderModelRoutingRunnerFiles(config);
     assert.deepEqual(runners.map(file => file.relativePath), ['.grok/agents/qube-route-runner.md']);
+    assert.match(runners[0].body, /self-contained prompt/);
+  });
+
+  it('renders the Cursor command runner when another primary delegates to Cursor', () => {
+    const config = getDefaults();
+    config.modelRouting = buildModelRoutingFromSelections({
+      primaryHost: 'claude-code',
+      primaryModel: 'default',
+      mechanical: { host: 'cursor', model: 'default' },
+    });
+    const runners = renderModelRoutingRunnerFiles(config);
+    assert.deepEqual(runners.map(file => file.relativePath), ['.cursor/commands/qube-route-runner.md']);
     assert.match(runners[0].body, /self-contained prompt/);
   });
 
@@ -184,13 +208,26 @@ describe('installed host detection', () => {
     assert.deepEqual(installed, ['claude-code']);
   });
 
-  it('discovers a registered review-only host without adding it to delegated routing', () => {
+  it('detects Cursor through its supported CLI names', () => {
+    assert.deepEqual(detectInstalledRoutingHosts(command => command === 'cursor-agent'), ['cursor']);
+    assert.deepEqual(detectInstalledRoutingHosts(command => command === 'agent'), ['cursor']);
+  });
+
+  it('derives launch candidates from every canonical host profile', async () => {
+    const profiles = await getAgentHostProfiles(['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    for (const profile of profiles) {
+      const candidates = new Set([...profile.executables.names, ...profile.executables.windowsNames]);
+      assert.deepEqual(detectInstalledRoutingHosts(command => candidates.has(command)), [profile.id], profile.id);
+    }
+  });
+
+  it('discovers Cursor for review through the registered adapter', () => {
     const installed = detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'linux');
     assert.deepEqual(installed, ['cursor']);
     assert.deepEqual(detectInstalledReviewHostsOnPath(command => command === 'cursor-agent', 'win32'), ['cursor']);
   });
 
-  it('reuses an existing delegated-host scan while discovering review-only hosts', () => {
+  it('reuses an existing routing-host scan while discovering review hosts', () => {
     const lookups = [];
     const installed = detectInstalledReviewHostsOnPath(command => {
       lookups.push(command);

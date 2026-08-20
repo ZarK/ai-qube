@@ -5,11 +5,8 @@ import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { cwd } from 'process';
 import { Config, displayConfigPath, getDefaults, loadConfig, selectConfigPath, validateConfig, ValidationError } from './config/index.js';
-import { detectLegacyState } from './init/index.js';
 import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from './labels.js';
 import { runGh } from './providers/github_adapter_exports.js';
-import { buildMigrationPlan } from './migrate/index.js';
-import { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 import { computeQueue } from './queue/index.js';
 import type { GitHubIssue } from './providers/github_adapter_exports.js';
 import {
@@ -40,7 +37,6 @@ export {
   computeDoctorOk,
   selectedAgentHosts,
 } from './doctor_diagnostics/index.js';
-export { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 
 const requirePackage = createRequire(import.meta.url);
 
@@ -59,16 +55,15 @@ class DoctorDiagnosticsBuilder {
     const baseRef = getBaseRefStatus(effectiveConfig, repoRoot);
     const instructions = getInstructionStatus(repoRoot);
     const planning = getPlanningStatus(repoRoot);
-    const legacy = repoRoot ? await detectLegacyState(repoRoot) : [];
     const providerHealth = buildProviderHealthDiagnostics(effectiveConfig);
     const instructionPolicy = buildInstructionPolicyDiagnostics(effectiveConfig, repoRoot);
     const repositoryPolicy = buildRepositoryPolicyDiagnostics(effectiveConfig);
     const gateReadiness = buildGateReadinessDiagnostics(effectiveConfig, { ghAuthenticated: ghStatus.authenticated, evidenceRoot: repoRoot ?? undefined });
-    const migrationReadiness = buildMigrationReadinessDiagnostics(await buildMigrationPlan({ dryRun: true, cwd: cwd() }));
     const unmanagedTargets = repoRoot ? instructions.targets.filter(target => target.present && !target.managed) : [];
     const unhealthyTargets = repoRoot ? instructions.targets.filter(target => target.managed && !target.healthy) : [];
+    const installedHarnesses = instructions.harnesses.filter(harness => harness.installed);
     const missingInstructionChecks = missingConfiguredInstructionChecks(instructionPolicy);
-    const recommendations = this.buildEarlyRecommendations({ nodeStatus, gitAvailable, ghStatus, isRepo, isWorktree, configStatus, effectiveConfig, repoRoot, instructions, providerHealth, instructionPolicy, legacy, gateReadiness, migrationReadiness });
+    const recommendations = this.buildEarlyRecommendations({ nodeStatus, gitAvailable, ghStatus, isRepo, isWorktree, configStatus, effectiveConfig, repoRoot, instructions, providerHealth, instructionPolicy, gateReadiness });
     this.addLabelRecommendations(labelStatus, recommendations);
     const queueState = await this.readQueue(recommendations);
     const pullRequestState = await this.readPullRequests(effectiveConfig, recommendations);
@@ -125,7 +120,7 @@ class DoctorDiagnosticsBuilder {
       baseRef,
       blockingPullRequestCount: effectiveConfig.blockOnOpenPRs ? pullRequestState.blockingPullRequests.length : 0,
       pullRequestError: effectiveConfig.blockOnOpenPRs ? pullRequestState.pullRequestError : undefined,
-      instructionInstallOk: !repoRoot || ((!(instructions.opencodeMakeItSo || instructions.opencodeMakeitsoAlias) || instructions.opencodeMakeItSoManaged) && (instructions.agentsManaged || instructions.claudeManaged) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
+      instructionInstallOk: !repoRoot || (installedHarnesses.length > 0 && installedHarnesses.every(harness => harness.healthy) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
       staleReviewLockCount: reviewSessionLocks.filter(lock => lock.stale).length,
     });
     return {
@@ -156,14 +151,12 @@ class DoctorDiagnosticsBuilder {
       lifecycle,
       instructions,
       planning,
-      legacy,
       providerHealth,
       instructionPolicy,
       repositoryPolicy,
       gateReadiness,
       workflowReadiness,
       reviewSessionLocks,
-      migrationReadiness,
       baseRef,
       openPullRequests: pullRequestState.openPullRequests,
       blockingPullRequests: pullRequestState.blockingPullRequests,
@@ -189,9 +182,7 @@ class DoctorDiagnosticsBuilder {
     instructions: ReturnType<typeof getInstructionStatus>;
     providerHealth: ReturnType<typeof buildProviderHealthDiagnostics>;
     instructionPolicy: ReturnType<typeof buildInstructionPolicyDiagnostics>;
-    legacy: Awaited<ReturnType<typeof detectLegacyState>>;
     gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>;
-    migrationReadiness: ReturnType<typeof buildMigrationReadinessDiagnostics>;
   }): string[] {
     const recommendations: string[] = [];
     if (!input.nodeStatus.satisfies) recommendations.push(`Update to Node.js 24 LTS or newer (package requires ${input.nodeStatus.required}).`);
@@ -204,12 +195,6 @@ class DoctorDiagnosticsBuilder {
     for (const warning of input.providerHealth.warnings) recommendations.push(`Provider config issue: ${warning}`);
     this.addInstructionRecommendations(input, recommendations);
     this.addGateReadinessRecommendations(input.gateReadiness, recommendations);
-    if (input.legacy.length > 0) {
-      recommendations.push(`Legacy Executor helper state detected: ${input.legacy.map(item => `${item.category} (${item.paths.join(', ')})`).join('; ')}. Run \`aie migrate legacy --dry-run\` to review the non-mutating migration plan.`);
-    }
-    if (input.migrationReadiness.detectedPaths > 0 && input.legacy.length === 0) recommendations.push('Migration plan is available for detected legacy paths. Run `aie migrate legacy --dry-run` to review preservation and cleanup candidates.');
-    if (input.migrationReadiness.wrapperState.stale > 0) recommendations.push(`Stale compatibility wrappers detected: ${input.migrationReadiness.wrapperState.stalePaths.join(', ')}. Run \`aie migrate legacy --install-wrappers --dry-run\`, then \`aie migrate legacy --install-wrappers --apply\` to refresh wrappers.`);
-    if (input.migrationReadiness.remainingLegacyReferences.count > 0) recommendations.push(`Remaining legacy references detected: ${input.migrationReadiness.remainingLegacyReferences.paths.join(', ')}. Run \`aie migrate legacy --dry-run\` to review replacement or cleanup options.`);
     return recommendations;
   }
 

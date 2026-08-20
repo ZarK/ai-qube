@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -232,7 +232,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.package.name, "@tjalve/aiu");
 
     const commandNames = parsed.commands.map((command) => command.name);
-    assert.deepEqual(commandNames, ["config", "doctor", "hook-stop", "init", "migrate", "paths", "schema", "status", "whip"]);
+    assert.deepEqual(commandNames, ["config", "doctor", "hook-stop", "init", "paths", "schema", "status", "whip"]);
 
     const config = parsed.commands.find((command) => command.name === "config");
     assert.ok(config);
@@ -248,7 +248,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.sections?.config?.defaultPath, ".qube/aiu/config.json");
     assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilityNames, ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"]);
-    assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "recipe-only", "unsupported"]);
+    assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "unsupported"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilitySupport, ["supported", "experimental", "disabled", "unsupported", "unknown"]);
     assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
@@ -403,22 +403,6 @@ describe("metadata-backed CLI", () => {
     assert.ok(status.errors?.some((error) => error.kind === "trusted-command-timeout"));
     assert.ok(status.errors?.some((error) => error.kind === "trusted-command-invalid-state"));
 
-    const migrate = parsed.commands.find((command) => command.name === "migrate");
-    assert.ok(migrate);
-    assert.deepEqual(migrate.output?.formats, ["human", "json"]);
-    assert.equal(migrate.output?.defaultFormat, "human");
-    assert.equal(migrate.interactions?.json, true);
-    assert.equal(migrate.dryRun?.supported, true);
-    assert.equal(migrate.mutation?.mutates, true);
-    assert.ok(migrate.flags?.some((flag) => flag.name === "dry-run" && flag.type === "boolean"));
-    assert.ok(migrate.flags?.some((flag) => flag.name === "apply" && flag.type === "boolean"));
-    assert.ok(migrate.flags?.some((flag) => flag.name === "force" && flag.type === "boolean"));
-    assert.ok(migrate.flags?.some((flag) => flag.name === "cleanup" && flag.type === "boolean"));
-    assert.ok(migrate.flags?.some((flag) => flag.name === "confirm" && flag.type === "string"));
-    assert.ok(migrate.examples?.some((example) => example.command === "aiu migrate --dry-run --json"));
-    assert.ok(migrate.examples?.some((example) => example.command === "aiu migrate --apply --json"));
-    assert.ok(migrate.examples?.some((example) => example.command === "aiu migrate --cleanup --dry-run --json"));
-
     const schema = parsed.commands.find((command) => command.name === "schema");
     assert.ok(schema);
     assert.deepEqual(schema.output?.formats, ["json"]);
@@ -488,97 +472,6 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.config.value.continuation.allowBackgroundScheduling, false);
     assert.equal(parsed.config.value.supplyChain.stopOnApprovalRequired, true);
     assert.deepEqual(parsed.config.diagnostics, []);
-  });
-
-  it("emits clean JSON for migration dry-run plans", async () => {
-    const target = await createRepoRoot();
-    const result = await runCli(["migrate", "--dry-run", "--json"], target);
-    const parsed = JSON.parse(result.stdout) as {
-      ok: boolean;
-      command: string;
-      migrate: {
-        ok: boolean;
-        dryRun: boolean;
-        repoLocalHooks: unknown[];
-        localCheckoutReferences: unknown[];
-        scanErrors: unknown[];
-        managedSections: unknown[];
-        customizationPoints: string[];
-        recommendedNextCommand: string;
-      };
-    };
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stderr, "");
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.command, "migrate");
-    assert.equal(parsed.migrate.ok, true);
-    assert.equal(parsed.migrate.dryRun, true);
-    assert.deepEqual(parsed.migrate.repoLocalHooks, []);
-    assert.deepEqual(parsed.migrate.scanErrors, []);
-    assert.ok(parsed.migrate.managedSections.length >= 3);
-    assert.ok(parsed.migrate.customizationPoints.includes(".qube/aiu/config.json trustedStateCommands argv arrays"));
-    assert.equal(parsed.migrate.recommendedNextCommand, "aiu init --dry-run --json");
-  });
-
-  it("emits clean JSON for explicit migration apply", async () => {
-    const target = await createRepoRoot();
-    const result = await runCli(["migrate", "--apply", "--json"], target);
-    const parsed = JSON.parse(result.stdout) as {
-      ok: boolean;
-      command: string;
-      migrate: {
-        ok: boolean;
-        dryRun: boolean;
-        applied: boolean;
-        changed: Array<{ relativePath: string; action: string }>;
-        preserved: unknown[];
-        skipped: unknown[];
-        conflicted: unknown[];
-        reviewRequired: unknown[];
-      };
-    };
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stderr, "");
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.command, "migrate");
-    assert.equal(parsed.migrate.ok, true);
-    assert.equal(parsed.migrate.dryRun, false);
-    assert.equal(parsed.migrate.applied, true);
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".qube/aiu/config.json" && item.action === "create"));
-    assert.deepEqual(parsed.migrate.conflicted, []);
-    assert.deepEqual(parsed.migrate.reviewRequired, []);
-  });
-
-  it("emits clean JSON for migration cleanup dry-run", async () => {
-    const target = await createRepoRoot();
-    await mkdir(path.join(target, "scripts"), { recursive: true });
-    await writeFile(path.join(target, "scripts", "aiu-stop.js"), "console.log('ai-umpire hook-stop helper');\n", "utf8");
-    const result = await runCli(["migrate", "--cleanup", "--json"], target);
-    const parsed = JSON.parse(result.stdout) as {
-      ok: boolean;
-      command: string;
-      migrate: {
-        ok: boolean;
-        dryRun: boolean;
-        cleanup: boolean;
-        planned: Array<{ relativePath: string }>;
-        removed: unknown[];
-        conflicted: unknown[];
-      };
-    };
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stderr, "");
-    assert.equal(parsed.ok, true);
-    assert.equal(parsed.command, "migrate");
-    assert.equal(parsed.migrate.ok, true);
-    assert.equal(parsed.migrate.cleanup, true);
-    assert.equal(parsed.migrate.dryRun, true);
-    assert.ok(parsed.migrate.planned.some((item) => item.relativePath === "scripts/aiu-stop.js"));
-    assert.deepEqual(parsed.migrate.removed, []);
-    assert.deepEqual(parsed.migrate.conflicted, []);
   });
 
   it("emits clean JSON for whip status and dry-run mutations", async () => {
@@ -680,23 +573,13 @@ describe("metadata-backed CLI", () => {
     assert.match(unknownFlag.stderr, /Did you mean "--json"/);
   });
 
-  it("rejects incompatible migration cleanup flag combinations", async () => {
-    const cleanupApply = await runCli(["migrate", "--cleanup", "--apply", "--json"]);
-    assert.equal(cleanupApply.exitCode, 2);
-    assert.match(cleanupApply.stdout, /--cleanup cannot be combined with --apply or --force/);
-    assert.equal(cleanupApply.stderr, "");
-
-    const confirmWithoutCleanup = await runCli(["migrate", "--confirm", "scripts/aiu-stop.js", "--json"]);
-    assert.equal(confirmWithoutCleanup.exitCode, 2);
-    assert.match(confirmWithoutCleanup.stdout, /--confirm requires --cleanup/);
-    assert.equal(confirmWithoutCleanup.stderr, "");
-  });
 });
 
-async function runCli(input: readonly string[], cwd = repoRoot) {
+async function runCli(input: readonly string[], cwd?: string) {
+  const executionRoot = cwd ?? await createRepoRoot();
   try {
     const result = await execFileAsync(process.execPath, [aiuBin, ...input], {
-      cwd,
+      cwd: executionRoot,
     });
     return {
       exitCode: 0,

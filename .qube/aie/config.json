@@ -163,25 +163,6 @@
           "route": null
         },
         {
-          "id": "api-contract-compatibility",
-          "required": "when-matched",
-          "match": [
-            "packages/qube-core/src/**",
-            "packages/qube-cli/src/**",
-            "adapters/*/src/index.ts",
-            "products/*/src/index.ts",
-            "products/*/src/adapter_exports.ts",
-            "products/*/src/command_*.ts",
-            "products/*/src/runtime_handlers.ts"
-          ],
-          "severityThreshold": "high",
-          "prompt": [],
-          "tools": [],
-          "runner": "local-host",
-          "rereview": "delta",
-          "route": null
-        },
-        {
           "id": "ui-ux-accessibility",
           "required": "when-matched",
           "match": [
@@ -222,6 +203,19 @@
             "timeoutSeconds": 900,
             "maxTurns": 16
           }
+        }
+      ],
+      "sources": [
+        {
+          "id": "local-lanes",
+          "identity": "lane",
+          "expected": [
+            "issue-compliance",
+            "code-quality"
+          ],
+          "blocking": true,
+          "markers": "trusted",
+          "enabled": true
         }
       ],
       "agents": [],
@@ -358,7 +352,6 @@
           "externalService": false
         }
       ],
-      "qualityGates": [],
       "qualityControl": true,
       "focusedSelectors": [
         { "glob": "products/aie/**", "commands": ["pnpm --dir products/aie --config.verify-deps-before-run=false run test"] },
@@ -374,17 +367,11 @@
       "target": ""
     },
     "instructions": {
-      "opencodeCommandAlias": false,
       "namingRules": true,
       "promptInjectionWarning": true,
       "noCreditWarning": true,
       "implementationGuardrails": true,
       "supplyChainSafety": true
-    },
-    "migration": {
-      "legacyScripts": "preserve",
-      "compatibilityWrappers": false,
-      "cleanupKnownHelpers": false
     },
     "supplyChain": {
       "exactVersions": true,

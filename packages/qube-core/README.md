@@ -44,6 +44,5 @@ Shared provider-neutral QUBE contracts live in focused source modules. The packa
 - `review_forge.ts`: review forge provider, review request, lane publishing, and review finding contracts.
 - `review_participant.ts`: configured review participant coordination and rollup helpers.
 - `agent_host.ts`: agent host profiles and host review-runner capability contracts.
-- `review.ts`: compatibility barrel only; do not add contract definitions here.
 
 Keep product-specific policy and runtime behavior in product packages such as `@tjalve/aie`. QUBE core should stay provider-neutral and should not duplicate type definitions across modules.

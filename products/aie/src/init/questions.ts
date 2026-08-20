@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { getAgentHostProfileSync } from '../agent_host_adapters.js';
 import { listHostModels } from '../app/model_catalog.js';
 import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
 import { commandExistsOnPath, detectInstalledReviewHostsOnPath } from '../app/model_routing_hosts.js';
@@ -8,11 +8,7 @@ import { REVIEW_MODEL_HOST_IDS, type ReviewMode, type ReviewModelHostId } from '
 import { isReviewMode, REVIEW_MODES } from '../review_mode.js';
 import type { InitPolicyOptions, InitQuestion, InitQuestionId, InitQuestionOption, InitSetupSummary } from './types.js';
 import type { InitTool } from '../init_content.js';
-import {
-  DEFAULT_UI_AUDIT_EVIDENCE_ROOT,
-  LEGACY_UI_AUDIT_EVIDENCE_ROOT,
-  legacyUiAuditTreeExists,
-} from '../audit.js';
+import { DEFAULT_UI_AUDIT_EVIDENCE_ROOT } from '../audit.js';
 
 export interface GuideMachine {
   installedHosts: readonly ReviewModelHostId[];
@@ -27,7 +23,6 @@ export interface InvocationAnswers {
   reviewers?: string[];
   reviewModels?: string[];
   publisher?: 'user' | 'github-app' | 'token';
-  qualityGates?: string[];
   qualityControl?: boolean;
   manualUiAudit?: boolean;
   uiAuditEvidenceRoot?: string;
@@ -104,7 +99,6 @@ export function answersFromPolicy(policy: InitPolicyOptions | undefined): Invoca
     ));
   }
   if (policy?.publisher?.mode !== undefined) answers.publisher = policy.publisher.mode;
-  if (policy?.qualityGates !== undefined) answers.qualityGates = [...policy.qualityGates];
   if (policy?.qualityControl !== undefined) answers.qualityControl = policy.qualityControl;
   if (policy?.manualUiAudit !== undefined) answers.manualUiAudit = policy.manualUiAudit;
   if (policy?.uiAuditEvidenceRoot !== undefined) answers.uiAuditEvidenceRoot = policy.uiAuditEvidenceRoot;
@@ -117,18 +111,17 @@ export function buildInitQuestions(input: {
   answers: InvocationAnswers;
   useDefaults?: boolean;
   repoRoot?: string | null;
-  homeDirectory?: string;
 }): InitQuestion[] {
   const recommendedMode = recommendedReviewMode(input.machine);
   const isolatedHosts = isolatedReviewHostsOnMachine(input.machine);
+  const selectedMode = input.answers.reviewMode ?? recommendedMode;
+  const modelHosts = reviewModelHostsForMode(input.machine, selectedMode);
   const recommendedAudit = recommendedManualUiAudit(input.machine);
   const qualityControlValue = recommendedQualityControl(input.machine);
   const recommendedPublisher: 'user' | 'github-app' | 'token' = 'user';
   const recommendedReviewers: string[] = [];
   const includeEvidenceRoot = input.answers.manualUiAudit === true
     || (input.answers.manualUiAudit !== false && recommendedAudit);
-  const legacyExists = includeEvidenceRoot
-    && legacyUiAuditTreeExists(input.repoRoot ?? undefined, input.homeDirectory ?? homedir());
 
   const questions: InitQuestion[] = [
     question({
@@ -168,10 +161,12 @@ export function buildInitQuestions(input: {
     }),
     question({
       id: 'review-models',
-      prompt: 'Which live host models should isolated review use?',
-      options: liveModelOptions(input.machine),
-      recommendation: liveModelRecommendation(input.machine),
-      recommendedValue: liveModelRecommendationValue(input.machine),
+      prompt: selectedMode === 'host'
+        ? 'Which live harness models should native review use?'
+        : 'Which live harness models should isolated review use?',
+      options: liveModelOptions(input.machine, modelHosts),
+      recommendation: liveModelRecommendation(input.machine, modelHosts),
+      recommendedValue: liveModelRecommendationValue(input.machine, modelHosts),
       answered: input.answers.reviewModels !== undefined,
       value: input.answers.reviewModels ?? null,
       reason: input.answers.reviewModels !== undefined
@@ -196,23 +191,19 @@ export function buildInitQuestions(input: {
     }),
     question({
       id: 'quality-gate',
-      prompt: 'Should Quality Control run, and which quality gate commands should init record?',
+      prompt: 'Should Quality Control run?',
       options: [
-        { value: 'off', label: 'Do not record Quality Control or quality gate commands.' },
-        { value: 'on', label: 'Record Quality Control intent. Requires aiq and at least one quality gate command.' },
+        { value: 'off', label: 'Do not run AIQ quality gates.' },
+        { value: 'on', label: 'Run configured AIQ quality gates. Requires aiq.' },
       ],
       recommendation: qualityControlValue
         ? 'Record Quality Control. AIQ is available, so lint and format become a pre-PR gate.'
         : 'Leave Quality Control off until aiq is available.',
       recommendedValue: qualityControlValue ? 'on' : 'off',
-      answered: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined,
-      value: input.answers.qualityControl !== undefined
-        ? (input.answers.qualityControl ? 'on' : 'off')
-        : input.answers.qualityGates !== undefined
-          ? (input.answers.qualityGates.length > 0 ? 'on' : 'off')
-          : null,
-      reason: input.answers.qualityControl !== undefined || input.answers.qualityGates !== undefined
-        ? 'The invocation already selected quality gates.'
+      answered: input.answers.qualityControl !== undefined,
+      value: input.answers.qualityControl !== undefined ? (input.answers.qualityControl ? 'on' : 'off') : null,
+      reason: input.answers.qualityControl !== undefined
+        ? 'The invocation already selected Quality Control.'
         : qualityControlValue
           ? 'Init recommends Quality Control on when aiq is available.'
           : 'Init recommends Quality Control off until aiq is available.',
@@ -241,18 +232,15 @@ export function buildInitQuestions(input: {
       prompt: 'Where should this machine keep local UI audit evidence?',
       options: [
         { value: DEFAULT_UI_AUDIT_EVIDENCE_ROOT, label: 'QUBE user default (~/.qube/verification/)' },
-        { value: LEGACY_UI_AUDIT_EVIDENCE_ROOT, label: 'Existing legacy path (~/github-verification/)', available: legacyExists },
         { value: 'custom', label: 'Custom directory that you supply' },
       ],
-      recommendation: recommendedEvidenceRoot(legacyExists),
+      recommendation: 'Use the QUBE user default ~/.qube/verification/.',
       recommendedValue: DEFAULT_UI_AUDIT_EVIDENCE_ROOT,
       answered: input.answers.uiAuditEvidenceRoot !== undefined,
       value: input.answers.uiAuditEvidenceRoot ?? null,
       reason: input.answers.uiAuditEvidenceRoot !== undefined
         ? 'The invocation or existing config already selected the UI audit evidence root.'
-        : legacyExists
-          ? 'A leftover ~/github-verification tree exists for this repository. Init reports it and does not copy or delete those files.'
-          : 'Init recommends the QUBE user default ~/.qube/verification/.',
+        : 'Init recommends the QUBE user default ~/.qube/verification/.',
     }));
   }
   questions.push(question({
@@ -273,19 +261,21 @@ export function buildInitQuestions(input: {
   return questions;
 }
 
-function recommendedEvidenceRoot(legacyExists: boolean): string {
-  return legacyExists
-    ? 'Use the QUBE user default ~/.qube/verification/. A leftover ~/github-verification tree is still on disk and remains readable.'
-    : 'Use the QUBE user default ~/.qube/verification/.';
-}
-
 function uiAuditRecommendation(guide: GuideMachine): string {
   if (!guide.hasUserFacingUi) return 'Leave UI audit off. This repository does not look like user-facing UI.';
   return 'Leave UI audit off. This repository looks like UI, but agent-browser is not on PATH.';
 }
 
-function liveModelOptions(machine: GuideMachine): InitQuestionOption[] {
-  const options = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => ({
+function reviewModelHostsForMode(machine: GuideMachine, mode: ReviewMode): readonly ReviewModelHostId[] {
+  if (mode === 'isolated') return isolatedReviewHostsOnMachine(machine);
+  if (mode === 'host') {
+    return machine.installedHosts.filter(host => getAgentHostProfileSync(host).review.local.support !== 'unsupported');
+  }
+  return [];
+}
+
+function liveModelOptions(machine: GuideMachine, hosts: readonly ReviewModelHostId[]): InitQuestionOption[] {
+  const options = hosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => ({
     value: `${host}:${model}`,
     label: `${host} currently serves ${model}.`,
     available: true,
@@ -293,15 +283,15 @@ function liveModelOptions(machine: GuideMachine): InitQuestionOption[] {
   return options.length > 0 ? options : [{ value: 'none', label: 'No live host catalog is available.', available: false }];
 }
 
-function liveModelRecommendation(machine: GuideMachine): string {
-  const first = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+function liveModelRecommendation(machine: GuideMachine, hosts: readonly ReviewModelHostId[]): string {
+  const first = hosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
   return first
     ? `Use a model from the live catalog. Example: ${first}.`
     : 'No live catalog is available. Leave review models unconfigured until a host can list models.';
 }
 
-function liveModelRecommendationValue(machine: GuideMachine): string[] {
-  const first = isolatedReviewHostsOnMachine(machine).flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
+function liveModelRecommendationValue(machine: GuideMachine, hosts: readonly ReviewModelHostId[]): string[] {
+  const first = hosts.flatMap(host => (machine.liveModels?.[host] ?? []).map(model => `${host}:${model}`))[0];
   return first ? [first] : [];
 }
 
@@ -312,7 +302,7 @@ function reviewModelsFromAnswers(values: string[]): NonNullable<InitPolicyOption
     if (separator <= 0) continue;
     const host = value.slice(0, separator);
     const model = value.slice(separator + 1).trim();
-    if (isRegisteredReviewHost(host) && model) review[host as ReviewModelHostId] = { model, effort: null };
+    if ((REVIEW_MODEL_HOST_IDS as readonly string[]).includes(host) && model) review[host as ReviewModelHostId] = { model, effort: null };
   }
   return { review, economy: {}, synthesis: {} };
 }
@@ -386,7 +376,6 @@ function mapEvidenceRootAnswer(value: InitQuestion['value']): string | null {
   const trimmed = value.trim();
   if (trimmed === '' || trimmed === 'custom') return null;
   if (trimmed === 'qube' || trimmed === DEFAULT_UI_AUDIT_EVIDENCE_ROOT) return DEFAULT_UI_AUDIT_EVIDENCE_ROOT;
-  if (trimmed === 'legacy' || trimmed === LEGACY_UI_AUDIT_EVIDENCE_ROOT) return LEGACY_UI_AUDIT_EVIDENCE_ROOT;
   if (trimmed.split(/[\\/]+/).some(segment => segment === '..')) return null;
   if (trimmed.startsWith('~') || isAbsolute(trimmed)) return trimmed;
   return null;
@@ -396,7 +385,6 @@ export function buildSetupSummary(input: {
   reviewMode: ReviewMode;
   reviewers: string[];
   publisher: string;
-  qualityGates: string[];
   qualityControl: boolean;
   manualUiAudit: boolean;
   tools: InitTool[];
@@ -405,7 +393,6 @@ export function buildSetupSummary(input: {
     reviewMode: input.reviewMode,
     reviewers: [...input.reviewers],
     publisher: input.publisher,
-    qualityGates: [...input.qualityGates],
     qualityControl: input.qualityControl,
     manualUiAudit: input.manualUiAudit,
     tools: [...input.tools],

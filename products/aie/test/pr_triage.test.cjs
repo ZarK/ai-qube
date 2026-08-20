@@ -49,6 +49,19 @@ function assertNoMutations(gh) {
   assert.equal(gh.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
 }
 
+function providerReviewConfig() {
+  const config = getDefaults();
+  config.reviewSources = [{
+    id: 'provider-reviewers',
+    identity: 'reviewer',
+    expected: ['coderabbitai'],
+    blocking: true,
+    markers: 'provider',
+    enabled: true,
+  }];
+  return config;
+}
+
 describe('pr triage', () => {
   it('reports residual advisories on an approved head without mutating GitHub', async () => {
     const repo = makeRepo();
@@ -166,7 +179,7 @@ describe('pr triage', () => {
     writeApprovedHead(repo, [advisoryFinding('cq-1', 'Duplicate parsing of lane evidence files on resume.')]);
     const gh = fakeGh({ repo, prOverrides: { reviewDecision: 'CHANGES_REQUESTED', latestReviews: [{ author: { login: 'coderabbitai' }, state: 'CHANGES_REQUESTED', body: 'This regresses retries.', commit: { oid: repoHead(repo) } }] } });
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, exec: gh.exec });
+    const result = await runPrTriageService(providerReviewConfig(), { prNumber: 12, repoRoot: repo, exec: gh.exec });
 
     assert.equal(result.approvedHead, false);
     assert.deepEqual(result.blockingProviderSources, ['provider-reviewers']);
@@ -186,7 +199,7 @@ describe('pr triage', () => {
       },
     });
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, exec: gh.exec });
+    const result = await runPrTriageService(providerReviewConfig(), { prNumber: 12, repoRoot: repo, exec: gh.exec });
 
     assert.equal(result.approvedHead, true);
     assert.equal(result.advisories.length, 1);

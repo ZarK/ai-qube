@@ -219,11 +219,9 @@ describe('round summary marker', () => {
     assert.equal(parseRoundSummaryMarker('<!-- qube-pr-review-summary:{"version":1} -->'), null);
   });
 
-  it('accepts a legacy marker that omits findingDigest', () => {
+  it('rejects an incomplete marker that omits finding counts and the digest', () => {
     const parsed = parseRoundSummaryMarker('<!-- qube-pr-review-summary:{"version":1,"head":"abc123","round":"round-1","prNumber":12,"issueNumber":93,"verdict":"approve","expectedLanes":["code-quality"]} -->');
-    assert.equal(parsed.head, 'abc123');
-    assert.equal(parsed.round, 'round-1');
-    assert.equal(parsed.findingDigest, '');
+    assert.equal(parsed, null);
   });
 
   it('preserves the superseded flag on parse', () => {

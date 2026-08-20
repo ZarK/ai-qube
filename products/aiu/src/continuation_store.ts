@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, closeSync } from "node:fs";
 import path from "node:path";
 
-import type { AiuConfig } from "./config.js";
+import type { AiuConfig, AiuHost } from "./config.js";
 import type { AiuContinuationDecision, AiuDecisionSelectedItem, AiuDecisionSourceSummary } from "./decision.js";
 import type { AiuContinuationPrompt } from "./prompt.js";
 
@@ -13,6 +13,15 @@ export interface AiuContinuationPaths {
   readonly statePath: string;
   readonly lockPath: string;
   readonly logPath: string;
+}
+
+export interface AiuHostActivation {
+  readonly schemaVersion: 1;
+  readonly host: AiuHost;
+  readonly delivery: "host" | "stdout";
+  readonly event: "plugin-event" | "stop-hook";
+  readonly trustedStateFingerprint: string;
+  readonly observedAt: string;
 }
 
 export interface AiuContinuationState {
@@ -79,6 +88,7 @@ export interface AiuContinuationLogEntry {
 const STATE_FILENAME = "continuation.json";
 const LOCK_FILENAME = "continuation.lock";
 const LOG_FILENAME = "continuation.jsonl";
+const HOST_ACTIVATION_DIRECTORY = "host-activation";
 const MAX_LOG_BYTES = 64 * 1024;
 const MAX_LOG_ENTRY_BYTES = 8 * 1024;
 
@@ -110,6 +120,50 @@ export function writeAiuContinuationState(paths: Pick<AiuContinuationPaths, "sta
   const tempPath = `${paths.statePath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   renameSync(tempPath, paths.statePath);
+}
+
+export function resolveAiuHostActivationPath(
+  paths: Pick<AiuContinuationPaths, "stateDir">,
+  host: AiuHost,
+): string {
+  return path.join(paths.stateDir, HOST_ACTIVATION_DIRECTORY, `${host}.json`);
+}
+
+export function readAiuHostActivation(
+  paths: Pick<AiuContinuationPaths, "stateDir">,
+  host: AiuHost,
+): AiuHostActivation | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(resolveAiuHostActivationPath(paths, host), "utf8")) as unknown;
+    return normalizeHostActivation(parsed, host);
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeAiuHostActivation(
+  paths: Pick<AiuContinuationPaths, "stateDir">,
+  activation: AiuHostActivation,
+): void {
+  const activationPath = resolveAiuHostActivationPath(paths, activation.host);
+  const activationDirectory = path.dirname(activationPath);
+  mkdirSync(activationDirectory, { recursive: true });
+  const tempPath = `${activationPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify(activation, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(tempPath, activationPath);
+}
+
+export function createAiuTrustedStateFingerprint(commands: AiuConfig["trustedStateCommands"]): string {
+  const normalized = Object.entries(commands)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([sourceId, descriptor]) => ({
+      sourceId,
+      argv: [...descriptor.argv],
+      cwd: descriptor.cwd ?? null,
+      timeoutMs: descriptor.timeoutMs ?? null,
+      maxOutputBytes: descriptor.maxOutputBytes ?? null,
+    }));
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
 export function buildAiuContinuationState(input: {
@@ -217,6 +271,28 @@ export function createAiuDecisionId(input: {
   readonly reasonCodes?: readonly string[];
 }): string {
   return decisionId([input.observedAt, input.eventType, input.sessionId ?? "", input.promptFingerprint ?? "", ...(input.reasonCodes ?? [])]);
+}
+
+function normalizeHostActivation(value: unknown, expectedHost: AiuHost): AiuHostActivation | undefined {
+  if (!isRecord(value)
+    || value.schemaVersion !== 1
+    || value.host !== expectedHost
+    || (value.delivery !== "host" && value.delivery !== "stdout")
+    || (value.event !== "plugin-event" && value.event !== "stop-hook")
+    || typeof value.trustedStateFingerprint !== "string"
+    || !/^[a-f0-9]{64}$/.test(value.trustedStateFingerprint)
+    || typeof value.observedAt !== "string"
+    || !Number.isFinite(Date.parse(value.observedAt))) {
+    return undefined;
+  }
+  return Object.freeze({
+    schemaVersion: 1 as const,
+    host: expectedHost,
+    delivery: value.delivery,
+    event: value.event,
+    trustedStateFingerprint: value.trustedStateFingerprint,
+    observedAt: value.observedAt,
+  });
 }
 
 function tryCreateLock(lockPath: string, lock: AiuContinuationLock): { readonly created: true } | { readonly created: false; readonly reason: "exists" } {

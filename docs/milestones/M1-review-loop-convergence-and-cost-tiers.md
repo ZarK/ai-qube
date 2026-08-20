@@ -78,7 +78,7 @@ Before lanes spawn, the orchestrating host runs one `qube-review-digest` pass pe
 
 ### 2.4 - Per-lane tier defaults
 
-Lanes differ in judgment depth. Default tier per lane, configurable: `review` tier for code-quality, security, issue-compliance, concurrency-resource, data-database, api-contract-compatibility, final-gate; `economy` tier sufficient for docs-instructions, task-record-compliance, and the digest/triage passes. Tier per lane appears in `pr gate --json` plans so cost is predictable, and evidence records which tier actually ran.
+Lanes differ in judgment depth. Default tier per lane, configurable: `review` tier for code-quality, security, issue-compliance, concurrency-resource, data-database, and final-gate; `economy` tier sufficient for docs-instructions, task-record-compliance, and the digest/triage passes. Tier per lane appears in `pr gate --json` plans so cost is predictable, and evidence records which tier actually ran.
 
 ### 2.5 - Delta triage
 

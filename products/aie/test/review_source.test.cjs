@@ -80,6 +80,12 @@ describe('review source contract', () => {
     assert.deepEqual(resolved.map(source => source.id), ['a']);
   });
 
+  it('does not derive review sources from adapter or reviewer settings', () => {
+    const config = { ...getDefaults(), reviewSources: [], reviewAdapter: 'mixed', reviewAgents: ['alice'] };
+
+    assert.deepEqual(resolveReviewSources(config), []);
+  });
+
   it('reports a reviewer source unsatisfied when the received review at the current head requested changes', () => {
     const reviewerSource = { id: 'provider-reviewers', identity: 'reviewer', expected: ['alice'], blocking: true, markers: 'provider', enabled: true };
     const item = reviewItemWith({

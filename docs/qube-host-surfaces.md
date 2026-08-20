@@ -1,113 +1,62 @@
-# QUBE Host And Adapter Surfaces
+# QUBE Agent Harness Surfaces
 
-This matrix records host integration ownership by product. It separates real product surfaces from shared adapter contract packages.
+QUBE configures an agent harness. You can still run every QUBE command in a terminal, but the terminal is not an agent harness and has no instruction, task, review, or continuation surface.
 
-| Product | Package | CLI | GitHub | GitLab | Linear | Codex | OpenCode | Claude Code | Grok Build | Ownership decision |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Bootstrap | `@tjalve/aib` | yes | yes | yes | yes | yes | yes | yes | yes | AIB owns planning state and work-item rendering. GitHub, GitLab, and Linear output are safe preview/rendering surfaces; Codex, OpenCode, Claude Code, and Grok Build output is host instruction installation, with OpenCode adding project command assets. |
-| Executor | `@tjalve/aie` | yes | yes | yes | yes | yes | yes | yes | yes | AIE owns GitHub work-item, PR, queue, branch, review, and completion behavior. It also owns GitLab and Linear read mapping with explicit lifecycle mutation gaps, plus Codex/OpenCode/Claude Code/Grok Build host instruction init/migration for agent execution workflows. |
-| Quality | `@tjalve/aiq` | yes | no | no | no | no | no | no | no | AIQ owns quality command behavior and evidence. Its GitHub Action and OpenCode plugin packages are standalone adapters, not QUBE-facing GitHub/OpenCode product surfaces. |
-| Umpire | `@tjalve/aiu` | yes | no | no | no | no | yes | yes | yes | AIU owns continuation policy, trusted state, OpenCode plugin composition, Claude Code stop-hook handling, host continuation boundaries, and local continuation state. |
+The five harness profiles below are the current source of truth for `qube install`, `qube init`, Executor instructions, Make It So, review routing, model discovery, and Umpire continuation.
 
-`@tjalve/qube` includes the installed Codex host capability layer. It detects project `AGENTS.md`, reports Codex-local todo, command execution, Browser use, and worktree/handoff capabilities as host-provided, and reports unsupported Codex operations such as OpenCode-style project command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
+## Harness setup
 
-Product packages still own Codex-specific side effects:
+| Harness | Adapter package | Instruction file | Make It So asset | Start command |
+| --- | --- | --- | --- | --- |
+| OpenCode | `@tjalve/qube-adapter-opencode` | `AGENTS.md` | `.opencode/commands/make-it-so.md` | `/make-it-so` |
+| Codex | `@tjalve/qube-adapter-codex` | `AGENTS.md` | `.agents/skills/make-it-so/SKILL.md` | `$make-it-so` |
+| Claude Code | `@tjalve/qube-adapter-claude-code` | `CLAUDE.md` | `.claude/commands/make-it-so.md` | `/make-it-so` |
+| Grok Build | `@tjalve/qube-adapter-grok-build` | `AGENTS.md` | `.grok/commands/make-it-so.md` | `/make-it-so` |
+| Cursor | `@tjalve/qube-adapter-cursor` | `AGENTS.md` | `.cursor/commands/make-it-so.md` | `/make-it-so` |
 
-- AIB can plan or write `AGENTS.md` instruction assets for Codex through `qube aib init . --agent codex`.
-- AIE can install managed Executor instructions for Codex through `qube aie init . --tool codex` and still owns branch, PR, review, and completion workflow.
-- QUBE installer guidance consumes the Codex capability layer for `qube install --host codex` notes.
-- Codex host todo state remains local session state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
+QUBE uses a command asset where the harness supports project commands. Codex uses a skill because that is its project-level invocation surface.
 
-`@tjalve/qube` includes the installed Claude Code host capability layer. It detects project `CLAUDE.md`, `.claude/settings.json`, `.claude/commands`, and `.claude/skills`, reports Claude Code todo state, command execution, hooks, slash commands, subagents, and session continuation as host-provided, and reports unsupported Claude Code operations such as QUBE-managed slash-command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
+## Capability matrix
 
-Product packages still own Claude Code-specific side effects:
+`Experimental` means that QUBE has a tested integration with explicit limits or verification requirements. `Unsupported` means that QUBE does not claim or install that capability.
 
-- AIB can plan or write `CLAUDE.md` instruction assets for Claude Code through `qube aib init . --agent claude-code`.
-- AIE can install managed Executor instructions for Claude Code through `qube aie init . --tool claude-code` and still owns branch, PR, review, and completion workflow.
-- AIU owns the experimental Claude Code Stop hook integration through `qube aiu init --tool claude-code` and `qube aiu hook-stop --tool claude-code`.
-- QUBE installer guidance consumes the Claude Code capability layer for `qube install --host claude-code` notes.
-- Claude Code todo and conversation state remains local host state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
-- QUBE composer install notes do not create `.claude/commands` or `.claude/skills` assets.
+| Harness | Task list | Subagents | Host-local review | Isolated review | Live model list | Umpire continuation |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenCode | Supported | Supported | Supported | Unsupported | Supported | Supported |
+| Codex | Supported | Supported | Supported | Supported | Supported | Experimental |
+| Claude Code | Supported | Supported | Supported | Unsupported | Unsupported | Experimental |
+| Grok Build | Unsupported | Supported | Supported | Supported | Supported | Experimental |
+| Cursor | Unsupported | Unsupported | Unsupported | Supported | Supported | Unsupported |
 
-`@tjalve/qube` includes the installed Grok Build host capability layer. It detects project `AGENTS.md`, reports terminal CLI, terminal TUI, headless prompt mode, ACP, plugins, hooks, skills, MCP servers, parallel subagents, and worktree subagents as distinct host-owned capabilities, and reports unsupported Grok Build operations such as QUBE-driven CLI installation, direct external reviewer invocation, branch creation, pull request creation, and continuation ownership with actionable next steps.
+Host-local review uses fresh subagents inside the selected harness and can use the same subscription as the main agent. Isolated review starts a separate supported CLI harness in a read-only review session. External review services are configured through Executor and are not agent harness capabilities.
 
-Product packages still own Grok Build-specific side effects:
+OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Umpire reports these integrations as unverified until it observes a valid event. Cursor has no Umpire asset, so Cursor-only init does not run Umpire setup.
 
-- AIB can plan or write `AGENTS.md` instruction assets for Grok Build-compatible repository policy through existing AGENTS.md instruction flows.
-- AIE can install managed Executor instructions through existing AGENTS.md flows and still owns branch, PR, provider-visible review, review-thread, and completion workflow.
-- AIU documents Grok Build continuation as unsupported until a tested continuation or stop-hook path exists; host conversation state remains host-owned.
-- QUBE installer guidance consumes the Grok Build capability layer for `qube install --host grok-build` notes.
-- QUBE does not install Grok Build and does not emit third-party curl-pipe-shell installers as automated setup paths.
+## Current init flow
 
-`@tjalve/qube-adapter-opencode` is the shared OpenCode host adapter. It detects `AGENTS.md` and `.opencode/commands`, reports the host todo tools (`todowrite` and `todoread`), records the supported project-command and prompt/stop-hook capability boundaries, and returns explicit unsupported-capability results for behavior that OpenCode does not own, such as external review requests, branch creation, or pull request creation.
+Use one or more harness ids with `--host`:
 
-Product packages still own product-specific side effects:
+```sh
+qube init . --host codex --yes
+qube init . --host opencode,codex,claude-code,grok-build,cursor --yes --json
+```
 
-- AIB installs its OpenCode bootstrap instruction and command assets.
-- AIE installs Executor OpenCode project commands and renders Oracle-style review prompts without invoking host-only reviewers.
-- AIU owns OpenCode session continuation, prompt delivery, and stop-hook decisions from trusted state.
-- AIQ exposes OpenCode quality tools through its standalone plugin package, not through a QUBE-facing host surface.
+`qube init` does the following work:
 
-`@tjalve/qube-adapter-github` is the private shared GitHub provider adapter. It records the explicit capability model for GitHub issue work items, queue reads, status-label synchronization, pull request reads, review-gate requests, CI status normalization, CI diagnostics, review-thread reads, standalone AIQ GitHub Action behavior, and unsupported GitHub operations such as workflow-run triggering, pull request approval, repository file mutation, and release publishing.
+1. It runs Executor init once with every selected harness and the selected issue tracker, review provider, and automated-checks provider.
+2. It uses the first selected harness as the primary model-routing host unless you select another installed primary host.
+3. It runs Umpire init once for each selected harness that has an Umpire surface: OpenCode, Codex, Claude Code, or Grok Build.
+4. It writes the instruction file and the single canonical Make It So asset for each selected harness.
+5. It reports create, update, skip, or conflict actions. A repeated run reuses the current configuration and reports only the remaining work.
 
-Product packages still own GitHub-specific side effects:
+Executor (`@tjalve/aie`) and Umpire (`@tjalve/aiu`) participate by default. Add Bootstrap (`@tjalve/aib`) or Quality (`@tjalve/aiq`) with `--with aib`, `--with aiq`, or `--with aib,aiq`.
 
-- AIB renders provider-neutral work-item drafts into GitHub issue text without mutating GitHub.
-- AIE owns GitHub issue queue reads, issue label/state transitions, branch and pull request workflow, configured review-gate requests, pull request review-state reads, unresolved review-thread collection, and CI status diagnostics.
-- QUBE composes and dispatches product commands; it does not hide GitHub side effects behind a separate adapter command.
-- AIQ exposes GitHub behavior only through its standalone GitHub Action package, not as a QUBE-facing GitHub provider surface.
+Use `--dry-run --json` to inspect the plan without writing files. Use `--defaults --json` when an agent needs a non-interactive init with the repository defaults. After init completes, start a new agent session so the harness loads the new instructions and Make It So asset.
 
-## Review-Agent Adapter Surface
+The selected harness profile also supplies its trust steps. Executor instructions include attribution hygiene by default so public git and GitHub writes use the human project identity. Use `--no-credit-warning` only when you intentionally do not want those rules.
 
-AIE treats `policy.reviews.agents` / `reviewAgents` values as configured review-agent adapter handles. The current GitHub adapter ships these focused review-agent modules until the package interfaces are stable enough for separate installable packages:
+## Runtime boundary
 
-| Config value | Adapter id | Transport | Package boundary |
-| --- | --- | --- | --- |
-| `copilot`, `@copilot` | `copilot` | GitHub reviewer request plus idempotency marker comment | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-github-copilot` |
-| `coderabbit`, `coderabbitai`, `@coderabbitai` | `coderabbit` | Provider-visible PR comment trigger | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-coderabbit` |
-| `cubic`, `cubic-dev-ai`, `@cubic-dev-ai` | `cubic` | Provider-visible PR comment trigger | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-cubic` |
-| `QUBEReview`, `qubereview`, `@QUBEReview` | `qubereview` | Provider-visible PR comment trigger for host lane reviews | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-qube` |
-| `local-command` | `local-command` | Local evidence runner | built into `@tjalve/aie` |
-| `codex` | `codex` | Local-host fresh-context lane reviewer | built into `@tjalve/aie` |
+QUBE resolves component CLIs from its own install or from the current repository install. It does not load a QUBE component from an unrelated executable on the ambient `PATH`.
 
-`listReviewAgentAdapters()` reports installed adapters with forge affinity, package name, trigger, and external-service metadata. Forge adapters must plan review requests through these adapter interfaces so removing an adapter handle from the installed set removes its trigger template and output classifier from that runtime path.
-
-## Jenkins CI Provider Surface
-
-Jenkins support is an optional CI-provider adapter package boundary, not a work-provider or review-forge surface. `@tjalve/qube-adapter-jenkins` owns Jenkins API access, credential diagnostics, classic and folder job path handling, build-state mapping, artifact/log pointers, and unsupported CI mutation reporting.
-
-Product boundaries:
-
-- AIE can consume Jenkins build reads as provider gate evidence when a repository explicitly configures Jenkins CI evidence.
-- Jenkins build state maps to QUBE gate evidence with build URL, build id, result, timestamp, console log URL, and artifact URLs where Jenkins exposes them.
-- Missing `JENKINS_BASE_URL`, missing or incomplete credentials, inaccessible jobs, queued/running builds, unstable builds, failed builds, and unknown build results are explicit evidence states.
-- Jenkins trigger and rerun behavior is unsupported until a separate mutation capability is designed and tested.
-- Jenkins CI does not imply GitHub work items, GitHub pull requests, or provider-visible review communication.
-
-## Linear Provider Surface
-
-Linear support is an optional work-provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-linear` owns Linear API access, credential diagnostics, issue mapping, AIB issue-preview rendering, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
-
-Product boundaries:
-
-- AIB renders provider-neutral work item drafts into Linear issue previews through the Linear adapter package and `work-items render --provider linear --dry-run`.
-- AIE reads Linear issues only when `providers.work.kind` is `linear`, the optional Linear adapter package is installed, and the documented Linear credentials are present.
-- AIE lifecycle mutations for Linear workflow state, comments, assignees, and completion are explicitly unsupported until a tested Linear mutation adapter exists.
-- Review and CI behavior remain separate provider choices; Linear work does not imply GitHub pull requests or GitHub Actions.
-
-## GitLab Provider Surface
-
-GitLab support is an optional provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-gitlab` owns GitLab API access, credential diagnostics, issue mapping, AIB issue-preview rendering, merge request review-forge reads, provider-visible review notes, review discussion resolution, head-pipeline diagnostics, capability flags, self-managed URL handling, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
-
-Product boundaries:
-
-- AIB renders provider-neutral work item drafts into GitLab issue previews through the GitLab adapter package and `work-items render --provider gitlab --dry-run`.
-- AIE reads GitLab issues only when `providers.work.kind` is `gitlab`, the optional GitLab adapter package is installed, and the documented GitLab credentials are present.
-- AIE reads GitLab merge request review state only when `providers.review.kind` is `gitlab`, the optional GitLab adapter package is installed, and the documented GitLab project credentials are present.
-- AIE can request configured review participants and publish local review lane feedback by writing provider-visible GitLab merge request notes with trusted QUBE metadata.
-- AIE can resolve addressed GitLab merge request discussions when the GitLab review provider is selected.
-- AIE maps GitLab merge request `head_pipeline` status into review gate diagnostics when the GitLab review provider is selected.
-- AIE lifecycle mutations for GitLab issue state, labels, comments, assignees, completion, merge request approval, merge, and pipeline triggering are explicitly unsupported until tested mutation adapters exist.
-- Work, review, and CI behavior remain separate provider choices; GitLab work does not imply GitHub pull requests or GitHub Actions.
-
-`packages/qube-core` is the checked source of truth for this table. Tests fail if `qubeProductContracts` drifts from the documented ownership decisions.
+The harness owns the agent session, model access, task tools, subagents, and hooks that it exposes. QUBE writes instructions and configuration, invokes QUBE commands, records evidence, and reports capability state. QUBE cannot force a harness or model to obey those instructions.

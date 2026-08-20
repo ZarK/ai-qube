@@ -1,17 +1,30 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { redactStructuredValue, redactText } from "@tjalve/qube-cli/redaction";
+import { grokBuildStopHookFile } from "@tjalve/qube-adapter-grok-build";
 
 import { getAiuPackageAssetPaths, getAiuPackageRoot } from "./assets.js";
 import {
   type AiuConfigLoadResult,
+  type AiuContinuationMode,
   type AiuHost,
   AIU_HOSTS,
   loadAiuConfig,
 } from "./config.js";
-import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
+import {
+  createAiuTrustedStateFingerprint,
+  readAiuHostActivation,
+  resolveAiuContinuationPaths,
+  resolveAiuHostActivationPath,
+} from "./continuation_store.js";
 import { inspectGrokFolderTrust } from "./grok_trust.js";
-import { evaluateAiuHostRuntimePolicy, getAiuHostCapabilityProfiles } from "./host_policy.js";
+import {
+  evaluateAiuHostRuntimePolicy,
+  getAiuHostCapabilityProfile,
+  getAiuHostCapabilityProfiles,
+  type AiuHostPromptDelivery,
+  type AiuHostSupportLevel,
+} from "./host_policy.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
 
 export type AiuHealthStatus = "ok" | "warning" | "error";
@@ -90,7 +103,25 @@ export interface AiuDoctorReport {
     readonly defaultsUsed: boolean;
   };
   readonly paths: AiuResolvedPaths;
+  readonly hostProbes: readonly AiuHostContinuationProbe[];
   readonly checks: readonly AiuDoctorCheck[];
+}
+
+export type AiuHostProbeState = "active" | "disabled" | "unavailable" | "unverified";
+
+export interface AiuHostContinuationProbe {
+  readonly host: AiuHost;
+  readonly support: AiuHostSupportLevel;
+  readonly probeSupport: AiuHostSupportLevel;
+  readonly configured: boolean;
+  readonly state: AiuHostProbeState;
+  readonly delivery: AiuHostPromptDelivery;
+  readonly effectiveDelivery: AiuHostPromptDelivery;
+  readonly currentIssueRecovery: boolean;
+  readonly activationPath: string;
+  readonly observedAt?: string;
+  readonly reason: string;
+  readonly nextAction: string;
 }
 
 export interface AiuDoctorCheck {
@@ -167,6 +198,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
   const configLoad = loadAiuConfig(resolveConfigOptions(options));
   const paths = buildAiuResolvedPaths(options, configLoad);
   const packageJson = readPackageJson(paths.package.root);
+  const hostProbes = probeAiuHostContinuations(configLoad);
   const checks = [
     checkNodeVersion(),
     ...checkPackage(paths, packageJson),
@@ -179,6 +211,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
     ...checkHostFiles(configLoad),
     ...checkHostEntrypoints(configLoad),
     ...checkGrokProjectHookTrust(configLoad),
+    ...checkHostContinuationProbes(hostProbes),
     ...checkTrustedCommands(paths),
     ...checkTrustedCommandCompatibility(configLoad),
   ];
@@ -200,6 +233,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
       defaultsUsed: configLoad.defaultsUsed,
     },
     paths,
+    hostProbes,
     checks,
   }) as unknown as AiuDoctorReport;
 }
@@ -212,6 +246,9 @@ export function formatAiuDoctorReport(report: AiuDoctorReport): string {
     `config: ${report.config.selectedPath}`,
     `configFound: ${String(report.config.found)}`,
     `configValid: ${String(report.config.valid)}`,
+    "",
+    "Host continuation probes:",
+    ...report.hostProbes.map((probe) => `- ${probe.host}: ${probe.state}. ${probe.reason}`),
     "",
     "Checks:",
     ...report.checks.map((check) => {
@@ -478,8 +515,8 @@ function packageBackedEntrypointMarker(host: AiuHost, relativePath: string): str
   if (host === "claude-code" && relativePath.endsWith(path.join(".claude", "settings.json"))) {
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
-  const grokHookPath = loadGrokBuildAdapter()?.grokBuildStopHookFile.relativePath;
-  if (host === "grok-build" && grokHookPath && relativePath.replaceAll("\\", "/").endsWith(grokHookPath)) {
+  const grokHookPath = grokBuildStopHookFile.relativePath;
+  if (host === "grok-build" && relativePath.replaceAll("\\", "/").endsWith(grokHookPath)) {
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
   return undefined;
@@ -489,10 +526,7 @@ function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly Ai
   if (!configLoad.config.hosts.enabled.includes("grok-build")) {
     return [];
   }
-  const relativePath = loadGrokBuildAdapter()?.grokBuildStopHookFile.relativePath;
-  if (!relativePath) {
-    return [];
-  }
+  const relativePath = grokBuildStopHookFile.relativePath;
   const absolutePath = path.join(configLoad.repoRoot, relativePath);
   if (!existsSync(absolutePath)) {
     return [];
@@ -506,6 +540,132 @@ function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly Ai
   return [
     check("grok-hook-untrusted", "host", "warning", "grok-hook-untrusted", "Grok Build project Stop hook is present but the folder is not trusted. Untrusted project hooks do not run.", trust.trustFile, "Run /hooks-trust in Grok Build, or start with --trust, then rerun aiu doctor --json."),
   ];
+}
+
+function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly AiuHostContinuationProbe[] {
+  const continuationPaths = resolveAiuContinuationPaths(configLoad.repoRoot, configLoad.config);
+  const runtimePolicy = evaluateAiuHostRuntimePolicy(configLoad.config.hosts, configLoad.config.continuation.modes);
+  return Object.freeze(AIU_HOSTS.map((host) => {
+    const profile = getAiuHostCapabilityProfile(host);
+    const configured = configLoad.config.hosts.enabled.includes(host);
+    const delivery = profile.capabilities.promptDelivery.delivery ?? "none";
+    const activationPath = resolveAiuHostActivationPath(continuationPaths, host);
+    const base = {
+      host,
+      support: profile.supportLevel,
+      probeSupport: profile.probe.support,
+      configured,
+      delivery,
+      activationPath,
+    } as const;
+
+    if (!configured) {
+      return hostProbe(base, "disabled", "none", false, `${host} continuation is not enabled in this repository.`, `Run aiu init --tool ${host} if this harness should use Umpire continuation.`);
+    }
+    if (profile.supportLevel === "unsupported" || profile.probe.support === "unsupported" || !profile.currentIssueRecovery || delivery === "none") {
+      return hostProbe(base, "unavailable", "none", false, `${host} does not provide current-issue recovery through its canonical host profile.`, "Use a harness with supported Umpire continuation.");
+    }
+    if (!configLoad.ok) {
+      return hostProbe(base, "unavailable", "none", false, `${host} continuation cannot run because the Umpire config is invalid.`, "Fix the reported config errors, then rerun aiu doctor --json.");
+    }
+
+    const configuredModes = configLoad.config.hosts.modes[host] ?? configLoad.config.continuation.modes;
+    const recoveryModes = new Set<AiuContinuationMode>(configuredModes.filter((mode) => mode === "continue" || mode === "repair"));
+    if (recoveryModes.size === 0) {
+      return hostProbe(base, "disabled", "none", false, `${host} is configured to stop without current-issue recovery.`, `Add continue or repair to hosts.modes.${host} to enable current-issue recovery.`);
+    }
+    const policyError = runtimePolicy.errors.find((item) => item.host === host && recoveryModes.has(item.mode));
+    if (policyError) {
+      return hostProbe(base, "unavailable", "none", false, policyError.message, policyError.suggestedNextAction);
+    }
+    if (!managedHostFilesAreCurrent(configLoad.repoRoot, profile.managedFiles)) {
+      return hostProbe(base, "unavailable", "none", false, `${host} managed integration files are missing or differ from the package content.`, `Review the file diagnostics, then run aiu init --tool ${host}.`);
+    }
+    if (host === "grok-build" && !inspectGrokFolderTrust(configLoad.repoRoot).trusted) {
+      return hostProbe(base, "unverified", "none", false, "Grok Build has not trusted the managed project Stop hook.", "Run /hooks-trust in Grok Build, trigger one Stop event, then rerun aiu doctor --json.");
+    }
+
+    const trustedCommands = resolveTrustedCommandPaths(configLoad);
+    if (trustedCommands.length === 0) {
+      return hostProbe(base, "unavailable", "none", false, `${host} has no trusted state command for current-issue recovery.`, "Run aiu init for this repository, then rerun aiu doctor --json.");
+    }
+    const missingCommand = trustedCommands.find((command) => !command.found);
+    if (missingCommand) {
+      return hostProbe(base, "unavailable", "none", false, `${host} cannot run trusted state command ${missingCommand.sourceId} because ${missingCommand.executable} is unavailable.`, "Install the executable or update the trusted command argv descriptor, then rerun aiu doctor --json.");
+    }
+
+    const activation = readAiuHostActivation(continuationPaths, host);
+    if (!activation || activation.delivery !== delivery) {
+      const trustSteps = profile.trustSteps.join(" ");
+      const nextAction = trustSteps
+        ? `${trustSteps} Then start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`
+        : `Start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`;
+      return hostProbe(base, "unverified", "none", false, `${host} managed files are ready, but this integration has not been observed running.`, nextAction);
+    }
+    const trustedStateFingerprint = createAiuTrustedStateFingerprint(configLoad.config.trustedStateCommands);
+    if (activation.trustedStateFingerprint !== trustedStateFingerprint) {
+      return hostProbe(base, "unverified", "none", false, `${host} has not verified the current trusted state command configuration.`, `Start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`);
+    }
+
+    return hostProbe(
+      base,
+      "active",
+      delivery,
+      true,
+      `${host} continuation was observed through the managed ${activation.event === "stop-hook" ? "Stop hook" : "plugin"}.`,
+      "No action is required.",
+      activation.observedAt,
+    );
+  }));
+}
+
+function managedHostFilesAreCurrent(repoRoot: string, files: readonly { readonly relativePath: string; readonly content: string }[]): boolean {
+  return files.length > 0 && files.every((file) => {
+    try {
+      return normalizeText(readFileSync(path.join(repoRoot, file.relativePath), "utf8")) === normalizeText(file.content);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function hostProbe(
+  base: Pick<AiuHostContinuationProbe, "host" | "support" | "probeSupport" | "configured" | "delivery" | "activationPath">,
+  state: AiuHostProbeState,
+  effectiveDelivery: AiuHostPromptDelivery,
+  currentIssueRecovery: boolean,
+  reason: string,
+  nextAction: string,
+  observedAt?: string,
+): AiuHostContinuationProbe {
+  return Object.freeze({
+    ...base,
+    state,
+    effectiveDelivery,
+    currentIssueRecovery,
+    ...(observedAt ? { observedAt } : {}),
+    reason,
+    nextAction,
+  });
+}
+
+function checkHostContinuationProbes(probes: readonly AiuHostContinuationProbe[]): readonly AiuDoctorCheck[] {
+  return probes.filter((probe) => probe.configured).map((probe) => {
+    const status: AiuHealthStatus = probe.state === "active" || probe.state === "disabled"
+      ? "ok"
+      : probe.state === "unverified"
+        ? "warning"
+        : "error";
+    return check(
+      `host-continuation-${probe.host}`,
+      "host",
+      status,
+      `host-continuation-${probe.state}`,
+      probe.reason,
+      probe.activationPath,
+      probe.nextAction,
+    );
+  });
 }
 
 function checkTrustedCommands(paths: AiuResolvedPaths): readonly AiuDoctorCheck[] {

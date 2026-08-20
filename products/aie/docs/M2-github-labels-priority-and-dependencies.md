@@ -41,7 +41,6 @@ M2 intentionally does not complete:
 - branch creation or branch verification. That is M3.
 - installed agent instructions and `/make-it-so`. Those are M4.
 - PR review gates and shipping. Those are M5.
-- legacy script cleanup. That is M6.
 - Bootstrap-owned spec, milestone, or issue generation.
 
 ---
@@ -469,10 +468,9 @@ It must not:
 - generate issue batches from a spec
 - silently overwrite existing config
 - install agent instructions
-- clean up legacy scripts
 - create a seed issue unless an explicit future flag requests it
 
-Bootstrap owns spec, milestone, and issue generation. Init/instruction installation is M4. Legacy cleanup is M6.
+Bootstrap owns spec, milestone, and issue generation. Init and instruction installation are M4.
 
 ### 5.2 - Prime Modes
 

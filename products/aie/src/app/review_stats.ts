@@ -3,7 +3,6 @@ import { createCliError, isCliError, renderCliErrorText, type CliErrorShape } fr
 import { supportsReviewStats } from '@tjalve/qube-core';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
-import { reviewRoundId } from '../review_round.js';
 
 export const DEFAULT_REVIEW_STATS_WINDOW = 20;
 export const MAX_REVIEW_STATS_WINDOW = 50;
@@ -152,7 +151,7 @@ function laneNames(value: unknown): string[] | null {
   return lanes.sort();
 }
 
-function parseLaneReviews(value: unknown, prNumber: number): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
+function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
   if (value === undefined || value === null) {
     return { records: null, reason: 'No trusted QUBE lane review metadata was found.' };
   }
@@ -171,12 +170,6 @@ function parseLaneReviews(value: unknown, prNumber: number): { records: LaneRevi
     if (!nonEmptyString(candidate.head) || candidate.head !== candidate.head.trim() || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, recommendation, status, or publication time.` };
     }
-    if (candidate.expectedLanes === undefined || candidate.expectedLanes === null) {
-      // Older lane markers predate the expected-lane-set and severity-aware
-      // counts; without them exact convergence values cannot be computed, so
-      // the pull request degrades with a reason instead of fabricated zeros.
-      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} predates the expected-lane-set metadata; convergence stats cover reviews published after severity-aware lane markers.` };
-    }
     const expectedLanes = laneNames(candidate.expectedLanes);
     if (!expectedLanes) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} declared a malformed expected lane set.` };
@@ -192,30 +185,21 @@ function parseLaneReviews(value: unknown, prNumber: number): { records: LaneRevi
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid bodyFindingCount.` };
     }
     const blockingFindingCount = candidate.blockingFindingCount;
-    if (blockingFindingCount !== null && blockingFindingCount !== undefined && !nonNegativeInteger(blockingFindingCount)) {
-      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid blockingFindingCount.` };
-    }
-    const exactCount = nonNegativeInteger(blockingFindingCount) ? blockingFindingCount : null;
-    if (candidate.recommendation === 'request-changes' && exactCount === null) {
+    if (!nonNegativeInteger(blockingFindingCount)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} did not provide an exact severity-aware blocking finding count.` };
     }
-    if (candidate.recommendation !== 'request-changes' && exactCount !== null && exactCount > 0) {
+    if (candidate.recommendation !== 'request-changes' && blockingFindingCount > 0) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} contradicted its recommendation with a positive blocking finding count.` };
     }
-    // Round membership: an explicit round id wins; markers that predate the
-    // round field derive the deterministic id the publisher would have
-    // minted from their declared expected lane set.
-    const explicitRound = nonEmptyString(candidate.round) ? candidate.round.trim() : null;
-    const issueNumber = typeof candidate.issueNumber === 'number' && Number.isSafeInteger(candidate.issueNumber) && candidate.issueNumber > 0 ? candidate.issueNumber : null;
-    if (explicitRound === null && issueNumber === null) {
-      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} carries neither a round id nor the issue number needed to derive one.` };
+    if (!nonEmptyString(candidate.round) || candidate.round !== candidate.round.trim()) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} did not provide a valid round id.` };
     }
     records.push({
       head: candidate.head,
       lane: candidate.lane,
-      round: explicitRound ?? reviewRoundId({ prNumber, headSha: candidate.head, expectedLanes, issueNumber: issueNumber as number }),
+      round: candidate.round,
       recommendation: candidate.recommendation,
-      blockingFindingCount: candidate.recommendation === 'request-changes' ? exactCount ?? 0 : 0,
+      blockingFindingCount,
       expectedLanes,
       publishedAt: Date.parse(candidate.publishedAt),
     });
@@ -298,7 +282,7 @@ function summarizePullRequest(input: ReviewStatsInput): {
   if (input.unavailableReason) {
     return { pullRequest: noLaneEvidence(input, input.unavailableReason), blockingAfterFirstHead: 0, laneCounts: new Map() };
   }
-  const parsed = parseLaneReviews(input.trustedLaneReviews, input.number);
+  const parsed = parseLaneReviews(input.trustedLaneReviews);
   if (!parsed.records) {
     return { pullRequest: noLaneEvidence(input, parsed.reason), blockingAfterFirstHead: 0, laneCounts: new Map() };
   }

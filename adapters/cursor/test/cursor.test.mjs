@@ -16,6 +16,44 @@ const context = {
 };
 
 describe("Cursor isolated review adapter", () => {
+  it("publishes a truthful Cursor host profile", () => {
+    assert.deepEqual(cursor.cursorHostProfile.executables, {
+      names: ["cursor-agent", "agent"],
+      windowsNames: ["cursor-agent.exe", "agent.exe"],
+    });
+    assert.equal(cursor.cursorHostProfile.instructionTarget.path, "AGENTS.md");
+    assert.equal(cursor.cursorHostProfile.makeItSo.path, ".cursor/commands/make-it-so.md");
+    assert.equal(cursor.cursorHostProfile.makeItSo.invocation, "/make-it-so");
+    assert.equal("commandTargets" in cursor.cursorHostProfile, false);
+    assert.equal("instructionTargets" in cursor.cursorHostProfile, false);
+    assert.equal("todo" in cursor.cursorHostProfile, false);
+    assert.equal("dialogue" in cursor.cursorHostProfile, false);
+    assert.equal("hooks" in cursor.cursorHostProfile, false);
+    assert.equal("supportsProjectCommands" in cursor.cursorHostProfile, false);
+    assert.equal(cursor.cursorHostProfile.taskList.support, "unsupported");
+    assert.equal(cursor.cursorHostProfile.subagents.support, "unsupported");
+    assert.equal(cursor.cursorHostProfile.review.local.support, "unsupported");
+    assert.deepEqual(cursor.cursorHostProfile.review.local.agents, []);
+    assert.equal(cursor.cursorHostProfile.review.isolated.support, "supported");
+    assert.equal(cursor.cursorHostProfile.review.isolated.readOnly, true);
+    assert.deepEqual(cursor.cursorHostProfile.review.isolated.agents, []);
+    assert.equal("executableNames" in cursor.cursorHostProfile.modelDiscovery, false);
+    assert.equal(cursor.cursorHostProfile.umpire.continuation.support, "unsupported");
+    assert.equal(cursor.cursorHostProfile.trust.required, false);
+
+    const calls = [];
+    const models = cursor.cursorHostProfile.modelDiscovery.listModels({
+      executable: "node",
+      prefixArgs: ["cursor-script.js"],
+      runCommand(executable, args) {
+        calls.push([executable, args]);
+        return "Available models\nmodel-a - Model A\nmodel-b - Model B\n";
+      },
+    });
+    assert.deepEqual(models, ["model-a", "model-b"]);
+    assert.deepEqual(calls, [["node", ["cursor-script.js", "models"]]]);
+  });
+
   it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
@@ -64,6 +102,15 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(built.args.includes("--sandbox"), false);
     assert.equal(built.args.includes("disabled"), false);
     assert.deepEqual(cursor.buildCursorInvocation({ ...context, model: null }, "win32").args, ["--acp-review", "--workspace", "/repo"]);
+  });
+
+  it("rejects a separate effort instead of recording an effort that Cursor did not use", () => {
+    for (const platform of ["win32", "linux"]) {
+      assert.throws(
+        () => cursor.buildCursorInvocation({ ...context, effort: "high" }, platform),
+        /does not support a separate reasoning effort/,
+      );
+    }
   });
 
   it("parses exactly one successful terminal result", () => {

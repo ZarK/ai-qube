@@ -73,7 +73,6 @@ export interface UiAuditOptions {
 
 export const AUDIT_HEAD_STAMP_NAME = 'head-stamp.json';
 export const DEFAULT_UI_AUDIT_EVIDENCE_ROOT = '~/.qube/verification';
-export const LEGACY_UI_AUDIT_EVIDENCE_ROOT = '~/github-verification';
 
 export function uiAuditEvidenceDirectory(
   issueNumber: number,
@@ -164,21 +163,6 @@ export function resolveUiAuditNamespaceRoot(
   }
   const resolved = isAbsolute(expanded) ? normalize(expanded) : normalize(join(homeDirectory, expanded));
   return { ok: true, root: resolved };
-}
-
-export function legacyUiAuditRepositoryDirectory(repoRoot: string | undefined, homeDirectory: string): string {
-  const resolved = resolveUiAuditNamespaceRoot(LEGACY_UI_AUDIT_EVIDENCE_ROOT, homeDirectory);
-  if (!resolved.ok) return join(homeDirectory, 'github-verification', safeSegment(repoRoot ? basename(repoRoot) : 'repository'));
-  return join(resolved.root, safeSegment(repoRoot ? basename(repoRoot) : 'repository'));
-}
-
-export function legacyUiAuditTreeExists(repoRoot: string | undefined, homeDirectory: string): boolean {
-  const directory = legacyUiAuditRepositoryDirectory(repoRoot, homeDirectory);
-  try {
-    return existsSync(directory) && statSync(directory).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function hasNonEmptyFile(path: string): boolean {
@@ -391,10 +375,6 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
     writeCompleteAuditStamp(directory, headSha);
   }
   const warnings = buildWarnings(config);
-  const legacyDirectory = legacyUiAuditRepositoryDirectory(options.repoRoot, home);
-  if (legacyUiAuditTreeExists(options.repoRoot, home) && normalize(directory) !== normalize(join(legacyDirectory, String(options.issueNumber)))) {
-    warnings.push(`A leftover UI audit directory exists at ${redact(legacyDirectory)}. Init can keep that path or use the QUBE default. This command did not copy or delete it.`);
-  }
   const result: UiAuditResult = {
     ok: true,
     command: 'audit ui',

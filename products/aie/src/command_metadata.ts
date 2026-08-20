@@ -22,9 +22,6 @@ export interface CommandSchema {
   exitCodes: number[];
   stageValues: string[];
   reviewAgentValues: string[];
-  migrationModeValues: string[];
-  migrationActionValues: string[];
-  migrationConfidenceValues: string[];
   helpForms: string[];
   examples: string[];
 }
@@ -81,19 +78,11 @@ function toCommandSchema(command: CommandMetadata<ExecutorCommandExtensions>): C
     exitCodes: (command.exitCodes ?? []).map(exitCode => exitCode.code),
     stageValues: [...(command.extensions?.stageValues ?? [])],
     reviewAgentValues: [...(command.extensions?.reviewAgentValues ?? [])],
-    migrationModeValues: [...(command.extensions?.migrationModeValues ?? [])],
-    migrationActionValues: [...(command.extensions?.migrationActionValues ?? [])],
-    migrationConfidenceValues: [...(command.extensions?.migrationConfidenceValues ?? [])],
     helpForms: getHelpForms(command.name),
   };
 }
 
 function toLegacyFlagDetails(flag: NonNullable<CommandMetadata['flags']>[number]): CommandFlagSchema[] {
-  const legacyNames = getLegacyFlagNames(flag);
-  if (legacyNames) {
-    return legacyNames.map(name => toLegacyFlagDetail(flag, name, flag.description));
-  }
-
   const base = toLegacyFlagDetail(flag, flag.name, flag.description);
   const details = [base];
   if (flag.negatable === true) {
@@ -106,14 +95,6 @@ function toLegacyFlagDetails(flag: NonNullable<CommandMetadata['flags']>[number]
     }
   }
   return details;
-}
-
-function getLegacyFlagNames(flag: NonNullable<CommandMetadata['flags']>[number]): string[] | undefined {
-  const legacyForms = flag.extensions?.legacyForms;
-  if (!Array.isArray(legacyForms) || legacyForms.some(form => typeof form !== 'string')) {
-    return undefined;
-  }
-  return legacyForms;
 }
 
 function toLegacyFlagDetail(flag: NonNullable<CommandMetadata['flags']>[number], name: string, description: string): CommandFlagSchema {

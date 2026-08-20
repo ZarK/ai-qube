@@ -8,6 +8,7 @@ import {
   createAiuTrustedStateEnvelope,
   type AiuGateEvidenceState,
   type AiuHostSessionState,
+  type AiuContinuationPolicyState,
   type AiuPlanningState,
   type AiuQualityState,
   type AiuRepositoryState,
@@ -148,7 +149,10 @@ describe("continuation decision engine", () => {
   });
 
   it("repairs invalid active review, work, repository, and gate state before continuing", () => {
-    assertDecision(decideAiuContinuation({ states: [env(review("blocked"))] }), "repair", "repair-active-review");
+    const reviewAction = { id: "review-changes-requested", argv: ["aie", "pr", "gate", "90", "--json"] as const };
+    const reviewRepair = decideAiuContinuation({ states: [env(review("blocked", { targetId: "90", nextAction: reviewAction }))] });
+    assertDecision(reviewRepair, "repair", "repair-active-review");
+    assert.deepEqual(reviewRepair.selectedItem?.command?.argv, reviewAction.argv);
     assertDecision(
       decideAiuContinuation({ states: [env(workQueue({ activeItems: [workItem("47", "active", { status: "fail" })] }))] }),
       "repair",
@@ -510,6 +514,22 @@ describe("continuation decision engine", () => {
     assert.equal(result.selectedMode, "stop");
   });
 
+  it("uses trusted workflow policy to restrict configured continuation and preserves commands", () => {
+    const nextAction = { id: "continue-active-work", argv: ["aie", "branch", "check", "47"] as const };
+    const allowed = decideAiuContinuation({
+      states: [env(workQueue({ activeItems: [workItem("47", "active", { nextAction })] }))],
+      policy: { modes: ["continue", "repair", "wait", "stop"] },
+    });
+    assertDecision(allowed, "continue", "continue-active-work");
+    assert.deepEqual(allowed.selectedItem?.command?.argv, nextAction.argv);
+
+    const restricted = decideAiuContinuation({
+      states: [env(continuationPolicy(["stop"])), env(workQueue({ activeItems: [workItem("47", "active", { nextAction })] }))],
+      policy: { modes: ["continue", "repair", "wait", "stop"] },
+    });
+    assertDecision(restricted, "stop", "stop-safety-block");
+  });
+
 });
 
 async function loadDecision(): Promise<typeof Decision> {
@@ -578,6 +598,19 @@ function workQueue(overrides: Partial<AiuWorkQueueState> = {}): AiuWorkQueueStat
     blockedItems: [],
     unknownItems: [],
     ...overrides,
+  };
+}
+
+function continuationPolicy(allowedModes: AiuContinuationPolicyState["allowedModes"]): AiuContinuationPolicyState {
+  return {
+    kind: "continuation-policy",
+    status: "pass",
+    allowedModes,
+    stopOnUnknownState: true,
+    stopOnStaleState: true,
+    stopOnSupplyChainApprovalBlock: true,
+    allowProviderMutation: false,
+    allowBackgroundScheduling: false,
   };
 }
 

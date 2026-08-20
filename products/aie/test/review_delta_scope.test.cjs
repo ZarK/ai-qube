@@ -320,7 +320,7 @@ describe('review delta scope', () => {
         return { args, exitCode: 1, stdout: '', stderr: 'forced fail' };
       },
       [],
-      undefined,
+      { host: 'codex' },
       selection,
     );
     assert.match(bundlePrompt, /Delta re-review since approved head aaa111/);

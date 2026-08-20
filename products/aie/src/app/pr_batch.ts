@@ -72,7 +72,7 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
   // pr.headSha independently of this read.
   const reviewProvider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const reviewSnapshot = await reviewProvider.loadPullRequestReview(pr.number);
-  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const reviewSources = resolveReviewSources(config);
   const providerFindings = reviewSnapshot.pr.headRefOid === pr.headSha ? ingestProviderReviewFindings(reviewSnapshot.item, reviewSources) : [];
   const batch = buildFixBatch(repoRoot, pr.issueNumbers, pr.number, pr.headSha, localReview.evidence, providerFindings);
   const lanesWithEvidence = [...new Set(localReview.evidence.flatMap(entry => entry.lanes.map(lane => lane.id)))];

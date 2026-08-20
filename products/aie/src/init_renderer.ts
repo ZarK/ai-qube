@@ -1,13 +1,14 @@
 import type { Config } from './config/index.js';
-import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderGrokEconomyAgent, renderGrokReviewFocusAgent, renderMakeItSoCommand, renderModelRoutingRunnerFiles, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
+import type { AgentHostId, AgentHostProfile, AgentHostReviewAgentRenderer, AgentHostReviewAgentTarget, InstructionTarget } from './agent_hosts.js';
+import { renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderGrokEconomyAgent, renderGrokReviewFocusAgent, renderMakeItSoCommand, renderMakeItSoSkill, renderModelRoutingRunnerFiles, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
 import { economyCatalogAgent } from './review_catalog.js';
+import { reviewModeOf } from './review_mode.js';
 
 export interface InitRenderContext {
   workspaceAieRunner?: string | null;
 }
 
-export type InitRenderedFileKind = 'instruction' | 'command';
+export type InitRenderedFileKind = 'instruction' | 'command' | 'skill' | 'subagent';
 
 export interface InitRenderedFile {
   id: string;
@@ -32,25 +33,18 @@ interface GroupedInstructionTarget {
 function groupInstructionTargets(profiles: AgentHostProfile[]): GroupedInstructionTarget[] {
   const byPath = new Map<string, GroupedInstructionTarget>();
   for (const profile of profiles) {
-    for (const target of profile.instructionTargets) {
-      const existing = byPath.get(target.path);
-      if (existing) {
-        existing.profiles.push(profile);
-      } else {
-        byPath.set(target.path, { target, profiles: [profile] });
-      }
+    const target = profile.instructionTarget;
+    const existing = byPath.get(target.path);
+    if (existing) {
+      existing.profiles.push(profile);
+    } else {
+      byPath.set(target.path, { target, profiles: [profile] });
     }
   }
   return [...byPath.values()].sort((left, right) => left.target.path.localeCompare(right.target.path));
 }
 
-function commandEnabled(config: Config, target: CommandTarget, hostId: AgentHostId): boolean {
-  return commandTargetEnabled(config, target, hostId);
-}
-
-function commandBody(config: Config, target: CommandTarget, context: InitRenderContext): string {
-  const workspaceRunner = context.workspaceAieRunner ?? null;
-  if (target.renderer === 'make-it-so') return renderMakeItSoCommand(config);
+function reviewAgentBody(config: Config, target: AgentHostReviewAgentTarget): string {
   if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent(config);
   if (target.renderer === 'claude-review-focus-agent') return renderClaudeReviewFocusAgent(config);
   if (target.renderer === 'opencode-review-focus-agent') return renderOpenCodeReviewFocusAgent(config);
@@ -68,7 +62,13 @@ function commandBody(config: Config, target: CommandTarget, context: InitRenderC
   if (target.renderer === 'grok-review-digest-agent') return renderGrokEconomyAgent(economyCatalogAgent('qube-review-digest'), config);
   if (target.renderer === 'grok-review-librarian-agent') return renderGrokEconomyAgent(economyCatalogAgent('qube-review-librarian'), config);
   const exhaustive: never = target.renderer;
-  throw new Error(`Unsupported init command renderer ${exhaustive as CommandRenderer}. Next action: use a supported Executor host profile command target.`);
+  throw new Error(`Unsupported native review-agent renderer ${exhaustive as AgentHostReviewAgentRenderer}.`);
+}
+
+function nativeReviewEnabled(config: Config, profile: AgentHostProfile): boolean {
+  return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed')
+    && reviewModeOf(config) !== 'isolated'
+    && config.localReviewAgents.includes(profile.id);
 }
 
 export function renderInitFiles(config: Config, profiles: AgentHostProfile[], context: InitRenderContext = {}): InitRenderResult {
@@ -85,20 +85,22 @@ export function renderInitFiles(config: Config, profiles: AgentHostProfile[], co
 
   const warnings: string[] = [];
   for (const profile of profiles) {
-    const enabledCommandTargets = profile.commandTargets.filter(target => commandEnabled(config, target, profile.id));
-    if (!profile.supportsProjectCommands) {
-      const instructionTargets = profile.instructionTargets.map(target => target.path).join(', ');
-      warnings.push(`${profile.displayName} project command files are not installed; ${profile.displayName} uses the managed ${instructionTargets} always-loaded instructions.`);
-    } else if (enabledCommandTargets.length === 0 && profile.commandTargets.length > 0) {
-      warnings.push(`${profile.displayName} project command files are configured but none are enabled for the current review policy.`);
-    }
-    for (const target of profile.commandTargets) {
-      if (!commandEnabled(config, target, profile.id)) continue;
+    files.push({
+      id: profile.makeItSo.id,
+      relativePath: profile.makeItSo.path,
+      kind: profile.makeItSo.kind,
+      body: profile.makeItSo.kind === 'skill' ? renderMakeItSoSkill(config) : renderMakeItSoCommand(config),
+      allowAppend: false,
+      hosts: [profile.id],
+      description: profile.makeItSo.description,
+    });
+    if (!nativeReviewEnabled(config, profile)) continue;
+    for (const target of profile.review.local.agents) {
       files.push({
         id: target.id,
         relativePath: target.path,
-        kind: 'command',
-        body: commandBody(config, target, context),
+        kind: 'subagent',
+        body: reviewAgentBody(config, target),
         allowAppend: false,
         hosts: [profile.id],
         description: target.description,

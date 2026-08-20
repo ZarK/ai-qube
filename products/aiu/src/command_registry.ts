@@ -439,7 +439,7 @@ export const initCommand = defineCommand({
     jsonFlag,
     defineFlag({
       name: "tool",
-      description: "Select host tooling to initialize.",
+      description: "Select one agent harness or a canonical comma-separated set.",
       type: "option",
       options: AIU_INIT_TOOLS,
       defaultValue: "all",
@@ -463,6 +463,10 @@ export const initCommand = defineCommand({
     defineExample({
       description: "Initialize only Codex host files.",
       command: "aiu init --tool codex",
+    }),
+    defineExample({
+      description: "Initialize OpenCode and Claude Code in one plan.",
+      command: "aiu init --tool opencode,claude-code",
     }),
     defineExample({
       description: "Replace conflicting managed files intentionally.",
@@ -505,6 +509,11 @@ export const initCommand = defineCommand({
       code: 2,
       category: "usage",
       description: "Command usage was invalid.",
+    },
+    {
+      code: 3,
+      category: "validation",
+      description: "Init found conflicting repository paths and did not write the plan.",
     },
     {
       code: 1,
@@ -567,109 +576,6 @@ export const hookStopCommand = defineCommand({
       code: 0,
       category: "success",
       description: "Hook input was handled and a host response was emitted.",
-    },
-    {
-      code: 2,
-      category: "usage",
-      description: "Command usage was invalid.",
-    },
-    {
-      code: 1,
-      category: "unexpected",
-      description: "Command failed unexpectedly.",
-    },
-  ],
-});
-
-export const migrateCommand = defineCommand({
-  kind: "command",
-  name: "migrate",
-  description: "Audit and explicitly apply package-backed host migration while preserving repository state and policy.",
-  flags: [
-    jsonFlag,
-    defineFlag({
-      name: "dry-run",
-      description: "Render the migration audit plan without writing files.",
-      type: "boolean",
-    }),
-    defineFlag({
-      name: "apply",
-      description: "Write package-backed config and managed host files for migration-safe paths.",
-      type: "boolean",
-    }),
-    defineFlag({
-      name: "force",
-      description: "Replace differing managed host files explicitly; never deletes preserved state or cleanup candidates.",
-      type: "boolean",
-    }),
-    defineFlag({
-      name: "cleanup",
-      description: "Inspect or remove confirmed old migration assets without changing host/config apply behavior.",
-      type: "boolean",
-    }),
-    defineFlag({
-      name: "confirm",
-      description: "Comma-separated cleanup candidate relative paths or fingerprints to remove.",
-      type: "string",
-    }),
-  ],
-  examples: [
-    defineExample({
-      description: "Inspect migration work without writing files.",
-      command: "aiu migrate --dry-run --json",
-    }),
-    defineExample({
-      description: "Apply package-backed migration changes for safe paths.",
-      command: "aiu migrate --apply --json",
-    }),
-    defineExample({
-      description: "Replace differing managed host files after review.",
-      command: "aiu migrate --apply --force --json",
-    }),
-    defineExample({
-      description: "Inspect cleanup candidates without deleting files.",
-      command: "aiu migrate --cleanup --dry-run --json",
-    }),
-    defineExample({
-      description: "Remove a confirmed cleanup candidate by path or fingerprint.",
-      command: "aiu migrate --cleanup --confirm scripts/aiu-stop.js --json",
-    }),
-  ],
-  output: {
-    formats: ["human", "json"],
-    defaultFormat: "human",
-  },
-  interactions: {
-    json: true,
-    dryRun: {
-      supported: true,
-    },
-    noColor: true,
-    nonInteractive: true,
-    ttyPrompt: false,
-  },
-  mutation: {
-    categories: ["local-files", "local-config"],
-  },
-  errors: [
-    {
-      kind: "migration-conflict",
-      description: "Migration apply found paths requiring review or explicit force before replacement.",
-    },
-    {
-      kind: "migration-cleanup-conflict",
-      description: "Migration cleanup refused an unsafe or unconfirmed removal.",
-    },
-    {
-      kind: "invalid-command-usage",
-      description: "Migration command usage was invalid.",
-    },
-  ],
-  exitCodes: [
-    {
-      code: 0,
-      category: "success",
-      description: "Migration audit or explicit apply completed without provider, git, or cleanup mutations.",
     },
     {
       code: 2,
@@ -835,5 +741,5 @@ export const whipCommand = defineCommand({
 });
 
 export const AIU_COMMAND_REGISTRY = createCommandRegistry({
-  commands: [configCommand, doctorCommand, hookStopCommand, initCommand, migrateCommand, pathsCommand, statusCommand, whipCommand],
+  commands: [configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, whipCommand],
 });

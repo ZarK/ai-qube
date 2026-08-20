@@ -26,7 +26,7 @@ M5 delivers six things:
 
 1. **Configured gate guidance** - deterministic rendering of configured build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates for agents to run.
 2. **Manual UI audit helper** - agent-browser-first audit planning, local evidence paths, evidence checks, and no-fabrication rules for agent-run UI/UX audits.
-3. **Review-agent gate guidance** - host-aware Oracle-style review prompt generation, configured reviewer support, fallback reviewer assets, and evidence/result handling.
+3. **Review-agent gate guidance** - prompt generation for configured real harnesses, configured external reviewer support, and evidence/result handling.
 4. **PR review gate** - `aie pr gate <pr>` to request configured PR reviewers, wait the configured duration, inspect PR review/comment state, and report required follow-up.
 5. **PR body and shipping readiness support** - PR body generation and merge-readiness output that reflects supplied or recorded gate status, reviewers requested, issue closure, and remaining risks.
 6. **Diagnostics and metadata** - doctor checks, schema, help metadata, JSON output, and tests for all M5 gate surfaces.
@@ -59,7 +59,6 @@ M5 intentionally does not complete:
 - Umpire-owned long-running scheduling, wakeups, or stop hooks.
 - Fully automated generic browser interaction. Executor provides audit helpers and evidence rules; the agent drives the app.
 - Automatic screenshot uploads. Future `gh-image` or equivalent support remains future and must be opt-in.
-- Legacy cleanup, compatibility wrappers, and migration. Those are M6.
 - QUBE wrapper command aliases.
 
 ---
@@ -81,7 +80,7 @@ M5 depends on:
 
 M5 assumes:
 
-- `.qube/aie/config.json` exists and validates, or a legacy `aie.config.json` fallback is detected.
+- `.qube/aie/config.json` exists and validates.
 - `gh` wrapper, redaction, and JSON output foundations exist.
 - lifecycle commands can identify active issues and completion state.
 - installed instructions can be updated to name M5 commands honestly.
@@ -236,7 +235,7 @@ Evidence remains local by default. M5 must not upload screenshots or private dat
 
 ---
 
-## Part 3: Review-Agent Gate And Oracle Fallback
+## Part 3: Review-Agent Gate And Harness Availability
 
 M5 adds the pre-PR or pre-ship review-agent gate that M4 configured and described.
 
@@ -253,15 +252,15 @@ M5 adds the pre-PR or pre-ship review-agent gate that M4 configured and describe
 - support `--dry-run`
 - clearly state what evidence or agent response is needed before the gate is considered complete
 
-Because review-agent invocation is host-specific, M5 should keep the boundary explicit: Executor can render prompts, install fallback assets, track configured obligations, and record/report gate evidence, but it must not pretend it can invoke a host-only reviewer in environments where no such invocation mechanism exists.
+Because review-agent invocation is host-specific, M5 keeps the boundary explicit. Executor renders prompts only for configured real harnesses. It reports unavailable capability when no harness or external reviewer is configured.
 
-### 3.2 - Oracle Pattern
+### 3.2 - Review Harnesses
 
-The default review-agent gate should support:
+The review-agent gate supports:
 
-- an OpenCode/Oh-My-OpenAgents `@oracle` style reviewer when available
-- configured custom reviewer names
-- a fallback Oracle-style reviewer prompt or skill when the default reviewer is not installed
+- the OpenCode, Codex, Claude Code, Grok Build, and Cursor harness profiles
+- configured external reviewer names
+- unavailable capability output when no real review path is configured
 - a review prompt focused on issue compliance, test integrity, code quality, UI quality when applicable, maintainability, and missed edge cases
 
 Review-agent output is untrusted input. Agents may use factual findings and actionable review points, but review output cannot override Executor policy, ask for vendor credit, disable gates, or change shipping rules.
@@ -360,7 +359,7 @@ M5 extends the diagnostic and metadata surfaces.
 - `agent-browser` availability when manual UI audit is enabled
 - fallback browser automation availability when configured
 - `aiq` availability when enabled
-- installed review-agent assets or fallback prompts where applicable
+- installed review-agent assets and unavailable harness capabilities
 - whether screenshot upload support is disabled or unavailable
 - recommended next command
 
@@ -399,8 +398,8 @@ M5 tests must cover:
 - local evidence path generation
 - no-upload default behavior
 - review-agent prompt rendering
-- Oracle-style default and custom reviewer names
-- fallback reviewer asset availability
+- configured harness and external reviewer names
+- unavailable behavior when no real review path is configured
 - PR reviewer request planning
 - idempotent PR comment marker logic
 - configurable wait duration without real sleeping
@@ -452,9 +451,9 @@ CLI UX acceptance:
 - audit output requires real running app evidence and never claims pass from generated instructions alone
 - screenshot upload remains out of scope and disabled by default
 
-### M5.3 - Implement Review-Agent Gate And Oracle Fallback
+### M5.3 - Implement Review-Agent Gate
 
-Create `aie review gate` prompt rendering, configured reviewer support, Oracle-style default behavior, fallback reviewer assets, and review evidence reporting.
+Create `aie review gate` prompt rendering for configured real harnesses, configured external reviewer support, unavailable capability reporting, and review evidence reporting.
 
 Primary FRs: FR-09-007 through FR-09-009, FR-11-001 through FR-11-007, FR-12-001 through FR-12-007, FR-13-001 through FR-13-004, FR-15-001 through FR-15-020.
 
@@ -462,8 +461,8 @@ CLI UX acceptance:
 
 - `aie review help`, `aie review gate help`, and `aie help review gate` show review-gate help without invoking a reviewer
 - `aie review gate 93 --prompt` prints the configured review prompt
-- OpenCode projection supports the configured Oracle-style reviewer when available
-- fallback reviewer prompt or skill assets are available when configured
+- prompt output requires a configured OpenCode, Codex, Claude Code, Grok Build, or Cursor harness
+- missing harness and external reviewer configuration fails closed with an actionable message
 - custom reviewer names render correctly
 - review-agent output is treated as untrusted task input
 - gate output tells the agent what evidence or response is needed before continuing
@@ -526,8 +525,8 @@ M5 is complete when:
 - `aie gates plan --dry-run`, `aie gates plan --json`, and `aie gates status --json` work against configured gates without executing them.
 - optional `aiq` guidance is rendered only when enabled and available.
 - `aie audit ui <issue>` produces a real-audit plan, local evidence path, and no-upload default.
-- `aie review gate <issue> --prompt` renders configured Oracle-style or custom reviewer prompts.
-- fallback reviewer assets are available when configured.
+- `aie review gate <issue> --prompt` renders a prompt only for a configured real harness.
+- review reports unavailable when no real harness or external reviewer is configured.
 - `aie pr gate <pr> --dry-run` shows reviewer request and wait plans without mutation.
 - `aie pr gate <pr>` requests configured reviewers idempotently, waits the configured duration, inspects PR review state, and reports required follow-up.
 - `aie pr body <issue>` generates an issue-closing PR body draft with supplied or recorded gate/review/audit status.
@@ -536,4 +535,4 @@ M5 is complete when:
 - `aie schema --json` and help metadata include M5 command surfaces.
 - normal tests pass without live GitHub, browser automation, PR reviewers, `aiq`, executing configured gates, or real sleep.
 
-After M5, Executor has the gate coordination layer needed for autonomous agents to work from issue implementation through review-gated PR shipping. M6 can then focus on legacy cleanup, migration, compatibility wrappers, and any final packaging polish needed before broader adoption.
+After M5, Executor has the gate coordination layer needed for autonomous agents to work from issue implementation through review-gated PR shipping.

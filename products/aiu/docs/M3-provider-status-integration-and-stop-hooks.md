@@ -4,7 +4,7 @@
 
 M3 connects the M2 decision engine to real host integrations. OpenCode should receive safe event-driven continuation prompts, and Codex/Claude Code stop hooks should block stopping only when trusted state says there is clear work to continue.
 
-This milestone wires the M2 decision engine into supported hosts. Older repo-local hooks are handled by migration tooling, not by runtime compatibility paths in the host adapters.
+This milestone wires the M2 decision engine into supported hosts through package-owned adapters.
 
 Repositories can compose OpenCode behavior through the public `@tjalve/aiu/opencode` subpath. Managed host files should stay package-owned; custom wrappers import `createAiuOpenCodeServerPlugin` and compose before/after handlers around the package command delegate.
 

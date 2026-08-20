@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+import { getAgentHostProfileSync } from "@tjalve/aie";
+import { AGENT_HOST_IDS, type AgentHostId } from "@tjalve/qube-core";
 
 import { selectedAdapterInstallSpecs } from "./install_packages.js";
 import { packageName, packageVersion } from "./package.js";
@@ -74,11 +76,13 @@ function declaredPackageVersion(manifest: Record<string, unknown>, name: string)
   return null;
 }
 
-export function instructionTargetsForHosts(hosts: readonly string[]): readonly string[] {
+export function hostSetupTargets(hosts: readonly string[]): readonly string[] {
   const targets = new Set<string>();
   for (const host of hosts) {
-    if (host === "codex" || host === "grok-build" || host === "opencode" || host === "cursor") targets.add("AGENTS.md");
-    if (host === "claude-code") targets.add("CLAUDE.md");
+    if (!(AGENT_HOST_IDS as readonly string[]).includes(host)) continue;
+    const profile = getAgentHostProfileSync(host as AgentHostId);
+    targets.add(profile.instructionTarget.path);
+    targets.add(profile.makeItSo.path);
   }
   return [...targets];
 }
@@ -103,8 +107,7 @@ function managedSectionStatus(content: string): InstallStepStatus | "absent" {
     .replace(/^\s*\n/, "")
     .trimEnd();
   const expected = createHash("sha256").update(normalizeForChecksum(`${body}\n`)).digest("hex");
-  const legacy = createHash("sha256").update(`${body.replace(/\r\n/g, "\n").trimEnd()}\n`).digest("hex");
-  return expected === checksumMatch[1] || legacy === checksumMatch[1] ? "satisfied" : "stale";
+  return expected === checksumMatch[1] ? "satisfied" : "stale";
 }
 
 function installedPackageVersion(root: string, name: string): string | null {
@@ -202,7 +205,7 @@ function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): In
   if (ciKind && !selections.ciProviders.includes(ciKind)) {
     return { stage: "workspace-init", status: "missing", reason: `Workspace CI provider is ${ciKind}, not one of the selected providers.` };
   }
-  const targets = instructionTargetsForHosts(selections.hosts);
+  const targets = hostSetupTargets(selections.hosts);
   let stale = false;
   for (const target of targets) {
     const path = resolveContained(cwd, target);

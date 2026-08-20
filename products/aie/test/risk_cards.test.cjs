@@ -167,8 +167,8 @@ describe('aie risk cards', () => {
     });
     assert.ok(cards.length > 0);
     const fragments = cards.map(card => formatRiskCardReviewerFragment(card));
-    const without = promptStack('code-quality', ['Run local review lane code-quality.'], []);
-    const withCards = promptStack('code-quality', ['Run local review lane code-quality.'], fragments);
+    const without = promptStack('codex', 'code-quality', ['Run local review lane code-quality.'], []);
+    const withCards = promptStack('codex', 'code-quality', ['Run local review lane code-quality.'], fragments);
     const hashWithout = createHash('sha256').update(without.text).digest('hex');
     const hashWith = createHash('sha256').update(withCards.text).digest('hex');
     assert.notEqual(hashWithout, hashWith);

@@ -4,13 +4,13 @@
 
 M1 turns the current repository into a safe `@tjalve/aiu` npm package with a real `aiu` CLI, versioned repository config, dry-runnable host installation, diagnostics, schema output, and release checks.
 
-M1 is the foundation only. It does not implement continuation decisions, runtime migration of older helper semantics, or bundled companion tools.
+M1 is the foundation only. It does not implement continuation decisions or bundle companion tools.
 
 M1 delivers five things:
 
 1. **Package foundation** - package metadata, pnpm, Node 24 baseline, build/type/test/release scripts, publish surface, and no install-time side effects.
 2. **CLI foundation** - metadata-backed help, schema, JSON output, exit codes, no-color behavior, and dry-run conventions.
-3. **Config foundation** - `.qube/aiu/config.json` discovery, conservative defaults, validation, legacy fallback, and typed diagnostics.
+3. **Config foundation** - `.qube/aiu/config.json` discovery, conservative defaults, validation, and typed diagnostics.
 4. **Host install planner** - dry-runnable install plans for OpenCode, Codex, and Claude Code without silent overwrites.
 5. **Diagnostics foundation** - `aiu doctor`, `aiu paths`, and `aiu schema --json` for humans, agents, and tests.
 
@@ -85,7 +85,7 @@ No future command may exist as an executable placeholder.
 
 ## Part 3: Config Foundation
 
-Discover config from `.qube/aiu/config.json` unless a command receives an explicit config path. Legacy `aiu.config.json` remains a compatibility discovery path for existing repositories.
+Discover repository config from `.qube/aiu/config.json` unless a command receives an explicit config path.
 
 The initial schema covers:
 

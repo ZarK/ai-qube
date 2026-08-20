@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -13,44 +13,117 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const monorepoRoot = path.resolve(repoRoot, "../..");
 const qubeCliRoot = path.join(monorepoRoot, "packages/qube-cli");
+const qubeCoreRoot = path.join(monorepoRoot, "packages/qube-core");
+const runtimePackageRoots = [
+  ["@tjalve/qube-cli", qubeCliRoot],
+  ["@tjalve/qube-core", qubeCoreRoot],
+  ["@tjalve/qube-adapter-codex", path.join(monorepoRoot, "adapters/codex")],
+  ["@tjalve/qube-adapter-claude-code", path.join(monorepoRoot, "adapters/claude-code")],
+  ["@tjalve/qube-adapter-opencode", path.join(monorepoRoot, "adapters/opencode")],
+  ["@tjalve/qube-adapter-grok-build", path.join(monorepoRoot, "adapters/grok-build")],
+] as const;
 const tempRoots: string[] = [];
+
+const expectedHostAssets = [
+  ".opencode/plugins/ai-umpire-continuation.ts",
+  ".agents/plugins/marketplace.json",
+  "plugins/ai-umpire/.codex-plugin/plugin.json",
+  "plugins/ai-umpire/hooks/hooks.json",
+  "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
+  ".claude/settings.json",
+  ".grok/hooks/ai-umpire.json",
+] as const;
 
 describe("packed tarball install smoke", () => {
   afterEach(async () => {
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  it("installs the packed package into a blank repo and runs init dry-run", async () => {
+  it("installs the profile-driven package surface and initializes every supported Umpire harness", async () => {
     const root = await createTempRoot("aiu-install-smoke-");
     const packDir = path.join(root, "pack");
     const target = path.join(root, "repo");
     await mkdir(packDir);
     await mkdir(target);
-    const tarball = await packPackage(repoRoot, packDir);
-    const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
-    await createLockedBlankRepo(target, tarball, qubeCliTarball);
+    const packedPackages: PackedPackage[] = [await packRuntimePackage("@tjalve/aiu", repoRoot, packDir)];
+    for (const [name, packageRoot] of runtimePackageRoots) {
+      packedPackages.push(await packRuntimePackage(name, packageRoot, packDir));
+    }
+    await createLockedBlankRepo(target, packedPackages);
 
     await runPnpm(["fetch", "--frozen-lockfile", "--ignore-scripts"], target);
     await rm(path.join(target, "node_modules"), { recursive: true, force: true });
     await runPnpm(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], target);
-    const result = await runPnpm(["exec", "aiu", "init", "--dry-run", "--json"], target);
+    const result = await runPnpm(["exec", "aiu", "init", "--json"], target);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
 
     assert.equal(parsed.ok, true);
     assert.equal(parsed.command, "init");
     assert.equal(parsed.init.ok, true);
-    assert.equal(parsed.init.dryRun, true);
-    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code"]);
-    assert.equal(parsed.init.files.length, 6);
+    assert.equal(parsed.init.dryRun, false);
+    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(
+      parsed.init.hostProfiles.map((profile) => [profile.tool, profile.supportLevel, profile.currentIssueRecovery]),
+      [
+        ["opencode", "supported", true],
+        ["codex", "experimental", true],
+        ["claude-code", "experimental", true],
+        ["grok-build", "experimental", true],
+      ],
+    );
+    assert.deepEqual(parsed.init.files.map((file) => file.relativePath.replaceAll("\\", "/")), expectedHostAssets);
+    assert.equal(parsed.init.files.every((file) => file.operation === "create"), true);
     assert.equal(parsed.init.config.operation, "create");
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
-    assert.equal(existsSync(path.join(target, ".opencode")), false);
-    assert.equal(existsSync(path.join(target, ".agents")), false);
-    assert.equal(existsSync(path.join(target, "plugins")), false);
-    assert.equal(existsSync(path.join(target, ".claude")), false);
-    assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
-    assert.equal(existsSync(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json")), false);
-    assert.equal(existsSync(path.join(target, ".claude", "settings.json")), false);
+    for (const relativePath of expectedHostAssets) {
+      assert.equal(existsSync(path.join(target, ...relativePath.split("/"))), true, relativePath);
+    }
+    assert.match(
+      await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"),
+      /createAiuOpenCodeServerPlugin/,
+    );
+    assert.match(
+      await readFile(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json"), "utf8"),
+      /aiu hook-stop --tool codex/,
+    );
+    assert.match(
+      await readFile(path.join(target, ".claude", "settings.json"), "utf8"),
+      /aiu hook-stop --tool claude-code/,
+    );
+    assert.match(
+      await readFile(path.join(target, ".grok", "hooks", "ai-umpire.json"), "utf8"),
+      /aiu hook-stop --tool grok-build/,
+    );
+
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+      hosts: {
+        enabled: string[];
+        modes: Record<string, string[]>;
+        stopHookBlocking: Record<string, boolean>;
+      };
+    };
+    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(config.hosts.modes.opencode, ["continue", "repair", "wait", "stop"]);
+    for (const host of ["codex", "claude-code", "grok-build"]) {
+      assert.deepEqual(config.hosts.modes[host], ["continue", "repair", "stop"], host);
+    }
+    assert.deepEqual(config.hosts.stopHookBlocking, {
+      opencode: false,
+      codex: true,
+      "claude-code": true,
+      "grok-build": true,
+    });
+
+    const installedAiuRoot = await realpath(path.join(target, "node_modules", "@tjalve", "aiu"));
+    for (const packedPackage of packedPackages) {
+      const installedPackageRoot = packedPackage.name === "@tjalve/aiu"
+        ? installedAiuRoot
+        : path.join(path.dirname(installedAiuRoot), packedPackage.name.slice("@tjalve/".length));
+      const installedManifest = JSON.parse(
+        await readFile(path.join(installedPackageRoot, "package.json"), "utf8"),
+      ) as { version: string };
+      assert.equal(installedManifest.version, packedPackage.manifest.version, packedPackage.name);
+    }
+    assert.equal(existsSync(path.join(target, "node_modules", "@tjalve", "qube-adapter-cursor")), false);
   });
 });
 
@@ -61,9 +134,24 @@ interface InitEnvelope {
     readonly ok: boolean;
     readonly dryRun: boolean;
     readonly tools: string[];
-    readonly files: Array<{ operation: string }>;
+    readonly hostProfiles: Array<{ tool: string; supportLevel: string; currentIssueRecovery: boolean }>;
+    readonly files: Array<{ relativePath: string; operation: string }>;
     readonly config: { operation: string };
   };
+}
+
+interface PackageManifest {
+  readonly name: string;
+  readonly version: string;
+  readonly engines?: Record<string, string>;
+  readonly bin?: Record<string, string> | string;
+  readonly dependencies?: Record<string, string>;
+}
+
+interface PackedPackage {
+  readonly name: string;
+  readonly tarball: string;
+  readonly manifest: PackageManifest;
 }
 
 async function packPackage(packageRoot: string, packDir: string): Promise<string> {
@@ -77,10 +165,17 @@ async function packPackage(packageRoot: string, packDir: string): Promise<string
   return path.isAbsolute(packedName) ? packedName : path.join(packDir, packedName);
 }
 
-async function createLockedBlankRepo(target: string, tarball: string, qubeCliTarball: string): Promise<void> {
+async function packRuntimePackage(name: string, packageRoot: string, packDir: string): Promise<PackedPackage> {
+  const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8")) as PackageManifest;
+  assert.equal(manifest.name, name);
+  return { name, tarball: await packPackage(packageRoot, packDir), manifest };
+}
+
+async function createLockedBlankRepo(target: string, packedPackages: readonly PackedPackage[]): Promise<void> {
   await mkdir(path.join(target, ".git"));
-  const tarballSpecifier = `file:${path.relative(target, tarball).split(path.sep).join("/")}`;
-  const qubeCliTarballSpecifier = `file:${path.relative(target, qubeCliTarball).split(path.sep).join("/")}`;
+  const aiuPackage = packedPackages.find((candidate) => candidate.name === "@tjalve/aiu");
+  assert.ok(aiuPackage);
+  const aiuSpecifier = fileSpecifier(target, aiuPackage.tarball);
   await writeFile(
     path.join(target, "package.json"),
     `${JSON.stringify(
@@ -88,7 +183,7 @@ async function createLockedBlankRepo(target: string, tarball: string, qubeCliTar
         private: true,
         packageManager: "pnpm@11.0.4",
         devDependencies: {
-          "@tjalve/aiu": tarballSpecifier,
+          "@tjalve/aiu": aiuSpecifier,
         },
       },
       null,
@@ -99,7 +194,7 @@ async function createLockedBlankRepo(target: string, tarball: string, qubeCliTar
   await writeFile(path.join(target, ".npmrc"), "ignore-scripts=true\nsave-exact=true\n", "utf8");
   await writeFile(
     path.join(target, "pnpm-lock.yaml"),
-    await buildSmokeLockfile(tarballSpecifier, tarball, qubeCliTarballSpecifier, qubeCliTarball),
+    await buildSmokeLockfile(target, packedPackages),
     "utf8",
   );
 }
@@ -111,23 +206,37 @@ async function createTempRoot(prefix: string): Promise<string> {
 }
 
 async function buildSmokeLockfile(
-  tarballSpecifier: string,
-  tarball: string,
-  qubeCliTarballSpecifier: string,
-  qubeCliTarball: string,
+  target: string,
+  packedPackages: readonly PackedPackage[],
 ): Promise<string> {
   const rootLock = (await readFile(path.join(repoRoot, "pnpm-lock.yaml"), "utf8")).replace(/\r\n/g, "\n");
-  const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
-  const qubeCliPackageJson = JSON.parse(await readFile(path.join(qubeCliRoot, "package.json"), "utf8")) as {
-    dependencies?: Record<string, string>;
-    engines?: Record<string, string>;
-    version: string;
-  };
   const lockfileVersion = readLockfileVersion(rootLock);
   const packages = readLockfileSection(rootLock, "packages", "snapshots");
   const snapshots = readLockfileSection(rootLock, "snapshots");
-  const integrity = `sha512-${createHash("sha512").update(await readFile(tarball)).digest("base64")}`;
-  const qubeCliIntegrity = `sha512-${createHash("sha512").update(await readFile(qubeCliTarball)).digest("base64")}`;
+  const packedByName = new Map(packedPackages.map((packedPackage) => [packedPackage.name, packedPackage]));
+  const specifierByName = new Map(
+    packedPackages.map((packedPackage) => [packedPackage.name, fileSpecifier(target, packedPackage.tarball)]),
+  );
+  const aiuSpecifier = specifierByName.get("@tjalve/aiu");
+  assert.ok(aiuSpecifier);
+  const localPackageEntries: string[] = [];
+  const localSnapshotEntries: string[] = [];
+  for (const packedPackage of packedPackages) {
+    const specifier = specifierByName.get(packedPackage.name);
+    assert.ok(specifier);
+    const integrity = `sha512-${createHash("sha512").update(await readFile(packedPackage.tarball)).digest("base64")}`;
+    localPackageEntries.push(renderPackedPackageEntry(packedPackage, specifier, integrity));
+    const dependencies = Object.fromEntries(
+      Object.entries(packedPackage.manifest.dependencies ?? {}).map(([name, version]) => [
+        name,
+        packedByName.has(name) ? specifierByName.get(name) : version,
+      ]),
+    ) as Record<string, string>;
+    localSnapshotEntries.push([
+      `  '${packedPackage.name}@${specifier}':`,
+      renderSnapshotDependencies(dependencies),
+    ].join("\n"));
+  }
 
   return [
     `lockfileVersion: ${lockfileVersion}`,
@@ -141,34 +250,36 @@ async function buildSmokeLockfile(
     "  .:",
     "    devDependencies:",
     "      '@tjalve/aiu':",
-    `        specifier: ${tarballSpecifier}`,
-    `        version: ${tarballSpecifier}`,
+    `        specifier: ${aiuSpecifier}`,
+    `        version: ${aiuSpecifier}`,
     "",
     "packages:",
     "",
-    `  '@tjalve/aiu@${tarballSpecifier}':`,
-    `    resolution: {integrity: ${integrity}, tarball: ${tarballSpecifier}}`,
-    `    version: ${packageJson.version}`,
-    "    engines: {node: '>=24.0.0'}",
-    "    hasBin: true",
-    "",
-    `  '@tjalve/qube-cli@${qubeCliTarballSpecifier}':`,
-    `    resolution: {integrity: ${qubeCliIntegrity}, tarball: ${qubeCliTarballSpecifier}}`,
-    `    version: ${qubeCliPackageJson.version}`,
-    `    engines: ${renderInlineYamlRecord(qubeCliPackageJson.engines ?? {})}`,
+    localPackageEntries.join("\n\n"),
     "",
     packages,
     "snapshots:",
     "",
-    `  '@tjalve/aiu@${tarballSpecifier}':`,
-    "    dependencies:",
-    `      '@tjalve/qube-cli': ${qubeCliTarballSpecifier}`,
-    "",
-    `  '@tjalve/qube-cli@${qubeCliTarballSpecifier}':`,
-    renderSnapshotDependencies(qubeCliPackageJson.dependencies ?? {}),
+    localSnapshotEntries.join("\n\n"),
     "",
     snapshots,
   ].join("\n");
+}
+
+function renderPackedPackageEntry(packedPackage: PackedPackage, specifier: string, integrity: string): string {
+  return [
+    `  '${packedPackage.name}@${specifier}':`,
+    `    resolution: {integrity: ${integrity}, tarball: ${specifier}}`,
+    `    version: ${packedPackage.manifest.version}`,
+    ...(packedPackage.manifest.engines === undefined
+      ? []
+      : [`    engines: ${renderInlineYamlRecord(packedPackage.manifest.engines)}`]),
+    ...(packedPackage.manifest.bin === undefined ? [] : ["    hasBin: true"]),
+  ].join("\n");
+}
+
+function fileSpecifier(fromDir: string, filePath: string): string {
+  return `file:${path.relative(fromDir, filePath).split(path.sep).join("/")}`;
 }
 
 function renderInlineYamlRecord(record: Record<string, string>): string {

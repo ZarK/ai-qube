@@ -1,32 +1,19 @@
-import type { CiProviderKind, GateConfig, GitHubReviewPublisherConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
+import type { CiProviderKind, GateConfig, GitHubReviewPublisherConfig, InstructionConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
 import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_routing.js';
 import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewLanePolicy, ReviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewRoutePolicy } from '../core/policy.js';
 import type { InitTool } from '../init_content.js';
-import type { LegacyCategory } from '../legacy.js';
 
 export type InitActionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';
 export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'unchanged' | 'blocked';
-export type { LegacyCategory } from '../legacy.js';
-export type LegacyChoice = 'leave-untouched' | 'install-alongside' | 'install-compatibility-wrappers' | 'cleanup-and-replace' | 'defer-to-migration';
-
 export interface InitAction {
   id: string;
   path: string;
-  kind: 'config' | 'instruction' | 'command' | 'legacy';
+  kind: 'config' | 'instruction' | 'command' | 'skill' | 'subagent';
   operation: InitActionOperation;
   status: InitActionStatus;
   managedSection: boolean;
   conflict: boolean;
   reason: string;
-}
-
-export interface LegacyState {
-  category: LegacyCategory;
-  paths: string[];
-  action: LegacyChoice;
-  choices: LegacyChoice[];
-  reason: string;
-  nextCommand: string;
 }
 
 export type InitQuestionId = 'review-mode' | 'reviewers' | 'review-models' | 'publisher' | 'quality-gate' | 'ui-audit' | 'ui-audit-evidence' | 'attribution-hygiene';
@@ -52,7 +39,6 @@ export interface InitSetupSummary {
   reviewMode: ReviewMode;
   reviewers: string[];
   publisher: string;
-  qualityGates: string[];
   qualityControl: boolean;
   manualUiAudit: boolean;
   tools: InitTool[];
@@ -76,7 +62,6 @@ export interface InitResult {
   policy: InitPolicySummary;
   configPath: string;
   actions: InitAction[];
-  legacy: LegacyState[];
   plannedChanges: string[];
   completedChanges: string[];
   skippedActions: string[];
@@ -98,7 +83,6 @@ export interface InitPolicySummary {
   supplyChainSafety: boolean;
   projectPackageManagerDefaults: boolean;
   autonomousMode: boolean;
-  opencodeCommandAlias: boolean;
 }
 
 export interface InitPolicyOptions {
@@ -131,16 +115,13 @@ export interface InitPolicyOptions {
   reviewFailover?: ReviewFailoverPolicy | null;
   localReviewAgents?: string[];
   publisher?: GitHubReviewPublisherConfig;
-  opencodeCommandAlias?: boolean;
   manualUiAudit?: boolean;
   uiAuditAppLaunch?: string;
   uiAuditTarget?: string;
   uiAuditEvidenceRoot?: string;
   gates?: GateConfig[];
-  qualityGates?: string[];
   qualityControl?: boolean;
   instructions?: Partial<InstructionConfig>;
-  migration?: Partial<MigrationConfig>;
   supplyChain?: Partial<SupplyChainConfig>;
   modelRouting?: ModelRoutingPolicy;
 }
@@ -159,6 +140,5 @@ export interface InitOptions {
   fetchRepoConfig?: (slug: string) => Promise<string>;
   installedHosts?: readonly string[];
   agentBrowserAvailable?: boolean;
-  homeDirectory?: string;
   aiqAvailable?: boolean;
 }

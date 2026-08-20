@@ -6,11 +6,13 @@ import {
   continuationPromptIsDuplicate,
   continuationPromptOwnedByOtherSession,
   continuationPromptTargetsSameItem,
+  createAiuTrustedStateFingerprint,
   createAiuDecisionId,
   persistedLastPromptAt,
   readAiuContinuationState,
   releaseAiuContinuationLock,
   resolveAiuContinuationPaths,
+  writeAiuHostActivation,
   writeAiuContinuationState,
   type AiuContinuationPaths,
   type AiuContinuationState,
@@ -105,6 +107,18 @@ export interface AiuOpenCodePluginOptions {
 
 export interface AiuOpenCodeServerPluginInput {
   readonly directory?: string;
+  readonly worktree?: string;
+  readonly client?: AiuOpenCodeServerClient;
+}
+
+export interface AiuOpenCodeServerClient {
+  readonly session?: {
+    readonly promptAsync?: (input: {
+      readonly path: { readonly id: string };
+      readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] };
+      readonly query?: { readonly directory: string };
+    }) => Promise<unknown>;
+  };
 }
 
 export interface AiuOpenCodeServerPluginEvent {
@@ -157,8 +171,12 @@ export function createAiuOpenCodeServerPlugin(
   options: AiuOpenCodePluginOptions = {},
 ): AiuOpenCodeServerPlugin {
   return async (input) => {
-    const plugin = createAiuOpenCodePlugin(options);
-    const cwd = input.directory;
+    const cwd = input.directory ?? input.worktree;
+    const clientDeliverer = createAiuOpenCodeClientDeliverer(input.client, cwd);
+    const plugin = createAiuOpenCodePlugin({
+      ...options,
+      ...(options.deliverPrompt || !clientDeliverer ? {} : { deliverPrompt: clientDeliverer }),
+    });
     return Object.freeze({
       event: async ({ event }: AiuOpenCodeServerPluginEventInput) => {
         await plugin.handle(
@@ -189,6 +207,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
 
   const host = buildAiuOpenCodeHostSession(event);
   const paths = resolveAiuContinuationPaths(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
+  const activationSuppressions: string[] = normalizedContext.deliverPrompt === undefined ? ["host-delivery-unavailable"] : [];
   let lock;
   try {
     lock = acquireAiuContinuationLock({
@@ -202,7 +221,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     const message = error instanceof Error ? error.message : String(error);
     return Object.freeze({
       handled: true,
-      metadata: resultMetadata(event, host, 0, [`continuation-lock: ${message}`], ["continuation-lock-unavailable"], paths),
+      metadata: resultMetadata(event, host, 0, [`continuation-lock: ${message}`], ["continuation-lock-unavailable", ...activationSuppressions], paths),
     });
   }
   if (!lock.acquired) {
@@ -218,7 +237,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     });
     return Object.freeze({
       handled: true,
-      metadata: resultMetadata(event, host, 0, [], ["lock-held"], paths),
+      metadata: resultMetadata(event, host, 0, [], ["lock-held", ...activationSuppressions], paths),
     });
   }
 
@@ -236,6 +255,13 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
       });
     }
     const { states, adapterErrors } = await collectTrustedStates(event, normalizedContext, host.state);
+    const trustedStateWasRead = states.some((state) => state.sourceId !== "opencode") && adapterErrors.length === 0;
+    if (trustedStateWasRead && normalizedContext.deliverPrompt !== undefined) {
+      const activationSuppression = recordOpenCodeActivation(paths, observedAt, normalizedContext.config);
+      if (activationSuppression) {
+        activationSuppressions.push(activationSuppression);
+      }
+    }
     const whipRead = readAiuWhipState(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
     const whipDecision = decideAiuWhipContinuation({
       config: normalizedContext.config,
@@ -244,7 +270,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     const decision = decideAiuContinuation({
       states,
       policy: {
-        modes: normalizedContext.config.continuation.modes,
+        modes: normalizedContext.config.hosts.modes.opencode ?? normalizedContext.config.continuation.modes,
         stopOnUnknownState: normalizedContext.config.continuation.stopOnUnknownState,
         stopOnUnsafeState: normalizedContext.config.continuation.stopOnUnsafeState,
         stopOnSupplyChainApprovalBlock: normalizedContext.config.continuation.stopOnSupplyChainApprovalBlock,
@@ -255,8 +281,9 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
       ...(whipDecision.enqueuesPrompt && whipDecision.task ? { whipTask: whipDecision.task } : {}),
       ...(normalizedContext.config.whip.enabled && whipRead.errors.length > 0 ? { whipStateError: { kind: "whip", sourceId: whipRead.path, status: "malformed" } } : {}),
     });
-    const baseSuppressions = [...host.suppressions, ...decisionSuppressions(decision), ...hostPolicySuppressions(normalizedContext.config, decision.kind)];
-    if (baseSuppressions.length > 0 || (decision.kind !== "continue" && decision.kind !== "repair")) {
+    const blockingSuppressions = [...host.suppressions, ...decisionSuppressions(decision), ...hostPolicySuppressions(normalizedContext.config, decision.kind)];
+    const baseSuppressions = [...blockingSuppressions, ...activationSuppressions];
+    if (blockingSuppressions.length > 0 || (decision.kind !== "continue" && decision.kind !== "repair")) {
       const logged = safeLogDecision(paths, {
         event,
         host,
@@ -280,6 +307,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     const prompt = renderAiuContinuationPrompt({ decision, config: normalizedContext.config });
     const promptSuppressions = promptPersistenceSuppressions(persisted, prompt, host.state.sessionId);
     if (promptSuppressions.length > 0) {
+      const reportedSuppressions = [...promptSuppressions, ...activationSuppressions];
       const logged = safeLogDecision(paths, {
         event,
         host,
@@ -287,10 +315,10 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
         prompt,
         observedAt,
         adapterErrors,
-        suppressions: promptSuppressions,
+        suppressions: reportedSuppressions,
         elapsedMs: Date.now() - start,
       });
-      const metadataSuppressions = logged ? promptSuppressions : [...promptSuppressions, "continuation-log-write-failed"];
+      const metadataSuppressions = logged ? reportedSuppressions : [...reportedSuppressions, "continuation-log-write-failed"];
       return Object.freeze({
         handled: true,
         decision,
@@ -348,6 +376,26 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
   }
 }
 
+function recordOpenCodeActivation(
+  paths: AiuContinuationPaths,
+  observedAt: string,
+  config: AiuConfig,
+): "host-activation-write-failed" | undefined {
+  try {
+    writeAiuHostActivation(paths, {
+      schemaVersion: 1,
+      host: "opencode",
+      delivery: "host",
+      event: "plugin-event",
+      trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
+      observedAt,
+    });
+    return undefined;
+  } catch {
+    return "host-activation-write-failed";
+  }
+}
+
 export function composeAiuOpenCodeHandlers(handlers: readonly AiuOpenCodeHandler[]): AiuOpenCodeHandler {
   return async (event, context, next) => {
     let index = -1;
@@ -386,8 +434,8 @@ function buildAiuOpenCodeHostSession(event: AiuOpenCodeEvent): AiuOpenCodeHostSe
   const payload = isRecord(event.payload) ? event.payload : {};
   const session = isRecord(payload.session) ? payload.session : {};
   const selectedSession = isRecord(payload.selectedSession) ? payload.selectedSession : {};
-  const sessionId = readString(payload.sessionId) ?? readString(session.id) ?? readString(payload.id);
-  const selectedSessionId = readString(payload.selectedSessionId) ?? readString(selectedSession.id) ?? readString(payload.currentSessionId);
+  const sessionId = readString(payload.sessionID) ?? readString(payload.sessionId) ?? readString(session.id) ?? readString(payload.id);
+  const selectedSessionId = readString(payload.selectedSessionID) ?? readString(payload.selectedSessionId) ?? readString(selectedSession.id) ?? readString(payload.currentSessionId);
   const suppressions: string[] = [];
   const eventType = normalizeEventToken(event.type);
   const helperRole = readString(session.role);
@@ -556,6 +604,27 @@ async function deliverAiuOpenCodePrompt(
       reason: `prompt-delivery-error: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
+}
+
+function createAiuOpenCodeClientDeliverer(
+  client: AiuOpenCodeServerClient | undefined,
+  cwd: string | undefined,
+): AiuOpenCodePromptDeliverer | undefined {
+  const promptAsync = client?.session?.promptAsync;
+  if (!promptAsync) return undefined;
+  return async (prompt, event) => {
+    const host = buildAiuOpenCodeHostSession(event).state;
+    const targetSessionId = host.selectedSessionId ?? host.sessionId;
+    if (!targetSessionId) {
+      return Object.freeze({ delivered: false, reason: "missing-target-session" });
+    }
+    await promptAsync.call(client.session, {
+      path: { id: targetSessionId },
+      body: { parts: [{ type: "text", text: prompt.body }] },
+      ...(cwd ? { query: { directory: cwd } } : {}),
+    });
+    return Object.freeze({ delivered: true, targetSessionId });
+  };
 }
 
 function normalizeDeliveryResult(result: unknown): AiuOpenCodePromptDelivery {

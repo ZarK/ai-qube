@@ -1,14 +1,13 @@
 import type { Config } from '../config/index.js';
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { lstatSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, carryForwardScopeFromConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
+import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider } from '../providers/review_forge_provider.js';
 import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
-import { verifyReviewWriteContainment, writeReviewFileGuarded } from './local_review_runner_support.js';
 import type { PrGateExec } from './pr_gate.js';
 
 // The default advisory publication cap when neither the caller nor config
@@ -58,143 +57,6 @@ export interface PrReviewPublishResult {
   prNumber: number;
   lane: LocalReviewLaneId;
   publish: ReviewForgeLaneReviewPublishResult;
-}
-
-const snapshotCacheByHead = new Map<string, Promise<ReviewForgeSnapshot>>();
-const SNAPSHOT_CACHE_LOCK_POLL_MS = 100;
-const SNAPSHOT_CACHE_LOCK_TIMEOUT_MS = 60_000;
-
-function snapshotCacheKey(prNumber: number, headSha: string, cachePath?: string): string {
-  return `${cachePath ?? 'memory'}:${prNumber}:${headSha}`;
-}
-
-function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
-  const safeHead = headSha.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
-  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeHead, 'fallback-snapshot-cache.json');
-}
-
-// Cache reads apply the same trust rules as cache writes: an absent file is
-// a miss, but a symlinked cache file or a relocated ancestor chain fails
-// the read closed instead of feeding redirected snapshot state into
-// publication decisions.
-function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
-  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
-  let cacheStats: ReturnType<typeof lstatSync>;
-  try {
-    cacheStats = lstatSync(path);
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new Error(`Refusing to treat an unreadable snapshot cache as a miss: ${path}. Fix filesystem access, then rerun.`);
-  }
-  if (!cacheStats.isFile()) {
-    throw new Error(`Refusing to read the snapshot cache through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
-  }
-  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed) || !isRecord(parsed.pr) || !isRecord(parsed.item) || !Array.isArray(parsed.closingIssueNumbers)) return null;
-  if (parsed.pr.number !== prNumber || parsed.pr.headRefOid !== headSha) return null;
-  return parsed as unknown as ReviewForgeSnapshot;
-}
-
-// The fallback snapshot cache lives inside the review evidence subtree and
-// gets the same containment and symlink guards as evidence writes: a
-// symlinked descendant must not redirect the temp file or the final rename
-// outside the repository.
-function writeSnapshotCache(repoRoot: string, path: string, snapshot: ReviewForgeSnapshot): void {
-  // Chain verification runs before directory creation so mkdir can never
-  // materialize directories through an existing symlinked ancestor.
-  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
-  mkdirSync(dirname(path), { recursive: true });
-  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
-  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeReviewFileGuarded(tempPath, JSON.stringify(snapshot), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
-  try {
-    if (lstatSync(path).isSymbolicLink()) {
-      throw new Error(`Refusing to replace a symlinked snapshot cache: ${path}. Remove the symlink, then rerun.`);
-    }
-  } catch (err: unknown) {
-    if (err instanceof Error && err.message.startsWith('Refusing to replace')) throw err;
-    // A missing cache file is the normal first-write case.
-  }
-  // Revalidate the chain immediately before the rename: a concurrent junction
-  // swap of a parent between the temp write and this rename must fail closed.
-  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
-  renameSync(tempPath, path);
-}
-
-function snapshotCacheLockPath(cachePath: string): string {
-  return `${cachePath}.lock`;
-}
-
-function tryAcquireSnapshotCacheLock(lockPath: string): boolean {
-  try {
-    mkdirSync(lockPath);
-    return true;
-  } catch (error: unknown) {
-    const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';
-    if (code === 'EEXIST') return false;
-    throw error;
-  }
-}
-
-function releaseSnapshotCacheLock(lockPath: string): void {
-  rmSync(lockPath, { recursive: true, force: true });
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string, repoRoot: string): Promise<ReviewForgeSnapshot> {
-  const cachedFile = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
-  if (cachedFile) return cachedFile;
-  const lockPath = snapshotCacheLockPath(cachePath);
-  const deadline = Date.now() + SNAPSHOT_CACHE_LOCK_TIMEOUT_MS;
-  while (true) {
-    if (tryAcquireSnapshotCacheLock(lockPath)) {
-      try {
-        const cachedAfterLock = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
-        if (cachedAfterLock) return cachedAfterLock;
-        const snapshot = await provider.loadPullRequestReview(prNumber);
-        if (snapshot.pr.headRefOid !== headSha) {
-          throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
-        }
-        writeSnapshotCache(repoRoot, cachePath, snapshot);
-        return snapshot;
-      } finally {
-        releaseSnapshotCacheLock(lockPath);
-      }
-    }
-    const cachedWhileWaiting = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
-    if (cachedWhileWaiting) return cachedWhileWaiting;
-    if (Date.now() >= deadline) {
-      throw new Error(`publish lane review failed. Likely cause: fallback snapshot cache for pull request #${prNumber} head ${headSha} stayed locked. Next action: remove stale cache lock ${relativeEvidencePath(process.cwd(), lockPath) ?? lockPath}, rerun pr gate for the current PR head, then retry lane publish.`);
-    }
-    await sleep(SNAPSHOT_CACHE_LOCK_POLL_MS);
-  }
-}
-
-async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string | undefined, repoRoot: string): Promise<ReviewForgeSnapshot> {
-  const key = snapshotCacheKey(prNumber, headSha, cachePath);
-  const cached = snapshotCacheByHead.get(key);
-  if (cached) return cached;
-  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath, repoRoot) : provider.loadPullRequestReview(prNumber).then(snapshot => {
-    if (snapshot.pr.headRefOid !== headSha) {
-      snapshotCacheByHead.delete(key);
-      throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
-    }
-    return snapshot;
-  })).catch(error => {
-    snapshotCacheByHead.delete(key);
-    throw error;
-  });
-  snapshotCacheByHead.set(key, loaded);
-  return loaded;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -441,8 +303,8 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
 
 function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; model: string | null; effort: string | null; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
-  if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
-  if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
+  if (raw.version !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
+  if (raw.issueNumber !== issueNumber || raw.prNumber !== prNumber || raw.headSha !== headSha || raw.lane !== lane) {
     throw laneEvidenceFailure(path, 'issue, PR, head, or lane metadata does not match the publish target.');
   }
   if (!validStatus(raw.status)) throw laneEvidenceFailure(path, 'status must be a known local review status.');
@@ -674,13 +536,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
     withheld: { duplicates: synthesisPlan.withheldDuplicates, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
   };
-  // Both publish paths verify the provider still points at the head being
-  // published: the adapter's ForPullRequest path rejects a stale input head
-  // against the PR it loads, and the legacy path goes through
-  // loadCachedSnapshot, which throws on a head change.
-  const publish = provider.publishLaneReviewFeedbackForPullRequest
-    ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha), repoRoot)).item, publishInput);
+  const publish = await provider.publishLaneReviewFeedback(publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
 }
 

@@ -46,7 +46,12 @@ export const initCommand = defineCommand({
       name: "agent",
       description: "Agent host that will operate aib.",
       type: "option",
-      options: ["codex", "opencode", "claude-code", "gemini", "other"]
+      options: ["codex", "opencode", "claude-code", "grok-build", "cursor", "gemini", "other"]
+    }),
+    defineFlag({
+      name: "surfaces",
+      description: "Comma-separated agent harnesses that need Bootstrap instructions.",
+      type: "string"
     })
   ],
   examples: [

@@ -5,8 +5,8 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { getDefaultAiuConfig, type AiuConfig } from "../dist/src/config.js";
-import { readAiuContinuationState, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
-import { runAiuOpenCodeContinuation } from "../dist/src/opencode.js";
+import { readAiuContinuationState, readAiuHostActivation, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
+import { createAiuOpenCodeServerPlugin, runAiuOpenCodeContinuation } from "../dist/src/opencode.js";
 import { createAiuTrustedStateEnvelope, type AiuPlanningState, type AiuQualityState, type AiuTrustedStateEnvelope, type AiuWorkItemState, type AiuWorkQueueState } from "../dist/src/state.js";
 
 const repoRoot = path.resolve(process.cwd());
@@ -17,6 +17,36 @@ after(async () => {
 });
 
 describe("OpenCode continuation runtime", () => {
+  it("delivers through the installed server plugin client for OpenCode sessionID events", async () => {
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-"));
+    tempContinuationRoots.add(target);
+    await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+    const config = opencodeConfig();
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
+    const requests: Array<{ readonly path: { readonly id: string }; readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] }; readonly query?: { readonly directory: string } }> = [];
+    const serverPlugin = createAiuOpenCodeServerPlugin({
+      loadTrustedStates: () => [workQueueEnvelope({ readyItems: [workItem("65", "Server delivery")] })],
+    });
+    const hooks = await serverPlugin({
+      directory: target,
+      client: {
+        session: {
+          promptAsync: async (request) => {
+            requests.push(request);
+          },
+        },
+      },
+    });
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_server" } } });
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.path.id, "ses_server");
+    assert.equal(requests[0]?.query?.directory, target);
+    assert.match(requests[0]?.body.parts[0]?.text ?? "", /Start ready work/);
+    assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(target, config), "opencode")?.event, "plugin-event");
+  });
+
   it("delivers rendered prompts for idle continue decisions", async () => {
     const config = opencodeConfig();
     const delivered: string[] = [];
@@ -41,6 +71,23 @@ describe("OpenCode continuation runtime", () => {
     assert.match(result.prompt?.fingerprint ?? "", /^[a-f0-9]{64}$/);
     assert.equal(result.delivery?.delivered, true);
     assert.equal(delivered.length, 1);
+  });
+
+  it("does not report host activation when OpenCode prompt delivery is unavailable", async () => {
+    const config = opencodeConfig();
+    const result = await runAiuOpenCodeContinuation(
+      { type: "session.idle", payload: { sessionId: "ses_no_delivery", selectedSessionId: "ses_no_delivery" } },
+      {
+        cwd: repoRoot,
+        config,
+        observedAt: "2026-05-23T12:00:00.000Z",
+        trustedStates: [workQueueEnvelope({ readyItems: [workItem("65", "No delivery")] })],
+      },
+    );
+
+    assert.equal(result.delivery?.delivered, false);
+    assert.ok(result.metadata?.suppressions?.includes("host-delivery-unavailable"));
+    assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(repoRoot, config), "opencode"), undefined);
   });
 
   it("delivers planning, quality, and whip prompts through the shared prompt payload", async () => {

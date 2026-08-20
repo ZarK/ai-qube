@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import type { ModelRoutingPolicy } from '../core/model_routing.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
@@ -185,7 +185,6 @@ export interface FocusedGateSelector {
 
 export interface GatePolicyConfig {
   definitions: GateConfig[];
-  qualityGates: string[];
   qualityControl: boolean;
   focusedSelectors: FocusedGateSelector[];
 }
@@ -198,7 +197,6 @@ export interface AuditConfig {
 }
 
 export interface InstructionConfig {
-  opencodeCommandAlias: boolean;
   namingRules: boolean;
   promptInjectionWarning: boolean;
   noCreditWarning: boolean;
@@ -217,8 +215,6 @@ export interface SupplyChainConfig {
   writePackageManagerDefaults: boolean;
 }
 
-export interface MigrationConfig extends MigrationPolicy {}
-
 export interface ConfigFilePolicy {
   labels: LabelConfig;
   milestoneOrdering: MilestoneOrderingConfig;
@@ -229,7 +225,6 @@ export interface ConfigFilePolicy {
   gates: GatePolicyConfig;
   audit: AuditConfig;
   instructions: InstructionConfig;
-  migration: MigrationConfig;
   supplyChain: SupplyChainConfig;
   modelRouting: ModelRoutingPolicy;
 }
@@ -275,18 +270,15 @@ export interface Config extends ConfigFileShape {
   modelRouting: ModelRoutingPolicy;
   reviewRoute: ReviewRoutePolicy | null;
   reviewFailover: ReviewFailoverPolicy | null;
-  opencodeCommandAlias: boolean;
   manualUiAudit: boolean;
   uiAuditAppLaunch: string;
   uiAuditTarget: string;
   uiAuditEvidenceRoot: string;
   gates: GateConfig[];
-  qualityGates: string[];
   qualityControl: boolean;
   focusedSelectors: FocusedGateSelector[];
   instructions: InstructionConfig;
   supplyChain: SupplyChainConfig;
-  migration: MigrationConfig;
 }
 
 export interface ValidationError {

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
-import type { ReviewLanePolicy, ReviewModelHostId, RoutedReviewHostId } from '../core/policy.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewLanePolicy, type ReviewModelHostId, type RoutedReviewHostId } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, defaultLaneModelTier, resolveLaneModelTier } from '../review_focus.js';
 import { classifyApprovedLaneDelta, type DeltaTriageLaneResult } from '../review_delta_triage.js';
 import { selectReviewScope, readPriorLaneHistory, type ReviewScopeSelection } from './review_delta_scope.js';
@@ -24,12 +24,12 @@ import { buildReviewHeadDigest, reviewHeadDigestContextLines, writeReviewHeadDig
 import type { IssueChecklistSummary } from './issue_checklist.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
+import { reviewerDisplayName } from '../agent_host_adapters.js';
 
 export type LocalReviewRunStatus = 'disabled' | 'planned' | 'completed' | 'pending' | 'unavailable' | 'failed';
 export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'pending' | 'unavailable' | 'failed';
 
-export type CodexReviewCapability = HostReviewCapability & { host: 'codex' };
-export type OpenCodeReviewCapability = HostReviewCapability & { host: 'opencode' };
+export type AgentHostReviewCapability = HostReviewCapability & { host: ReviewModelHostId };
 
 export interface LocalReviewLaneRun {
   issueNumber: number;
@@ -91,8 +91,8 @@ export interface LocalReviewRunResult {
   headSha: string;
   status: LocalReviewRunStatus;
   evidenceRoot: string;
-  codex: CodexReviewCapability;
-  opencode: OpenCodeReviewCapability;
+  host: ReviewModelHostId;
+  hosts: Record<ReviewModelHostId, AgentHostReviewCapability>;
   modelTiers: { review: ReviewModelTierResolution; economy: ReviewModelTierResolution; synthesis: ReviewModelTierResolution };
   economyCatalog: EconomyCatalogTierResolution[];
   headDigest: LocalReviewHeadDigestResult | null;
@@ -154,29 +154,14 @@ function effectiveProfile(config: Config, required: boolean, shadow: boolean): L
   return config.reviewProfile;
 }
 
-export async function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): Promise<CodexReviewCapability> {
-  const capability = await probeHostReviewRunner('codex', { independentReviewerCommand, hostProvided });
-  return { ...capability, host: 'codex' };
+export async function probeAgentHostReviewCapability(host: ReviewModelHostId, independentReviewerCommand?: string | null, hostProvided = false): Promise<AgentHostReviewCapability> {
+  const capability = await probeHostReviewRunner(host, { independentReviewerCommand, hostProvided });
+  return { ...capability, host };
 }
 
-export function probeCodexReviewCapabilitySync(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
-  const capability = probeHostReviewRunnerSync('codex', { independentReviewerCommand, hostProvided });
-  return { ...capability, host: 'codex' };
-}
-
-export async function probeOpenCodeReviewCapability(): Promise<OpenCodeReviewCapability> {
-  const capability = await probeHostReviewRunner('opencode');
-  return { ...capability, host: 'opencode' };
-}
-
-export function probeOpenCodeReviewCapabilitySync(): OpenCodeReviewCapability {
-  const capability = probeHostReviewRunnerSync('opencode');
-  return { ...capability, host: 'opencode' };
-}
-
-function codexCommand(config: Config): string | null {
-  const command = config.reviewLanes.find(lane => lane.runner === 'local-host' && lane.command?.trim())?.command?.trim();
-  return command && command !== '' ? command : null;
+export function probeAgentHostReviewCapabilitySync(host: ReviewModelHostId, independentReviewerCommand?: string | null, hostProvided = false): AgentHostReviewCapability {
+  const capability = probeHostReviewRunnerSync(host, { independentReviewerCommand, hostProvided });
+  return { ...capability, host };
 }
 
 function lanePolicy(config: Config, lane: LocalReviewLaneId): ReviewLanePolicy | undefined {
@@ -375,6 +360,7 @@ export function reviewRouteKey(plan: ModelReviewRoutePlan | null): string {
 
 function laneConfiguredFragments(config: Config, lane: LocalReviewLaneId): LaneConfiguredFragments {
   return {
+    host: configuredReviewModelHost(config),
     repository: config.reviewPromptFragments.repository,
     lanePrompt: config.reviewLanes.find(item => item.id === lane)?.prompt ?? [],
   };
@@ -397,7 +383,7 @@ async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInp
     matchPatterns: config.reviewLanes.find(item => item.id === lane)?.match ?? [],
     contextPatterns: [],
     contextMode: config.reviewLanes.find(item => item.id === lane)?.carryForwardContext ?? defaultCarryForwardContext(lane),
-    expectedFragmentDigest: expectedLaneFragmentDigest(lane),
+    expectedFragmentDigest: expectedLaneFragmentDigest(configuredReviewModelHost(config), lane),
     expectedAdapter: 'local-host',
     requiredCommand: null,
   });
@@ -453,8 +439,10 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     homeDirectory: auditHomeDirectory,
   });
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, renderedContext, repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
-  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
+  if (!configuredFragments) throw new Error('Local review prompt fragments must include the selected agent harness.');
+  const promptHost = (route?.host ?? configuredFragments.host) as ReviewModelHostId;
+  const rendered = promptStack(promptHost, lane, laneContextLines(promptHost, lane, issueNumbers, prNumber, headSha, evidencePaths, renderedContext, repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
+  const stableRendered = promptStack(promptHost, lane, laneContextLines(promptHost, lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
@@ -485,8 +473,9 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   };
 }
 
-function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string, publishCommand: string): string {
-  return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and fork_context false. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never read files under .qube/aie/reviews/**. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`${publishCommand}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR reviews/comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
+function hostSubagentSummary(host: ReviewModelHostId, lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string, publishCommand: string): string {
+  const name = reviewerDisplayName(host);
+  return `Create the review session lock, then spawn one independent ${name} subagent with the generated qube-review-focus profile and a fresh context. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never read files under .qube/aie/reviews/**. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent returns candidate JSON and makes no filesystem or provider change. Wait for all subagents. In the main session, validate each result against its lane, current head, schema, prompt hash, and fresh-context provenance; write validated evidence at ${evidencePath} and its matching provenance; then publish the lane with \`${publishCommand}\`. Delete the review session lock, rerun pr gate, and treat provider PR reviews/comments as the merge gate.`;
 }
 
 // Exact-head reuse mirrors the evidence gate's precedence exactly: a present
@@ -527,7 +516,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     matchPatterns: lanePolicy?.match ?? [],
     contextPatterns,
     contextMode: lanePolicy?.carryForwardContext ?? defaultCarryForwardContext(lane),
-    expectedFragmentDigest: expectedLaneFragmentDigest(lane, input.repoRoot, laneConfiguredFragments(config, lane)),
+    expectedFragmentDigest: expectedLaneFragmentDigest(configuredReviewModelHost(config), lane, input.repoRoot, laneConfiguredFragments(config, lane)),
     expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
     expectedAdapter: runner,
     requiredCommand: command,
@@ -611,8 +600,12 @@ async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => 
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
   auditHomeDirectory = input.homeDirectory;
-  const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
-  const opencode = await probeOpenCodeReviewCapability();
+  const reviewHost = configuredReviewModelHost(config);
+  const hostEntries = await Promise.all(REVIEW_MODEL_HOST_IDS.map(async host => [
+    host,
+    await probeAgentHostReviewCapability(host, null, config.localReviewAgents.includes(host)),
+  ] as const));
+  const hosts = Object.fromEntries(hostEntries) as Record<ReviewModelHostId, AgentHostReviewCapability>;
   const profile = effectiveProfile(config, input.required, input.shadow);
   const activeLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const requiredLanes = input.onlyLanes && input.onlyLanes.length > 0
@@ -651,7 +644,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const riskCardFragments = activatedRiskCards.map(card => formatRiskCardReviewerFragment(card));
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
-  const reviewHost = configuredReviewModelHost(config);
+  const reviewHostCapability = hosts[reviewHost];
   const modelTiers = {
     review: resolveReviewModelTier(config.reviewModels, 'review', reviewHost),
     economy: resolveReviewModelTier(config.reviewModels, 'economy', reviewHost),
@@ -681,10 +674,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     },
   }));
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, host: reviewHost, hosts, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, host: reviewHost, hosts, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
   const primaryIssueNumber = input.issueNumbers[0];
@@ -715,20 +708,15 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane) && !resolveModelReviewPlan(config, lane)));
 
-  const opencodeConfigured = config.localReviewAgents.includes('opencode');
-  const commandlessHostReady = codex.independentReviewer || !opencodeConfigured;
+  const commandlessHostReady = reviewHostCapability.independentReviewer;
   for (const lane of commandlessHostLanes) {
     for (const issueNumber of input.issueNumbers) {
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const linkedIssueNumbers = [issueNumber, ...input.issueNumbers.filter(linkedIssueNumber => linkedIssueNumber !== issueNumber)];
       const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
       if (!commandlessHostReady) {
-        const summary = opencodeConfigured
-          ? `OpenCode local-host review runner is unsupported: ${opencode.nextAction}`
-          : codex.nextAction;
-        const blocker = opencodeConfigured
-          ? opencode.missingCapabilities[0] ?? 'opencode-local-review-runner-unsupported'
-          : codex.missingCapabilities[0] ?? 'codex-local-reviewer-not-configured';
+        const summary = `${reviewerDisplayName(reviewHost)} local-host review is unavailable: ${reviewHostCapability.nextAction}`;
+        const blocker = reviewHostCapability.missingCapabilities[0] ?? `${reviewHost}-local-reviewer-not-configured`;
         unavailable.push(`${lane}: ${summary}`);
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedLaneModelTier(config, lane), laneConfiguredFragments(config, lane)));
         continue;
@@ -748,9 +736,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(carried);
         continue;
       }
-      const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
+      const summary = hostSubagentSummary(reviewHost, lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
-      const blocker = input.dryRun ? null : 'codex-subagent-review-required';
+      const blocker = input.dryRun ? null : `${reviewHost}-subagent-review-required`;
       const reviewScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
       lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], plannedLaneTierResolution(config, lane, modelTiers, null), riskCardFragments, null, true, plannedLaneModelTier(config, lane), laneConfiguredFragments(config, lane), reviewScope));
     }
@@ -779,7 +767,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
       const plannedSummary = route
         ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ' This lane reached the configured host-fault threshold and executes through the fallback route.' : ''}`
-        : runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.';
+        : runner === 'local-host' ? `${reviewerDisplayName(reviewHost)} local-host lane would return candidate JSON for main-session validation, evidence writing, and publishing.` : 'Local-command lane would run and write current-head evidence.';
       const plannedScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
       let resolvedExecutable: ModelHostExecutable | null = null;
       if (input.dryRun && route) {
@@ -824,14 +812,15 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             continue;
           }
           const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
-          const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], withVisualAuditContext({
+          const routedHost = route.host as ReviewModelHostId;
+          const rendered = promptStack(routedHost, lane, laneContextLines(routedHost, lane, [issueNumber], input.prNumber, input.headSha, [path], withVisualAuditContext({
             lane,
             repoRoot: input.repoRoot,
             issueNumber,
             headSha: input.headSha,
             contextLines,
             homeDirectory: auditHomeDirectory,
-          }), input.repoRoot, publishCommand, route.host), riskCardFragments, input.repoRoot, laneConfiguredFragments(config, lane));
+          }), input.repoRoot, publishCommand), riskCardFragments, input.repoRoot, laneConfiguredFragments(config, lane));
           // Defer execution to the bounded pool; the placeholder keeps the lane's
           // deterministic position and is replaced in the serial completion phase.
           // The job reads route and routeSource at execution time so the probe
@@ -893,7 +882,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         }), publishCommand, input.exec, riskCardFragments, laneConfiguredFragments(config, lane), plannedScope);
         if (!evidence) {
           failed = true;
-          lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
+          lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, `${reviewerDisplayName(reviewHost)} local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.`, 'invalid local-host output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
           continue;
         }
         const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route), reviewScope: plannedScope.scope, baseHeadSha: plannedScope.baseHeadSha }, 'local-host');
@@ -1069,8 +1058,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     headSha: input.headSha,
     status,
     evidenceRoot,
-    codex,
-    opencode,
+    host: reviewHost,
+    hosts,
     modelTiers,
     economyCatalog,
     headDigest,
@@ -1082,7 +1071,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     summary: status === 'completed'
       ? `Local review runner wrote ${written.length} lane evidence file(s).${lanes.some(lane => lane.evidenceSource === 'local' && lane.status === 'completed') ? ` Reused existing current-head local evidence for: ${lanes.filter(lane => lane.evidenceSource === 'local' && lane.status === 'completed').map(lane => lane.lane).join(', ')}.` : ''}${lanes.some(lane => lane.evidenceSource === 'trusted-provider') ? ` Reused trusted provider current-head reviews for: ${lanes.filter(lane => lane.evidenceSource === 'trusted-provider').map(lane => lane.lane).join(', ')}.` : ''}`
       : status === 'pending'
-        ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
+        ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent ${reviewerDisplayName(reviewHost)} subagent review lane(s). Run them in parallel when the harness supports it.`
       : status === 'planned'
         ? `Local review runner planned ${lanes.filter(lane => lane.status === 'planned' || lane.status === 'pending').length} lane execution(s); ${lanes.filter(lane => lane.status === 'skipped').length} lane(s) reuse existing current-head evidence.`
       : status === 'failed'

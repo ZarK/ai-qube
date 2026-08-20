@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export type AibAgentHost = "codex" | "opencode" | "claude-code" | "gemini" | "other";
+export type AibAgentHost = "codex" | "opencode" | "claude-code" | "grok-build" | "cursor" | "gemini" | "other";
 export type AibPrivacyMode = "local-first" | "network-allowed" | "restricted";
 export type AibProviderKind = "github" | "gitlab" | "linear" | "jira" | "local" | "none";
 
@@ -141,7 +141,7 @@ function parseProviders(value: Readonly<Record<string, unknown>>): NonNullable<A
 
 function parseAgent(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["agent"]> {
   const agent: Record<string, string | number | readonly AibAgentHost[]> = {};
-  if (value.host !== undefined) agent.host = requireOneOf(value.host, "agent.host", ["codex", "opencode", "claude-code", "gemini", "other"]);
+  if (value.host !== undefined) agent.host = requireOneOf(value.host, "agent.host", ["codex", "opencode", "claude-code", "grok-build", "cursor", "gemini", "other"]);
   if (value.questionBudget !== undefined) {
     const budget = value.questionBudget;
     if (typeof budget !== "number" || !Number.isInteger(budget) || budget < 1 || budget > 8) {
@@ -153,7 +153,7 @@ function parseAgent(value: Readonly<Record<string, unknown>>): NonNullable<AibCo
     if (!Array.isArray(value.surfaces) || value.surfaces.length === 0) {
       throw new TypeError("agent.surfaces must be a non-empty array when provided.");
     }
-    agent.surfaces = value.surfaces.map((item, index) => requireOneOf(item, `agent.surfaces[${index}]`, ["codex", "opencode", "claude-code", "gemini", "other"]));
+    agent.surfaces = value.surfaces.map((item, index) => requireOneOf(item, `agent.surfaces[${index}]`, ["codex", "opencode", "claude-code", "grok-build", "cursor", "gemini", "other"]));
   }
   return agent;
 }

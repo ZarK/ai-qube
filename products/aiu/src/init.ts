@@ -3,21 +3,39 @@ import path from "node:path";
 
 import {
   AIU_CONFIG_FILENAME,
+  AIU_HOSTS,
   type AiuConfig,
   type AiuHost,
   getDefaultAiuConfig,
   loadAiuConfig,
 } from "./config.js";
-import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 import {
   getAiuHostCapabilityProfiles,
   getDefaultHostCapabilityOverrides,
   getDefaultHostModes,
+  getDefaultStopHookBlocking,
   type AiuHostCapabilityProfile,
   type AiuManagedHostFile,
 } from "./host_policy.js";
 
-export const AIU_INIT_TOOLS = ["opencode", "codex", "claude-code", "grok-build", "all"] as const;
+export const AIU_INIT_TOOLS = [
+  "opencode",
+  "codex",
+  "claude-code",
+  "grok-build",
+  "opencode,codex",
+  "opencode,claude-code",
+  "opencode,grok-build",
+  "codex,claude-code",
+  "codex,grok-build",
+  "claude-code,grok-build",
+  "opencode,codex,claude-code",
+  "opencode,codex,grok-build",
+  "opencode,claude-code,grok-build",
+  "codex,claude-code,grok-build",
+  "opencode,codex,claude-code,grok-build",
+  "all",
+] as const;
 
 export type AiuInitTool = (typeof AIU_INIT_TOOLS)[number];
 export type AiuInitFileOperation = "create" | "update" | "skip" | "conflict";
@@ -50,6 +68,7 @@ export interface AiuInitFileAction {
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly description: string;
+  readonly ownership: AiuManagedHostFile["ownership"];
   readonly operation: AiuInitFileOperation;
   readonly reason: string;
   readonly content: string;
@@ -85,7 +104,9 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
     ...files.filter((file) => file.operation === "conflict").map((file) => ({
       relativePath: file.relativePath,
       reason: file.reason,
-      suggestedNextAction: `Review ${file.relativePath}, then rerun with --force if replacing it is intentional.`,
+      suggestedNextAction: file.ownership === "shared"
+        ? `Fix ${file.relativePath} so it contains the expected JSON structure. QUBE does not replace shared files.`
+        : `Review ${file.relativePath}, then rerun with --force if replacing it is intentional.`,
     })),
     ...(config.operation === "conflict"
       ? [
@@ -161,27 +182,29 @@ export function formatInitPlan(plan: AiuInitPlan): string {
 }
 
 function expandInitTools(tool: AiuInitTool): readonly AiuHost[] {
-  if (tool !== "all") return [tool];
-  const hosts: AiuHost[] = ["opencode", "codex", "claude-code"];
-  if (loadGrokBuildAdapter()) hosts.push("grok-build");
-  return hosts;
+  if (tool === "all") return AIU_HOSTS;
+  const selected = new Set<AiuHost>(tool.split(",") as AiuHost[]);
+  return Object.freeze(AIU_HOSTS.filter((host) => selected.has(host)));
 }
 
 function toolForPlan(tools: readonly AiuHost[]): AiuInitTool {
-  return tools.length === 1 ? tools[0] ?? "all" : "all";
+  return (tools.length === AIU_HOSTS.length ? "all" : tools.join(",")) as AiuInitTool;
 }
 
 function planFile(repoRoot: string, file: AiuManagedHostFile, force: boolean): AiuInitFileAction {
   const absolutePath = path.join(repoRoot, file.relativePath);
   const existing = readExistingText(absolutePath);
-  const planned = classifyTextWrite(existing, file.content, force);
+  const planned = file.ownership === "shared"
+    ? planSharedJsonWrite(existing, file)
+    : { ...classifyTextWrite(existing, file.content, force), content: file.content };
   return Object.freeze({
     relativePath: file.relativePath,
     absolutePath,
     description: file.description,
+    ownership: file.ownership,
     operation: planned.operation,
     reason: planned.reason,
-    content: file.content,
+    content: planned.content,
   });
 }
 
@@ -206,7 +229,7 @@ function planConfig(repoRoot: string, configPath: string, loadedConfig: AiuConfi
 
 function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: readonly AiuHost[]): Record<string, unknown> {
   const defaults = getDefaultAiuConfig();
-  const enabled = [...new Set([...config.hosts.enabled, ...tools])];
+  const enabled = [...tools];
   const capabilities = {
     ...config.hosts.capabilities,
     ...Object.fromEntries(
@@ -225,6 +248,12 @@ function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: rea
       tools.map((tool) => [tool, config.hosts.modes[tool] ?? getDefaultHostModes(tool)]),
     ),
   };
+  const stopHookBlocking = {
+    ...config.hosts.stopHookBlocking,
+    ...Object.fromEntries(
+      tools.map((tool) => [tool, config.hosts.stopHookBlocking[tool] ?? getDefaultStopHookBlocking(tool)]),
+    ),
+  };
 
   return {
     ...raw,
@@ -234,6 +263,7 @@ function mergeConfig(config: AiuConfig, raw: Record<string, unknown>, tools: rea
       enabled,
       capabilities,
       modes,
+      stopHookBlocking,
     },
     trustedStateCommands: {
       ...config.trustedStateCommands,
@@ -269,6 +299,14 @@ interface ExistingText {
   readonly error?: string;
 }
 
+interface PlannedFileWrite {
+  readonly operation: AiuInitFileOperation;
+  readonly reason: string;
+  readonly content: string;
+}
+
+type SharedHostFile = Extract<AiuManagedHostFile, { readonly ownership: "shared" }>;
+
 function readExistingText(absolutePath: string): ExistingText {
   if (!existsSync(absolutePath)) {
     return { exists: false };
@@ -281,6 +319,164 @@ function readExistingText(absolutePath: string): ExistingText {
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function planSharedJsonWrite(existing: ExistingText, file: SharedHostFile): PlannedFileWrite {
+  if (!existing.exists) {
+    return { operation: "create", reason: reasonForOperation("create"), content: file.content };
+  }
+  if (existing.error !== undefined) {
+    return { operation: "conflict", reason: `Existing shared file could not be read: ${existing.error}`, content: file.content };
+  }
+
+  const existingJson = parseJsonObject(existing.content ?? "");
+  if (!existingJson.ok) {
+    return {
+      operation: "conflict",
+      reason: "Existing shared file is not a JSON object. QUBE will not replace it.",
+      content: file.content,
+    };
+  }
+
+  const desiredJson = parseJsonObject(file.content);
+  if (!desiredJson.ok) {
+    throw new Error(`Managed shared-file content is not a JSON object: ${file.relativePath}`);
+  }
+
+  const merged = mergeSharedJson(file.managedEntry, existingJson.value, desiredJson.value);
+  if (!merged.ok) {
+    return { operation: "conflict", reason: merged.reason, content: file.content };
+  }
+
+  const content = stableJson(merged.value);
+  if (stableJson(existingJson.value) === content) {
+    return {
+      operation: "skip",
+      reason: "QUBE-owned entries already match; unrelated JSON entries are unchanged.",
+      content,
+    };
+  }
+  return {
+    operation: "update",
+    reason: "QUBE-owned entries will be updated; unrelated JSON entries will be preserved.",
+    content,
+  };
+}
+
+function mergeSharedJson(
+  managedEntry: SharedHostFile["managedEntry"],
+  existing: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
+  if (managedEntry === "codex-marketplace-plugin") {
+    return mergeCodexMarketplace(existing, desired);
+  }
+  return mergeClaudeSettings(existing, desired);
+}
+
+function mergeCodexMarketplace(
+  existing: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
+  if (existing.plugins !== undefined && !Array.isArray(existing.plugins)) {
+    return { ok: false, reason: "Existing Codex marketplace plugins value is not an array. QUBE will not replace the shared file." };
+  }
+  if (!Array.isArray(desired.plugins)) {
+    throw new Error("Managed Codex marketplace content does not contain a plugins array.");
+  }
+
+  const managedPlugin = desired.plugins.find(isAiuMarketplacePlugin);
+  if (managedPlugin === undefined) {
+    throw new Error("Managed Codex marketplace content does not contain the AI Umpire plugin entry.");
+  }
+
+  const existingPlugins = existing.plugins ?? [];
+  const plugins: unknown[] = [];
+  let managedIndex: number | undefined;
+  for (const plugin of existingPlugins) {
+    if (isAiuMarketplacePlugin(plugin)) {
+      managedIndex ??= plugins.length;
+      continue;
+    }
+    plugins.push(plugin);
+  }
+  plugins.splice(managedIndex ?? plugins.length, 0, managedPlugin);
+
+  return {
+    ok: true,
+    value: {
+      ...desired,
+      ...existing,
+      plugins,
+    },
+  };
+}
+
+function mergeClaudeSettings(
+  existing: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
+  if (existing.hooks !== undefined && !isRecord(existing.hooks)) {
+    return { ok: false, reason: "Existing Claude Code hooks value is not a JSON object. QUBE will not replace the shared file." };
+  }
+  const desiredHooks = isRecord(desired.hooks) ? desired.hooks : undefined;
+  const desiredStop = desiredHooks?.Stop;
+  if (!Array.isArray(desiredStop)) {
+    throw new Error("Managed Claude Code settings do not contain a Stop hook array.");
+  }
+  const managedGroup = desiredStop.find(hasAiuClaudeStopHook);
+  if (managedGroup === undefined) {
+    throw new Error("Managed Claude Code settings do not contain the AI Umpire Stop hook.");
+  }
+
+  const existingHooks = isRecord(existing.hooks) ? existing.hooks : {};
+  if (existingHooks.Stop !== undefined && !Array.isArray(existingHooks.Stop)) {
+    return { ok: false, reason: "Existing Claude Code Stop hooks value is not an array. QUBE will not replace the shared file." };
+  }
+
+  const stopGroups: unknown[] = [];
+  let managedIndex: number | undefined;
+  for (const group of existingHooks.Stop ?? []) {
+    if (!isRecord(group) || !Array.isArray(group.hooks)) {
+      stopGroups.push(group);
+      continue;
+    }
+    const hooks = group.hooks.filter((hook) => !isAiuClaudeStopHook(hook));
+    if (hooks.length === group.hooks.length) {
+      stopGroups.push(group);
+      continue;
+    }
+    managedIndex ??= stopGroups.length;
+    if (hooks.length > 0) {
+      stopGroups.push({ ...group, hooks });
+    }
+  }
+  stopGroups.splice(managedIndex ?? stopGroups.length, 0, managedGroup);
+
+  return {
+    ok: true,
+    value: {
+      ...existing,
+      hooks: {
+        ...existingHooks,
+        Stop: stopGroups,
+      },
+    },
+  };
+}
+
+function isAiuMarketplacePlugin(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.name === "ai-umpire") return true;
+  return isRecord(value.source) && value.source.path === "./plugins/ai-umpire";
+}
+
+function hasAiuClaudeStopHook(value: unknown): boolean {
+  return isRecord(value) && Array.isArray(value.hooks) && value.hooks.some(isAiuClaudeStopHook);
+}
+
+function isAiuClaudeStopHook(value: unknown): boolean {
+  return isRecord(value) && value.command === "pnpm exec aiu hook-stop --tool claude-code";
 }
 
 function classifyTextWrite(existing: ExistingText, desired: string, force: boolean): { readonly operation: AiuInitFileOperation; readonly reason: string } {

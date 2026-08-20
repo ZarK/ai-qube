@@ -35,7 +35,7 @@ describe('review focus selection', () => {
     assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance', 'ui-ux-accessibility']);
   });
 
-  it('matches double-star patterns against root-level paths', () => {
+  it('matches double-star UI patterns against root-level paths', () => {
     const focuses = activeLocalReviewFocuses({
       profile: 'local-focused',
       lanes: [
@@ -43,13 +43,12 @@ describe('review focus selection', () => {
         { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
         { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
         { id: 'ui-ux-accessibility', required: 'when-matched', match: ['**/*.tsx'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
-        { id: 'api-contract-compatibility', required: 'when-matched', match: ['**/api/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
       ],
-      changedPaths: ['App.tsx', 'api/routes.ts'],
+      changedPaths: ['App.tsx'],
       maxActive: 5,
     });
 
-    assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance', 'ui-ux-accessibility', 'api-contract-compatibility']);
+    assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance', 'ui-ux-accessibility']);
   });
 
   it('keeps always-required focuses when capping when-matched focuses', () => {
@@ -61,15 +60,15 @@ describe('review focus selection', () => {
         { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
         { id: 'security', required: 'when-matched', match: ['**/auth/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
         { id: 'ui-ux-accessibility', required: 'when-matched', match: ['**/*.tsx'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
-        { id: 'api-contract-compatibility', required: 'when-matched', match: ['**/api/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'docs-instructions', required: 'when-matched', match: ['**/*.md'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
       ],
-      changedPaths: ['src/auth/login.ts', 'src/components/Button.tsx', 'src/api/routes.ts'],
+      changedPaths: ['src/auth/login.ts', 'src/components/Button.tsx', 'README.md'],
       maxActive: 5,
     });
 
     assert.equal(focuses.length, 5);
     assert.deepEqual(focuses.slice(0, 3), ['issue-compliance', 'code-quality', 'performance']);
-    assert.ok(focuses.includes('security') || focuses.includes('ui-ux-accessibility') || focuses.includes('api-contract-compatibility'));
+    assert.equal(focuses.filter(focus => ['security', 'ui-ux-accessibility', 'docs-instructions'].includes(focus)).length, 2);
   });
 
   it('falls back to profile defaults when no lanes are configured', () => {

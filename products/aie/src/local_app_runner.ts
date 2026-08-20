@@ -46,7 +46,6 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 const LOG_TAIL_LINES = 30;
 const SAFE_RUN_NAME = /^[A-Za-z0-9._-]+$/;
 const SAFE_ATTEMPT_ID = /^[A-Za-z0-9._-]+$/;
-const LEGACY_ATTEMPT_ID = 'legacy';
 
 interface CurrentAttempt {
   attemptId: string;
@@ -83,13 +82,6 @@ function writeJsonAtomic(path: string, value: unknown): void {
 }
 
 function attemptFilePaths(directory: string, attemptId: string): AttemptLogPaths {
-  if (attemptId === LEGACY_ATTEMPT_ID) {
-    return {
-      attemptId,
-      stdoutPath: join(directory, 'stdout.log'),
-      stderrPath: join(directory, 'stderr.log'),
-    };
-  }
   return {
     attemptId,
     stdoutPath: join(directory, `stdout-${attemptId}.log`),
@@ -110,7 +102,6 @@ function listHistoricalLogs(directory: string): AttemptLogPaths[] {
     const match = name.match(/^(?:stdout|stderr)-(.+)\.log$/);
     if (match) ids.add(match[1]);
   }
-  if (names.includes('stdout.log') || names.includes('stderr.log')) ids.add(LEGACY_ATTEMPT_ID);
   return [...ids].sort().map(attemptId => attemptFilePaths(directory, attemptId));
 }
 
@@ -129,8 +120,11 @@ function readCurrentAttempt(path: string): CurrentAttempt | null {
     if (!isRecord(parsed) || parsed.version !== 1 || typeof parsed.attemptId !== 'string' || typeof parsed.stdoutPath !== 'string' || typeof parsed.stderrPath !== 'string') {
       return null;
     }
+    const attemptId = validateAttemptId(parsed.attemptId);
+    const expectedPaths = attemptFilePaths(dirname(path), attemptId);
+    if (parsed.stdoutPath !== expectedPaths.stdoutPath || parsed.stderrPath !== expectedPaths.stderrPath) return null;
     return {
-      attemptId: parsed.attemptId,
+      attemptId,
       stdoutPath: parsed.stdoutPath,
       stderrPath: parsed.stderrPath,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
@@ -175,21 +169,10 @@ export function runPaths(repoRoot: string, name: string, attemptId?: string): Ru
     const files = attemptFilePaths(base.directory, safeAttemptId);
     return withLogPaths(base, files.attemptId, files.stdoutPath, files.stderrPath);
   }
-  if (existsSync(base.metadataPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(base.metadataPath, 'utf8'));
-      if (isRecord(parsed) && typeof parsed.stdoutPath === 'string' && typeof parsed.stderrPath === 'string') {
-        const metadataAttemptId = typeof parsed.attemptId === 'string' ? parsed.attemptId : null;
-        return withLogPaths(base, metadataAttemptId, parsed.stdoutPath, parsed.stderrPath);
-      }
-    } catch {
-      // Fall through to the current-attempt pointer or legacy files.
-    }
-  }
   const current = readCurrentAttempt(base.currentAttemptPath);
   if (current) return withLogPaths(base, current.attemptId, current.stdoutPath, current.stderrPath);
-  const legacy = attemptFilePaths(base.directory, LEGACY_ATTEMPT_ID);
-  return withLogPaths(base, null, legacy.stdoutPath, legacy.stderrPath);
+  const unavailable = attemptFilePaths(base.directory, 'not-started');
+  return withLogPaths(base, null, unavailable.stdoutPath, unavailable.stderrPath);
 }
 
 function resolveWorkingDirectory(repoRoot: string, cwd: string | undefined): string {
@@ -267,7 +250,16 @@ export function readRunMetadata(repoRoot: string, name: string): RunMetadata | n
   const paths = runPaths(repoRoot, name);
   if (!existsSync(paths.metadataPath)) return null;
   const parsed: unknown = JSON.parse(readFileSync(paths.metadataPath, 'utf8'));
-  if (!isRecord(parsed) || parsed.version !== 1 || typeof parsed.pid !== 'number' || typeof parsed.name !== 'string') {
+  if (
+    !isRecord(parsed)
+    || parsed.version !== 1
+    || typeof parsed.pid !== 'number'
+    || typeof parsed.name !== 'string'
+    || typeof parsed.attemptId !== 'string'
+    || parsed.attemptId !== paths.attemptId
+    || parsed.stdoutPath !== paths.stdoutPath
+    || parsed.stderrPath !== paths.stderrPath
+  ) {
     throw new Error(`run metadata is malformed at ${paths.metadataPath}`);
   }
   return parsed as unknown as RunMetadata;
@@ -324,13 +316,14 @@ function fallbackPaths(repoRoot: string, name: string): RunPaths {
     return runPaths(repoRoot, name);
   } catch {
     const directory = join(repoRoot, '.qube', 'aie', 'runs', 'unknown');
+    const unavailable = attemptFilePaths(directory, 'not-started');
     return {
       directory,
       metadataPath: join(directory, 'metadata.json'),
       currentAttemptPath: join(directory, 'current-attempt.json'),
       attemptId: null,
-      stdoutPath: join(directory, 'stdout.log'),
-      stderrPath: join(directory, 'stderr.log'),
+      stdoutPath: unavailable.stdoutPath,
+      stderrPath: unavailable.stderrPath,
       historicalLogs: [],
     };
   }

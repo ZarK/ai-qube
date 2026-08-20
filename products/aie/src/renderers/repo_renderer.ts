@@ -18,7 +18,7 @@ export function formatRepoPrimeHuman(plan: RepoPrimePlan, dryRun: boolean): stri
   lines.push(`  Base ref: ${plan.baseRef.remote}/${plan.baseRef.branch} ${plan.baseRef.resolved ? 'resolved' : 'unresolved'}`);
   lines.push(`  Open PRs: ${plan.pullRequests.length} (${plan.blockingPullRequests.length} blocking)`);
   lines.push(`  Milestones: ${plan.milestones.length}; issues without milestones: ${plan.milestoneWarnings.length}`);
-  lines.push(`  Instructions: AGENTS.md=${plan.instructions.agents ? 'yes' : 'no'}, CLAUDE.md=${plan.instructions.claude ? 'yes' : 'no'}, make-it-so=${plan.instructions.opencodeMakeItSo ? 'yes' : 'no'}`);
+  lines.push(`  Agent harnesses: ${plan.instructions.harnesses.map(harness => `${harness.displayName}=${harness.installed ? (harness.healthy ? 'ready' : 'needs-refresh') : 'not-installed'}`).join(', ')}`);
   lines.push(`  Planning artifacts: spec=${plan.planning.spec ? 'yes' : 'no'}, milestone docs=${plan.planning.milestones.length}`);
   lines.push('');
   lines.push(...formatList('Planned changes', plan.plannedChanges));

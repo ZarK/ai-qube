@@ -2,7 +2,7 @@ import type { CommandFlagSchema } from './command_metadata.js';
 
 export const GATE_STAGE_OPTIONS = ['all', 'pre-pr', 'pre-merge'];
 export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'coderabbit', 'custom', 'local'];
-export const REVIEW_AGENT_VALUES = ['oracle', 'opencode-oracle', 'fallback-oracle', 'custom', 'local'];
+export const REVIEW_AGENT_VALUES = ['custom', 'local'];
 
 export const REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--app-id', type: 'string', description: 'Public GitHub App id' },
@@ -12,16 +12,6 @@ export const REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--login', type: 'string', description: 'Optional public bot login used for trust matching' },
   { name: '--yes', type: 'boolean', description: 'Apply the config write non-interactively when required flags are complete', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show the setup plan without writing config or minting credentials', default: false },
-  { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free setup output', default: false },
-  { name: '--no-probe', type: 'boolean', description: 'Skip the final read-only publisher identity and permission probe', default: false },
-  { name: '--help', type: 'boolean', description: 'Show command help' },
-];
-
-export const REVIEW_SETUP_TOKEN_FLAG_DETAILS: CommandFlagSchema[] = [
-  { name: '--token-env', type: 'string', description: 'Environment variable name containing the fine-grained token; token values are rejected' },
-  { name: '--login', type: 'string', description: 'Optional public reviewer login used for trust matching' },
-  { name: '--yes', type: 'boolean', description: 'Apply the config write non-interactively when required flags are complete', default: false },
-  { name: '--dry-run', type: 'boolean', description: 'Show the setup plan without writing config or probing credentials', default: false },
   { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free setup output', default: false },
   { name: '--no-probe', type: 'boolean', description: 'Skip the final read-only publisher identity and permission probe', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
@@ -41,8 +31,8 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--defaults', type: 'boolean', description: 'Use default repository policy values without prompting', default: false },
   { name: '--from', type: 'string', description: 'Adopt policy from a working-directory-relative path or an owner/repo slug' },
   { name: '--review-mode', type: 'string', description: 'Review mode written to Executor config', options: ['external', 'host', 'isolated'] },
-  { name: '--publisher', type: 'string', description: 'Review publisher identity', options: ['user', 'github-app', 'token'] },
-  { name: '--tool', type: 'string', description: 'Agent host projection to install', options: ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor', 'all'], default: 'opencode' },
+  { name: '--publisher', type: 'string', description: 'Review publisher identity', options: ['user', 'github-app'] },
+  { name: '--tool', type: 'string', description: 'Comma-separated agent harness ids: opencode, codex, claude-code, grok-build, cursor; use all for every harness', default: 'opencode' },
   { name: '--work-provider', type: 'string', description: 'Active work provider written to Executor config', options: ['github', 'gitlab', 'linear', 'jira'] },
   { name: '--review-provider', type: 'string', description: 'Active review provider written to Executor config', options: ['github', 'gitlab'] },
   { name: '--ci-provider', type: 'string', description: 'Active CI provider written to Executor config', options: ['github', 'gitlab', 'jenkins'] },
@@ -74,8 +64,6 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--ui-audit-app-launch', type: 'string', description: 'Command agents should run to start the app for manual UI audit evidence' },
   { name: '--ui-audit-target', type: 'string', description: 'URL, route, or screen agents should inspect during manual UI audits' },
   { name: '--ui-audit-evidence-root', type: 'string', description: 'User-local directory for UI audit evidence' },
-  { name: '--opencode-command-alias', type: 'boolean', description: 'Install optional makeitso OpenCode command alias' },
-  { name: '--no-opencode-command-alias', type: 'boolean', description: 'Do not install optional makeitso OpenCode command alias' },
   { name: '--quality-gate', type: 'string', description: 'Agent-run quality gate command', multiple: true },
   { name: '--review-agent', type: 'string', description: 'Configured review agent', multiple: true },
   { name: '--review-request-text', type: 'string', description: 'Custom review request text for configured review agents' },
@@ -106,7 +94,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--no-unverified-risk-approval', type: 'boolean', description: 'Follow repository policy for unverifiable package risk' },
   { name: '--package-manager-defaults', type: 'boolean', description: 'Write project-level npm secure defaults' },
   { name: '--no-package-manager-defaults', type: 'boolean', description: 'Do not write project-level package-manager defaults' },
-  { name: '--primary-host', type: 'string', description: 'Primary modelRouting host', options: ['codex', 'claude-code', 'opencode', 'grok-build'] },
+  { name: '--primary-host', type: 'string', description: 'Primary modelRouting host', options: ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor'] },
   { name: '--primary-model', type: 'string', description: 'Primary model identifier for modelRouting fallback' },
   { name: '--route-mechanical-implementation', type: 'string', description: 'Preferred mechanical-implementation host:model' },
   { name: '--route-exploration-investigation', type: 'string', description: 'Preferred exploration-investigation host:model' },
@@ -129,23 +117,6 @@ export const GATES_PLAN_FLAG_DETAILS: CommandFlagSchema[] = [
 export const GATES_STATUS_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable gate status', default: false },
   { name: '--stage', type: 'string', description: 'Filter gates by stage; all-stage gates are included when filtering', options: GATE_STAGE_OPTIONS },
-  { name: '--help', type: 'boolean', description: 'Show command help' },
-];
-
-export const MIGRATE_LEGACY_FLAG_DETAILS: CommandFlagSchema[] = [
-  { name: '--json', type: 'boolean', description: 'Emit machine-readable legacy migration plan', default: false },
-  { name: '--dry-run', type: 'boolean', description: 'Show the full legacy migration plan without writing files', default: false },
-  { name: '--apply', type: 'boolean', description: 'Apply explicitly requested migration writes, wrapper installs, or cleanup removals', default: false },
-  { name: '--cleanup', type: 'boolean', description: 'Plan or apply cleanup for known legacy helper files', default: false },
-  { name: '--install-wrappers', type: 'boolean', description: 'Plan or install compatibility wrappers for known legacy helper files', default: false },
-  { name: '--force', type: 'boolean', description: 'Allow selected unmanaged instruction files or explicit cleanup paths after review', default: false },
-  { name: '--instruction', type: 'string', description: 'Instruction or command file path to migrate; repeat or comma-separate', multiple: true },
-  { name: '--path', type: 'string', description: 'Legacy helper file path to include in cleanup; repeat or comma-separate', multiple: true },
-  { name: '--help', type: 'boolean', description: 'Show command help' },
-];
-
-export const MIGRATE_MAP_FLAG_DETAILS: CommandFlagSchema[] = [
-  { name: '--json', type: 'boolean', description: 'Emit machine-readable legacy command mapping', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

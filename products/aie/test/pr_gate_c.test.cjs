@@ -172,7 +172,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
-  it('reuses full PR review snapshots across same-head legacy lane publish fallback commands', async () => {
+  it('publishes directly from explicit pull request targets without loading review snapshots', async () => {
     const repo = makeGitRepo();
     const withReviewedContext = evidence => ({
       ...evidence,
@@ -208,8 +208,8 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
         loadCalls.push(prNumber);
         return snapshots[prNumber];
       },
-      async publishLaneReviewFeedback(item, input) {
-        publishCalls.push({ item, input });
+      async publishLaneReviewFeedback(input) {
+        publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     });
@@ -221,13 +221,11 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo, expectedLanes: ['issue-compliance'] });
     await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
-    assert.deepEqual(loadCalls, [12, 13]);
-    assert.equal(publishCalls[0].item, snapshots[12].item);
-    assert.equal(publishCalls[1].item, snapshots[12].item);
-    assert.equal(publishCalls[2].item, snapshots[13].item);
+    assert.deepEqual(loadCalls, []);
+    assert.deepEqual(publishCalls.map(input => [input.prNumber, input.lane]), [[12, 'code-quality'], [12, 'issue-compliance'], [13, 'code-quality']]);
   });
 
-  it('serializes cold parallel legacy lane publish fallback snapshot loads', async () => {
+  it('publishes parallel lanes directly without a shared snapshot cache', async () => {
     const repo = makeGitRepo();
     const withReviewedContext = evidence => ({
       ...evidence,
@@ -260,8 +258,8 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
         await new Promise(resolve => setTimeout(resolve, 250));
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
-        publishCalls.push({ item, input });
+      async publishLaneReviewFeedback(input) {
+        publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     });
@@ -280,12 +278,12 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
     ]);
 
-    assert.deepEqual(loadCalls, [12]);
+    assert.deepEqual(loadCalls, []);
     assert.equal(publishCalls.length, 3);
-    assert.ok(publishCalls.every(call => call.item.id === 'review:12'));
+    assert.deepEqual(publishCalls.map(input => input.lane).sort(), ['code-quality', 'issue-compliance', 'performance']);
   });
 
-  it('does not keep failed fallback snapshot loads in the lane publish cache', async () => {
+  it('does not cache a failed direct lane publication', async () => {
     const repo = makeGitRepo();
     const withReviewedContext = evidence => ({
       ...evidence,
@@ -301,14 +299,17 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     writeLocalEvidence(repo, withReviewedContext(localEvidence({ issueNumber: 95, prNumber: 14, headSha: 'ghi789' })));
     const snapshot = { item: { id: 'review:14' }, pr: cleanLocalPr({ number: 14, headRefOid: 'ghi789' }), closingIssueNumbers: [95], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
     const loadCalls = [];
+    let publishCalls = 0;
     const provider = {
       async loadPullRequestReview(prNumber) {
         loadCalls.push(prNumber);
         if (loadCalls.length === 1) throw new Error('temporary provider failure');
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
-        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: `planned ${item.id} ${input.lane}`, inlineCommentCount: 0, bodyFindingCount: 0 };
+      async publishLaneReviewFeedback(input) {
+        publishCalls += 1;
+        if (publishCalls === 1) throw new Error('temporary provider failure');
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: `planned ${input.lane}`, inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     };
 
@@ -318,8 +319,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
     const result = await runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
-    assert.deepEqual(loadCalls, [14, 14]);
-    assert.equal(result.publish.nextAction, 'planned review:14 code-quality');
+    assert.deepEqual(loadCalls, []);
+    assert.equal(publishCalls, 2);
+    assert.equal(result.publish.nextAction, 'planned code-quality');
   });
 
   it('publishes a gate condition restated across final-gate and another lane exactly once', async () => {
@@ -350,7 +352,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -408,7 +410,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -449,7 +451,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -490,7 +492,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -665,7 +667,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -952,7 +954,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
+      async publishLaneReviewFeedback(input) {
         publishCalls.push(input);
         return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
@@ -1157,7 +1159,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
     const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
-    const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
     assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
   });
 
@@ -1187,7 +1189,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('advertises the economy delegation catalog in the lane spawn prompt', () => {
     const { ECONOMY_REVIEW_CATALOG } = require('../dist/review_catalog.js');
-    const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
     const catalogLine = contextLines.find(line => line.startsWith('Economy delegation catalog'));
     assert.ok(catalogLine, 'the lane spawn prompt must advertise the economy delegation catalog');
     for (const agent of ECONOMY_REVIEW_CATALOG) {
@@ -2037,8 +2039,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json');
     const lane = JSON.parse(readFileSync(lanePath, 'utf8'));
 
-    assert.equal(result.localReviewRunner.codex.independentReviewer, true);
-    assert.deepEqual(result.localReviewRunner.codex.missingCapabilities, []);
+    assert.equal(result.localReviewRunner.host, 'codex');
+    assert.equal(result.localReviewRunner.hosts.codex.independentReviewer, true);
+    assert.deepEqual(result.localReviewRunner.hosts.codex.missingCapabilities, []);
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'inconclusive');
     assert.equal(result.localReview.evidence[0].adapter, 'local-host');
@@ -2189,7 +2192,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
           profile: 'local-comprehensive',
           recommendation: 'approve',
           status: 'passed',
-          lanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'security', 'performance', 'data-database', 'concurrency-resource', 'error-observability', 'tests-quality', 'api-contract-compatibility', 'docs-instructions', 'ui-ux-accessibility', 'release-ci-supply-chain', 'manual-qa', 'final-gate'],
+          lanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'security', 'performance', 'data-database', 'concurrency-resource', 'error-observability', 'tests-quality', 'docs-instructions', 'ui-ux-accessibility', 'release-ci-supply-chain', 'manual-qa', 'final-gate'],
         }),
       ],
     })] });
@@ -2198,7 +2201,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.equal(result.status, 'complete');
     assert.equal(result.localReview.profile, 'local-comprehensive');
-    assert.equal(result.localReview.requiredLanes.length, 15);
+    assert.equal(result.localReview.requiredLanes.length, 14);
     assert.ok(result.localReview.evidence[0].promptStack.some(item => item.id === 'review-lanes/final-gate'));
   });
 
@@ -2221,6 +2224,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     config.reviewAdapter = 'shadow';
+    config.reviewSources = [];
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -2498,7 +2502,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     config.reviewAdapter = 'mixed';
     config.reviewProfile = 'local-standard';
     config.reviewAgents = ['@coderabbitai'];
-    config.localReviewAgents = ['oracle'];
+    config.localReviewAgents = ['codex'];
     config.reviewLanes = standardReviewLanes('local-host');
     writeLocalEvidence(repo, localEvidence(), { reviewDecision: 'APPROVED' });
     const pr = cleanLocalPr({

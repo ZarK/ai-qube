@@ -12,7 +12,7 @@ export function formatInitHuman(result: InitResult): string {
   lines.push(`Target: ${result.target}`);
   lines.push(`Repository: ${result.repoRoot ?? 'not detected'}`);
   lines.push(`Tools: ${result.selectedTools.length > 0 ? result.selectedTools.join(', ') : 'none'}`);
-  lines.push(`Policy: naming rules ${result.policy.namingRules ? 'enabled' : 'disabled'}, milestone ordering ${result.policy.milestoneOrdering ? 'enabled' : 'disabled'}, supply-chain safety ${result.policy.supplyChainSafety ? 'enabled' : 'disabled'}, OpenCode command alias ${result.policy.opencodeCommandAlias ? 'enabled' : 'disabled'}`);
+  lines.push(`Policy: naming rules ${result.policy.namingRules ? 'enabled' : 'disabled'}, milestone ordering ${result.policy.milestoneOrdering ? 'enabled' : 'disabled'}, supply-chain safety ${result.policy.supplyChainSafety ? 'enabled' : 'disabled'}`);
   lines.push(`Config: ${result.configPath}`);
   if (result.setupSummary) {
     lines.push(`Setup: review mode ${result.setupSummary.reviewMode}, publisher ${result.setupSummary.publisher}, reviewers ${result.setupSummary.reviewers.join(', ') || 'none'}, quality control ${result.setupSummary.qualityControl ? 'enabled' : 'disabled'}, UI audit ${result.setupSummary.manualUiAudit ? 'enabled' : 'disabled'}`);

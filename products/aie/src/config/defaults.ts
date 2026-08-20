@@ -1,6 +1,6 @@
 import type { ExecutorPolicy, ReviewModelsPolicy } from '../core/policy.js';
 import { cloneModelRoutingPolicy, defaultModelRoutingPolicy } from '../core/model_routing.js';
-import { expandGateConfigs } from '../gate_config.js';
+import { selectEnabledGates } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
 import { defaultInstructionContextSources } from '../agent_host_adapters.js';
 import type { Config, ConfigFileShape, FocusedGateSelector, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
@@ -102,7 +102,6 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
     },
     gates: {
       definitions: [],
-      qualityGates: [],
       qualityControl: false,
       focusedSelectors: [],
     },
@@ -113,17 +112,11 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       evidenceRoot: '',
     },
     instructions: {
-      opencodeCommandAlias: false,
       namingRules: false,
       promptInjectionWarning: true,
       noCreditWarning: true,
       implementationGuardrails: true,
       supplyChainSafety: true,
-    },
-    migration: {
-      legacyScripts: 'preserve',
-      compatibilityWrappers: false,
-      cleanupKnownHelpers: false,
     },
     supplyChain: {
       exactVersions: true,
@@ -275,13 +268,11 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
       },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),
-        qualityGates: [...input.policy.gates.qualityGates],
         qualityControl: input.policy.gates.qualityControl,
         focusedSelectors: (input.policy.gates.focusedSelectors ?? []).map(cloneFocusedSelector),
       },
       audit: { ...input.policy.audit },
       instructions: { ...input.policy.instructions },
-      migration: { ...input.policy.migration },
       supplyChain: { ...input.policy.supplyChain },
       modelRouting: cloneModelRoutingPolicy(input.policy.modelRouting ?? defaultModelRoutingPolicy()),
     },
@@ -293,7 +284,7 @@ function labelObjects(names: string[]): Array<{ name: string; description: strin
 }
 
 function policyGateDefinitions(gates: GatePolicyConfig): ExecutorPolicy['gates']['definitions'] {
-  return expandGateConfigs(gates.definitions.map(cloneGate), gates.qualityGates, gates.qualityControl)
+  return selectEnabledGates(gates.definitions.map(cloneGate), gates.qualityControl)
     .map(gate => ({
       key: gate.name,
       name: gate.name,
@@ -384,7 +375,6 @@ export function configFromFile(input: ConfigFileShape): Config {
       evidenceRoot: policy.audit.evidenceRoot,
     },
     instructions: { ...policy.instructions },
-    migration: { ...policy.migration },
     supplyChain: { ...policy.supplyChain },
   };
   return {
@@ -450,18 +440,15 @@ export function configFromFile(input: ConfigFileShape): Config {
     modelRouting: cloneModelRoutingPolicy(policy.modelRouting ?? defaultModelRoutingPolicy()),
     reviewRoute: policy.reviews.route ? { ...policy.reviews.route } : null,
     reviewFailover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
-    opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,
     uiAuditTarget: policy.audit.target,
     uiAuditEvidenceRoot: policy.audit.evidenceRoot,
     gates: policy.gates.definitions.map(cloneGate),
-    qualityGates: [...policy.gates.qualityGates],
     qualityControl: policy.gates.qualityControl,
     focusedSelectors: (policy.gates.focusedSelectors ?? []).map(cloneFocusedSelector),
     instructions: { ...policy.instructions },
     supplyChain: { ...policy.supplyChain },
-    migration: { ...policy.migration },
   };
 }
 

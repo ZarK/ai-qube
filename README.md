@@ -30,9 +30,8 @@ pnpm run site:preview
 Use exact versions for automation and keep dependency lifecycle scripts disabled
 where your package manager supports it.
 
-Use the guided installer when choosing between local/global use, package manager,
-host surface, provider surface, docs notes, or migration from direct package
-globals:
+Use the guided installer to select the install scope, package manager, agent
+harness, and provider configuration:
 
 ```sh
 qube install
@@ -69,10 +68,8 @@ pnpm exec aib --help
 
 `qube` dispatches to the component versions installed with the composer package.
 Use the composer entry point for automation, agent instructions, hooks, and
-durable examples in this monorepo. Direct component packages remain independently
-installable; when they create repository state, they use the same QUBE-prefixed
-paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
-`.qube/aiq/out/`.
+durable examples. In a source checkout, `qube` can dispatch to matching workspace
+packages.
 
 ```sh
 qube components
@@ -107,10 +104,8 @@ inputs, assumptions, plan, actions, checks, local review, risks, summary, and
 final output. The summary explicitly states that no GitHub issue, branch, pull
 request, review request, merge, or approval was created by default.
 
-The composer first resolves component binaries from its own install scope, then
-from the local workspace, then from ambient `PATH`. PATH fallback is diagnostic:
-QUBE refuses a stale same-package binary when it can identify the installed
-package version.
+The composer first resolves component binaries from its npm install scope. In a
+source checkout, it then checks the current workspace install.
 
 ## Repository Layout
 
@@ -130,9 +125,10 @@ adapters/
 docs/
 ```
 
-Public package READMEs live beside the package that npm publishes. Product and
-release docs under `docs/` explain command boundaries, host surfaces, install
-migration, and package version policy.
+Public package READMEs live beside the package that npm publishes. They contain
+the package install instructions. Product docs under `docs/` explain command
+boundaries and agent harness surfaces. `docs/release-controls.md` and
+`docs/version-audit.json` describe release controls and package versions.
 
 ## Publishing
 
@@ -180,5 +176,5 @@ Useful public docs:
 - `docs/qube-jira-provider-support.md`
 - `docs/qube-linear-provider-support.md`
 - `docs/qube-paths-and-artifacts.md`
-- `docs/release/install-migration.md`
-- `docs/release/version-audit.json`
+- `docs/release-controls.md`
+- `docs/version-audit.json`

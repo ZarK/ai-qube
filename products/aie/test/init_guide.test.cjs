@@ -138,6 +138,41 @@ describe('init guide questions', () => {
     assert.ok(!questions.find(item => item.id === 'reviewers').options.some(option => option.value === 'grok-build:grok-4.5'));
   });
 
+  it('offers live OpenCode models for native host review', () => {
+    const questions = buildInitQuestions({
+      machine: {
+        installedHosts: ['opencode'],
+        agentBrowserAvailable: false,
+        aiqAvailable: false,
+        hasUserFacingUi: false,
+        liveModels: { opencode: ['opencode-current'] },
+      },
+      answers: { reviewMode: 'host' },
+    });
+    const models = questions.find(item => item.id === 'review-models');
+    assert.match(models.prompt, /native review/);
+    assert.ok(models.options.some(option => option.value === 'opencode:opencode-current'));
+    const policy = applyQuestionAnswersToPolicy({}, [
+      { id: 'review-models', answered: true, value: ['opencode:opencode-current'] },
+    ]);
+    assert.deepEqual(policy.reviewModels.review.opencode, { model: 'opencode-current', effort: null });
+  });
+
+  it('does not invent a Claude Code catalog for native host review', () => {
+    const questions = buildInitQuestions({
+      machine: {
+        installedHosts: ['claude-code'],
+        agentBrowserAvailable: false,
+        aiqAvailable: false,
+        hasUserFacingUi: false,
+        liveModels: {},
+      },
+      answers: { reviewMode: 'host' },
+    });
+    const models = questions.find(item => item.id === 'review-models');
+    assert.deepEqual(models.options, [{ value: 'none', label: 'No live host catalog is available.', available: false }]);
+  });
+
   it('writes live host models to reviewModels and never to reviewAgents', () => {
     const policy = applyQuestionAnswersToPolicy({}, [
       { id: 'reviewers', answered: true, value: ['coderabbitai', 'grok-build:grok-4.5'] },
@@ -194,7 +229,7 @@ describe('init guide questions', () => {
     assert.match(evidence.prompt, /Where should this machine keep local UI audit evidence/);
     assert.equal(evidence.recommendedValue, '~/.qube/verification');
     assert.ok(evidence.options.some(option => option.value === '~/.qube/verification'));
-    assert.equal(evidence.options.find(option => option.value === '~/github-verification').available, false);
+    assert.equal(evidence.options.some(option => option.value === '~/github-verification'), false);
   });
 
   it('omits the evidence-root question when UI audit is off and not recommended', () => {
@@ -220,34 +255,6 @@ describe('init guide questions', () => {
       aiqAvailable: false,
     });
     assert.equal(result.ok, true);
-    const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
-    assert.equal(written.policy.audit.evidenceRoot, '~/.qube/verification');
-  });
-
-  it('reports an existing legacy tree, keeps it on disk, and still writes the QUBE default on --yes', async () => {
-    const repo = makeGitRepo();
-    const home = join(repo, 'operator-home');
-    const { basename } = require('node:path');
-    const repoSegment = basename(repo).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'repository';
-    const legacyDir = join(home, 'github-verification', repoSegment);
-    mkdirSync(legacyDir, { recursive: true });
-    writeFileSync(join(legacyDir, 'notes.md'), 'old evidence\n');
-    writeFileSync(join(repo, 'index.html'), '<html></html>\n');
-    const result = await runInit({
-      target: '.',
-      tool: 'opencode',
-      dryRun: false,
-      force: false,
-      cwd: repo,
-      yes: true,
-      installedHosts: ['grok-build'],
-      agentBrowserAvailable: true,
-      aiqAvailable: false,
-      homeDirectory: home,
-    });
-    assert.equal(result.ok, true);
-    assert.ok(result.warnings.some(warning => /github-verification/.test(warning)));
-    assert.equal(existsSync(join(legacyDir, 'notes.md')), true);
     const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
     assert.equal(written.policy.audit.evidenceRoot, '~/.qube/verification');
   });
@@ -292,7 +299,7 @@ describe('init guide questions', () => {
     assert.match(includedAgents, /agent, model, service, or vendor credit/);
     assert.match(includedAgents, /Co-authored-by/);
     assert.match(includedAgents, /refs\/notes\/ai/);
-    assert.match(includedAgents, /performed_via_github_app/);
+    assert.match(includedAgents, /QUBE may use its configured review publisher/);
     assert.match(includedAgents, /Silence is not a waiver/);
 
     const omitted = makeGitRepo();
@@ -313,7 +320,7 @@ describe('init guide questions', () => {
     const omittedAgents = readFileSync(join(omitted, 'AGENTS.md'), 'utf8');
     assert.equal(omittedConfig.policy.instructions.noCreditWarning, false);
     assert.doesNotMatch(omittedAgents, /agent, model, service, or vendor credit/);
-    assert.doesNotMatch(omittedAgents, /performed_via_github_app/);
+    assert.doesNotMatch(omittedAgents, /QUBE may use its configured review publisher/);
   });
 });
 
@@ -324,8 +331,8 @@ describe('UI audit evidence path docs', () => {
     const page = readDoc(resolve(process.cwd(), '../../docs/qube-paths-and-artifacts.md'), 'utf8');
     assert.match(page, /~\/\.qube\/verification\/<repository>\/<issue>\//);
     assert.match(page, /user-local UI audit evidence/);
-    assert.match(page, /Not committed/);
-    assert.match(page, /github-verification/);
+    assert.match(page, /not committed/i);
+    assert.doesNotMatch(page, /github-verification/);
   });
 });
 
@@ -336,7 +343,7 @@ describe('init --from', () => {
       policy: {
         reviews: { mode: 'isolated', agents: ['review-bot'] },
         audit: { manualUiAudit: true, appLaunch: '', target: '' },
-        gates: { qualityControl: true, qualityGates: [], definitions: [], focusedSelectors: [] },
+        gates: { qualityControl: true, definitions: [], focusedSelectors: [] },
       },
     });
 
@@ -506,7 +513,6 @@ describe('init guide CLI and doctor-clean setup', () => {
         'issue-compliance',
         'code-quality',
         'performance',
-        'api-contract-compatibility',
         'ui-ux-accessibility',
         'security',
       ]);

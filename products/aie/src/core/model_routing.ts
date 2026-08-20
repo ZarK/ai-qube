@@ -1,5 +1,7 @@
 import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId, type ReviewModelTierId, type ReviewModelsPolicy } from './policy.js';
 import { resolveReviewModelTier } from '../app/local_review_runner_support.js';
+import { AGENT_HOST_IDS, type AgentHostId } from '@tjalve/qube-core';
+import { getAgentHostProfileSync } from '../agent_host_adapters.js';
 
 export const MODEL_ROUTE_CLASSES = Object.freeze([
   'mechanical-implementation',
@@ -16,8 +18,8 @@ export const DELEGATED_MODEL_ROUTE_CLASSES = Object.freeze([
 ] as const);
 export type DelegatedModelRouteClass = (typeof DELEGATED_MODEL_ROUTE_CLASSES)[number];
 
-export const MODEL_ROUTING_HOSTS = Object.freeze(['codex', 'claude-code', 'opencode', 'grok-build'] as const);
-export type ModelRoutingHostId = (typeof MODEL_ROUTING_HOSTS)[number];
+export const MODEL_ROUTING_HOSTS = AGENT_HOST_IDS;
+export type ModelRoutingHostId = AgentHostId;
 export type ModelRoutingTransport = 'cli' | 'host';
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -340,19 +342,13 @@ function firstInstalledReviewHost(installed: Set<ReviewModelHostId>): ReviewMode
   return null;
 }
 
-export const MODEL_ROUTING_HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, readonly string[]>> = Object.freeze({
-  codex: Object.freeze(['codex']),
-  'claude-code': Object.freeze(['claude']),
-  opencode: Object.freeze(['opencode']),
-  'grok-build': Object.freeze(['grok']),
-});
-
 export function detectInstalledRoutingHosts(
   lookup: (command: string) => boolean,
 ): readonly ModelRoutingHostId[] {
   const installed: ModelRoutingHostId[] = [];
   for (const host of MODEL_ROUTING_HOSTS) {
-    if (MODEL_ROUTING_HOST_COMMANDS[host].some(lookup)) installed.push(host);
+    const executables = getAgentHostProfileSync(host).executables;
+    if ([...executables.names, ...executables.windowsNames].some(lookup)) installed.push(host);
   }
   return installed;
 }

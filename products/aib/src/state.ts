@@ -524,7 +524,7 @@ function applySpecAnswer(state: BootstrapState, value: string): BootstrapState {
 }
 
 export function isAgentHost(value: string): value is AgentHostKind {
-  return value === "codex" || value === "opencode" || value === "claude-code" || value === "gemini" || value === "other";
+  return value === "codex" || value === "opencode" || value === "claude-code" || value === "grok-build" || value === "cursor" || value === "gemini" || value === "other";
 }
 
 export function missingDiscoveryFields(state: BootstrapState): readonly DiscoveryQuestion[] {

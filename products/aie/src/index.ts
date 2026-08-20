@@ -5,6 +5,12 @@
 export const name = '@tjalve/aie';
 export { validateConfig } from './config/schema.js';
 export {
+  getAgentHostProfile,
+  getAgentHostProfileSync,
+  getAgentHostProfiles,
+  getAllAgentHostProfiles,
+} from './agent_hosts.js';
+export {
   buildModelRoutingFromSelections,
   defaultModelRoutingPolicy,
   detectInstalledRoutingHosts,

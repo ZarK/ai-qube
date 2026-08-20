@@ -7,7 +7,7 @@ import { runGitLabReviewDoctor, type GitLabReviewDoctorProber } from './gitlab_r
 export const REVIEW_PUBLISHER_ROLE_BOUNDARY = 'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.';
 
 export interface ReviewSetupGuidance {
-  readonly mode: 'github-app' | 'token';
+  readonly mode: 'github-app';
   readonly title: string;
   readonly summary: string;
   readonly steps: readonly string[];
@@ -119,11 +119,11 @@ export interface RunReviewDoctorOptions {
 export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
   return {
     mode: 'github-app',
-    title: 'GitHub App reviewer publisher setup (preferred)',
-    summary: 'Use a GitHub App installation as a distinct provider publishing identity for formal pull request review events.',
+    title: 'QUBE Reviewer GitHub App setup',
+    summary: 'Use the QUBE Reviewer GitHub App as a distinct provider publishing identity for formal pull request review events and richer inline review formatting.',
     requiredPermissions: ['Pull requests: Read and write', 'Contents: Read and write'],
     steps: [
-      'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
+      'Create or choose the QUBE Reviewer GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
       'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',
@@ -132,24 +132,6 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
       'Run `review doctor --json` for a read-only identity and permission probe. The probe mints only a short-lived installation token in memory.',
     ],
     limitation: null,
-    roleBoundary: REVIEW_PUBLISHER_ROLE_BOUNDARY,
-  };
-}
-
-export function buildTokenSetupGuidance(): ReviewSetupGuidance {
-  return {
-    mode: 'token',
-    title: 'Fine-grained token reviewer publisher setup (fallback)',
-    summary: 'Use a fine-grained personal access token owned by a separate reviewer user or bot account when a GitHub App is not practical.',
-    requiredPermissions: ['Pull requests: Read and write', 'Contents: Read-only'],
-    steps: [
-      'Create or choose a separate GitHub user or bot account that is not the pull request author.',
-      'Create a fine-grained personal access token scoped only to the required repositories with Pull requests read/write and Contents read-only permissions.',
-      'Store the token in a local environment variable and pass only its variable name, for example `--token-env QUBE_REVIEW_TOKEN`.',
-      'Apply local config with `review setup token --token-env <ENV_NAME> --login <public-login> --yes`.',
-      'Run `review doctor --json` for a read-only identity and permission probe.',
-    ],
-    limitation: 'GitHub does not allow the pull request author to submit a formal review event on the same pull request. If the token identity is the author, publishing degrades to comment-state publication.',
     roleBoundary: REVIEW_PUBLISHER_ROLE_BOUNDARY,
   };
 }
@@ -498,8 +480,12 @@ function readinessFor(
 }
 
 function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPublisherMode, missingFields: readonly string[], probe: ReviewPublisherProbe): string {
-  if (readiness === 'unconfigured') return 'Run `qube review setup github-app` (preferred) or `qube review setup token` (fallback).';
-  if (missingFields.length > 0) return `Re-run \`qube review setup ${mode}\` with ${missingFields.join(' and ')}, then add --yes to apply the safe references.`;
+  if (readiness === 'unconfigured') return 'Continue with the current authenticated GitHub account, or run `qube review setup github-app` to configure the QUBE Reviewer App.';
+  if (missingFields.length > 0) {
+    return mode === 'github-app'
+      ? `Re-run \`qube review setup github-app\` with ${missingFields.join(' and ')}, then add --yes to apply the safe references.`
+      : `Update the advanced token publisher config with ${missingFields.join(' and ')}, then rerun \`qube review doctor --json\`.`;
+  }
   if (!probe.attempted) return 'Run `qube review doctor --json` without --no-probe after the referenced credential is available locally.';
   if (readiness === 'ready' && probe.avatar.status === 'warning') {
     return 'Upload a distinct logo in the GitHub App display settings (PNG, JPG, or GIF under 1 MB; 200x200 px recommended) and set the badge background to match. Do not rename the app. Then rerun `qube review doctor --json`.';
@@ -513,7 +499,7 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
       : 'Grant the GitHub App Contents write permission so review threads can be resolved, refresh the installation, then rerun `qube review doctor --json`.';
   }
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
-  if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
+  if (probe.permissionStatus === 'same-author') return 'Configure the QUBE Reviewer App so provider-visible reviews use an identity different from the pull request author.';
   // Credential resolution failures take priority over repository-access messaging.
   if (
     !probe.repository.attempted

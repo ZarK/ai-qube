@@ -14,13 +14,14 @@ describe("continuation prompt renderer", () => {
     const active = renderAiuContinuationPrompt({
       decision: decision({
         reasonCodes: ["continue-active-work"],
-        selectedItem: { kind: "work-item", id: "47", title: "Decision engine" },
+        selectedItem: { kind: "work-item", id: "47", title: "Decision engine", command: { id: "continue-active-work", argv: ["aie", "branch", "check", "47"] } },
         recommendedNextAction: "Continue: resume the active work item before starting new work.",
       }),
     });
     assert.equal(active.kind, "work");
     assert.match(active.body, /Continue active work for "Decision engine"/);
     assert.match(active.body, /Inspect trusted state first: work work-queue observed 2026-05-23T00:00:00.000Z/);
+    assert.match(active.body, /Next configured command: "aie" "branch" "check" "47"/);
     assert.match(active.body, /untrusted task input/);
     assertNoLocalOrProvenanceText(active.body);
 
@@ -41,11 +42,12 @@ describe("continuation prompt renderer", () => {
         kind: "repair",
         promptKind: "repair",
         reasonCodes: ["repair-active-review"],
-        selectedItem: { kind: "review", id: "62", status: "changes-requested" },
+        selectedItem: { kind: "review", id: "62", status: "changes-requested", command: { id: "review-changes-requested", argv: ["aie", "pr", "gate", "62", "--json"] } },
         recommendedNextAction: "Repair: refresh or reconcile the active review state.",
       }),
     });
     assert.match(review.body, /Repair review state for "62"/);
+    assert.match(review.body, /Next configured command: "aie" "pr" "gate" "62" "--json"/);
 
     const gate = renderAiuContinuationPrompt({
       decision: decision({

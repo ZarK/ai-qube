@@ -22,7 +22,8 @@ function binRun(args, cwd = process.cwd(), env = {}) {
 }
 
 function writeConfig(repo, config) {
-  writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
+  mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+  writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
 }
 
 function cleanConfig() {
@@ -170,12 +171,12 @@ describe('manual UI audit model', () => {
     assert.equal(existsSync(join(home, 'custom')), false);
   });
 
-  it('reports leftover github-verification trees without writing there', () => {
+  it('does not inspect unrelated user directories', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const repo = join(home, 'workspace', 'product-ui');
     mkdirSync(join(home, 'github-verification', 'product-ui'), { recursive: true });
     const result = runUiAudit(getDefaults(), { issueNumber: 104, repoRoot: repo, homeDirectory: home, dryRun: true });
-    assert.ok(result.warnings.some(warning => /leftover UI audit directory/.test(warning)));
+    assert.ok(result.warnings.every(warning => !/github-verification/.test(warning)));
     assert.equal(existsSync(join(home, 'github-verification', 'product-ui', '104')), false);
   });
 });
@@ -374,7 +375,7 @@ describe('manual UI audit CLI', () => {
     assert.equal(planned.status, 0, planned.stderr);
     assert.equal(plannedParsed.ok, true);
     assert.equal(plannedParsed.applied, false);
-    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8')).policy.audit.appLaunch, '');
+    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8')).policy.audit.appLaunch, '');
 
     const written = binRun([
       'audit', 'ui', 'set-run',
@@ -388,7 +389,7 @@ describe('manual UI audit CLI', () => {
     assert.equal(parsed.applied, true);
     assert.equal(parsed.appLaunch, 'pnpm dev:web');
     assert.equal(parsed.target, 'http://127.0.0.1:5178');
-    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
     assert.equal(saved.policy.audit.appLaunch, 'pnpm dev:web');
     assert.equal(saved.policy.audit.target, 'http://127.0.0.1:5178');
     assert.equal(saved.policy.gates.qualityControl, true);
@@ -405,7 +406,7 @@ describe('manual UI audit CLI', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const config = cleanConfig();
     writeConfig(repo, config);
-    writeFileSync(join(repo, 'aie.config.local.json'), `${JSON.stringify({
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), `${JSON.stringify({
       policy: { reviews: { requestText: 'from-overlay' } },
     }, null, 2)}\n`);
     const written = binRun([
@@ -415,7 +416,7 @@ describe('manual UI audit CLI', () => {
       '--json',
     ], repo, { HOME: home, USERPROFILE: home });
     assert.equal(written.status, 0, written.stderr);
-    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const saved = JSON.parse(require('node:fs').readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
     assert.equal(saved.policy.audit.appLaunch, 'pnpm dev:web');
     assert.equal(saved.policy.audit.target, 'http://127.0.0.1:5178');
     assert.notEqual(saved.policy.reviews.requestText, 'from-overlay');
@@ -436,6 +437,6 @@ describe('manual UI audit CLI', () => {
     ], repo);
     assert.notEqual(parent.status, 0);
     assert.match(JSON.parse(parent.stdout).error, /parent-directory/);
-    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, 'aie.config.json'), 'utf8')).policy.audit.appLaunch, '');
+    assert.equal(JSON.parse(require('node:fs').readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8')).policy.audit.appLaunch, '');
   });
 });

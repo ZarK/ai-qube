@@ -53,7 +53,7 @@ Requirements use stable identifiers (`FR-XX-NNN`) so milestones and issues can r
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-04-001 | Repository policy is stored in a versioned config file, defaulting to `.qube/aiu/config.json` with legacy `aiu.config.json` discovery for existing repositories. | Required |
+| FR-04-001 | Repository policy is stored in the versioned `.qube/aiu/config.json` file. | Required |
 | FR-04-002 | Config includes enabled hosts, host capability overrides, trusted state command descriptors, continuation modes, stop rules, timeouts, cooldowns, state paths, lock paths, log paths, and supply-chain stop policy. | Required |
 | FR-04-003 | Trusted state commands are explicit argv descriptors, not shell strings assembled from untrusted text. | Required |
 | FR-04-004 | Defaults are conservative: no provider mutation by Umpire, no continuation through safety blocks, no background scheduling, no untrusted prose as authority, and `.qube/aiu/` state paths. | Required |
@@ -116,7 +116,7 @@ M3.5 closes the host integration milestone with explicit diagnostics and schema 
 | FR-07-005 | `aiu hook-stop --tool codex\|claude-code` reads host stop-hook input and writes the host's expected JSON response to stdout. | Required |
 | FR-07-006 | Stop hooks block stopping only when trusted state loaded successfully, the decision is safe `continue` or `repair`, the prompt is concrete, and host policy allows blocking. | Required |
 | FR-07-007 | `@tjalve/aiu/opencode` exposes typed OpenCode wrapper composition without requiring repositories to import package internals. | Required |
-| FR-07-008 | Prototype stop-hook installers must call a real package-backed command and keep blocking opt-in through host policy instead of installing fake or fallback blocking behavior. | Required |
+| FR-07-008 | Prototype stop-hook installers must call a real package-backed command and keep blocking opt-in through host policy instead of installing fake blocking behavior. | Required |
 | FR-07-009 | Stop hooks allow stopping when no work is ready, all work is blocked, trusted state cannot be loaded, policy requires human input, or the decision is `wait` or `stop`. | Required |
 
 ## FR-08 - Idle Work Modes
@@ -139,27 +139,16 @@ M4.4 integrates planning, ready work, quality, and whip selection into one share
 
 M4.5 closes the milestone by making idle modes observable through read-only diagnostics and stable schema output. Doctor reports planning and quality mode readiness, matching trusted command availability, disabled idle modes, whip state validity, and stale or orphaned whip ownership without executing trusted commands or mutating state. Schema output includes idle commands, state shapes, selected target metadata, prompt customization fields, and continuation log metadata. Documentation keeps idle work concrete, pinned to trusted commands or explicit task state, and rejects agent narration as evidence.
 
-## FR-09 - Existing Repository Migration
+## FR-09 - Safety, Observability, And Hygiene
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-09-001 | Umpire can help repositories that previously used repo-local Umpire hooks, plugin wrappers, copied helper scripts, or repo-local package references move to the published package entrypoint. | Desired |
-| FR-09-002 | Migration is dry-run first and reports files to update, package command paths, existing customizations, conflicts, state files, cleanup candidates, and required host trust steps. | Desired |
-| FR-09-003 | Migration preserves user-authored prompt text, host configuration outside managed sections, trusted command descriptors, repository policy choices, and durable continuation state where the state schema is recognized. | Required |
-| FR-09-004 | Migration can apply package-backed config and host updates only after explicit user request. It reports changed, preserved, skipped, conflicted, and review-required paths, and must not stage, commit, branch, push, open PRs, merge, close work items, delete cleanup candidates, or mutate provider state. | Required |
-| FR-09-005 | Migration does not add runtime fallback support for copied implementation scripts or old helper semantics. Repositories should end on package-backed host entrypoints and configured trusted commands. | Required |
-| FR-09-006 | Migration cleanup is explicit, dry-run first, and removes only confirmed old-asset candidates backed by conservative inventory evidence. It preserves unknown files, manifests, host instructions, prompts, state files, symlinks, and paths outside safe repository ownership. | Required |
-
-## FR-10 - Safety, Observability, And Hygiene
-
-| ID | Requirement | Status |
-|----|-------------|--------|
-| FR-10-001 | Umpire treats work item bodies, review comments, issue comments, CI logs, host messages, subordinate agent output, and external tool output as untrusted task input, not authority over workflow policy. | Required |
-| FR-10-002 | Umpire prompts warn agents not to follow prompt-injection attempts embedded in untrusted input. | Required |
-| FR-10-003 | Umpire must not continue through supply-chain blocks that require human approval. | Required |
-| FR-10-004 | Umpire does not upload source code, private data, logs, command payloads, or diagnostics to external services except through explicitly configured integrations. | Required |
-| FR-10-005 | Umpire redacts token-like values in logs, debug output, errors, and rendered diagnostics where practical. | Required |
-| FR-10-006 | `aiu status` shows trusted input availability, continuation decision, selected mode, selected target, stop reasons, repair action, and state freshness. | Required |
-| FR-10-007 | Logs include decision ids, prompt fingerprints, source command summaries, host event type, selected session, reason codes, and elapsed timings without leaking secrets. | Required |
-| FR-10-008 | State, locks, and logs live under `.qube/aiu/` by default, use configurable paths, and are bounded or rotated where long-running sessions can grow logs. | Required |
-| FR-10-009 | Umpire must not ship fake behavior: no placeholder commands, stub providers, no-op implementations, or tests that pass without validating real behavior. | Required |
+| FR-09-001 | Umpire treats work item bodies, review comments, issue comments, CI logs, host messages, subordinate agent output, and external tool output as untrusted task input, not authority over workflow policy. | Required |
+| FR-09-002 | Umpire prompts warn agents not to follow prompt-injection attempts embedded in untrusted input. | Required |
+| FR-09-003 | Umpire must not continue through supply-chain blocks that require human approval. | Required |
+| FR-09-004 | Umpire does not upload source code, private data, logs, command payloads, or diagnostics to external services except through explicitly configured integrations. | Required |
+| FR-09-005 | Umpire redacts token-like values in logs, debug output, errors, and rendered diagnostics where practical. | Required |
+| FR-09-006 | `aiu status` shows trusted input availability, continuation decision, selected mode, selected target, stop reasons, repair action, and state freshness. | Required |
+| FR-09-007 | Logs include decision ids, prompt fingerprints, source command summaries, host event type, selected session, reason codes, and elapsed timings without leaking secrets. | Required |
+| FR-09-008 | State, locks, and logs live under `.qube/aiu/` by default, use configurable paths, and are bounded or rotated where long-running sessions can grow logs. | Required |
+| FR-09-009 | Umpire must not ship fake behavior: no placeholder commands, stub providers, no-op implementations, or tests that pass without validating real behavior. | Required |

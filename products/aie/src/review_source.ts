@@ -9,7 +9,6 @@ import {
 } from './core/review_participant.js';
 import type { ReviewItem } from '@tjalve/qube-core';
 import type { Config, ReviewSourceConfig, ReviewSourceIdentity, ReviewSourceMarkers } from './config/index.js';
-import { requiredLocalReviewLanes } from './local_review_evidence.js';
 
 export interface ReviewSourceReadiness {
   id: string;
@@ -105,32 +104,7 @@ export function evaluateReviewSourceContract(sources: readonly ReviewSourceConfi
   return { sources: evaluated, allSatisfied: evaluated.every(source => !source.blocking || source.satisfied) };
 }
 
-// Dogfood compatibility: when repository config declares no explicit
-// sources, derive the same expectations the adapter already implies today
-// (routed local lanes when local review is required, configured provider
-// reviewers when the adapter requests them). `activeLaneIds`, when given, is
-// the caller's own dynamic active-lane resolution so the derived default
-// never diverges from what the caller already treats as required.
-function defaultReviewSources(config: Config, activeLaneIds: readonly string[] | undefined): ReviewSourceConfig[] {
-  const sources: ReviewSourceConfig[] = [];
-  const localRequired = (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.reviewProfile !== 'local-shadow';
-  if (localRequired) {
-    const profile = config.reviewProfile === 'remote-compatible' ? 'local-standard' : config.reviewProfile;
-    const expected = activeLaneIds && activeLaneIds.length > 0 ? [...activeLaneIds] : [...requiredLocalReviewLanes(profile)];
-    if (expected.length > 0) {
-      sources.push({ id: 'local-lanes', identity: 'lane', expected, blocking: true, markers: 'trusted', enabled: true });
-    }
-  }
-  const remoteEnabled = config.reviewAdapter === 'github' || config.reviewAdapter === 'remote' || config.reviewAdapter === 'mixed';
-  const reviewers = config.reviewAgents.map(name => name.trim()).filter(name => name !== '');
-  if (remoteEnabled && reviewers.length > 0) {
-    sources.push({ id: 'provider-reviewers', identity: 'reviewer', expected: reviewers, blocking: true, markers: 'provider', enabled: true });
-  }
-  return sources;
-}
-
-/** The configured or, when omitted, adapter-derived set of enabled review sources for this repository. */
-export function resolveReviewSources(config: Config, options: { activeLaneIds?: readonly string[] } = {}): ReviewSourceConfig[] {
-  const declared = config.reviewSources.length > 0 ? config.reviewSources : defaultReviewSources(config, options.activeLaneIds);
-  return declared.filter(source => source.enabled);
+/** The explicitly configured, enabled review sources for this repository. */
+export function resolveReviewSources(config: Config): ReviewSourceConfig[] {
+  return config.reviewSources.filter(source => source.enabled);
 }

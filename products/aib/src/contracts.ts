@@ -1,7 +1,7 @@
 export type ArtifactStatus = "missing" | "draft" | "ready" | "accepted" | "blocked" | "unknown";
 export type CapabilityStatus = "supported" | "unsupported" | "unknown" | "policy-blocked";
 export type ProviderRole = "work" | "forge" | "review" | "ci" | "layout";
-export type AgentHostKind = "codex" | "opencode" | "claude-code" | "gemini" | "other";
+export type AgentHostKind = "codex" | "opencode" | "claude-code" | "grok-build" | "cursor" | "gemini" | "other";
 export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemStatus = "draft" | "ready" | "blocked" | "rendered";
 export type AgentActionKind = "ask_human" | "inspect_context" | "draft_spec" | "request_acceptance" | "generate_artifacts" | "stop";

@@ -9,7 +9,7 @@ describe('agent descriptors and prompt registry', () => {
     const { renderAgentPrompt } = await import('../dist/agent_descriptors.js');
 
     const first = renderAgentPrompt({
-      hostId: 'fallback-single-agent',
+      hostId: 'codex',
       descriptorId: 'qa-reviewer',
       categoryId: 'review',
       laneIds: ['issue-compliance', 'code-quality'],
@@ -17,7 +17,7 @@ describe('agent descriptors and prompt registry', () => {
       outputContract: 'Return findings and residual risk.',
     });
     const second = renderAgentPrompt({
-      hostId: 'fallback-single-agent',
+      hostId: 'codex',
       descriptorId: 'qa-reviewer',
       categoryId: 'review',
       laneIds: ['issue-compliance', 'code-quality'],
@@ -58,7 +58,7 @@ describe('agent descriptors and prompt registry', () => {
     summary.agents.find(item => item.id === 'qa-reviewer').requiredTools.push('mutated-tool');
 
     const rendered = renderAgentPrompt({
-      hostId: 'fallback-single-agent',
+      hostId: 'codex',
       descriptorId: 'qa-reviewer',
       categoryId: 'review',
     });
@@ -99,7 +99,7 @@ describe('agent descriptors and prompt registry', () => {
     const { renderAgentPrompt } = await import('../dist/agent_descriptors.js');
 
     const rendered = renderAgentPrompt({
-      hostId: 'fallback-single-agent',
+      hostId: 'codex',
       descriptorId: 'qa-reviewer',
       categoryId: 'review',
       commandFragments: ['Use the configured repository review request.'],
@@ -117,20 +117,18 @@ describe('agent descriptors and prompt registry', () => {
       hostId: 'codex',
       descriptorId: 'qa-reviewer',
       categoryId: 'review',
-      laneIds: ['performance', 'data-database', 'error-observability', 'api-contract-compatibility', 'ui-ux-accessibility', 'release-ci-supply-chain'],
+      laneIds: ['performance', 'data-database', 'error-observability', 'ui-ux-accessibility', 'release-ci-supply-chain'],
       contextLines: ['Review PR #180.'],
     });
 
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/performance'));
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/data-database'));
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/error-observability'));
-    assert.ok(rendered.orderedFragmentIds.includes('review-lanes/api-contract-compatibility'));
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/ui-ux-accessibility'));
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/release-ci-supply-chain'));
     assert.match(rendered.text, /Review performance risk/);
     assert.match(rendered.text, /database sanity/);
     assert.match(rendered.text, /error handling and observability/);
-    assert.match(rendered.text, /API and contract compatibility/);
     assert.match(rendered.text, /host-agent UX/);
     assert.match(rendered.text, /release, CI, and supply-chain/);
   });
@@ -156,7 +154,7 @@ describe('agent descriptors and prompt registry', () => {
   it('gives every review-lane fragment a heuristic checklist with all five sections', async () => {
     const { renderAgentPrompt, listPromptFragmentDefinitions } = await import('../dist/agent_descriptors.js');
     const laneFragments = listPromptFragmentDefinitions().filter(fragment => fragment.sourceCategory === 'lane');
-    assert.equal(laneFragments.length, 15);
+    assert.equal(laneFragments.length, 14);
     const sectionLabels = ['Defect classes:', 'Inspect beyond the diff:', 'Evidence to demand:', 'Out of lane (ignore):', 'Exhaustiveness rules:'];
 
     for (const fragment of laneFragments) {
@@ -190,6 +188,16 @@ describe('agent descriptors and prompt registry', () => {
     assert.equal(librarian.modelPreferences.supportsLargeContext, true);
     assert.equal(librarian.roleKind, 'researcher');
     assert.deepEqual(librarian.categoryIds, ['research']);
+  });
+
+  it('exposes only the five real agent harness profiles', async () => {
+    const { buildDescriptorSummary, getAgentToolHost, listPromptFragmentDefinitions } = await import('../dist/agent_descriptors.js');
+
+    const summary = buildDescriptorSummary();
+
+    assert.deepEqual(summary.hosts.map(host => host.id), ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
+    assert.throws(() => getAgentToolHost('fallback-single-agent'), /Unknown agent host/);
+    assert.ok(!listPromptFragmentDefinitions().some(fragment => fragment.id === 'hosts/fallback-single-agent'));
   });
 
   it('detects missing prompt assets without claiming runner availability', async () => {

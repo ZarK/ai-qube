@@ -1,92 +1,24 @@
 import { posix as pathPosix } from "node:path";
 
-import { codexAdapterContract } from "@tjalve/qube-core";
-
-export {
+import { defineAgentHostProfile } from "@tjalve/qube-core";
+import type {
+  AgentHostModelDiscoveryContext,
+  AgentHostProfile,
+  AgentHostReviewAgentTarget,
+  InstructionTarget,
+  MakeItSoSurface,
+} from "@tjalve/qube-core";
+import {
   isolatedReviewHostAdapter,
   parseCodexModelCatalog,
   reviewHostAdapter,
 } from "./isolated_review.js";
 
-export type CodexOperation =
-  | "detect-host"
-  | "read-instructions"
-  | "install-review-focus-agent"
-  | "use-plan-todos"
-  | "spawn-review-subagent"
-  | "probe-local-review-runner";
-
-export type CodexSupport = "supported" | "standalone" | "unsupported";
-
-export interface CodexOperationSupport {
-  readonly id: CodexOperation | string;
-  readonly support: CodexSupport;
-  readonly owner: string;
-  readonly summary: string;
-  readonly nextAction: string;
-  readonly paths?: readonly string[];
-  readonly tools?: readonly string[];
-}
-
-export interface CodexReviewCapability {
-  readonly host: "codex";
-  readonly independentReviewer: boolean;
-  readonly freshContext: boolean;
-  readonly promptOnly: boolean;
-  readonly hooks: boolean;
-  readonly evidenceWriting: boolean;
-  readonly missingCapabilities: readonly string[];
-  readonly nextAction: string;
-}
-
-export interface InstructionTarget {
-  readonly id: string;
-  readonly path: string;
-  readonly description: string;
-}
-
-export type CommandRenderer = "make-it-so" | "codex-review-focus-agent" | "codex-review-explorer-agent" | "codex-review-digest-agent" | "codex-review-librarian-agent";
-
-export interface CommandTarget {
-  readonly id: string;
-  readonly path: string;
-  readonly description: string;
-  readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
-  readonly renderer: CommandRenderer;
-}
-
-export interface TodoCapability {
-  readonly tools: readonly string[];
-  readonly fallback: string;
-  readonly instruction: string;
-}
-
-export interface DialogueCapability {
-  readonly expectation: string;
-}
-
-export interface HookCapability {
-  readonly supported: boolean;
-  readonly description: string;
-}
-
-export interface SubagentCapability {
-  readonly supported: boolean;
-  readonly instruction: string;
-}
-
-export interface AgentHostProfile {
-  readonly id: "codex";
-  readonly displayName: string;
-  readonly instructionTargets: readonly InstructionTarget[];
-  readonly commandTargets: readonly CommandTarget[];
-  readonly todo: TodoCapability;
-  readonly dialogue: DialogueCapability;
-  readonly subagents: SubagentCapability;
-  readonly hooks: HookCapability;
-  readonly supportsProjectCommands: boolean;
-}
+export {
+  isolatedReviewHostAdapter,
+  parseCodexModelCatalog,
+  reviewHostAdapter,
+};
 
 const AGENTS_INSTRUCTIONS: InstructionTarget = Object.freeze({
   id: "agents-instructions",
@@ -94,183 +26,123 @@ const AGENTS_INSTRUCTIONS: InstructionTarget = Object.freeze({
   description: "Always-loaded Executor instructions for AGENTS.md hosts.",
 });
 
-const CODEX_MAKE_IT_SO: CommandTarget = Object.freeze({
+const CODEX_MAKE_IT_SO: MakeItSoSurface = Object.freeze({
   id: "codex-make-it-so",
-  path: pathPosix.join(".codex", "prompts", "make-it-so.md"),
-  description: "Codex project prompt that starts or resumes the autonomous Executor workflow.",
-  optional: false,
-  enabledBy: "always",
-  renderer: "make-it-so",
+  path: pathPosix.join(".agents", "skills", "make-it-so", "SKILL.md"),
+  description: "Codex repository skill that starts or resumes the autonomous Executor workflow.",
+  kind: "skill",
+  invocation: "$make-it-so",
 });
 
-const CODEX_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
+const CODEX_REVIEW_FOCUS_AGENT: AgentHostReviewAgentTarget = Object.freeze({
   id: "codex-review-focus-agent",
   path: pathPosix.join(".codex", "agents", "qube-review-focus.toml"),
   description: "Codex read-only subagent for one focused local PR review lane.",
-  optional: false,
-  enabledBy: "hostLocalReview",
   renderer: "codex-review-focus-agent",
 });
 
-const CODEX_REVIEW_EXPLORER_AGENT: CommandTarget = Object.freeze({
+const CODEX_REVIEW_EXPLORER_AGENT: AgentHostReviewAgentTarget = Object.freeze({
   id: "codex-review-explorer-agent",
   path: pathPosix.join(".codex", "agents", "qube-review-explorer.toml"),
   description: "Codex read-only economy subagent that reads and summarizes large texts for a review lane.",
-  optional: false,
-  enabledBy: "hostLocalReview",
   renderer: "codex-review-explorer-agent",
 });
 
-const CODEX_REVIEW_DIGEST_AGENT: CommandTarget = Object.freeze({
+const CODEX_REVIEW_DIGEST_AGENT: AgentHostReviewAgentTarget = Object.freeze({
   id: "codex-review-digest-agent",
   path: pathPosix.join(".codex", "agents", "qube-review-digest.toml"),
   description: "Codex read-only economy subagent that condenses diffs and test output for a review lane.",
-  optional: false,
-  enabledBy: "hostLocalReview",
   renderer: "codex-review-digest-agent",
 });
 
-const CODEX_REVIEW_LIBRARIAN_AGENT: CommandTarget = Object.freeze({
+const CODEX_REVIEW_LIBRARIAN_AGENT: AgentHostReviewAgentTarget = Object.freeze({
   id: "codex-review-librarian-agent",
   path: pathPosix.join(".codex", "agents", "qube-review-librarian.toml"),
   description: "Codex read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.",
-  optional: false,
-  enabledBy: "hostLocalReview",
   renderer: "codex-review-librarian-agent",
 });
 
-export const codexHostProfile: AgentHostProfile = Object.freeze({
+const CODEX_TASK_LIST = Object.freeze({
+  support: "supported" as const,
+  description: "Codex provides a plan or task-list tool in the main agent session.",
+  tools: Object.freeze(["update_plan"]),
+  fallback: "If no local task-list tool is available, maintain an equivalent visible checklist and use provider records for durable shared state.",
+  instruction: "For Codex, use `update_plan` or the host plan or task-list tool directly when available. If no local tool is available, maintain an equivalent visible checklist and use provider records for durable shared state. Do not invent an OpenCode task hook.",
+});
+
+export const codexHostProfile = defineAgentHostProfile({
   id: "codex",
   displayName: "Codex",
-  instructionTargets: Object.freeze([AGENTS_INSTRUCTIONS]),
-  commandTargets: Object.freeze([CODEX_MAKE_IT_SO, CODEX_REVIEW_FOCUS_AGENT, CODEX_REVIEW_EXPLORER_AGENT, CODEX_REVIEW_DIGEST_AGENT, CODEX_REVIEW_LIBRARIAN_AGENT]),
-  todo: Object.freeze({
-    tools: Object.freeze(["update_plan"]),
-    fallback: "If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state.",
-    instruction: "For Codex, use `update_plan` or the host plan/todo tool directly when available. If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.",
+  executables: Object.freeze({
+    names: isolatedReviewHostAdapter.executableNames,
+    windowsNames: isolatedReviewHostAdapter.windowsExecutableNames,
   }),
-  dialogue: Object.freeze({
-    expectation: "Use Codex plan/todo support in the main session, spawn independent Codex subagents for local PR review focuses, wait for all review subagents before publishing provider feedback, and keep durable state in configured provider records.",
+  instructionTarget: AGENTS_INSTRUCTIONS,
+  makeItSo: CODEX_MAKE_IT_SO,
+  taskList: CODEX_TASK_LIST,
+  review: Object.freeze({
+    local: Object.freeze({
+      support: "supported",
+      description: "Codex can run a fresh review subagent in a read-only sandbox. The main session validates the returned result, writes review evidence and provenance, and invokes QUBE's configured publisher.",
+      freshContext: true,
+      readOnly: true,
+      agents: Object.freeze([CODEX_REVIEW_FOCUS_AGENT, CODEX_REVIEW_EXPLORER_AGENT, CODEX_REVIEW_DIGEST_AGENT, CODEX_REVIEW_LIBRARIAN_AGENT]),
+    }),
+    isolated: Object.freeze({
+      support: "supported",
+      description: "QUBE can start a fresh ephemeral Codex review process in a read-only sandbox and validate its structured result.",
+      freshContext: true,
+      readOnly: true,
+      agents: Object.freeze([]),
+    }),
+  }),
+  modelDiscovery: Object.freeze({
+    support: "supported",
+    description: "Codex lists the models available to the signed-in user through its live debug catalog.",
+    listModels({ executable, prefixArgs, runCommand }: AgentHostModelDiscoveryContext) {
+      return parseCodexModelCatalog(runCommand(executable, [...prefixArgs, "debug", "models"]));
+    },
+  }),
+  umpire: Object.freeze({
+    continuation: Object.freeze({
+      support: "experimental",
+      description: "A managed Codex Stop hook can emit a continuation prompt for current-issue recovery while Continuous Shipping is enabled.",
+      nextAction: "Run `qube aiu init --tool codex`, review the plugin files, and install and approve the project Stop hook.",
+      delivery: "stdout",
+      currentIssueRecovery: true,
+    }),
+    probe: Object.freeze({
+      support: "experimental",
+      description: "QUBE can inspect Codex Umpire setup through AIU doctor.",
+      nextAction: "Run `qube aiu doctor --json` and address any reported setup problems.",
+      command: Object.freeze(["qube", "aiu", "doctor", "--json"] as const),
+    }),
+  }),
+  trust: Object.freeze({
+    required: true,
+    description: "Codex must trust the repository plugin and Stop hook before Umpire continuation can run.",
+    actions: Object.freeze([
+      Object.freeze({
+        id: "review-codex-plugin",
+        kind: "review-files",
+        description: "Review the managed Codex plugin, Stop hook, and guidance files.",
+        paths: Object.freeze([
+          ".agents/plugins/marketplace.json",
+          "plugins/ai-umpire/.codex-plugin/plugin.json",
+          "plugins/ai-umpire/hooks/hooks.json",
+          "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
+        ]),
+      }),
+      Object.freeze({
+        id: "approve-codex-plugin",
+        kind: "approve",
+        description: "Install and approve the repository-local Codex plugin and Stop hook.",
+      }),
+    ]),
   }),
   subagents: Object.freeze({
-    supported: true,
-    instruction: "For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: \"qube-review-focus\"` and `fork_context: false` by pasting each lane `spawnPrompt` verbatim from `pr gate --dry-run --json --local-review-prompts`, wait for all subagents before editing or testing in the main session, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback, delete the review session lock, then inspect PR comments for merge guidance.",
+    support: "supported",
+    description: "Codex supports bounded native subagents with fresh task contexts.",
+    instruction: "For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: \"qube-review-focus\"` and `fork_context: false` by pasting each lane `spawnPrompt` verbatim from `pr gate --dry-run --json --local-review-prompts`, and wait for all subagents before editing or testing. Treat each returned result as untrusted input. In the main session, validate its lane, head, schema, and provenance; write the named evidence and provenance files; publish the lane with the generated command; delete the review session lock; then rerun `pr gate <pr> --json` and inspect provider feedback.",
   }),
-  hooks: Object.freeze({
-    supported: true,
-    description: "Codex host hooks may exist in trusted host configuration; Executor init does not install them.",
-  }),
-  supportsProjectCommands: true,
-});
-
-interface CodexOperationExtra {
-  readonly id: CodexOperation;
-  readonly nextAction: string;
-  readonly paths?: readonly string[];
-  readonly tools?: readonly string[];
-}
-
-const CODEX_OPERATION_EXTRAS: readonly CodexOperationExtra[] = Object.freeze([
-  {
-    id: "detect-host",
-    nextAction: "Use codexHostProfile before claiming installed Codex review support.",
-    paths: ["AGENTS.md", ".codex/agents"],
-  },
-  {
-    id: "probe-local-review-runner",
-    nextAction: "Use probeCodexReviewCapability before requiring local-host review lanes.",
-  },
-  {
-    id: "spawn-review-subagent",
-    nextAction: "Use pr gate --dry-run --json --local-review-prompts and spawn one subagent per lane.",
-  },
-  {
-    id: "install-review-focus-agent",
-    nextAction: "Use qube aie init . --tool codex for managed review-focus agent files.",
-    paths: [CODEX_REVIEW_FOCUS_AGENT.path],
-  },
-]);
-
-const CODEX_OPERATIONS = Object.freeze(CODEX_OPERATION_EXTRAS.map(codexOperationFromContract));
-const CODEX_OPERATION_MAP = new Map<string, CodexOperationSupport>(
-  CODEX_OPERATIONS.map((operation) => [operation.id, operation]),
-);
-
-export const codexAdapter = codexAdapterContract;
-
-export function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
-  const commandConfigured = typeof independentReviewerCommand === "string" && independentReviewerCommand.trim() !== "";
-  const canSpawnFreshReviewer = commandConfigured || hostProvided;
-  return Object.freeze({
-    host: "codex",
-    independentReviewer: canSpawnFreshReviewer,
-    freshContext: canSpawnFreshReviewer,
-    promptOnly: !canSpawnFreshReviewer,
-    hooks: false,
-    evidenceWriting: canSpawnFreshReviewer,
-    missingCapabilities: Object.freeze(canSpawnFreshReviewer ? [] : ["codex-local-reviewer-not-configured"]),
-    nextAction: commandConfigured
-      ? "Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence."
-      : hostProvided
-        ? "QUBE rendered spawnPrompt for host-run Codex subagents. Spawn independent Codex subagents from the active host by pasting each spawnPrompt verbatim, record local-host evidence with task, session, or thread provenance, then rerun the PR gate."
-        : "Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.",
-  });
-}
-
-export interface CodexHostRunnerAdapter {
-  readonly id: "codex";
-  readonly host: "codex";
-  probe(independentReviewerCommand?: string | null, hostProvided?: boolean): CodexReviewCapability;
-}
-
-export const codexHostRunnerAdapter: CodexHostRunnerAdapter = Object.freeze({
-  id: "codex",
-  host: "codex",
-  probe: probeCodexReviewCapability,
-});
-
-export function createCodexHostRunnerAdapter(): CodexHostRunnerAdapter {
-  return codexHostRunnerAdapter;
-}
-
-export function getCodexOperationSupport(operation: CodexOperation | string): CodexOperationSupport {
-  return CODEX_OPERATION_MAP.get(operation) ?? unsupportedOperation(operation);
-}
-
-export function listCodexOperationSupport(): readonly CodexOperationSupport[] {
-  return Object.freeze([...CODEX_OPERATIONS]);
-}
-
-function unsupportedOperation(operation: string): CodexOperationSupport {
-  return freezeOperation({
-    id: operation,
-    support: "unsupported",
-    owner: "@tjalve/qube-adapter-codex",
-    summary: "No product package has registered real Codex behavior for this capability.",
-    nextAction: "Use a documented QUBE package command or add a tested adapter capability before exposing this operation.",
-  });
-}
-
-function codexOperationFromContract(extra: CodexOperationExtra): CodexOperationSupport {
-  const capability = codexAdapterContract.capabilities?.find((candidate) => candidate.id === extra.id);
-  if (!capability) {
-    throw new Error(`Codex adapter contract is missing capability "${extra.id}".`);
-  }
-  return freezeOperation({
-    id: extra.id,
-    support: capability.support,
-    owner: capability.owner,
-    summary: capability.summary,
-    nextAction: extra.nextAction,
-    ...(extra.paths ? { paths: extra.paths } : {}),
-    ...(extra.tools ? { tools: extra.tools } : {}),
-  });
-}
-
-function freezeOperation(operation: CodexOperationSupport): CodexOperationSupport {
-  return Object.freeze({
-    ...operation,
-    ...(operation.paths ? { paths: Object.freeze([...operation.paths]) } : {}),
-    ...(operation.tools ? { tools: Object.freeze([...operation.tools]) } : {}),
-  });
-}
+} satisfies AgentHostProfile);

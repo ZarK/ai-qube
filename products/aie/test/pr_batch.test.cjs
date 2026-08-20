@@ -33,6 +33,19 @@ function finding(id, severity, message, line) {
   return { id, severity, message, location: { path: 'src/app.ts', line } };
 }
 
+function providerReviewConfig() {
+  const config = getDefaults();
+  config.reviewSources = [{
+    id: 'provider-reviewers',
+    identity: 'reviewer',
+    expected: ['coderabbitai'],
+    blocking: true,
+    markers: 'provider',
+    enabled: true,
+  }];
+  return config;
+}
+
 describe('pr batch', () => {
   it('merges the same defect across lanes and ranks blocking first over partial evidence', async () => {
     const repo = makeRepo();
@@ -87,7 +100,7 @@ describe('pr batch', () => {
       latestReviews: [{ author: { login: 'coderabbitai' }, state: 'CHANGES_REQUESTED', body: 'This breaks the retry loop under load.', commit: { oid: HEAD } }],
     });
 
-    const result = await runPrBatchService(getDefaults(), { prNumber: 12, repoRoot: repo, exec });
+    const result = await runPrBatchService(providerReviewConfig(), { prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(result.batch.findings.length, 1);
     const providerFinding = result.batch.findings[0];
@@ -105,7 +118,7 @@ describe('pr batch', () => {
     const threads = [{ isResolved: false, comments: { nodes: [{ author: { login: 'coderabbitai' }, body: 'Unrelated inline defect.', url: 'https://github.com/example/repo/pull/12#discussion_r1', path: 'src/other.ts', line: 5 }] } }];
     const { exec } = fakeGh({ reviewDecision: 'REVIEW_REQUIRED', threads });
 
-    const result = await runPrBatchService(getDefaults(), { prNumber: 12, repoRoot: repo, exec });
+    const result = await runPrBatchService(providerReviewConfig(), { prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(result.batch.findings.length, 2);
     const localFinding = result.batch.findings.find(entry => entry.message === shared);

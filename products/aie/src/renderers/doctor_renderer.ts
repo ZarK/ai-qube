@@ -15,9 +15,6 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   lines.push(`Instructions: ${targetSummary}`);
   lines.push(`Instruction policy: naming=${diagnostics.instructionPolicy.namingRules.installed ? 'installed' : diagnostics.instructionPolicy.namingRules.configured ? 'missing' : 'disabled'}, guardrails=${diagnostics.instructionPolicy.implementationGuardrails.installed ? 'installed' : diagnostics.instructionPolicy.implementationGuardrails.configured ? 'missing' : 'disabled'}, supply-chain=${diagnostics.instructionPolicy.supplyChainSafety.installed ? 'installed' : diagnostics.instructionPolicy.supplyChainSafety.configured ? 'missing' : 'disabled'}, canonical-guard=${diagnostics.instructionPolicy.canonicalSupplyChainGuard.installed ? 'installed' : diagnostics.instructionPolicy.canonicalSupplyChainGuard.configured ? 'missing' : 'disabled'}`);
   lines.push(`Gate readiness: configured=${readiness.gates.configured}, required=${readiness.gates.required}, supply-chain-sensitive=${readiness.gates.supplyChainSensitive}, external-service=${readiness.gates.externalServiceGates.length}`);
-  lines.push(`Migration readiness: state=${diagnostics.migrationReadiness.legacyState}, detected=${diagnostics.migrationReadiness.detectedPaths}, categories=${diagnostics.migrationReadiness.detectedCategories.join(', ') || 'none'}, cleanup=${diagnostics.migrationReadiness.cleanupStatus}, conflicts=${diagnostics.migrationReadiness.conflicts}`);
-  lines.push(`Compatibility wrappers: installed=${diagnostics.migrationReadiness.wrapperState.installed}, stale=${diagnostics.migrationReadiness.wrapperState.stale}`);
-  lines.push(`Remaining legacy references: ${diagnostics.migrationReadiness.remainingLegacyReferences.count}`);
   lines.push(`Manual UI audit: ${readiness.audit.manualUiAudit ? readiness.audit.readiness : 'disabled'}; agent-browser=${readiness.audit.agentBrowser.state}; screenshot upload=${readiness.audit.screenshotUpload}`);
   const reviewMode = readiness.reviewAgent;
   const instructionVersion = reviewMode.instructionStale
@@ -29,7 +26,7 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
     const live = host.listing === 'ready' ? (host.live.join(', ') || 'none') : host.listing;
     lines.push(`Review models ${host.host}: configured=${configured}; catalog=${live}; served=${host.served.join(', ') || 'none'}; absent=${host.absent.join(', ') || 'none'}`);
   }
-  lines.push(`Review-agent gate: reviewers=${readiness.reviewAgent.reviewers.join(', ')}, fallback=${readiness.reviewAgent.fallbackPromptAvailable ? 'available' : 'missing'}, external-services=${readiness.reviewAgent.externalServices.length}`);
+  lines.push(`Review-agent gate: reviewers=${readiness.reviewAgent.reviewers.join(', ') || 'none'}, harness=${readiness.reviewAgent.localRunner.host}, runner=${readiness.reviewAgent.localRunner.readiness}, external-services=${readiness.reviewAgent.externalServices.length}`);
   lines.push(`PR review gate: ${readiness.prReview.readiness}; reviewers=${readiness.prReview.reviewers.length}; wait=${readiness.prReview.reviewWaitMinutes} minutes; gh=${readiness.prReview.ghAuthenticated ? 'authenticated' : 'not authenticated'}`);
   lines.push(`Review preflight: ${readiness.reviewPreflight.readiness}; disk=${readiness.reviewPreflight.checks.disk.readiness}; dist=${readiness.reviewPreflight.checks.dist.readiness}; loose-objects=${readiness.reviewPreflight.checks.gitObjects.readiness}; gh-review-auth=${readiness.reviewPreflight.checks.githubReviewAuth.readiness}; route-probes=${readiness.reviewPreflight.checks.routeProbes.readiness}`);
   for (const route of readiness.reviewPreflight.checks.routeProbes.routes) {
@@ -50,7 +47,7 @@ function pushWorkflowReadiness(lines: string[], diagnostics: DoctorDiagnostics):
   for (const stage of workflow.stages) {
     lines.push(`- ${stage.stage}: ${stage.status} — ${stage.detail}${stage.nextAction ? ` Next: ${stage.nextAction}` : ''}`);
   }
-  lines.push(`Review state: ${workflow.review.state}; fallback prompt=${workflow.review.fallbackPromptAvailable ? 'available (not enforced review)' : 'missing'}; lanes=${workflow.review.lanes.configured.length}/${workflow.review.lanes.required.length} required; runner=${workflow.review.lanes.runnerReadiness}; publisher=${workflow.review.publisher.mode}; evidence=${workflow.review.evidence.state}`);
+  lines.push(`Review state: ${workflow.review.state}; lanes=${workflow.review.lanes.configured.length}/${workflow.review.lanes.required.length} required; runner=${workflow.review.lanes.runnerReadiness}; publisher=${workflow.review.publisher.mode}; evidence=${workflow.review.evidence.state}`);
   for (const source of workflow.review.sources) {
     lines.push(`- review source ${source.id} (${source.identity}/${source.markers}${source.blocking ? '' : ', advisory'}): ${source.readiness} — ${source.detail}`);
   }
@@ -82,7 +79,6 @@ export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   pushConfigAndQueue(lines, diagnostics);
   pushInstructionAndGateState(lines, diagnostics);
   pushWorkflowReadiness(lines, diagnostics);
-  lines.push(`Legacy state: ${diagnostics.legacy.length > 0 ? diagnostics.legacy.map(item => `${item.category}=${item.paths.join(',')}`).join('; ') : 'none detected'}`);
   lines.push(`Planning artifacts: spec=${diagnostics.planning.spec ? 'yes' : 'no'}, milestones=${diagnostics.planning.milestones.length}`);
   lines.push(`Lifecycle readiness: ${diagnostics.lifecycle.lifecycleCommandsReady ? 'ready' : 'blocked'}; active issues=${diagnostics.lifecycle.inProgressIssueCount}; branch policy=${diagnostics.lifecycle.branchNamingValid ? 'valid' : 'invalid'}`);
   if (diagnostics.lifecycle.activeIssueNumber !== null) lines.push(`Active branch check: #${diagnostics.lifecycle.activeIssueNumber} expects ${diagnostics.lifecycle.activeIssueBranch ?? 'unknown'}; current match=${diagnostics.lifecycle.currentBranchMatchesActiveIssue === true ? 'yes' : 'no'}`);

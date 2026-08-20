@@ -22,6 +22,83 @@ import {
 
 const require = createRequire(import.meta.url);
 
+function capability(support, description) {
+  return support === "supported"
+    ? { support, description }
+    : { support, description, nextAction: "Use a supported harness capability." };
+}
+
+function reviewCapability(support, description, agents = []) {
+  return Object.freeze({
+    ...capability(support, description),
+    freshContext: support !== "unsupported",
+    readOnly: support !== "unsupported",
+    agents: Object.freeze(agents),
+  });
+}
+
+function umpireCapability(support) {
+  if (support === "unsupported") {
+    return Object.freeze({
+      continuation: Object.freeze({
+        ...capability("unsupported", "Umpire continuation is not supported."),
+        delivery: "none",
+        currentIssueRecovery: false,
+      }),
+      probe: Object.freeze(capability("unsupported", "Umpire setup cannot be probed for this harness.")),
+    });
+  }
+  return Object.freeze({
+    continuation: Object.freeze({
+      ...capability(support, "Umpire can recover current issue work."),
+      delivery: support === "supported" ? "host" : "stdout",
+      currentIssueRecovery: true,
+    }),
+    probe: Object.freeze({
+      ...capability(support, "Inspect the effective Umpire setup."),
+      command: Object.freeze(["qube", "aiu", "doctor", "--json"]),
+    }),
+  });
+}
+
+function minimalAgentHostProfile() {
+  const instructionTarget = Object.freeze({ id: "codex-instructions", path: "AGENTS.md", description: "Codex instructions." });
+  const makeItSo = Object.freeze({
+    id: "codex-make-it-so",
+    kind: "skill",
+    path: ".agents/skills/make-it-so/SKILL.md",
+    invocation: "$make-it-so",
+    description: "Start or resume QUBE in Codex.",
+  });
+  const taskList = Object.freeze({
+    support: "supported",
+    description: "Use the Codex task list.",
+    tools: Object.freeze(["update_plan"]),
+    fallback: "Keep a visible checklist.",
+    instruction: "Keep task state in the main session.",
+  });
+  return {
+    id: "codex",
+    displayName: "Codex",
+    executables: Object.freeze({ names: Object.freeze(["codex"]), windowsNames: Object.freeze(["codex.exe"]) }),
+    instructionTarget,
+    makeItSo,
+    taskList,
+    subagents: Object.freeze({ support: "supported", description: "Use bounded subagents.", instruction: "Keep workflow state in the main session." }),
+    review: Object.freeze({
+      local: reviewCapability("supported", "Host-local review.", [{ id: "review-focus", path: ".codex/agents/review.toml", description: "Review agent.", renderer: "codex-review-focus-agent" }]),
+      isolated: reviewCapability("supported", "Isolated review."),
+    }),
+    modelDiscovery: Object.freeze({
+      support: "supported",
+      description: "Read the live model catalog.",
+      listModels: () => Object.freeze(["example-model"]),
+    }),
+    umpire: umpireCapability("experimental"),
+    trust: Object.freeze({ required: true, description: "Approve the managed Umpire integration.", actions: Object.freeze([{ id: "approve-codex-umpire", kind: "approve", description: "Approve the managed integration." }]) }),
+  };
+}
+
 describe("qube core contracts", () => {
   it("is publishable because public products depend on it at runtime", () => {
     const manifest = require("../package.json");
@@ -39,11 +116,133 @@ describe("qube core contracts", () => {
   it("owns the public host id set and isolated-review contract", () => {
     assert.deepEqual([...core.AGENT_HOST_IDS], ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.ok(!core.AGENT_HOST_IDS.includes("grok"));
-    assert.equal(core.RETIRED_GROK_HOST_ID, "grok");
-    assert.match(core.retiredGrokHostIdMessage(), /Use `grok-build`/);
-    assert.deepEqual([...core.GROK_BUILD_EXECUTABLE_NAMES], ["grok"]);
-    assert.equal(core.ISOLATED_REVIEW_HOST_PACKAGE_NAMES["grok-build"], "@tjalve/qube-adapter-grok-build");
-    assert.equal(core.ISOLATED_REVIEW_HOST_PACKAGE_NAMES.cursor, "@tjalve/qube-adapter-cursor");
+    assert.equal(core.AGENT_HOST_REGISTRATIONS["grok-build"].packageName, "@tjalve/qube-adapter-grok-build");
+    assert.equal(core.AGENT_HOST_REGISTRATIONS.cursor.packageName, "@tjalve/qube-adapter-cursor");
+  });
+
+  it("defines one complete capability profile row for each agent harness", () => {
+    const rows = [
+      { id: "opencode", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".opencode/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "supported" },
+      { id: "codex", instructionPath: "AGENTS.md", makeItSoKind: "skill", makeItSoPath: ".agents/skills/make-it-so/SKILL.md", invocation: "$make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
+      { id: "claude-code", instructionPath: "CLAUDE.md", makeItSoKind: "command", makeItSoPath: ".claude/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "experimental" },
+      { id: "grok-build", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".grok/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
+      { id: "cursor", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".cursor/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "unsupported" },
+    ];
+
+    assert.deepEqual(Object.keys(core.AGENT_HOST_REGISTRATIONS), [...core.AGENT_HOST_IDS]);
+    assert.deepEqual([...core.AGENT_HOST_CAPABILITY_SUPPORT], ["supported", "experimental", "unsupported"]);
+
+    for (const row of rows) {
+      const registration = core.AGENT_HOST_REGISTRATIONS[row.id];
+      const instructionTarget = Object.freeze({ id: `${row.id}-instructions`, path: row.instructionPath, description: `${registration.displayName} instructions.` });
+      const makeItSo = Object.freeze({
+        id: `${row.id}-make-it-so`,
+        kind: row.makeItSoKind,
+        path: row.makeItSoPath,
+        invocation: row.invocation,
+        description: `Start or resume QUBE in ${registration.displayName}.`,
+      });
+      const taskList = Object.freeze({
+        ...capability(row.taskList, `${registration.displayName} task-list support.`),
+        tools: row.taskList === "supported" ? Object.freeze(["task-list"]) : Object.freeze([]),
+        fallback: "Keep a visible checklist.",
+        instruction: "Keep task state in the main session.",
+      });
+      const subagents = Object.freeze({
+        ...capability(row.subagents, `${registration.displayName} subagent support.`),
+        instruction: "Keep protected workflow state in the main session.",
+      });
+      const localAgents = row.localReview === "unsupported"
+        ? []
+        : [{ id: `${row.id}-review-focus`, path: `.host/${row.id}/review`, description: "Focused review agent.", renderer: "codex-review-focus-agent" }];
+      const profile = core.defineAgentHostProfile({
+        id: row.id,
+        displayName: registration.displayName,
+        executables: Object.freeze({
+          names: Object.freeze([row.id]),
+          windowsNames: Object.freeze([`${row.id}.exe`]),
+        }),
+        instructionTarget,
+        makeItSo,
+        taskList,
+        subagents,
+        review: Object.freeze({
+          local: reviewCapability(row.localReview, "Host-local review support.", localAgents),
+          isolated: reviewCapability(row.isolatedReview, "Isolated review support."),
+        }),
+        modelDiscovery: Object.freeze({
+          support: "supported",
+          description: "Read the live host model catalog.",
+          listModels: () => Object.freeze(["example-model"]),
+        }),
+        umpire: umpireCapability(row.umpire),
+        trust: row.umpire === "unsupported"
+          ? Object.freeze({ required: false, description: "No harness trust action is required.", actions: Object.freeze([]) })
+          : Object.freeze({ required: true, description: "Approve the managed Umpire integration.", actions: Object.freeze([{ id: `${row.id}-trust`, kind: "approve", description: "Approve the managed integration." }]) }),
+      });
+
+      assert.equal(Object.isFrozen(profile), true, row.id);
+      assert.equal(profile.instructionTarget.path, row.instructionPath, row.id);
+      assert.deepEqual(profile.executables.names, [row.id], row.id);
+      assert.deepEqual(profile.executables.windowsNames, [`${row.id}.exe`], row.id);
+      assert.equal(profile.makeItSo.path, row.makeItSoPath, row.id);
+      assert.equal(profile.makeItSo.kind, row.makeItSoKind, row.id);
+      assert.equal(profile.makeItSo.invocation, row.invocation, row.id);
+      assert.equal(profile.taskList.support, row.taskList, row.id);
+      assert.equal(profile.subagents.support, row.subagents, row.id);
+      assert.equal(profile.review.local.support, row.localReview, row.id);
+      assert.equal(profile.review.local.agents.length, row.localReview === "unsupported" ? 0 : 1, row.id);
+      assert.equal(profile.review.isolated.support, row.isolatedReview, row.id);
+      assert.deepEqual(profile.review.isolated.agents, [], row.id);
+      assert.equal(profile.modelDiscovery.support, "supported", row.id);
+      assert.equal(profile.umpire.continuation.support, row.umpire, row.id);
+      assert.equal(profile.trust.required, row.umpire !== "unsupported", row.id);
+      assert.equal(registration.id, row.id);
+      assert.deepEqual(Object.keys(registration).sort(), ["displayName", "id", "packageName"]);
+    }
+  });
+
+  it("rejects native agents outside supported local review", () => {
+    const profile = minimalAgentHostProfile();
+    assert.throws(
+      () => core.defineAgentHostProfile({
+        ...profile,
+        review: {
+          ...profile.review,
+          isolated: { ...profile.review.isolated, agents: profile.review.local.agents },
+        },
+      }),
+      /cannot attach native agents to isolated review/,
+    );
+
+    assert.throws(
+      () => core.defineAgentHostProfile({
+        ...profile,
+        review: {
+          ...profile.review,
+          local: { ...reviewCapability("unsupported", "No local review."), agents: profile.review.local.agents },
+        },
+      }),
+      /cannot attach native agents to unsupported local review/,
+    );
+  });
+
+  it("rejects host profiles without a usable launch executable", () => {
+    const profile = minimalAgentHostProfile();
+    assert.throws(
+      () => core.defineAgentHostProfile({
+        ...profile,
+        executables: { names: [], windowsNames: [] },
+      }),
+      /requires at least one executable name/,
+    );
+    assert.throws(
+      () => core.defineAgentHostProfile({
+        ...profile,
+        executables: { names: ["codex"], windowsNames: [" "] },
+      }),
+      /cannot declare an empty executable name/,
+    );
   });
 
   it("keeps product contracts standalone and provider-neutral", () => {
@@ -63,7 +262,7 @@ describe("qube core contracts", () => {
     assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(surfaces.get("quality"), ["cli"]);
-    assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
+    assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "codex", "claude-code", "grok-build"]);
   });
 
   it("declares provider connection contracts with read-only bounded probes", () => {
@@ -217,13 +416,15 @@ describe("qube core contracts", () => {
     assert.match(aiqStandalone?.commandPattern ?? "", /serve/);
 
     const workflowConfigs = qubeRepoArtifactContracts.filter((entry) => entry.classification === "implementation-time workflow policy");
-    assert.ok(workflowConfigs.some((entry) => entry.pathPattern === "products/*/aie.config.json"));
+    assert.ok(workflowConfigs.some((entry) => entry.pathPattern === "products/*/AGENTS.md"));
     assert.ok(workflowConfigs.every((entry) => entry.productInstalledSurface === false));
 
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/" && entry.classification === "shared QUBE namespace"));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiq/config.json")));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/aiu/config.json" && entry.committed === true));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiu/state") && entry.committed === false));
+    assert.ok(qubePathContracts.every((entry) => typeof entry.writePolicy === "string" && entry.writePolicy.length > 0));
+    assert.ok(qubePathContracts.every((entry) => !("migrationPolicy" in entry)));
   });
 
   it("keeps checked-in matrix docs aligned with core contracts", () => {
@@ -234,6 +435,12 @@ describe("qube core contracts", () => {
     for (const product of qubeProductContracts) {
       assert.match(hostSurfaceDoc, new RegExp(product.packageName.replace("/", "\\/")));
     }
+    for (const hostId of core.AGENT_HOST_IDS) {
+      const registration = core.AGENT_HOST_REGISTRATIONS[hostId];
+      assert.match(hostSurfaceDoc, new RegExp(escapeRegExp(registration.displayName)));
+      assert.match(hostSurfaceDoc, new RegExp(escapeRegExp(registration.packageName)));
+    }
+    assert.doesNotMatch(hostSurfaceDoc, /migration|compatibility/i);
     for (const command of qubeCommandSurfaceContracts) {
       assert.match(commandSurfaceDoc, new RegExp(escapeRegExp(markdownTableCellText(command.commandPattern))));
     }
@@ -273,7 +480,7 @@ describe("qube core contracts", () => {
     });
   });
 
-  it("keeps provider-neutral review contracts owned by focused modules", () => {
+  it("defines provider-neutral review contracts in focused modules", () => {
     const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
     const files = readdirSync(srcDir).filter((name) => name.endsWith(".ts"));
     const definitions = new Map([
@@ -290,10 +497,7 @@ describe("qube core contracts", () => {
       });
       assert.deepEqual(matches, [expectedFile], `${symbol} should be defined only in ${expectedFile}`);
     }
-
-    const reviewBarrel = readFileSync(fileURLToPath(new URL("../src/review.ts", import.meta.url)), "utf8");
-    assert.doesNotMatch(reviewBarrel, /export interface /);
-    assert.match(reviewBarrel, /export \* from "\.\/review_item\.js";/);
+    assert.equal(files.includes("review.ts"), false);
   });
 
   it("keeps the root export surface explicit and canonical", () => {
@@ -313,10 +517,16 @@ describe("qube core contracts", () => {
       assert.equal(typeof core[symbol], "function", `${symbol} should be exported as a runtime function`);
     }
     assert.equal(typeof core.githubAdapterContract, "object");
-    assert.equal(typeof core.opencodeAdapterContract, "object");
-    assert.equal(typeof core.cursorAdapterContract, "object");
-    assert.ok(core.cursorAdapterContract.capabilities.some(capability => capability.id === "publish-review" && capability.support === "unsupported"));
-    assert.equal("connection" in core.cursorAdapterContract, false);
+    for (const retiredHostContract of [
+      "opencodeAdapterContract",
+      "codexAdapterContract",
+      "claudeCodeAdapterContract",
+      "grokBuildAdapterContract",
+      "cursorAdapterContract",
+    ]) {
+      assert.equal(retiredHostContract in core, false, retiredHostContract);
+    }
+    assert.equal(typeof core.defineAgentHostProfile, "function");
   });
 });
 

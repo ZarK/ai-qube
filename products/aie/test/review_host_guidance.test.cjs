@@ -19,7 +19,10 @@ const CONTRACT = [
   /runnerProvenance/,
   /review session lock/,
   /do not run git restore/,
-  /pr review publish/,
+  /Do not write lane evidence or provenance/,
+  /Do not invoke a review publish command/,
+  /main session treats your result as untrusted input/,
+  /cannot modify source or worktree files/,
   /Do not approve stale evidence/,
 ];
 
@@ -34,7 +37,11 @@ describe('host review subagent guidance', () => {
     for (const body of rendered) {
       for (const pattern of CONTRACT) assert.match(body, pattern);
       assert.doesNotMatch(body, /host codex/);
+      assert.doesNotMatch(body, /^tools: Read, Grep, Glob$/m);
+      assert.doesNotMatch(body, /^\s+(?:write|edit|bash): false$/m);
     }
+    assert.match(rendered[0], /sandbox_mode = "read-only"/);
+    for (const body of rendered.slice(1)) assert.doesNotMatch(body, /sandbox_mode = "read-only"/);
   });
 
   it('does not attribute missing provenance host to a vendor', () => {

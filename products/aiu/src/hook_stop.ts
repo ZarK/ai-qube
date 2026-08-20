@@ -1,8 +1,9 @@
 import path from "node:path";
+import { isGrokSessionEndReason, parseGrokStopPayload } from "@tjalve/qube-adapter-grok-build";
 
 import type { AiuConfig, AiuHost } from "./config.js";
-import { loadGrokBuildAdapter } from "./grok_build_adapter.js";
 import { loadAiuConfig } from "./config.js";
+import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "./continuation_store.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
 import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./prompt.js";
 import { createAiuTrustedStateEnvelope, type AiuHostSessionState, type AiuTrustedStateEnvelope } from "./state.js";
@@ -57,9 +58,6 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   const stdin = options.stdin ?? "";
   const inputBytes = Buffer.byteLength(stdin, "utf8");
   const observedAt = options.observedAt ?? new Date().toISOString();
-  if (options.tool === "grok-build" && !loadGrokBuildAdapter()) {
-    return missingAdapter(options, inputBytes);
-  }
   const parsed = parseHookPayload(options.tool, stdin);
   if (!parsed.ok) {
     return allow(options, inputBytes, parsed.code, [
@@ -67,7 +65,7 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  if (options.tool === "grok-build" && loadGrokBuildAdapter()?.isGrokSessionEndReason(parsed.payload.reason)) {
+  if (options.tool === "grok-build" && isGrokSessionEndReason(parsed.payload.reason)) {
     return allow(options, inputBytes, "session-end-stop", [
       diagnostic("info", "session-end-stop", "Grok Build reported a session-end Stop; continuation is not applied."),
     ]);
@@ -88,12 +86,17 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   const cwd = resolvedCwd.cwd;
   const configLoad = loadAiuConfig(options.configPath ? { cwd, configPath: options.configPath } : { cwd });
   const policyBlocker = stopHookPolicyBlocker(configLoad.config, options.tool);
-  const configDiagnostics = configLoad.diagnostics.map((item) => diagnostic(item.severity, item.kind, item.message));
+  const configDiagnostics = configLoad.diagnostics
+    .filter((item) => item.kind !== "host-capability-experimental")
+    .map((item) => diagnostic(item.severity, item.kind, item.message));
   if (!configLoad.ok) {
     return allow(options, inputBytes, "config-invalid", configDiagnostics);
   }
   if (policyBlocker) {
-    return allow(options, inputBytes, policyBlocker, [diagnostic("info", policyBlocker, policyBlockerMessage(policyBlocker, options.tool))]);
+    return allow(options, inputBytes, policyBlocker, [
+      ...configDiagnostics,
+      diagnostic("info", policyBlocker, policyBlockerMessage(policyBlocker, options.tool)),
+    ]);
   }
 
   const adapterResults = await Promise.all(Object.entries(configLoad.config.trustedStateCommands).map(([sourceId, descriptor]) => runAiuTrustedStateAdapter(sourceId, descriptor, {
@@ -125,6 +128,11 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     );
   }
 
+  const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
+  if (activationDiagnostic) {
+    warningDiagnostics.push(activationDiagnostic);
+  }
+
   const states = [
     ...adapterResults.flatMap((result) => result.ok ? result.states : []),
     hostSessionEnvelope(options.tool, parsed.payload, observedAt),
@@ -141,7 +149,7 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   const decision = decideAiuContinuation({
     states,
     policy: {
-      modes: configLoad.config.continuation.modes,
+      modes: configLoad.config.hosts.modes[options.tool] ?? configLoad.config.continuation.modes,
       stopOnUnknownState: configLoad.config.continuation.stopOnUnknownState,
       stopOnUnsafeState: configLoad.config.continuation.stopOnUnsafeState,
       stopOnSupplyChainApprovalBlock: configLoad.config.continuation.stopOnSupplyChainApprovalBlock,
@@ -171,6 +179,31 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     continuationDecision: decision,
     prompt,
   });
+}
+
+function recordStopHookActivation(
+  repoRoot: string,
+  config: AiuConfig,
+  host: AiuHookStopOptions["tool"],
+  observedAt: string,
+): AiuHookStopDiagnostic | undefined {
+  try {
+    writeAiuHostActivation(resolveAiuContinuationPaths(repoRoot, config), {
+      schemaVersion: 1,
+      host,
+      delivery: "stdout",
+      event: "stop-hook",
+      trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
+      observedAt,
+    });
+    return undefined;
+  } catch (error) {
+    return diagnostic(
+      "warning",
+      "host-activation-write-failed",
+      `Umpire could not record ${host} Stop-hook activation: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export function formatHookStopJson(result: AiuHookStopResult): string {
@@ -265,11 +298,7 @@ function parseHookPayload(
       return { ok: false, code: "malformed-hook-input", error: "Stop hook input must be a JSON object." };
     }
     if (tool === "grok-build") {
-      const adapter = loadGrokBuildAdapter();
-      if (!adapter) {
-        return { ok: false, code: "malformed-hook-input", error: "Grok Build stop-hook parse requires @tjalve/qube-adapter-grok-build." };
-      }
-      const grok = adapter.parseGrokStopPayload(parsed);
+      const grok = parseGrokStopPayload(parsed);
       if (!grok.ok) return { ok: false, code: "malformed-hook-input", error: grok.error };
       return { ok: true, payload: grok.payload };
     }
@@ -391,23 +420,6 @@ function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: HookPayl
 
 function isBlockingDecision(decision: AiuContinuationDecision, prompt: AiuContinuationPrompt): boolean {
   return (decision.kind === "continue" || decision.kind === "repair") && prompt.body.trim().length > 0;
-}
-
-function missingAdapter(options: AiuHookStopOptions, inputBytes: number): AiuHookStopResult {
-  const message = `${options.tool} stop-hook support requires @tjalve/qube-adapter-grok-build.`;
-  const item = diagnostic("error", "missing-adapter", message);
-  return Object.freeze({
-    tool: options.tool,
-    decision: "block" as const,
-    reason: "missing-adapter",
-    inputBytes,
-    stdoutJson: Object.freeze({
-      decision: "block" as const,
-      reason: message,
-    }),
-    stderr: formatDiagnostics([item]),
-    diagnostics: Object.freeze([item]),
-  });
 }
 
 function allow(

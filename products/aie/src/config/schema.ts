@@ -1,8 +1,8 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import { isolatedReviewHostPackageName, isRegisteredReviewHost, unregisteredIsolatedReviewHostMessage } from '../app/review_host_adapters.js';
 import { defaultCarryForwardContext, defaultLaneModelTier } from '../review_focus.js';
-import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, retiredGrokHostIdMessage, type ConnectionContract } from '@tjalve/qube-core';
-import { REVIEW_MODEL_HOST_IDS, type MigrationPolicy, type ReviewContextSources, type ReviewFailoverPolicy, type ReviewLanePolicy, type ReviewLaneRequiredMode, type ReviewLaneRereviewMode, type ReviewModelTierId, type ReviewModelsPolicy, type ReviewProfileKind, type ReviewPromptFragments, type ReviewRoutePolicy, type ReviewSeverityThreshold, type ShippingPolicy } from '../core/policy.js';
+import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
+import { REVIEW_MODEL_HOST_IDS, type ReviewContextSources, type ReviewFailoverPolicy, type ReviewLanePolicy, type ReviewLaneRequiredMode, type ReviewLaneRereviewMode, type ReviewModelTierId, type ReviewModelsPolicy, type ReviewProfileKind, type ReviewPromptFragments, type ReviewRoutePolicy, type ReviewSeverityThreshold, type ShippingPolicy } from '../core/policy.js';
 import {
   defaultModelRoutingPolicy,
   isModelRoutingHost,
@@ -14,7 +14,7 @@ import {
   type ModelRoutingPolicy,
 } from '../core/model_routing.js';
 import { cloneConfigFile, cloneFocusedSelector, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
-import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type FocusedGateSelector, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
+import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type FocusedGateSelector, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind, ReviewMode } from '../core/policy.js';
 import { isReviewMode } from '../review_mode.js';
 
@@ -399,11 +399,8 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
     return null;
   }
   rejectUnknownKeys(value, ['host', 'tier', 'timeoutSeconds', 'maxTurns'], path, errors);
-  if (value.host === 'grok') {
-    errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host ${retiredGrokHostIdMessage()}` });
-  }
-  const host = value.host === 'grok' ? null : isRegisteredReviewHost(value.host) ? value.host : null;
-  if (value.host !== 'grok' && !host) {
+  const host = isRegisteredReviewHost(value.host) ? value.host : null;
+  if (!host) {
     errors.push({
       kind: 'invalid',
       path: `${path}.host`,
@@ -457,13 +454,6 @@ function readReviewRereviewMode(value: unknown, defaultValue: ReviewLaneRereview
   if (value === undefined) return defaultValue;
   if (value === 'always-rerun' || value === 'delta') return value;
   errors.push({ kind: 'invalid', path, message: `${path} must be "always-rerun" or "delta"` });
-  return defaultValue;
-}
-
-function readLegacyScriptsPolicy(value: unknown, defaultValue: MigrationPolicy['legacyScripts'], path: string, errors: ValidationError[]): MigrationPolicy['legacyScripts'] {
-  if (value === undefined) return defaultValue;
-  if (value === 'preserve' || value === 'install-wrappers' || value === 'cleanup') return value;
-  errors.push({ kind: 'invalid', path, message: `${path} must be preserve, install-wrappers, or cleanup` });
   return defaultValue;
 }
 
@@ -1024,10 +1014,7 @@ function readReviewModelTierMap(value: unknown, path: string, errors: Validation
     errors.push({ kind: 'invalid', path, message: `${path} must be an object mapping hosts to model bindings` });
     return {};
   }
-  if (Object.prototype.hasOwnProperty.call(value, 'grok')) {
-    errors.push({ kind: 'invalid', path: `${path}.grok`, message: `${path}.grok ${retiredGrokHostIdMessage()}` });
-  }
-  rejectUnknownKeys(value, [...REVIEW_MODEL_HOST_IDS, 'grok'], path, errors);
+  rejectUnknownKeys(value, [...REVIEW_MODEL_HOST_IDS], path, errors);
   const tierMap: ReviewModelsPolicy['review'] = {};
   for (const host of REVIEW_MODEL_HOST_IDS) {
     const binding = value[host];
@@ -1078,7 +1065,6 @@ function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: Valid
   if (value === undefined) {
     return {
       definitions: defaultValue.definitions.map(cloneGate),
-      qualityGates: [...defaultValue.qualityGates],
       qualityControl: defaultValue.qualityControl,
       focusedSelectors: defaultValue.focusedSelectors.map(cloneFocusedSelector),
     };
@@ -1087,15 +1073,13 @@ function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: Valid
     errors.push({ kind: 'invalid', path: 'policy.gates', message: 'policy.gates must be an object' });
     return {
       definitions: defaultValue.definitions.map(cloneGate),
-      qualityGates: [...defaultValue.qualityGates],
       qualityControl: defaultValue.qualityControl,
       focusedSelectors: defaultValue.focusedSelectors.map(cloneFocusedSelector),
     };
   }
-  rejectUnknownKeys(value, ['definitions', 'qualityGates', 'qualityControl', 'focusedSelectors'], 'policy.gates', errors);
+  rejectUnknownKeys(value, ['definitions', 'qualityControl', 'focusedSelectors'], 'policy.gates', errors);
   return {
     definitions: readGateConfigs(value.definitions, 'policy.gates.definitions', errors) ?? defaultValue.definitions.map(cloneGate),
-    qualityGates: readStringArray(value, 'qualityGates', defaultValue.qualityGates, 'policy.gates', errors),
     qualityControl: readBoolean(value, 'qualityControl', defaultValue.qualityControl, 'policy.gates', errors),
     focusedSelectors: readFocusedSelectors(value.focusedSelectors, defaultValue.focusedSelectors, errors),
   };
@@ -1159,28 +1143,13 @@ function readInstructions(value: unknown, defaultValue: InstructionConfig, error
     errors.push({ kind: 'invalid', path: 'policy.instructions', message: 'policy.instructions must be an object' });
     return { ...defaultValue };
   }
-  rejectUnknownKeys(value, ['opencodeCommandAlias', 'namingRules', 'promptInjectionWarning', 'noCreditWarning', 'implementationGuardrails', 'supplyChainSafety'], 'policy.instructions', errors);
+  rejectUnknownKeys(value, ['namingRules', 'promptInjectionWarning', 'noCreditWarning', 'implementationGuardrails', 'supplyChainSafety'], 'policy.instructions', errors);
   return {
-    opencodeCommandAlias: readBoolean(value, 'opencodeCommandAlias', defaultValue.opencodeCommandAlias, 'policy.instructions', errors),
     namingRules: readBoolean(value, 'namingRules', defaultValue.namingRules, 'policy.instructions', errors),
     promptInjectionWarning: readBoolean(value, 'promptInjectionWarning', defaultValue.promptInjectionWarning, 'policy.instructions', errors),
     noCreditWarning: readBoolean(value, 'noCreditWarning', defaultValue.noCreditWarning, 'policy.instructions', errors),
     implementationGuardrails: readBoolean(value, 'implementationGuardrails', defaultValue.implementationGuardrails, 'policy.instructions', errors),
     supplyChainSafety: readBoolean(value, 'supplyChainSafety', defaultValue.supplyChainSafety, 'policy.instructions', errors),
-  };
-}
-
-function readMigration(value: unknown, defaultValue: MigrationConfig, errors: ValidationError[]): MigrationConfig {
-  if (value === undefined) return { ...defaultValue };
-  if (!isPlainObject(value)) {
-    errors.push({ kind: 'invalid', path: 'policy.migration', message: 'policy.migration must be an object' });
-    return { ...defaultValue };
-  }
-  rejectUnknownKeys(value, ['legacyScripts', 'compatibilityWrappers', 'cleanupKnownHelpers'], 'policy.migration', errors);
-  return {
-    legacyScripts: readLegacyScriptsPolicy(value.legacyScripts, defaultValue.legacyScripts, 'policy.migration.legacyScripts', errors),
-    compatibilityWrappers: readBoolean(value, 'compatibilityWrappers', defaultValue.compatibilityWrappers, 'policy.migration', errors),
-    cleanupKnownHelpers: readBoolean(value, 'cleanupKnownHelpers', defaultValue.cleanupKnownHelpers, 'policy.migration', errors),
   };
 }
 
@@ -1217,7 +1186,7 @@ function readPolicy(value: unknown, defaultValue: ConfigFilePolicy, errors: Vali
     errors.push({ kind: 'invalid', path: 'policy', message: 'policy must be an object' });
     return cloneConfigFile(DEFAULT_CONFIG_FILE).policy;
   }
-  rejectUnknownKeys(value, ['labels', 'milestoneOrdering', 'branch', 'lifecycle', 'shipping', 'reviews', 'gates', 'audit', 'instructions', 'migration', 'supplyChain', 'modelRouting'], 'policy', errors);
+  rejectUnknownKeys(value, ['labels', 'milestoneOrdering', 'branch', 'lifecycle', 'shipping', 'reviews', 'gates', 'audit', 'instructions', 'supplyChain', 'modelRouting'], 'policy', errors);
   return {
     labels: readLabels(value.labels, defaultValue.labels, errors),
     milestoneOrdering: readMilestoneOrdering(value.milestoneOrdering, defaultValue.milestoneOrdering, errors),
@@ -1228,7 +1197,6 @@ function readPolicy(value: unknown, defaultValue: ConfigFilePolicy, errors: Vali
     gates: readGates(value.gates, defaultValue.gates, errors),
     audit: readAudit(value.audit, defaultValue.audit, errors),
     instructions: readInstructions(value.instructions, defaultValue.instructions, errors),
-    migration: readMigration(value.migration, defaultValue.migration, errors),
     supplyChain: readSupplyChain(value.supplyChain, defaultValue.supplyChain, errors),
     modelRouting: readModelRouting(value.modelRouting, defaultValue.modelRouting, errors),
   };
@@ -1289,10 +1257,6 @@ function readModelCatalog(value: unknown, errors: ValidationError[]): ModelCatal
       return;
     }
     const host = String(entry.host ?? '');
-    if (host === 'grok') {
-      errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host ${retiredGrokHostIdMessage()}` });
-      return;
-    }
     if (!isModelRoutingHost(host)) {
       errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be one of: ${['codex', 'claude-code', 'opencode', 'grok-build'].join(', ')}` });
       return;

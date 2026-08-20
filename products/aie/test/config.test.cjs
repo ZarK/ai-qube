@@ -53,7 +53,6 @@ describe('config validation', () => {
     assert.equal(defaults.autonomousMode, true);
     assert.equal(defaults.assignOnStart, true);
     assert.equal(defaults.commentOnStart, true);
-    assert.equal(defaults.opencodeCommandAlias, false);
     assert.equal(defaults.uiAuditAppLaunch, '');
     assert.equal(defaults.uiAuditTarget, '');
     assert.equal(defaults.uiAuditEvidenceRoot, '');
@@ -101,7 +100,6 @@ describe('config validation', () => {
     input.policy.reviews.adapter = 'mixed';
     input.policy.reviews.waitMinutes = 15;
     input.policy.reviews.localAgents = ['local-check'];
-    input.policy.instructions.opencodeCommandAlias = true;
 
     const result = validateConfig(input);
 
@@ -118,7 +116,6 @@ describe('config validation', () => {
     assert.equal(result.config.reviewAdapter, 'mixed');
     assert.equal(result.config.reviewWaitMinutes, 15);
     assert.deepEqual(result.config.localReviewAgents, ['local-check']);
-    assert.equal(result.config.opencodeCommandAlias, true);
   });
 
   it('validates global and per-lane isolated review routes', () => {
@@ -154,12 +151,12 @@ describe('config validation', () => {
     assert.equal(result.config.reviewModels.review.codex.effort, 'high');
   });
 
-  it('rejects grok as a review-route or review-model host id', () => {
+  it('rejects an unregistered grok host id without translating it', () => {
     const routeInput = defaultFile();
     routeInput.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     const routeResult = validateConfig(routeInput);
     assert.equal(routeResult.ok, false);
-    assert.ok(routeResult.errors.some((error) => error.path === 'policy.reviews.route.host' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
+    assert.ok(routeResult.errors.some((error) => error.path === 'policy.reviews.route.host' && /registered review host adapter/.test(error.message)));
 
     const modelsInput = defaultFile();
     modelsInput.policy.reviews.models = {
@@ -169,7 +166,7 @@ describe('config validation', () => {
     };
     const modelsResult = validateConfig(modelsInput);
     assert.equal(modelsResult.ok, false);
-    assert.ok(modelsResult.errors.some((error) => error.path === 'policy.reviews.models.review.grok' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
+    assert.ok(modelsResult.errors.some((error) => error.path === 'policy.reviews.models.review.grok' && /not supported/.test(error.message)));
 
     const catalogInput = defaultFile();
     catalogInput.policy.modelRouting = {
@@ -179,7 +176,7 @@ describe('config validation', () => {
         host: 'grok',
         transport: 'cli',
         costRank: 1,
-        notes: 'retired host id must not validate',
+        notes: 'unknown host id must not validate',
       }],
       routes: {
         'mechanical-implementation': { preferred: 'primary', fallback: ['primary'] },
@@ -190,7 +187,7 @@ describe('config validation', () => {
     };
     const catalogResult = validateConfig(catalogInput);
     assert.equal(catalogResult.ok, false);
-    assert.ok(catalogResult.errors.some((error) => error.path === 'policy.modelRouting.catalog[0].host' && /not a host id/.test(error.message) && /grok-build/.test(error.message)));
+    assert.ok(catalogResult.errors.some((error) => error.path === 'policy.modelRouting.catalog[0].host' && /must be one of/.test(error.message)));
   });
 
   it('validates per-lane carry-forward context modes with conservative defaults', () => {
@@ -513,21 +510,21 @@ describe('config validation', () => {
     assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.apiTokenEnv' && error.kind === 'unknown'));
   });
 
-  it('normalizes structured and legacy gate policy consistently', () => {
+  it('normalizes structured gate definitions', () => {
     const input = defaultFile();
     input.policy.gates.definitions = [
       { name: 'unit', kind: 'unit', command: 'node --test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
+      { name: 'test', kind: 'custom', command: 'npm test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
     ];
-    input.policy.gates.qualityGates = ['npm test'];
 
     const result = validateConfig(input);
 
     assert.equal(result.ok, true);
-    assert.deepEqual(result.config.normalizedPolicy.gates.definitions.map(gate => gate.name), ['unit', 'quality-gate-1']);
-    assert.equal(result.config.normalizedPolicy.gates.definitions.find(gate => gate.name === 'quality-gate-1').supplyChainSensitive, true);
+    assert.deepEqual(result.config.normalizedPolicy.gates.definitions.map(gate => gate.name), ['unit', 'test']);
+    assert.equal(result.config.normalizedPolicy.gates.definitions.find(gate => gate.name === 'test').supplyChainSensitive, true);
   });
 
-  it('accepts nested milestone, instruction, migration, and supply-chain policy', () => {
+  it('accepts nested milestone, instruction, and supply-chain policy', () => {
     const input = defaultFile();
     input.policy.milestoneOrdering = { enabled: true, order: ['M1', 'M2'], missingAssignment: 'block' };
     input.policy.instructions = {
@@ -538,7 +535,6 @@ describe('config validation', () => {
       implementationGuardrails: true,
       supplyChainSafety: true,
     };
-    input.policy.migration = { legacyScripts: 'cleanup', compatibilityWrappers: true, cleanupKnownHelpers: true };
     input.policy.supplyChain = {
       exactVersions: true,
       intentionalLockfileChanges: true,
@@ -557,7 +553,6 @@ describe('config validation', () => {
     assert.deepEqual(result.config.milestoneOrdering.order, ['M1', 'M2']);
     assert.equal(result.config.instructions.namingRules, true);
     assert.equal(result.config.instructions.promptInjectionWarning, false);
-    assert.equal(result.config.migration.legacyScripts, 'cleanup');
     assert.equal(result.config.supplyChain.packageAgeDays, 9);
     assert.equal(result.config.supplyChain.pinCiActions, false);
     assert.equal(result.config.supplyChain.writePackageManagerDefaults, true);
@@ -774,26 +769,28 @@ describe('config validation', () => {
 
   it('throws typed errors instead of falling back to defaults for invalid config files', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-config-'));
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify({ version: 1, legacyFlatField: true }, null, 2)}\n`);
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify({ version: 1, unsupportedField: true }, null, 2)}\n`);
 
     await assert.rejects(
       () => loadConfig(repo),
       (error) => error.name === 'ConfigLoadError'
         && error.message.includes('Failed to load Executor config from')
         && error.message.includes('Next action:')
-        && error.errors.some((entry) => entry.path === 'legacyFlatField'),
+        && error.errors.some((entry) => entry.path === 'unsupportedField'),
     );
   });
 
-  it('reports parse errors against the selected legacy config path', async () => {
+  it('reports parse errors against the canonical config path', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-config-'));
-    writeFileSync(join(repo, 'aie.config.json'), '{ invalid json');
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), '{ invalid json');
 
     const result = await loadConfigFile(repo);
 
     assert.equal(result.ok, false);
-    assert.equal(result.path, join(repo, 'aie.config.json'));
-    assert.ok(result.errors.some((entry) => entry.path === 'aie.config.json' && entry.message.includes('Failed to read or parse aie.config.json')));
+    assert.equal(result.path, join(repo, '.qube', 'aie', 'config.json'));
+    assert.ok(result.errors.some((entry) => entry.path === '.qube/aie/config.json' && entry.message.includes('Failed to read or parse .qube/aie/config.json')));
   });
 
   it('deep-merges a local overlay onto a base object without mutating either input', () => {
@@ -818,7 +815,6 @@ describe('config validation', () => {
 
   it('derives the local overlay filename by inserting .local before the extension', () => {
     assert.equal(overlayConfigPath(join('repo', '.qube', 'aie', 'config.json')), join('repo', '.qube', 'aie', 'config.local.json'));
-    assert.equal(overlayConfigPath(join('repo', 'aie.config.json')), join('repo', 'aie.config.local.json'));
   });
 
   it('merges a working-tree publisher config from a local, never-committed overlay', async () => {

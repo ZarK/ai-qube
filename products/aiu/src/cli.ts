@@ -1,4 +1,7 @@
 import { createCli, createCommand, createSchemaCommand, runCli } from "@tjalve/qube-cli/runtime";
+import { createCliError } from "@tjalve/qube-cli/errors";
+import { createJsonErrorEnvelope, renderJsonLine } from "@tjalve/qube-cli/output";
+import { redactStructuredValue } from "@tjalve/qube-cli/redaction";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -13,13 +16,12 @@ import {
   getDefaultAiuConfig,
   loadAiuConfig,
 } from "./config.js";
-import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, migrateCommand, pathsCommand, statusCommand, whipCommand } from "./command_registry.js";
+import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, whipCommand } from "./command_registry.js";
 import { AIU_DECISION_MODES, AIU_DECISION_PROMPT_KINDS } from "./decision.js";
 import { formatAiuDoctorReport, formatAiuPaths, getAiuResolvedPaths, runAiuDoctor } from "./doctor.js";
 import { AIU_HOST_CAPABILITY_SUPPORT, AIU_HOST_SUPPORT_LEVELS, getAllAiuHostCapabilityProfiles } from "./host_policy.js";
 import { formatHookStopJson, readHookStopStdin, runAiuHookStop } from "./hook_stop.js";
 import { applyAiuInitPlan, formatInitPlan, planAiuInit, type AiuInitTool } from "./init.js";
-import { applyAiuMigration, cleanupAiuMigration, formatMigrationApplyResult, formatMigrationCleanupResult, formatMigrationPlan, planAiuMigration } from "./migrate.js";
 import { AIU_STATUS_ERROR_CODES, formatAiuStatusReport, runAiuStatus } from "./status.js";
 import {
   AIU_REASON_CODE_CATALOG,
@@ -101,8 +103,27 @@ export const aiuCli = createCli({
       const dryRun = context.flags["dry-run"] === true;
       const force = context.flags.force === true;
       const plan = applyAiuInitPlan(planAiuInit({ tool, dryRun, force }));
+      const human = formatInitPlan(plan);
+      if (!plan.ok) {
+        const error = createCliError({
+          command: "init",
+          kind: "init-conflict",
+          operation: "apply init plan",
+          likelyCause: "Init found one or more conflicting repository paths.",
+          suggestedNextAction: "Resolve the reported conflicts. Then run aiu init again.",
+          category: "validation",
+        });
+        return {
+          exitCode: error.exitCode,
+          human,
+          jsonStdout: renderJsonLine({
+            ...createJsonErrorEnvelope(error),
+            init: redactStructuredValue(plan as unknown as Readonly<Record<string, unknown>>),
+          }),
+        };
+      }
       return {
-        human: formatInitPlan(plan),
+        human,
         json: {
           init: plan,
         },
@@ -117,7 +138,6 @@ export const aiuCli = createCli({
         };
       }
       const result = await runAiuHookStop({ tool, stdin: await readHookStopStdin() });
-      const exitCode = result.reason === "missing-adapter" ? 2 : 0;
       if (context.flags.json === true) {
         return {
           json: {
@@ -131,56 +151,11 @@ export const aiuCli = createCli({
             },
           },
           stderr: result.stderr,
-          exitCode,
         };
       }
       return {
         stdout: formatHookStopJson(result),
         stderr: result.stderr,
-        exitCode,
-      };
-    }),
-    createCommand(migrateCommand, (context) => {
-      const confirmations = readConfirmations(context.flags.confirm);
-      if (context.flags.cleanup === true && (context.flags.apply === true || context.flags.force === true)) {
-        return {
-          stderr: "Invalid migrate flags: --cleanup cannot be combined with --apply or --force.\n",
-          exitCode: 2,
-        };
-      }
-      if (context.flags.cleanup !== true && confirmations.length > 0) {
-        return {
-          stderr: "Invalid migrate flags: --confirm requires --cleanup.\n",
-          exitCode: 2,
-        };
-      }
-      if (context.flags.cleanup === true) {
-        const dryRun = context.flags["dry-run"] === true || confirmations.length === 0;
-        const result = cleanupAiuMigration({ dryRun, confirmations });
-        return {
-          human: formatMigrationCleanupResult(result),
-          json: {
-            migrate: result,
-          },
-        };
-      }
-      const apply = context.flags.apply === true && context.flags["dry-run"] !== true;
-      const force = context.flags.force === true;
-      if (apply) {
-        const result = applyAiuMigration({ force });
-        return {
-          human: formatMigrationApplyResult(result),
-          json: {
-            migrate: result,
-          },
-        };
-      }
-      const plan = planAiuMigration({ dryRun: true });
-      return {
-        human: formatMigrationPlan(plan),
-        json: {
-          migrate: plan,
-        },
       };
     }),
     createCommand(whipCommand, (context) => {
@@ -423,10 +398,6 @@ function readHookStopTool(value: unknown): "codex" | "claude-code" | "grok-build
 
 function readWhipAction(value: unknown): AiuWhipReport["action"] | undefined {
   return value === "list" || value === "status" || value === "add" || value === "cancel" || value === "complete" ? value : undefined;
-}
-
-function readConfirmations(value: unknown): readonly string[] {
-  return typeof value === "string" ? value.split(",").map((item) => item.trim()).filter((item) => item.length > 0) : [];
 }
 
 runtimeRegistry = aiuCli.registry;

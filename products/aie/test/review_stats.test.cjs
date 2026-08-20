@@ -14,8 +14,8 @@ const {
 const { getCommandMetadata } = require('../dist/command_metadata.js');
 const { listReviewForgeAdapters } = require('../dist/providers/review_forge_adapters.js');
 
-function lane({ head, lane, expectedLanes = [lane], recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z', issueNumber = 93 }) {
-  return { head, lane, expectedLanes, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt, issueNumber };
+function lane({ head, lane, expectedLanes = [lane], round = 'round-1', recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z', issueNumber = 93 }) {
+  return { head, lane, expectedLanes, round, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt, issueNumber };
 }
 
 function pullRequest(number, title = `PR ${number}`) {
@@ -156,7 +156,7 @@ describe('review convergence stats', () => {
     assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head/);
   });
 
-  it('degrades markers that predate the expected-lane-set metadata with a distinct reason', () => {
+  it('rejects markers that omit the expected lane set', () => {
     const result = computeReviewStats([{
       number: 105,
       title: 'Legacy marker',
@@ -164,8 +164,23 @@ describe('review convergence stats', () => {
     }]);
 
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
-    assert.match(result.pullRequests[0].noLaneEvidenceReason, /predates the expected-lane-set metadata/);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /malformed expected lane set/);
     assert.equal(result.summary.reviewedPullRequests, 0);
+  });
+
+  it('rejects markers that omit the round or exact blocking count', () => {
+    const missingRound = lane({ head: 'abc', lane: 'code-quality' });
+    delete missingRound.round;
+    const missingCount = lane({ head: 'abc', lane: 'code-quality' });
+    delete missingCount.blockingFindingCount;
+
+    const result = computeReviewStats([
+      { number: 107, title: 'Missing round', trustedLaneReviews: [missingRound] },
+      { number: 108, title: 'Missing count', trustedLaneReviews: [missingCount] },
+    ]);
+
+    assert.match(result.pullRequests.find(pr => pr.number === 107).noLaneEvidenceReason, /valid round id/);
+    assert.match(result.pullRequests.find(pr => pr.number === 108).noLaneEvidenceReason, /exact severity-aware blocking finding count/);
   });
 
   it('uses one bounded listing request and degrades an individual load failure', async () => {

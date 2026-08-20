@@ -3,7 +3,6 @@ import { dirname } from 'node:path';
 import { formatConfigFile, getDefaults, type Config, type GitHubReviewPublisherConfig } from './config/index.js';
 import {
   buildGitHubAppSetupGuidance,
-  buildTokenSetupGuidance,
   formatReviewDoctor,
   publisherMissingFields,
   REVIEW_PUBLISHER_ROLE_BOUNDARY,
@@ -14,10 +13,10 @@ import {
   type ReviewSetupGuidance,
 } from './review_setup.js';
 
-export type ReviewSetupMode = 'github-app' | 'token';
+export type ReviewSetupMode = 'github-app';
 
 export interface ReviewSetupPrompt {
-  readonly id: 'appId' | 'installationId' | 'privateKeyEnv' | 'privateKeyPath' | 'tokenEnv';
+  readonly id: 'appId' | 'installationId' | 'privateKeyEnv' | 'privateKeyPath';
   readonly message: string;
 }
 
@@ -32,7 +31,6 @@ export interface RunReviewSetupOptions {
   readonly installationId?: string;
   readonly privateKeyEnv?: string;
   readonly privateKeyPath?: string;
-  readonly tokenEnv?: string;
   readonly login?: string;
   readonly yes?: boolean;
   readonly dryRun?: boolean;
@@ -46,7 +44,7 @@ export interface RunReviewSetupOptions {
 
 export interface ReviewSetupResult {
   readonly ok: boolean;
-  readonly command: 'review setup github-app' | 'review setup token';
+  readonly command: 'review setup github-app';
   readonly mode: ReviewSetupMode;
   readonly applied: boolean;
   readonly dryRun: boolean;
@@ -122,7 +120,6 @@ function validateInputs(input: {
   installationId?: string;
   privateKeyEnv?: string;
   privateKeyPath?: string;
-  tokenEnv?: string;
   login?: string;
 }): string[] {
   const errors = [
@@ -131,9 +128,8 @@ function validateInputs(input: {
     ...validatePublicIdentifier(input.login, '--login'),
     ...validateEnvironmentName(input.privateKeyEnv, '--private-key-env'),
     ...validatePrivateKeyPath(input.privateKeyPath),
-    ...validateEnvironmentName(input.tokenEnv, '--token-env'),
   ];
-  if (input.mode === 'github-app' && input.privateKeyEnv && input.privateKeyPath) {
+  if (input.privateKeyEnv && input.privateKeyPath) {
     errors.push('Use exactly one of --private-key-env or --private-key-path.');
   }
   return errors;
@@ -145,39 +141,24 @@ function buildPublisher(input: {
   installationId?: string;
   privateKeyEnv?: string;
   privateKeyPath?: string;
-  tokenEnv?: string;
   login?: string;
 }): GitHubReviewPublisherConfig {
-  if (input.mode === 'github-app') {
-    return {
-      mode: 'github-app',
-      githubApp: {
-        appId: input.appId ?? '',
-        installationId: input.installationId ?? '',
-        ...(input.privateKeyEnv ? { privateKeyEnv: input.privateKeyEnv } : {}),
-        ...(input.privateKeyPath ? { privateKeyPath: input.privateKeyPath } : {}),
-        ...(input.login ? { login: input.login } : {}),
-      },
-    };
-  }
   return {
-    mode: 'token',
-    token: {
-      env: input.tokenEnv ?? '',
+    mode: 'github-app',
+    githubApp: {
+      appId: input.appId ?? '',
+      installationId: input.installationId ?? '',
+      ...(input.privateKeyEnv ? { privateKeyEnv: input.privateKeyEnv } : {}),
+      ...(input.privateKeyPath ? { privateKeyPath: input.privateKeyPath } : {}),
       ...(input.login ? { login: input.login } : {}),
     },
   };
 }
 
 async function promptForMissing(
-  mode: ReviewSetupMode,
-  values: { appId?: string; installationId?: string; privateKeyEnv?: string; privateKeyPath?: string; tokenEnv?: string },
+  values: { appId?: string; installationId?: string; privateKeyEnv?: string; privateKeyPath?: string },
   prompt: ReviewSetupPromptFunction,
 ): Promise<typeof values> {
-  if (mode === 'token') {
-    if (!values.tokenEnv) values.tokenEnv = trimmed(await prompt({ id: 'tokenEnv', message: 'Environment variable name containing the fine-grained token' }));
-    return values;
-  }
   if (!values.appId) values.appId = trimmed(await prompt({ id: 'appId', message: 'GitHub App id' }));
   if (!values.installationId) values.installationId = trimmed(await prompt({ id: 'installationId', message: 'GitHub App installation id' }));
   if (!values.privateKeyEnv && !values.privateKeyPath) {
@@ -212,13 +193,12 @@ function nextAction(input: { mode: ReviewSetupMode; missingFields: readonly stri
 
 export async function runReviewSetup(options: RunReviewSetupOptions): Promise<ReviewSetupResult> {
   const command = `review setup ${options.mode}` as const;
-  const guidance = options.mode === 'github-app' ? buildGitHubAppSetupGuidance() : buildTokenSetupGuidance();
+  const guidance = buildGitHubAppSetupGuidance();
   const values = {
     appId: trimmed(options.appId),
     installationId: trimmed(options.installationId),
     privateKeyEnv: trimmed(options.privateKeyEnv),
     privateKeyPath: trimmed(options.privateKeyPath),
-    tokenEnv: trimmed(options.tokenEnv),
   };
   const login = trimmed(options.login);
   let validationErrors = validateInputs({ mode: options.mode, ...values, login });
@@ -232,11 +212,9 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
   }
 
   const interactive = options.isTTY === true && options.yes !== true && options.json !== true && options.prompt;
-  const needsPrompt = options.mode === 'token'
-    ? !values.tokenEnv
-    : !values.appId || !values.installationId || (!values.privateKeyEnv && !values.privateKeyPath);
+  const needsPrompt = !values.appId || !values.installationId || (!values.privateKeyEnv && !values.privateKeyPath);
   const prompted = Boolean(interactive && needsPrompt);
-  if (prompted) await promptForMissing(options.mode, values, options.prompt as ReviewSetupPromptFunction);
+  if (prompted) await promptForMissing(values, options.prompt as ReviewSetupPromptFunction);
   validationErrors = validateInputs({ mode: options.mode, ...values, login });
   if (validationErrors.length > 0) {
     return {

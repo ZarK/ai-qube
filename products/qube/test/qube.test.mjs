@@ -7,32 +7,12 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { runConnectionProbe as runCoreConnectionProbe } from "@tjalve/qube-core";
+import { getAgentHostProfile } from "@tjalve/aie";
+import { AGENT_HOST_IDS, runConnectionProbe as runCoreConnectionProbe } from "@tjalve/qube-core";
 
 import {
-  assertClaudeCodeHostCapabilityAvailable,
-  formatClaudeCodeUnsupportedCapabilityMessage,
-  getClaudeCodeHostCapability,
-  inspectClaudeCodeWorkspace,
-  listClaudeCodeHostCapabilities,
-  listClaudeCodeInstallFiles,
-  listClaudeCodeInstallNotes,
-  assertCodexHostCapabilityAvailable,
-  formatCodexUnsupportedCapabilityMessage,
-  assertGrokBuildHostCapabilityAvailable,
-  formatGrokBuildUnsupportedCapabilityMessage,
   findQubeComponent,
   probeInstallState,
-  getCodexHostCapability,
-  getGrokBuildHostCapability,
-  inspectCodexWorkspace,
-  inspectGrokBuildWorkspace,
-  listCodexInstallFiles,
-  listCodexInstallNotes,
-  listCodexHostCapabilities,
-  listGrokBuildHostCapabilities,
-  listGrokBuildInstallFiles,
-  listGrokBuildInstallNotes,
   adapterPackageVersions as runtimeAdapterPackageVersions,
   createPackumentFetch,
   createPassingPackument,
@@ -40,8 +20,10 @@ import {
   verifyInstallRegistryGate,
   verifyInstallRegistryPackages,
   planQubeCli,
+  applyUmpireHostProbes,
   probeHostToolkits,
   composeHostToolkitManifests,
+  formatPlannedHostToolkits,
   createInitRecord,
   writeInitRecord,
   MCP_BYPASS_CAVEAT,
@@ -49,26 +31,21 @@ import {
   QUBE_INIT_RECORD_PATH,
   qubeComponents,
   renderCommandSurfacesDoc,
-  modelRoutingPromptPlan,
   runConnectionDoctor,
   runModelRoutingDoctor,
   resolveCommand,
   resolveComponentCommand,
 } from "../dist/index.js";
+import { detectInstalledRoutingHostsOnPath } from "../dist/model_routing_local.js";
 import {
   adapterPackageVersions,
   componentFixtures,
-  aibExpectedPathPattern,
-  aibUnableVerifyPattern,
   aibVersion,
-  aieExpectedPathPattern,
-  aieUnableVerifyPattern,
   aieVersion,
   dependencyVersion,
   qubePackageName,
   qubePackageVersion,
   qubeNpmGlobalInstallPattern,
-  qubePnpmAddCommand,
   qubePnpmAddCommandWith,
   qubePnpmAddPattern,
 } from "./workspace-versions.mjs";
@@ -124,7 +101,6 @@ function createWorkflowDoctorShim(root) {
         { stage: "quality-gates", status: "unconfigured", detail: "No quality gates are configured.", nextAction: "Configure policy.gates entries." },
         { stage: "shipping", status: "manual", detail: "Manual shipping mode.", nextAction: null },
       ],
-      review: { state: "fallback-only", fallbackPromptAvailable: true, fallbackEnforcesReview: false },
       shipping: { mode: "manual" },
       selectedHosts: ["codex"],
     },
@@ -154,6 +130,15 @@ function createJsonEnvelopeShim(root, componentId, payload) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: `@tjalve/${componentId}`, version: findQubeComponent(componentId).packageVersion })}\n`, "utf8");
 }
 
+function createExecutableStub(root, name) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  mkdirSync(binDir, { recursive: true });
+  const commandPath = path.join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
+  writeFileSync(commandPath, process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n", "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  return binDir;
+}
+
 function createAiuMergingShim(root) {
   const binDir = path.join(root, "node_modules", ".bin");
   const packageDir = path.join(root, "node_modules", "@tjalve", "aiu");
@@ -164,17 +149,17 @@ function createAiuMergingShim(root) {
     "import { existsSync, mkdirSync, readFileSync, writeFileSync } from \"node:fs\";",
     "import path from \"node:path\";",
     "const toolIndex = process.argv.indexOf(\"--tool\");",
-    "const tool = toolIndex >= 0 ? process.argv[toolIndex + 1] : \"unknown\";",
+    "const tools = toolIndex >= 0 ? process.argv[toolIndex + 1].split(\",\") : [];",
     "const configPath = path.join(process.cwd(), \".qube\", \"aiu\", \"config.json\");",
     "mkdirSync(path.dirname(configPath), { recursive: true });",
     "let enabled = [];",
     "if (existsSync(configPath)) {",
     "  enabled = JSON.parse(readFileSync(configPath, \"utf8\")).hosts.enabled;",
     "}",
-    "const next = { hosts: { enabled: [...new Set([...enabled, tool])] } };",
+    "const next = { hosts: { enabled: [...new Set([...enabled, ...tools])] } };",
     "await new Promise((resolve) => setTimeout(resolve, 150));",
     "writeFileSync(configPath, JSON.stringify(next));",
-    "process.stdout.write(JSON.stringify({ ok: true, command: \"init\", init: { tools: [tool] } }) + \"\\n\");",
+    "process.stdout.write(JSON.stringify({ ok: true, command: \"init\", init: { tools } }) + \"\\n\");",
     "",
   ].join("\n"), "utf8");
   const commandPath = path.join(binDir, process.platform === "win32" ? "aiu.cmd" : "aiu");
@@ -300,8 +285,8 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /work-items render\s+Render work item drafts for a provider\./);
     assert.match(help.stdout, /queue\s+Show the Executor issue queue\./);
     assert.match(help.stdout, /start\s+Start or resume Executor issue work\./);
-    assert.match(help.stdout, /review setup github-app\s+Configure a user-owned GitHub App reviewer publisher/);
-    assert.match(help.stdout, /review setup token\s+Configure a separate-user fine-grained token reviewer publisher/);
+    assert.match(help.stdout, /review setup github-app\s+Configure the QUBE Reviewer GitHub App/);
+    assert.doesNotMatch(help.stdout, /review setup token|separate-user fine-grained token/i);
     assert.match(help.stdout, /review doctor\s+Validate reviewer publisher readiness/);
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
@@ -326,8 +311,9 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /--apply/);
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
     assert.match(installHelp.stdout, /--host <value>/);
-    assert.match(installHelp.stdout, /Default: generic/);
-    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, cursor, opencode/);
+    assert.match(installHelp.stdout, /Default: codex/);
+    assert.match(installHelp.stdout, /opencode, codex, claude-code, grok-build, cursor/);
+    assert.doesNotMatch(installHelp.stdout, /generic|--force|--migration/);
     assert.match(installHelp.stdout, /--work-provider <value>/);
     assert.match(installHelp.stdout, /Default: github/);
     assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
@@ -369,9 +355,10 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
     const commandNames = parsed.commands.map(command => command.name);
-    for (const command of ["install", "autoresearch", "oneshot", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review setup", "review setup github-app", "review setup token", "review doctor", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+    for (const command of ["install", "autoresearch", "oneshot", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review setup", "review setup github-app", "review doctor", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "continue"]) {
       assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
     }
+    assert.equal(commandNames.includes("review setup token"), false);
     const installCommand = parsed.commands.find(command => command.name === "install");
     assert.equal(installCommand?.dryRun.supported, true);
     assert.deepEqual(installCommand?.supplyChain.kinds, ["dependency", "package-manager"]);
@@ -386,7 +373,6 @@ describe("qube composer CLI", () => {
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
     );
-    assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component])).status, "aiu");
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component]))["pr gate"], "aie");
   });
 
@@ -404,7 +390,7 @@ describe("qube composer CLI", () => {
     assert.match(productHelp.stdout, /Usage:\s*\r?\n\s*aie review/);
     for (const output of [shortHelp.stdout, productHelp.stdout]) {
       assert.match(output, /review setup github-app/);
-      assert.match(output, /review setup token/);
+      assert.doesNotMatch(output, /review setup token|separate-user fine-grained token/i);
       assert.match(output, /review doctor/);
       assert.match(output, /review gate/);
     }
@@ -421,7 +407,6 @@ describe("qube composer CLI", () => {
       ["review"],
       ["review", "setup"],
       ["review", "setup", "github-app"],
-      ["review", "setup", "token"],
       ["review", "doctor"],
       ["review", "gate"],
     ];
@@ -436,10 +421,9 @@ describe("qube composer CLI", () => {
     }
   });
 
-  it("renders concrete short-surface reviewer publisher guidance without writing incomplete config", () => {
+  it("renders concrete GitHub App publisher guidance without writing incomplete config", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-review-setup-"));
     const githubApp = runCli(["review", "setup", "github-app"], { cwd });
-    const token = runCli(["review", "setup", "token"], { cwd });
 
     assert.equal(githubApp.status, 0, githubApp.stderr);
     assert.match(githubApp.stdout, /Pull requests: Read and write/);
@@ -447,10 +431,6 @@ describe("qube composer CLI", () => {
     assert.match(githubApp.stdout, /private key.*outside repository files/i);
     assert.match(githubApp.stdout, /installation id/i);
     assert.match(githubApp.stdout, /Review compute remains host-run/);
-    assert.equal(token.status, 0, token.stderr);
-    assert.match(token.stdout, /separate GitHub user or bot account/i);
-    assert.match(token.stdout, /formal review event/i);
-    assert.match(token.stdout, /--token-env/);
     assert.equal(existsSync(path.join(cwd, ".qube", "aie", "config.json")), false);
   });
 
@@ -468,14 +448,13 @@ describe("qube composer CLI", () => {
     assert.deepEqual(parsed.installPlan.selections, {
       creditWarning: true,
       docs: true,
-      host: "generic",
-      hosts: ["generic"],
+      host: "codex",
+      hosts: ["codex"],
       ciProvider: "github",
       ciProviders: ["github"],
       lifecycleScripts: "disabled",
-      migration: "none",
       packageManager: "pnpm",
-      reviewMode: "external",
+      reviewMode: "isolated",
       scope: "local",
       uiAuditEvidenceRoot: "~/.qube/verification",
       workProvider: "github",
@@ -487,8 +466,11 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.connections[0].probe.readOnly, true);
     assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      qubePnpmAddCommand,
-      "qube init . --host generic --work-provider github --ci-provider github --review-mode external --ui-audit-evidence-root ~/.qube/verification --credit-warning",
+      qubePnpmAddCommandWith(
+        "@tjalve/qube-adapter-codex",
+        "@tjalve/qube-adapter-github",
+      ),
+      "qube init . --host codex --work-provider github --ci-provider github --review-mode isolated --ui-audit-evidence-root ~/.qube/verification --credit-warning",
       "qube aie labels setup",
       "qube doctor"
     ]);
@@ -502,12 +484,11 @@ describe("qube composer CLI", () => {
     assert.deepEqual(
       parsed.installPlan.options.hosts.map(option => [option.value, option.support, option.default, option.source]),
       [
-        ["generic", "installed", true, "local-option"],
-        ["codex", "installed", false, "adapter-contract"],
-        ["claude-code", "installed", false, "adapter-contract"],
-        ["grok-build", "optional", false, "adapter-contract"],
-        ["cursor", "optional", false, "adapter-contract"],
-        ["opencode", "optional", false, "adapter-contract"]
+        ["opencode", "installed", false, "agent-host-profile"],
+        ["codex", "installed", true, "agent-host-profile"],
+        ["claude-code", "installed", false, "agent-host-profile"],
+        ["grok-build", "installed", false, "agent-host-profile"],
+        ["cursor", "installed", false, "agent-host-profile"]
       ]
     );
     assert.deepEqual(
@@ -565,6 +546,8 @@ describe("qube composer CLI", () => {
   }
 
   function writeConfiguredRepo(root, options = {}) {
+    const instructionPath = path.join(root, "AGENTS.md");
+    const makeItSoPath = path.join(root, ".agents", "skills", "make-it-so", "SKILL.md");
     mkdirSync(path.join(root, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(root, "package.json"), `${JSON.stringify({
       name: "demo-app",
@@ -582,11 +565,12 @@ describe("qube composer CLI", () => {
     }
     writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1, providers: { work: { kind: "github" } } }, null, 2)}\n`);
     if (options.staleManaged) {
-      writeManagedSection(path.join(root, "AGENTS.md"), "Team rules.", "deadbeef");
+      writeManagedSection(instructionPath, "Team rules.", "deadbeef");
+      writeManagedSection(makeItSoPath, "Run QUBE Make It So.");
     } else if (options.crlfManaged) {
       const body = "Team rules.";
       const digest = createHash("sha256").update(`${body.replace(/\r\n?/g, "\n").trimEnd()}\n`).digest("hex");
-      writeFileSync(path.join(root, "AGENTS.md"), [
+      writeFileSync(instructionPath, [
         "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
         "<!-- executor-managed-version: 1 -->",
         `<!-- executor-managed-checksum: ${digest} -->`,
@@ -594,8 +578,10 @@ describe("qube composer CLI", () => {
         "<!-- END EXECUTOR MANAGED SECTION -->",
         ""
       ].join("\r\n"));
+      writeManagedSection(makeItSoPath, "Run QUBE Make It So.");
     } else if (options.managed !== false) {
-      writeManagedSection(path.join(root, "AGENTS.md"), "Team rules.");
+      writeManagedSection(instructionPath, "Team rules.");
+      writeManagedSection(makeItSoPath, "Run QUBE Make It So.");
     }
   }
 
@@ -700,6 +686,7 @@ const args = process.argv.slice(2).join(" ");
 if (args.includes("init")) {
   const cwd = process.cwd();
   mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+  mkdirSync(path.join(cwd, ".agents", "skills", "make-it-so"), { recursive: true });
   writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), ${JSON.stringify(`${initConfig}\n`)});
   const body = "Team rules.\\n";
   const digest = createHash("sha256").update(body).digest("hex");
@@ -708,6 +695,16 @@ if (args.includes("init")) {
     "<!-- executor-managed-version: 1 -->",
     "<!-- executor-managed-checksum: " + digest + " -->",
     "Team rules.",
+    "<!-- END EXECUTOR MANAGED SECTION -->",
+    ""
+  ].join("\\n"));
+  const makeItSoBody = "Run QUBE Make It So.\\n";
+  const makeItSoDigest = createHash("sha256").update(makeItSoBody).digest("hex");
+  writeFileSync(path.join(cwd, ".agents", "skills", "make-it-so", "SKILL.md"), [
+    "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
+    "<!-- executor-managed-version: 1 -->",
+    "<!-- executor-managed-checksum: " + makeItSoDigest + " -->",
+    "Run QUBE Make It So.",
     "<!-- END EXECUTOR MANAGED SECTION -->",
     ""
   ].join("\\n"));
@@ -723,7 +720,6 @@ process.stdout.write(JSON.stringify({
   command: "doctor",
   workflowReadiness: {
     stages: [],
-    review: { state: "fallback-only", fallbackPromptAvailable: true, fallbackEnforcesReview: false },
     shipping: { mode: "manual" },
     selectedHosts: []
   }
@@ -837,7 +833,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     } catch {
       return;
     }
-    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "generic", "--work-provider", "github"], { cwd: root });
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github"], { cwd: root });
     assert.equal(result.status, 0, result.stderr);
     const workspace = JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init");
     assert.notEqual(workspace.status, "satisfied");
@@ -845,7 +841,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
 
   it("keeps unknown package state missing instead of satisfied", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-empty-"));
-    const state = probeInstallState(root, { scope: "local", packageManager: "pnpm", hosts: ["generic"], workProviders: ["github"], ciProviders: ["github"] });
+    const state = probeInstallState(root, { scope: "local", packageManager: "pnpm", hosts: ["codex"], workProviders: ["github"], ciProviders: ["github"] });
     assert.equal(state.find(step => step.stage === "package-install").status, "missing");
     assert.equal(state.find(step => step.stage === "workspace-init").status, "missing");
     assert.equal(state.every(step => step.status !== "satisfied"), true);
@@ -867,8 +863,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "standalone-globals",
       "--review-mode",
       "isolated",
       "--ui-audit-evidence-root",
@@ -879,12 +873,11 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(result.status, 0);
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: global/);
-    assert.match(result.stdout, /Host surface: codex/);
+    assert.match(result.stdout, /Agent harnesses: codex/);
     assert.match(result.stdout, qubeNpmGlobalInstallPattern);
-    assert.match(result.stdout, /AGENTS\.md policy notes/);
-    assert.match(result.stdout, /Codex host support uses AGENTS\.md/);
-    assert.match(result.stdout, /Codex does not use OpenCode-style project command files/);
-    assert.match(result.stdout, /remove stale standalone global commands/);
+    assert.match(result.stdout, /AGENTS\.md agent instructions/);
+    assert.match(result.stdout, /\.agents\/skills\/make-it-so\/SKILL\.md Make It So skill/);
+    assert.match(result.stdout, /Codex: reads AGENTS\.md; start with \$make-it-so/);
     assert.match(result.stdout, /Connections:\s*[\s\S]*github \(cli-delegated\)/);
     assert.match(result.stdout, /Verify: gh auth status/);
     assert.match(result.stdout, /No commands were run\./);
@@ -906,8 +899,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--yes",
       "--dry-run",
       "--json"
@@ -1075,7 +1066,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       ["quality-gates", "unconfigured"],
       ["shipping", "manual"],
     ]);
-    assert.equal(parsed.workflow.readiness.review.state, "fallback-only");
     assert.equal(parsed.workflow.readiness.shipping.mode, "manual");
 
     const human = runCli(["doctor"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
@@ -1227,29 +1217,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.deepEqual(result.connections.filter(connection => connection.adapterId === "gitlab").map(connection => connection.connectionId), ["work:gitlab", "review:gitlab"]);
   });
 
-  it("uses the same Jira legacy-option precedence as the runtime adapter", async () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-jira-precedence-"));
-    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
-    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
-      version: 1,
-      providers: {
-        work: { kind: "jira", jira: { projectKey: "LEGACY", jql: "project = LEGACY" }, connection: { baseUrl: "https://jira.example.com", projectKey: "NEW", jql: "project = NEW" } },
-        review: { kind: "github" },
-        ci: { kind: "github" },
-      },
-    })}\n`, "utf8");
-    await runConnectionDoctor({
-      cwd,
-      probe: async (contract, options) => {
-        if (contract.adapterId === "jira") {
-          assert.equal(options.config.projectKey, "LEGACY");
-          assert.equal(options.config.jql, "project = LEGACY");
-        }
-        return { adapterId: contract.adapterId, probeId: contract.probe.id, status: "pass", authMethod: contract.authMethod, summary: "passed", verifyCommand: contract.probe.verifyCommand, readOnly: true };
-      },
-    });
-  });
-
   it("fails doctor for malformed or structurally invalid Executor config", () => {
     const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-quality-"));
     createQualityDoctorShim(qualityRoot);
@@ -1345,8 +1312,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--yes",
       "--dry-run",
       "--json"
@@ -1378,8 +1343,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--yes",
       "--dry-run",
       "--json"
@@ -1412,8 +1375,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--yes",
       "--dry-run",
       "--json"
@@ -1447,8 +1408,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--review-mode",
       "external",
       "--ui-audit-evidence-root",
@@ -1459,13 +1418,13 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(result.status, 0);
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: local/);
-    assert.match(result.stdout, /Host surface: claude-code/);
+    assert.match(result.stdout, /Agent harnesses: claude-code/);
     assert.match(result.stdout, qubePnpmAddPattern);
-    assert.match(result.stdout, /CLAUDE\.md policy notes/);
-    assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
-    assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
-    assert.match(result.stdout, /Use TodoWrite and TodoRead/);
-    assert.match(result.stdout, /do not create Claude Code slash command or skill assets/);
+    assert.match(result.stdout, /CLAUDE\.md agent instructions/);
+    assert.match(result.stdout, /\.claude\/commands\/make-it-so\.md Make It So command/);
+    assert.match(result.stdout, /\.claude\/settings\.json trust review/);
+    assert.match(result.stdout, /Claude Code: reads CLAUDE\.md; start with \/make-it-so/);
+    assert.match(result.stdout, /Claude Code capabilities: task list supported; subagents supported; native review supported; isolated review unsupported/);
     assert.match(result.stdout, /No commands were run\./);
   });
 
@@ -1483,8 +1442,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--yes",
       "--dry-run",
       "--json"
@@ -1500,149 +1457,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "qube aie labels setup",
       "qube doctor"
     ]);
-    assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
-    assert.match(parsed.installPlan.notes.join("\n"), /Grok Build host support uses AGENTS\.md/);
-    assert.match(parsed.installPlan.notes.join("\n"), /terminal-native coding agent and CLI surface/);
-    assert.match(parsed.installPlan.notes.join("\n"), /headless prompt mode with -p/);
-    assert.match(parsed.installPlan.notes.join("\n"), /does not install Grok Build or emit the xAI curl-pipe-shell installer/);
+    assert.ok(parsed.installPlan.files.includes("AGENTS.md agent instructions"));
+    assert.ok(parsed.installPlan.files.includes(".grok/commands/make-it-so.md Make It So command"));
+    assert.ok(parsed.installPlan.files.includes(".grok/hooks/ai-umpire.json trust review"));
+    assert.match(parsed.installPlan.notes.join("\n"), /Grok Build: reads AGENTS\.md; start with \/make-it-so/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Grok Build capabilities: task list unsupported; subagents supported; native review supported; isolated review supported/);
     assert.doesNotMatch(parsed.installPlan.commands.map(step => step.command).join("\n"), /x\.ai\/cli\/install\.sh|curl -fsSL/);
-  });
-
-  it("reports Codex host capabilities without current-session assumptions", () => {
-    const capabilities = listCodexHostCapabilities();
-    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
-    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 5);
-    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
-    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
-
-    assert.equal(assertCodexHostCapabilityAvailable("read-instructions").support, "supported");
-    assert.equal(getCodexHostCapability("spawn-fresh-reviewer").support, "host-provided");
-    assert.match(getCodexHostCapability("spawn-fresh-reviewer").summary, /fresh subagents/);
-    assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
-    assert.deepEqual(listCodexInstallFiles(), [
-      "AGENTS.md policy notes: Codex project instructions use AGENTS.md with repository policy precedence.",
-    ]);
-    assert.equal(listCodexInstallNotes().length, 4);
-
-    const unknownCapability = getCodexHostCapability("completely-unknown-id");
-    assert.equal(unknownCapability.support, "unsupported");
-    assert.match(formatCodexUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
-    assert.throws(() => assertCodexHostCapabilityAvailable("install-project-command"), /Unsupported Codex capability/);
-
-    const repo = mkdtempSync(path.join(tmpdir(), "qube-codex-host-"));
-    writeFileSync(path.join(repo, "AGENTS.md"), "Repository policy\n");
-    const inspection = inspectCodexWorkspace(repo);
-
-    assert.equal(inspection.cwd, repo);
-    assert.equal(inspection.instructionTarget.present, true);
-    assert.equal(path.basename(inspection.instructionTarget.path), "AGENTS.md");
-    assert.ok(inspection.capabilities.some(capability => capability.id === "use-local-todos"));
-    assert.ok(inspection.capabilities.some(capability => capability.id === "spawn-fresh-reviewer"));
-    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
-    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
-    assert.throws(() => {
-      inspection.capabilities[0].summary = "mutated";
-    }, TypeError);
-
-    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-codex-host-missing-"));
-    const missingInspection = inspectCodexWorkspace(repoWithoutInstructions);
-    assert.equal(missingInspection.instructionTarget.present, false);
-  });
-
-  it("reports Claude Code host capabilities without mixing host assumptions", () => {
-    const capabilities = listClaudeCodeHostCapabilities();
-    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
-    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 6);
-    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
-    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
-
-    assert.equal(assertClaudeCodeHostCapabilityAvailable("read-instructions").support, "supported");
-    assert.equal(getClaudeCodeHostCapability("install-slash-command").support, "unsupported");
-    assert.deepEqual(getClaudeCodeHostCapability("use-task-state").tools, ["TodoWrite", "TodoRead"]);
-    assert.deepEqual(listClaudeCodeInstallFiles(), [
-      "CLAUDE.md policy notes: Claude Code project instructions use CLAUDE.md with repository policy precedence.",
-      ".claude/settings.json hook notes: Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop.",
-    ]);
-    assert.equal(listClaudeCodeInstallNotes().length, 5);
-
-    const unknownCapability = getClaudeCodeHostCapability("completely-unknown-id");
-    assert.equal(unknownCapability.support, "unsupported");
-    assert.match(formatClaudeCodeUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
-    assert.throws(() => assertClaudeCodeHostCapabilityAvailable("install-slash-command"), /Unsupported Claude Code capability/);
-
-    const repo = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-"));
-    writeFileSync(path.join(repo, "CLAUDE.md"), "Repository policy\n");
-    mkdirSync(path.join(repo, ".claude", "commands"), { recursive: true });
-    mkdirSync(path.join(repo, ".claude", "skills"), { recursive: true });
-    writeFileSync(path.join(repo, ".claude", "settings.json"), "{}\n");
-    const inspection = inspectClaudeCodeWorkspace(repo);
-
-    assert.equal(inspection.cwd, repo);
-    assert.equal(inspection.instructionTarget.present, true);
-    assert.equal(path.basename(inspection.instructionTarget.path), "CLAUDE.md");
-    assert.equal(inspection.settingsDirectory.present, true);
-    assert.equal(inspection.projectSettings.present, true);
-    assert.equal(inspection.localSettings.present, false);
-    assert.equal(inspection.commandDirectory.present, true);
-    assert.equal(inspection.skillsDirectory.present, true);
-    assert.ok(inspection.capabilities.some(capability => capability.id === "use-task-state"));
-    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
-    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
-    assert.throws(() => {
-      inspection.capabilities[0].summary = "mutated";
-    }, TypeError);
-
-    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-missing-"));
-    const missingInspection = inspectClaudeCodeWorkspace(repoWithoutInstructions);
-    assert.equal(missingInspection.instructionTarget.present, false);
-    assert.equal(missingInspection.settingsDirectory.present, false);
-  });
-
-  it("reports Grok Build terminal host capabilities from fixtures without invoking the host", () => {
-    const capabilities = listGrokBuildHostCapabilities();
-    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 2);
-    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 10);
-    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 5);
-    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
-
-    assert.equal(assertGrokBuildHostCapabilityAvailable("read-instructions").support, "supported");
-    assert.equal(getGrokBuildHostCapability("run-terminal-cli").category, "terminal-cli");
-    assert.equal(getGrokBuildHostCapability("use-terminal-tui").category, "terminal-tui");
-    assert.equal(getGrokBuildHostCapability("run-headless-prompt").category, "automation");
-    assert.equal(getGrokBuildHostCapability("use-parallel-subagents").category, "subagent");
-    assert.equal(getGrokBuildHostCapability("use-worktree-subagents").category, "worktree");
-    assert.equal(getGrokBuildHostCapability("install-cli").support, "unsupported");
-    assert.match(getGrokBuildHostCapability("install-cli").summary, /does not install Grok Build/);
-    assert.deepEqual(listGrokBuildInstallFiles(), [
-      "AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records.",
-    ]);
-    assert.equal(listGrokBuildInstallNotes().length, 6);
-
-    const unknownCapability = getGrokBuildHostCapability("completely-unknown-id");
-    assert.equal(unknownCapability.support, "unsupported");
-    assert.match(formatGrokBuildUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
-    assert.throws(() => assertGrokBuildHostCapabilityAvailable("install-cli"), /Unsupported Grok Build capability/);
-
-    const repo = mkdtempSync(path.join(tmpdir(), "qube-grok-build-host-"));
-    writeFileSync(path.join(repo, "AGENTS.md"), "Repository policy\n");
-    const inspection = inspectGrokBuildWorkspace(repo);
-
-    assert.equal(inspection.cwd, repo);
-    assert.equal(inspection.instructionTarget.present, true);
-    assert.equal(path.basename(inspection.instructionTarget.path), "AGENTS.md");
-    assert.deepEqual(inspection.commandExamples, ["grok-build", "grok-build -p \"<prompt>\""]);
-    assert.ok(inspection.capabilities.some(capability => capability.id === "run-terminal-cli" && capability.category === "terminal-cli"));
-    assert.ok(inspection.capabilities.some(capability => capability.id === "use-terminal-tui" && capability.category === "terminal-tui"));
-    assert.ok(inspection.capabilities.some(capability => capability.id === "use-acp" && capability.category === "automation"));
-    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
-    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
-    assert.throws(() => {
-      inspection.capabilities[0].summary = "mutated";
-    }, TypeError);
-
-    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-grok-build-host-missing-"));
-    const missingInspection = inspectGrokBuildWorkspace(repoWithoutInstructions);
-    assert.equal(missingInspection.instructionTarget.present, false);
   });
 
   it("prints the install question list in JSON without --yes", () => {
@@ -1726,7 +1546,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.match(workspace.command, /--review-mode isolated/);
     assert.match(workspace.command, /--ui-audit-evidence-root ~\/\.qube\/verification/);
     assert.match(workspace.command, /--credit-warning/);
-    assert.doesNotMatch(workspace.command, /--docs|--migration/);
+    assert.doesNotMatch(workspace.command, /--docs/);
   });
 
   it("keeps already-answered values answered when only some unanswered flags return", () => {
@@ -1754,12 +1574,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(review.value, "isolated");
   });
 
-  it("rejects isolated review when no selected host adapter can run it", () => {
+  it("rejects isolated review when the selected agent harness cannot run it", () => {
     const result = runCli([
       "install",
       "--json",
       "--host",
-      "generic",
+      "claude-code",
       "--review-mode",
       "isolated"
     ]);
@@ -1796,7 +1616,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.installPlan.selections.packageManager, "npm");
-    assert.equal(parsed.installPlan.selections.reviewMode, "external");
+    assert.equal(parsed.installPlan.selections.reviewMode, "isolated");
     assert.equal(parsed.installPlan.selections.uiAuditEvidenceRoot, "~/.qube/verification");
     assert.equal(parsed.installPlan.selections.creditWarning, true);
   });
@@ -1900,7 +1720,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -1908,8 +1728,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none",
       "--review-mode",
       "external",
       "--ui-audit-evidence-root",
@@ -1945,7 +1763,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "local",
       "--ci-provider",
@@ -1953,8 +1771,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ]);
     assert.equal(result.status, 3);
     const parsed = JSON.parse(result.stdout);
@@ -1973,7 +1789,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -1981,8 +1797,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { env: { ...process.env, CI: "true" } });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /prompt-blocked|Prompts are disabled/);
@@ -2001,7 +1815,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2009,8 +1823,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ];
     const first = runCli(applyArgs, { cwd: harness.cwd, env: harness.env });
     assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
@@ -2019,10 +1831,17 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.installPlan.mode, "apply");
     assert.deepEqual(parsed.apply.executed.map(step => step.stage), ["package-install", "workspace-init"]);
     assert.equal(parsed.apply.executed.every(step => step.status === "executed"), true);
-    assert.equal(readFileSync(harness.pmLog, "utf8").trim(), qubePnpmAddCommand.replace(/^pnpm /, ""));
+    assert.equal(
+      readFileSync(harness.pmLog, "utf8").trim(),
+      qubePnpmAddCommandWith(
+        "@tjalve/qube-adapter-codex",
+        "@tjalve/qube-adapter-github",
+      ).replace(/^pnpm /, ""),
+    );
     const manifest = JSON.parse(readFileSync(path.join(harness.cwd, "package.json"), "utf8"));
     assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
     assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
+    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-codex"], adapterPackageVersions["@tjalve/qube-adapter-codex"]);
     assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
     assert.equal(parsed.apply.components.ok, true);
     assert.equal(parsed.apply.components.command, "components");
@@ -2050,7 +1869,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2058,8 +1877,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SILENT_QUBE_SHIM: "1" } });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
@@ -2082,7 +1899,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2090,8 +1907,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SKIP_QUBE_BIN: "1" } });
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
@@ -2112,7 +1927,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2120,8 +1935,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
       [qubePackageName]: { publishedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }
     }) } });
@@ -2135,43 +1948,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.apply.executed.some(step => step.stage === "workspace-init" && step.status === "executed"), true);
     assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
     assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
-  });
-
-  it("does not let --force override a failed registry age gate", () => {
-    const help = runCli(["install", "--help"]);
-    assert.equal(help.status, 0, help.stderr);
-    assert.match(help.stdout, /Does not override registry identity, age, provenance, or lifecycle gates/);
-    const root = mkdtempSync(path.join(tmpdir(), "qube-install-force-age-"));
-    const harness = createInstallApplyHarness(root);
-    const result = runCli([
-      "install",
-      "--apply",
-      "--yes",
-      "--force",
-      "--json",
-      "--scope",
-      "local",
-      "--package-manager",
-      "pnpm",
-      "--host",
-      "generic",
-      "--work-provider",
-      "github",
-      "--ci-provider",
-      "github",
-      "--lifecycle-scripts",
-      "disabled",
-      "--docs",
-      "--migration",
-      "none"
-    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
-      [qubePackageName]: { publishedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }
-    }) } });
-    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.apply.registry.status, "plan-only");
-    assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
-    assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
   });
 
   it("downgrades apply to plan when registry metadata is unverifiable", () => {
@@ -2188,7 +1964,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2196,8 +1972,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { cwd: harness.cwd, env: harness.env });
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
@@ -2220,7 +1994,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--package-manager",
       "pnpm",
       "--host",
-      "generic",
+      "codex",
       "--work-provider",
       "github",
       "--ci-provider",
@@ -2228,8 +2002,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--lifecycle-scripts",
       "disabled",
       "--docs",
-      "--migration",
-      "none"
     ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
       [qubePackageName]: { scripts: { postinstall: "node ./postinstall.js" } }
     }) } });
@@ -2251,7 +2023,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       selections: {
         scope: "local",
         packageManager: "pnpm",
-        hosts: ["generic"],
+        hosts: ["codex"],
         workProviders: ["github"],
         ciProviders: ["github"]
       },
@@ -2271,7 +2043,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       selections: {
         scope: "local",
         packageManager: "pnpm",
-        hosts: ["generic"],
+        hosts: ["codex"],
         workProviders: ["github"],
         ciProviders: ["github"]
       },
@@ -2308,7 +2080,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       selections: {
         scope: "local",
         packageManager: "pnpm",
-        hosts: ["generic"],
+        hosts: ["codex"],
         workProviders: ["github"],
         ciProviders: ["github"]
       },
@@ -2353,18 +2125,15 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     );
     const executor = parsed.components.find(component => component.id === "executor");
     assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
-    assert.equal(executor.capabilities.localReview.promptOnlyFallback, true);
     assert.equal(executor.capabilities.localReview.manualEvidenceSatisfiesRequiredGate, false);
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("promptStackHash"));
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"));
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
     assert.match(executor.capabilities.localReview.evidencePathPattern, /<lane>\.json/);
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
-    assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "optional"));
-    assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /Grok Build adapter contract/);
-    assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "claude-code").capabilities.some(capability => capability.id === "use-task-state" && capability.support === "standalone"));
-    assert.equal(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").source, "adapter-contract");
-    assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").capabilities.some(capability => capability.id === "open-pull-request" && capability.support === "unsupported"));
+    assert.deepEqual(executor.capabilities.hostSurfaces.map(surface => surface.id), [...AGENT_HOST_IDS]);
+    assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.support === "installed"), true);
+    assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.source === "agent-host-profile"), true);
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed" && provider.default === true));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
@@ -2376,6 +2145,91 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
     assert.match(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").summary, /without triggering or rerunning jobs/);
     assert.ok(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").capabilities.some(capability => capability.id === "trigger-ci-run" && capability.support === "unsupported"));
+  });
+
+  it("keeps all five agent harnesses consistent across components, help, and install planning", async () => {
+    const expectedHarnesses = [
+      {
+        host: "opencode", instructionPath: "AGENTS.md", makeItSoPath: ".opencode/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
+        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "supported", models: "supported" },
+      },
+      {
+        host: "codex", instructionPath: "AGENTS.md", makeItSoPath: ".agents/skills/make-it-so/SKILL.md", makeItSoKind: "skill", invocation: "$make-it-so",
+        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental", models: "supported" },
+      },
+      {
+        host: "claude-code", instructionPath: "CLAUDE.md", makeItSoPath: ".claude/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
+        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "experimental", models: "unsupported" },
+      },
+      {
+        host: "grok-build", instructionPath: "AGENTS.md", makeItSoPath: ".grok/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
+        support: { taskList: "unsupported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental", models: "supported" },
+      },
+      {
+        host: "cursor", instructionPath: "AGENTS.md", makeItSoPath: ".cursor/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
+        support: { taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "unsupported", models: "supported" },
+      },
+    ];
+    const componentsResult = runCli(["components", "--json"]);
+    const installHelp = runCli(["install", "--help"]);
+    assert.equal(componentsResult.status, 0, componentsResult.stderr);
+    assert.equal(installHelp.status, 0, installHelp.stderr);
+
+    const executor = JSON.parse(componentsResult.stdout).components.find(component => component.id === "executor");
+    const componentRows = new Map(executor.capabilities.hostSurfaces.map(row => [row.id, row]));
+    assert.deepEqual([...componentRows.keys()], expectedHarnesses.map(expected => expected.host));
+    assert.deepEqual([...AGENT_HOST_IDS], expectedHarnesses.map(expected => expected.host));
+
+    for (const expected of expectedHarnesses) {
+      const host = expected.host;
+      const profile = await getAgentHostProfile(host);
+      const componentRow = componentRows.get(host);
+      assert.ok(componentRow, host);
+      assert.equal(componentRow.source, "agent-host-profile", host);
+      assert.equal(componentRow.default, host === "codex", host);
+      assert.ok(installHelp.stdout.includes(host), host);
+      assert.equal(profile.instructionTarget.path, expected.instructionPath, host);
+      assert.equal(profile.makeItSo.path, expected.makeItSoPath, host);
+      assert.equal(profile.makeItSo.kind, expected.makeItSoKind, host);
+      assert.equal(profile.makeItSo.invocation, expected.invocation, host);
+      assert.deepEqual({
+        taskList: profile.taskList.support,
+        subagents: profile.subagents.support,
+        localReview: profile.review.local.support,
+        isolatedReview: profile.review.isolated.support,
+        umpire: profile.umpire.continuation.support,
+        models: profile.modelDiscovery.support,
+      }, expected.support, host);
+
+      const supports = Object.fromEntries(componentRow.capabilities.map(capability => [capability.id, capability.support]));
+      assert.deepEqual({
+        taskList: supports["task-list"],
+        subagents: supports.subagents,
+        localReview: supports["local-review"],
+        isolatedReview: supports["isolated-review"],
+        umpire: supports["umpire-continuation"],
+        models: supports["live-models"],
+      }, expected.support, host);
+
+      const installResult = runCli([
+        "install", "--host", host, "--work-provider", "github", "--ci-provider", "github",
+        "--yes", "--dry-run", "--json",
+      ]);
+      assert.equal(installResult.status, 0, `${host}: ${installResult.stderr}`);
+      const plan = JSON.parse(installResult.stdout).installPlan;
+      assert.deepEqual(plan.selections.hosts, [host], host);
+      const plannedHost = plan.options.hosts.find(option => option.value === host);
+      assert.ok(plannedHost, host);
+      assert.equal(plannedHost.source, "agent-host-profile", host);
+      assert.deepEqual(plannedHost.capabilities, componentRow.capabilities, host);
+      assert.ok(plan.files.includes(`${profile.instructionTarget.path} agent instructions`), host);
+      assert.deepEqual(
+        plan.files.filter(file => file.includes(" Make It So ")),
+        [`${profile.makeItSo.path} Make It So ${profile.makeItSo.kind}`],
+        host,
+      );
+      assert.ok(plan.notes.some(note => note.includes(`start with ${profile.makeItSo.invocation}`)), host);
+    }
   });
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {
@@ -3004,7 +2858,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.match(directParsed.makeItSo.nextAction, /oneshot/);
   });
 
-  it("plans dispatch through the selected standalone command", async () => {
+  it("does not load component commands from ambient PATH", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-path-cwd-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-empty-package-root-"));
     const pathPackageRoot = mkdtempSync(path.join(tmpdir(), "qube-path-package-"));
@@ -3017,18 +2871,13 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
-    assertSameCommandPath(resolveCommand("aib", { cwd, env, packageRoot }), commandPath);
+    assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
+    assert.equal(resolveComponentCommand(findQubeComponent("aib"), { cwd, env, packageRoot }), undefined);
 
     const planned = planQubeCli(["run", "aib", "--", "init", "--dry-run"], { cwd, env, packageRoot });
-    assert.equal(planned.exitCode, 0);
-    assert.equal(planned.dispatch?.component.command, "aib");
-    assert.equal(planned.dispatch?.resolution.source, "path");
-    assert.deepEqual(planned.dispatch?.args, ["init", "--dry-run"]);
-
-    const helpDispatch = planQubeCli(["run", "aib", "--help"], { cwd, env, packageRoot });
-    assert.equal(helpDispatch.exitCode, 0);
-    assert.equal(helpDispatch.dispatch?.component.command, "aib");
-    assert.deepEqual(helpDispatch.dispatch?.args, ["--help"]);
+    assert.equal(planned.exitCode, 4);
+    assert.equal(planned.dispatch, undefined);
+    assert.match(planned.stderr, /Cannot find aib/);
   });
 
   it("maps common QUBE commands to component commands", async () => {
@@ -3078,11 +2927,6 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
         input: ["make-it-so", "--flow", "issue", "next", "--json"],
         component: "aie",
         args: ["start", "next", "--json"]
-      },
-      {
-        input: ["makeitso", "--flow=issue", "#99", "--json"],
-        component: "aie",
-        args: ["start", "99", "--json"]
       },
       {
         input: ["idea", "--json"],
@@ -3160,12 +3004,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
         args: ["evidence", "--format", "json"]
       },
       {
-        input: ["status", "--json"],
-        component: "aiu",
-        args: ["status", "--json"]
-      },
-      {
-        input: ["continue", "status", "--json"],
+        input: ["continue", "--json"],
         component: "aiu",
         args: ["status", "--json"]
       }
@@ -3233,27 +3072,21 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(planned.dispatch, undefined);
   });
 
-  it("prefers install-scoped component binaries over ambient PATH", async () => {
+  it("resolves install-scoped component binaries", async () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-install-root-"));
     const binDir = path.join(packageRoot, "node_modules", ".bin");
     const packageDir = path.join(packageRoot, "node_modules", "@tjalve", "aib");
-    const pathDir = mkdtempSync(path.join(tmpdir(), "qube-global-bin-"));
     const command = process.platform === "win32" ? "aib.cmd" : "aib";
     const installCommandPath = path.join(binDir, command);
-    const pathCommandPath = path.join(pathDir, command);
     await mkdir(binDir, { recursive: true });
     await mkdir(packageDir, { recursive: true });
     await writeFile(installCommandPath, process.platform === "win32" ? "@echo off\r\necho install-scoped %*\r\n" : "#!/usr/bin/env sh\necho install-scoped \"$@\"\n");
-    await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho path %*\r\n" : "#!/usr/bin/env sh\necho path \"$@\"\n");
     await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: aibVersion })}\n`);
-    if (process.platform !== "win32") {
-      await chmod(installCommandPath, 0o755);
-      await chmod(pathCommandPath, 0o755);
-    }
+    if (process.platform !== "win32") await chmod(installCommandPath, 0o755);
 
     const component = findQubeComponent("aib");
     assert.ok(component);
-    const env = { PATH: `${pathDir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
+    const env = { PATH: process.env.PATH ?? "", OS: process.env.OS };
     const resolution = resolveComponentCommand(component, { cwd: path.resolve("."), env, packageRoot });
 
     assertSameCommandPath(resolution?.commandPath, installCommandPath);
@@ -3262,171 +3095,27 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assertSameCommandPath(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 
-  it("refuses a stale same-package binary from PATH", async () => {
-    const stalePackageRoot = mkdtempSync(path.join(tmpdir(), "qube-stale-aib-"));
-    const binDir = path.join(stalePackageRoot, "bin");
-    const command = process.platform === "win32" ? "aib.cmd" : "aib";
-    const commandPath = path.join(binDir, command);
-    await mkdir(binDir, { recursive: true });
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho stale %*\r\n" : "#!/usr/bin/env sh\necho stale \"$@\"\n");
-    await writeFile(path.join(stalePackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.0.1" })}\n`);
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const env = { PATH: binDir, OS: process.env.OS };
-    const planned = planQubeCli(["run", "aib", "status"], { cwd: mkdtempSync(path.join(tmpdir(), "qube-stale-cwd-")), env, packageRoot: mkdtempSync(path.join(tmpdir(), "qube-empty-install-")) });
-
-    assert.equal(planned.exitCode, 4);
-    assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, aibExpectedPathPattern);
-    assert.equal(planned.dispatch, undefined);
-  });
-
-  it("accepts an npm-prefix PATH shim beside the matching package", async () => {
-    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-"));
-    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
-    const command = process.platform === "win32" ? "aie.cmd" : "aie";
-    const commandPath = path.join(prefix, command);
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
-    await writeFile(path.join(prefix, "package.json"), `${JSON.stringify({ name: "npm-prefix" })}\n`);
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-cwd-"));
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-install-"));
-    const env = { PATH: prefix, OS: process.env.OS };
-    const component = findQubeComponent("aie");
-    assert.ok(component);
-    const resolution = resolveComponentCommand(component, { cwd, env, packageRoot });
-
-    assertSameCommandPath(resolution?.commandPath, commandPath);
-    assert.equal(resolution?.source, "path");
-    assert.equal(resolution?.packageVersion, aieVersion);
-    assert.equal(resolution?.error, undefined);
-    assertSameCommandPath(resolveCommand("aie", { cwd, env, packageRoot }), commandPath);
-
-    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
-    assert.equal(planned.exitCode, 0);
-    assert.equal(planned.dispatch?.resolution.source, "path");
-    assert.equal(planned.dispatch?.resolution.packageVersion, aieVersion);
-  });
-
-  it("refuses an npm-prefix PATH shim with malformed package metadata", async () => {
-    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-"));
-    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
-    const command = process.platform === "win32" ? "aie.cmd" : "aie";
-    const commandPath = path.join(prefix, command);
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), "{");
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-cwd-"));
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-bad-json-install-"));
-    const env = { PATH: prefix, OS: process.env.OS };
-    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
-
-    assert.equal(planned.exitCode, 4);
-    assert.match(planned.stderr, /Refusing aie from PATH/);
-    assert.match(planned.stderr, aieUnableVerifyPattern);
-    assert.equal(planned.dispatch, undefined);
-    assert.equal(resolveCommand("aie", { cwd, env, packageRoot }), undefined);
-  });
-
-  it("refuses an npm-prefix PATH shim whose package name does not match", async () => {
-    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-"));
-    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
-    const command = process.platform === "win32" ? "aie.cmd" : "aie";
-    const commandPath = path.join(prefix, command);
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/other", version: aieVersion })}\n`);
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-cwd-"));
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-wrong-name-install-"));
-    const env = { PATH: prefix, OS: process.env.OS };
-    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
-
-    assert.equal(planned.exitCode, 4);
-    assert.match(planned.stderr, /Refusing aie from PATH/);
-    assert.match(planned.stderr, aieUnableVerifyPattern);
-    assert.equal(planned.dispatch, undefined);
-  });
-
-  it("refuses an npm-prefix PATH shim whose package version does not match", async () => {
-    const prefix = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-"));
-    const packageDir = path.join(prefix, "node_modules", "@tjalve", "aie");
-    const command = process.platform === "win32" ? "aie.cmd" : "aie";
-    const commandPath = path.join(prefix, command);
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.0.1" })}\n`);
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-cwd-"));
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-npm-prefix-stale-install-"));
-    const env = { PATH: prefix, OS: process.env.OS };
-    const planned = planQubeCli(["aie", "next", "--json"], { cwd, env, packageRoot });
-
-    assert.equal(planned.exitCode, 4);
-    assert.match(planned.stderr, /Refusing aie from PATH/);
-    assert.match(planned.stderr, aieExpectedPathPattern);
-    assert.equal(planned.dispatch, undefined);
-  });
-
-  it("prefers workspace component binaries over an npm-prefix PATH shim", async () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-cwd-"));
+  it("resolves workspace component binaries when the QUBE install has none", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workspace-component-cwd-"));
     const workspaceBin = path.join(cwd, "node_modules", ".bin");
     const workspacePackage = path.join(cwd, "node_modules", "@tjalve", "aie");
-    const prefix = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-prefix-"));
-    const prefixPackage = path.join(prefix, "node_modules", "@tjalve", "aie");
     const command = process.platform === "win32" ? "aie.cmd" : "aie";
     const workspaceCommandPath = path.join(workspaceBin, command);
-    const pathCommandPath = path.join(prefix, command);
     await mkdir(workspaceBin, { recursive: true });
     await mkdir(workspacePackage, { recursive: true });
-    await mkdir(prefixPackage, { recursive: true });
     await writeFile(workspaceCommandPath, process.platform === "win32" ? "@echo off\r\necho workspace-aie %*\r\n" : "#!/usr/bin/env sh\necho workspace-aie \"$@\"\n");
-    await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho prefix-aie %*\r\n" : "#!/usr/bin/env sh\necho prefix-aie \"$@\"\n");
     await writeFile(path.join(workspacePackage, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
-    await writeFile(path.join(prefixPackage, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: aieVersion })}\n`);
-    if (process.platform !== "win32") {
-      await chmod(workspaceCommandPath, 0o755);
-      await chmod(pathCommandPath, 0o755);
-    }
+    if (process.platform !== "win32") await chmod(workspaceCommandPath, 0o755);
 
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workspace-over-path-install-"));
-    const env = { PATH: prefix, OS: process.env.OS };
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workspace-component-install-"));
+    const env = { PATH: process.env.PATH ?? "", OS: process.env.OS };
     const component = findQubeComponent("aie");
     assert.ok(component);
     const resolution = resolveComponentCommand(component, { cwd, env, packageRoot });
 
     assertSameCommandPath(resolution?.commandPath, workspaceCommandPath);
     assert.equal(resolution?.source, "workspace");
-    assert.equal(resolution?.error, undefined);
-  });
-
-  it("refuses PATH component binary when package metadata cannot be verified", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "qube-unverified-path-"));
-    const command = process.platform === "win32" ? "aib.cmd" : "aib";
-    const commandPath = path.join(dir, command);
-    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho unknown %*\r\n" : "#!/usr/bin/env sh\necho unknown \"$@\"\n");
-    if (process.platform !== "win32") await chmod(commandPath, 0o755);
-
-    const env = { PATH: dir, OS: process.env.OS };
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-unverified-cwd-"));
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-unverified-install-"));
-    const planned = planQubeCli(["run", "aib", "status"], {
-      cwd,
-      env,
-      packageRoot
-    });
-
-    assert.equal(planned.exitCode, 4);
-    assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, aibUnableVerifyPattern);
-    assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
+    assert.equal(resolution?.packageVersion, aieVersion);
   });
 
   it("dispatches to resolved component command shims", async () => {
@@ -3516,25 +3205,30 @@ describe("qube init composer orchestrator", () => {
     const splitCwd = mkdtempSync(path.join(tmpdir(), "qube-init-split-cwd-"));
     createJsonEnvelopeShim(splitRoot, "aie", { ok: true, command: "init", actions: [] });
     createJsonEnvelopeShim(splitRoot, "aiu", { ok: true, command: "init" });
-    const split = runCli(["init", ".", "--host", "generic", "--work-provider", "jira", "--ci-provider", "jenkins", "--yes", "--json"], { cwd: splitCwd, env: initEnv(splitRoot) });
+    const split = runCli(["init", ".", "--host", "codex", "--work-provider", "jira", "--ci-provider", "jenkins", "--yes", "--json"], { cwd: splitCwd, env: initEnv(splitRoot) });
     assert.equal(split.status, 0, split.stderr);
-    assert.deepEqual(JSON.parse(split.stdout).aie[0].args, ["init", ".", "--json", "--work-provider", "jira", "--review-provider", "github", "--ci-provider", "jenkins", "--yes"]);
+    assert.deepEqual(JSON.parse(split.stdout).aie[0].args, ["init", ".", "--json", "--tool", "codex", "--work-provider", "jira", "--review-provider", "github", "--ci-provider", "jenkins", "--yes"]);
     assert.equal(parsed.aiu.length, 1);
     assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "claude-code"]);
     assert.deepEqual(parsed.with, []);
   });
 
-  it("collapses to --tool all when every real host tool is selected, and fans out otherwise", () => {
+  it("passes each selected harness set to Executor and Umpire in one apply", async () => {
+    const profiles = await Promise.all(AGENT_HOST_IDS.map(getAgentHostProfile));
+    const umpireHosts = profiles
+      .filter(profile => profile.umpire.continuation.support !== "unsupported")
+      .map(profile => profile.id);
     const allRoot = mkdtempSync(path.join(tmpdir(), "qube-init-all-hosts-"));
     const allCwd = mkdtempSync(path.join(tmpdir(), "qube-init-all-cwd-"));
     createJsonEnvelopeShim(allRoot, "aie", { ok: true, command: "init", actions: [] });
     createJsonEnvelopeShim(allRoot, "aiu", { ok: true, command: "init" });
-    const allResult = runCli(["init", ".", "--host", "codex,claude-code,opencode", "--yes", "--json"], { cwd: allCwd, env: initEnv(allRoot) });
+    const allResult = runCli(["init", ".", "--host", "opencode,codex,claude-code,grok-build,cursor", "--yes", "--json"], { cwd: allCwd, env: initEnv(allRoot) });
     assert.equal(allResult.status, 0, allResult.stderr);
     const allParsed = JSON.parse(allResult.stdout);
     assert.equal(allParsed.aie.length, 1);
-    assert.ok(allParsed.aie[0].args.includes("--tool"));
-    assert.ok(allParsed.aie[0].args.includes("all"));
+    assert.equal(allParsed.aie[0].args[allParsed.aie[0].args.indexOf("--tool") + 1], "opencode,codex,claude-code,grok-build,cursor");
+    assert.equal(allParsed.aiu.length, 1);
+    assert.equal(allParsed.aiu[0].args[allParsed.aiu[0].args.indexOf("--tool") + 1], umpireHosts.join(","));
 
     const partialRoot = mkdtempSync(path.join(tmpdir(), "qube-init-partial-hosts-"));
     const partialCwd = mkdtempSync(path.join(tmpdir(), "qube-init-partial-cwd-"));
@@ -3545,9 +3239,106 @@ describe("qube init composer orchestrator", () => {
     const partialParsed = JSON.parse(partialResult.stdout);
     assert.equal(partialParsed.aie.length, 1);
     assert.equal(partialParsed.aie[0].args[partialParsed.aie[0].args.indexOf("--tool") + 1], "opencode,claude-code");
-    assert.equal(partialParsed.aiu.length, 2);
-    const aiuTools = partialParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(aiuTools, ["claude-code", "opencode"]);
+    assert.equal(partialParsed.aiu.length, 1);
+    assert.equal(
+      partialParsed.aiu[0].args[partialParsed.aiu[0].args.indexOf("--tool") + 1],
+      umpireHosts.filter(host => ["opencode", "claude-code"].includes(host)).join(","),
+    );
+  });
+
+  it("initializes every harness through the real component CLIs and repeats without content changes", async () => {
+    const outer = mkdtempSync(path.join(tmpdir(), "qube-init-real-components-"));
+    const target = path.join(outer, "repo");
+    const initialized = spawnSync("git", ["init", "--quiet", target], { cwd: outer, encoding: "utf8" });
+    assert.equal(initialized.status, 0, initialized.stderr);
+
+    const requestedHosts = ["cursor", "grok-build", "codex", "opencode", "claude-code", "cursor"];
+    const expectedHosts = ["cursor", "grok-build", "codex", "opencode", "claude-code"];
+    const canonicalHosts = AGENT_HOST_IDS.filter(host => expectedHosts.includes(host));
+    const profiles = await Promise.all(canonicalHosts.map(getAgentHostProfile));
+    const umpireHosts = profiles
+      .filter(profile => profile.umpire.continuation.support !== "unsupported")
+      .map(profile => profile.id);
+    const args = [
+      "init", "repo",
+      "--host", requestedHosts.join(","),
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--yes",
+      "--json",
+    ];
+    const options = { cwd: outer, env: { QUBE_TEST_PACKAGE_ROOT: packageRoot } };
+
+    const first = runCli(args, options);
+    assert.equal(first.status, 0, first.stderr);
+    const firstResult = JSON.parse(first.stdout);
+    assert.equal(firstResult.ok, true);
+    assert.deepEqual(firstResult.selections.hosts, expectedHosts);
+    assert.equal(firstResult.aie.length, 1);
+    assert.equal(firstResult.aiu.length, 1);
+    assert.equal(firstResult.aie[0].args[firstResult.aie[0].args.indexOf("--tool") + 1], canonicalHosts.join(","));
+    assert.equal(firstResult.aiu[0].args[firstResult.aiu[0].args.indexOf("--tool") + 1], umpireHosts.join(","));
+    assert.deepEqual(firstResult.aie[0].json.selectedTools, canonicalHosts);
+    assert.deepEqual(firstResult.aiu[0].json.init.tools, umpireHosts);
+    assert.equal(path.resolve(firstResult.aie[0].json.repoRoot), path.resolve(target));
+    assert.equal(path.resolve(firstResult.aiu[0].json.init.repoRoot), path.resolve(target));
+
+    const initRecordPath = path.join(target, ".qube", "init.json");
+    const aiuConfigPath = path.join(target, ".qube", "aiu", "config.json");
+    const initRecord = JSON.parse(readFileSync(initRecordPath, "utf8"));
+    const aiuConfig = JSON.parse(readFileSync(aiuConfigPath, "utf8"));
+    assert.deepEqual(initRecord.hosts, expectedHosts);
+    assert.deepEqual(aiuConfig.hosts.enabled, umpireHosts);
+    assert.equal(aiuConfig.hosts.enabled.includes("cursor"), false);
+    for (const profile of profiles) {
+      assert.equal(existsSync(path.join(target, profile.makeItSo.path)), true, profile.id);
+    }
+    const firstContents = new Map([
+      [initRecordPath, readFileSync(initRecordPath, "utf8")],
+      [aiuConfigPath, readFileSync(aiuConfigPath, "utf8")],
+      ...profiles.map(profile => {
+        const file = path.join(target, profile.makeItSo.path);
+        return [file, readFileSync(file, "utf8")];
+      }),
+    ]);
+
+    const second = runCli(args, options);
+    assert.equal(second.status, 0, second.stderr);
+    const secondResult = JSON.parse(second.stdout);
+    assert.equal(secondResult.ok, true);
+    assert.deepEqual(secondResult.selections.hosts, expectedHosts);
+    assert.deepEqual(secondResult.aie[0].json.completedChanges, []);
+    assert.equal(secondResult.aiu[0].json.init.config.operation, "skip");
+    assert.ok(secondResult.aiu[0].json.init.files.every(file => file.operation === "skip"));
+    for (const [file, content] of firstContents) {
+      assert.equal(readFileSync(file, "utf8"), content, file);
+    }
+  });
+
+  it("derives routing launch names from the canonical harness profiles", async () => {
+    for (const host of AGENT_HOST_IDS) {
+      const profile = await getAgentHostProfile(host);
+      const candidates = new Set([...profile.executables.names, ...profile.executables.windowsNames]);
+      assert.deepEqual(detectInstalledRoutingHostsOnPath(command => candidates.has(command)), [host], host);
+    }
+  });
+
+  it("skips Umpire init when Cursor is the only selected harness", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-only-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-only-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createAiuMergingShim(packageRoot);
+
+    const result = runCli(["init", ".", "--host", "cursor", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selections.hosts, ["cursor"]);
+    assert.equal(parsed.aie.length, 1);
+    assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "cursor");
+    assert.deepEqual(parsed.aiu, []);
+    assert.equal(existsSync(path.join(cwd, ".qube", "aiu", "config.json")), false);
   });
 
   it("treats Grok Build as its own init tool instead of Codex", () => {
@@ -3568,29 +3359,7 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.aiu[0].args.includes("codex"), false);
   });
 
-  it("keeps classic all-host init separate from an explicit Grok Build selection", () => {
-    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-"));
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-cwd-"));
-    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
-    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
-    const classic = runCli(["init", ".", "--host", "opencode,codex,claude-code", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(classic.status, 0, classic.stderr);
-    const classicParsed = JSON.parse(classic.stdout);
-    assert.equal(classicParsed.aie.length, 1);
-    assert.equal(classicParsed.aie[0].args[classicParsed.aie[0].args.indexOf("--tool") + 1], "all");
-    assert.equal(classicParsed.aiu.length, 1);
-    assert.equal(classicParsed.aiu[0].args[classicParsed.aiu[0].args.indexOf("--tool") + 1], "all");
-
-    const combined = runCli(["init", ".", "--host", "opencode,codex,claude-code,grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
-    assert.equal(combined.status, 0, combined.stderr);
-    const combinedParsed = JSON.parse(combined.stdout);
-    assert.equal(combinedParsed.aie.length, 1);
-    assert.equal(combinedParsed.aie[0].args[combinedParsed.aie[0].args.indexOf("--tool") + 1], "all");
-    const combinedAiuTools = combinedParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(combinedAiuTools, ["all"]);
-  });
-
-  it("applies Umpire host inits one after another so combined hosts stay in config", () => {
+  it("applies the complete Umpire harness set through one child", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-cwd-"));
     createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
@@ -3598,14 +3367,15 @@ describe("qube init composer orchestrator", () => {
     const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.aiu.length, 2);
+    assert.equal(parsed.aiu.length, 1);
+    assert.equal(parsed.aiu[0].args[parsed.aiu[0].args.indexOf("--tool") + 1], "codex,grok-build");
     const configPath = path.join(cwd, ".qube", "aiu", "config.json");
     assert.equal(existsSync(configPath), true);
     const enabled = JSON.parse(readFileSync(configPath, "utf8")).hosts.enabled.sort();
     assert.deepEqual(enabled, ["codex", "grok-build"]);
   });
 
-  it("keeps one Executor init for Grok Build plus Codex and fans Umpire per host", () => {
+  it("keeps one Executor and one Umpire init for Grok Build plus Codex", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-cwd-"));
     createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
@@ -3615,9 +3385,8 @@ describe("qube init composer orchestrator", () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.aie.length, 1);
     assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "codex,grok-build");
-    assert.equal(parsed.aiu.length, 2);
-    const aiuTools = parsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(aiuTools, ["codex", "grok-build"]);
+    assert.equal(parsed.aiu.length, 1);
+    assert.equal(parsed.aiu[0].args[parsed.aiu[0].args.indexOf("--tool") + 1], "codex,grok-build");
   });
 
   it("also initializes aib when selected through --with", () => {
@@ -3627,7 +3396,7 @@ describe("qube init composer orchestrator", () => {
     createJsonEnvelopeShim(packageRoot, "aib", { ok: true, command: "init", files: [] });
 
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-with-aib-cwd-"));
-    const result = runCli(["init", ".", "--host", "generic", "--with", "aib", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
+    const result = runCli(["init", ".", "--host", "codex", "--with", "aib", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.deepEqual(parsed.selections.withComponents, ["aib"]);
@@ -3679,48 +3448,77 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.aie[0].ok, false);
   });
 
-  it("plans TTY prompts for every modelRouting route class", () => {
-    assert.deepEqual(modelRoutingPromptPlan(["claude-code", "grok-build"]), [
-      "primary-host",
-      "primary-model",
-      "mechanical-implementation",
-      "exploration-investigation",
-      "synthesis-judgment",
-      "independent-review",
-    ]);
+  it("requires each child to report explicit top-level success", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-implicit-child-success-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { command: "init", init: { ok: false } });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+
+    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.aie[0].ok, false);
   });
 
-  it("keeps Cursor review-only in the top-level modelRouting contract", () => {
+  it("accepts Cursor as a primary model-routing host", () => {
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
     const parsedSchema = JSON.parse(schema.stdout);
     const init = parsedSchema.commands.find(command => command.name === "init");
     const primaryHost = init.flags.find(flag => flag.name === "primary-host");
-    assert.doesNotMatch(primaryHost.description, /cursor/i);
+    assert.match(primaryHost.description, /cursor/i);
 
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-package-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-cursor-routing-init-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    const binDir = createExecutableStub(packageRoot, "cursor-agent");
     const result = runCli([
       "init", ".",
       "--host", "cursor",
       "--yes",
       "--json",
       "--primary-host", "cursor",
-      "--primary-model", "default",
-    ], { cwd });
-    assert.notEqual(result.status, 0);
+      "--primary-model", "cursor-model",
+    ], { cwd, env: initEnv(packageRoot, { PATH: binDir, Path: binDir }) });
+    assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.match(String(parsed.error ?? result.stderr), /Use one of: codex, claude-code, opencode, grok-build\./);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.aie.length, 1);
+    const primaryHostIndex = parsed.aie[0].args.indexOf("--primary-host");
+    assert.deepEqual(parsed.aie[0].args.slice(primaryHostIndex, primaryHostIndex + 4), [
+      "--primary-host", "cursor", "--primary-model", "cursor-model",
+    ]);
+  });
 
-    const routeResult = runCli([
+  it("does not invent a primary model when only a routing host is selected", () => {
+    const result = runCli([
       "init", ".",
       "--host", "cursor",
       "--yes",
       "--json",
-      "--route-mechanical-implementation", "cursor:gpt-5.6-luna-high",
-    ], { cwd });
-    assert.notEqual(routeResult.status, 0);
-    const parsedRoute = JSON.parse(routeResult.stdout);
-    assert.match(String(parsedRoute.error ?? routeResult.stderr), /using codex, claude-code, opencode, or grok-build\./);
+      "--primary-host", "cursor",
+    ]);
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.match(String(parsed.error), /requires --primary-model/i);
+  });
+
+  it("does not discover root-level Executor config files", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-current-config-doctor-"));
+    writeFileSync(path.join(cwd, "aie.config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+
+    const result = await runConnectionDoctor({ cwd });
+
+    assert.equal(result.status, "unverified");
+    assert.equal(result.configPath, null);
+    assert.deepEqual(result.connections, []);
   });
 
   it("refuses an uninstalled modelRouting host during init", () => {
@@ -3731,7 +3529,7 @@ describe("qube init composer orchestrator", () => {
       "--yes",
       "--json",
       "--primary-host", "opencode",
-      "--primary-model", "default",
+      "--primary-model", "opencode-model",
     ], { cwd, env: { PATH: "" } });
     assert.notEqual(result.status, 0);
     const parsed = result.stdout.trim() ? JSON.parse(result.stdout) : { error: result.stderr };
@@ -3746,6 +3544,32 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.command, "init");
     assert.equal(parsed.error.kind, "prompt-blocked");
   });
+
+  it("keeps --defaults JSON init non-interactive and removes answered child question IDs", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-defaults-package-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-defaults-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", {
+      ok: true,
+      command: "init",
+      awaitingAnswers: false,
+      questions: [
+        { id: "work-provider", answered: true, value: "github" },
+        { id: "review-mode", answered: true, value: "host" },
+      ],
+      unansweredQuestionIds: ["work-provider", "review-mode"],
+      actions: [],
+    });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+
+    const result = runCli(["init", ".", "--host", "codex", "--defaults", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.error, undefined);
+    assert.ok(parsed.aie[0].args.includes("--defaults"));
+    assert.deepEqual(parsed.aie[0].json.unansweredQuestionIds, []);
+    assert.equal(parsed.aie[0].json.questions.every(question => question.answered === true), true);
+  });
 });
 
 describe("host toolkit manifests", () => {
@@ -3753,28 +3577,24 @@ describe("host toolkit manifests", () => {
     if (host === "claude-code") {
       writeFileSync(path.join(cwd, "CLAUDE.md"), "instructions\n");
       mkdirSync(path.join(cwd, ".claude", "commands"), { recursive: true });
-      mkdirSync(path.join(cwd, ".claude", "skills", "make-it-so"), { recursive: true });
       writeFileSync(path.join(cwd, ".claude", "commands", "make-it-so.md"), "make it so\n");
-      writeFileSync(path.join(cwd, ".claude", "skills", "make-it-so", "SKILL.md"), "make it so\n");
       writeFileSync(path.join(cwd, ".claude", "settings.json"), "{}\n");
     }
     if (host === "grok-build") {
       writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
       mkdirSync(path.join(cwd, ".grok", "commands"), { recursive: true });
-      mkdirSync(path.join(cwd, ".grok", "skills", "make-it-so"), { recursive: true });
       mkdirSync(path.join(cwd, ".grok", "hooks"), { recursive: true });
       writeFileSync(path.join(cwd, ".grok", "commands", "make-it-so.md"), "make it so\n");
-      writeFileSync(path.join(cwd, ".grok", "skills", "make-it-so", "SKILL.md"), "make it so\n");
       writeFileSync(path.join(cwd, ".grok", "hooks", "ai-umpire.json"), "{}\n");
     }
     if (host === "codex") {
       writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
-      mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
+      mkdirSync(path.join(cwd, ".agents", "skills", "make-it-so"), { recursive: true });
       mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
       mkdirSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin"), { recursive: true });
       mkdirSync(path.join(cwd, "plugins", "ai-umpire", "hooks"), { recursive: true });
       mkdirSync(path.join(cwd, "plugins", "ai-umpire", "skills", "ai-umpire"), { recursive: true });
-      writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".agents", "skills", "make-it-so", "SKILL.md"), "make it so\n");
       writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
       writeFileSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin", "plugin.json"), "{}\n");
       writeFileSync(path.join(cwd, "plugins", "ai-umpire", "hooks", "hooks.json"), "{}\n");
@@ -3782,8 +3602,78 @@ describe("host toolkit manifests", () => {
     }
   }
 
-  it("plans Claude Code instruction, command, skill, and hook assets without Claude-only files on Codex", () => {
-    const claude = composeHostToolkitManifests(["claude-code"], {
+  for (const host of AGENT_HOST_IDS) {
+    it(`keeps the ${host} toolkit row consistent with its canonical profile`, async () => {
+      const profile = await getAgentHostProfile(host);
+      const composition = await composeHostToolkitManifests([host]);
+      assert.deepEqual(composition.manifests.map((manifest) => manifest.host), [host]);
+      const manifest = composition.manifests[0];
+      const instructionAssets = manifest.assets.filter((item) => item.kind === "instruction");
+      const makeItSoAssets = manifest.assets.filter((item) => item.command === profile.makeItSo.invocation);
+      const reviewAssets = manifest.assets.filter((item) => item.kind === "subagent").map((item) => item.path);
+      const profileReviewPaths = profile.review.local.agents.map((target) => target.path);
+
+      assert.deepEqual(instructionAssets.map((item) => item.path), [profile.instructionTarget.path], manifest.host);
+      assert.equal(makeItSoAssets.length, 1, manifest.host);
+      assert.equal(makeItSoAssets[0].kind, profile.makeItSo.kind, manifest.host);
+      assert.equal(makeItSoAssets[0].path, profile.makeItSo.path, manifest.host);
+      assert.deepEqual(reviewAssets, profileReviewPaths, manifest.host);
+      assert.equal(manifest.capabilities.taskList.support, profile.taskList.support, manifest.host);
+      assert.deepEqual(manifest.executables, profile.executables, manifest.host);
+      assert.deepEqual(manifest.capabilities.taskList.tools, profile.taskList.tools, manifest.host);
+      assert.equal(manifest.capabilities.subagents.support, profile.subagents.support, manifest.host);
+      assert.equal(manifest.capabilities.review.local.support, profile.review.local.support, manifest.host);
+      assert.equal(manifest.capabilities.review.isolated.support, profile.review.isolated.support, manifest.host);
+      assert.equal(manifest.capabilities.modelDiscovery.support, profile.modelDiscovery.support, manifest.host);
+      assert.equal(manifest.capabilities.umpire.continuation.support, profile.umpire.continuation.support, manifest.host);
+      assert.equal(manifest.capabilities.umpire.probe.support, profile.umpire.probe.support, manifest.host);
+      assert.equal(manifest.capabilities.umpire.continuation.state, host === "cursor" ? "unavailable" : "unverified", manifest.host);
+      assert.equal(manifest.capabilities.umpire.continuation.effectiveDelivery, "none", manifest.host);
+      assert.equal(manifest.capabilities.umpire.continuation.currentIssueRecovery, false, manifest.host);
+      assert.equal(manifest.capabilities.trust.required, profile.trust.required, manifest.host);
+      assert.deepEqual(manifest.capabilities.trust.actions, profile.trust.actions, manifest.host);
+      assert.ok(formatPlannedHostToolkits(composition).includes(`Make It So ${profile.makeItSo.invocation}`), manifest.host);
+      if (host === "cursor") {
+        assert.equal(manifest.capabilities.umpire.continuation.support, "unsupported");
+        assert.equal(manifest.capabilities.umpire.continuation.state, "unavailable");
+        assert.equal(manifest.capabilities.umpire.continuation.effectiveDelivery, "none");
+        assert.equal(manifest.capabilities.umpire.continuation.currentIssueRecovery, false);
+        assert.equal(manifest.assets.some((item) => item.source === "aiu"), false);
+      }
+    });
+  }
+
+  it("reports Umpire continuation as active only after a successful host probe", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-umpire-probe-"));
+    writeInitRecord(cwd, createInitRecord({
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const unverified = await probeHostToolkits({ cwd, env: { PATH: "" }, offline: true });
+    const beforeProbe = unverified.hosts[0].capabilities.umpire.continuation;
+    assert.equal(beforeProbe.state, "unverified");
+    assert.equal(beforeProbe.effectiveDelivery, "none");
+    assert.equal(beforeProbe.currentIssueRecovery, false);
+
+    const active = applyUmpireHostProbes(unverified, {
+      hostProbes: [{
+        host: "codex",
+        state: "active",
+        effectiveDelivery: "stdout",
+        currentIssueRecovery: true,
+        reason: "The configured Stop hook delivered the continuation probe.",
+      }],
+    });
+    const afterProbe = active.hosts[0].capabilities.umpire.continuation;
+    assert.equal(afterProbe.state, "active");
+    assert.equal(afterProbe.effectiveDelivery, "stdout");
+    assert.equal(afterProbe.currentIssueRecovery, true);
+  });
+
+  it("plans Claude Code instruction, command, and hook assets without Claude-only files on Codex", async () => {
+    const claude = await composeHostToolkitManifests(["claude-code"], {
       workProviders: ["github"],
       ciProviders: ["github"],
       mcpOptIn: false,
@@ -3792,7 +3682,6 @@ describe("host toolkit manifests", () => {
     assert.deepEqual(claudePaths, [
       "CLAUDE.md",
       ".claude/commands/make-it-so.md",
-      ".claude/skills/make-it-so/SKILL.md",
       ".claude/settings.json",
     ]);
     assert.ok(claude.manifests[0].assets.some((asset) => asset.kind === "subagent" && asset.required === false));
@@ -3821,11 +3710,11 @@ describe("host toolkit manifests", () => {
       assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
     }
 
-    const codex = composeHostToolkitManifests(["codex"], { workProviders: ["github"], mcpOptIn: false });
+    const codex = await composeHostToolkitManifests(["codex"], { workProviders: ["github"], mcpOptIn: false });
     const codexPaths = codex.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
     assert.deepEqual(codexPaths, [
       "AGENTS.md",
-      ".codex/prompts/make-it-so.md",
+      ".agents/skills/make-it-so/SKILL.md",
       ".agents/plugins/marketplace.json",
       "plugins/ai-umpire/.codex-plugin/plugin.json",
       "plugins/ai-umpire/hooks/hooks.json",
@@ -3834,13 +3723,12 @@ describe("host toolkit manifests", () => {
     assert.ok(!codexPaths.some((item) => item.includes(".claude")));
   });
 
-  it("plans Grok Build instruction, command, and skill assets and reports completeness", () => {
-    const grok = composeHostToolkitManifests(["grok-build"], { workProviders: ["github"], mcpOptIn: false });
+  it("plans Grok Build instruction and command assets and reports completeness", async () => {
+    const grok = await composeHostToolkitManifests(["grok-build"], { workProviders: ["github"], mcpOptIn: false });
     const grokRequired = grok.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
     assert.deepEqual(grokRequired, [
       "AGENTS.md",
       ".grok/commands/make-it-so.md",
-      ".grok/skills/make-it-so/SKILL.md",
       ".grok/hooks/ai-umpire.json",
     ]);
     assert.ok(grok.manifests[0].assets.some((asset) => asset.kind === "subagent" && asset.required === false));
@@ -3871,7 +3759,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const complete = probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
+    const complete = await probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
     assert.equal(complete.hosts[0].status, "complete");
     assert.equal(complete.hosts[0].missing.length, 0);
 
@@ -3883,7 +3771,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const missing = probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
+    const missing = await probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
     assert.equal(missing.hosts[0].status, "missing");
     assert.ok(missing.hosts[0].missing.includes(".grok/commands/make-it-so.md"));
     assert.ok(!existsSync(path.join(completeRoot, ".codex")));
@@ -3897,7 +3785,7 @@ describe("host toolkit manifests", () => {
     createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
 
     const implicit = runCli([
-      "init", ".", "--host", "generic", "--work-provider", "github", "--ci-provider", "github",
+      "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
       "--yes", "--json",
     ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, QUBE_MCP: "1", MCP: "1" } });
     assert.equal(implicit.status, 0, implicit.stderr);
@@ -3911,7 +3799,7 @@ describe("host toolkit manifests", () => {
     }
 
     const opted = runCli([
-      "init", ".", "--host", "generic", "--work-provider", "github", "--ci-provider", "github",
+      "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
       "--yes", "--mcp", "--json",
     ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
     assert.equal(opted.status, 0, opted.stderr);
@@ -3926,7 +3814,7 @@ describe("host toolkit manifests", () => {
     }
   });
 
-  it("reports per-host toolkit completeness after init and missing when a required asset is absent", () => {
+  it("reports per-host toolkit completeness after init and missing when a required asset is absent", async () => {
     const completeRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-complete-"));
     writeRequiredAssets(completeRoot, "claude-code");
     writeInitRecord(completeRoot, createInitRecord({
@@ -3935,7 +3823,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const complete = probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
+    const complete = await probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
     assert.equal(complete.status, "complete");
     assert.deepEqual(complete.selected, ["claude-code"]);
     assert.equal(complete.hosts[0].status, "complete");
@@ -3950,7 +3838,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const missing = probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
+    const missing = await probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
     assert.equal(missing.status, "missing");
     assert.notEqual(missing.hosts[0].status, "complete");
     assert.ok(missing.hosts[0].missing.includes(".claude/commands/make-it-so.md"));
@@ -3965,7 +3853,7 @@ describe("host toolkit manifests", () => {
     assert.equal(parsed.ok, false);
   });
 
-  it("does not report complete for an unknown or empty selected host record", () => {
+  it("does not report complete for an unknown or empty selected host record", async () => {
     const unknownRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-unknown-host-"));
     writeInitRecord(unknownRoot, createInitRecord({
       hosts: ["unsupported-host"],
@@ -3973,7 +3861,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const unknown = probeHostToolkits({ cwd: unknownRoot, env: { PATH: "" }, offline: true });
+    const unknown = await probeHostToolkits({ cwd: unknownRoot, env: { PATH: "" }, offline: true });
     assert.equal(unknown.status, "missing");
     assert.equal(unknown.hosts[0].status, "missing");
     assert.match(unknown.hosts[0].reason, /not a supported toolkit host/);
@@ -3985,17 +3873,17 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const empty = probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
+    const empty = await probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
     assert.equal(empty.status, "missing");
     assert.notEqual(empty.status, "complete");
   });
 
-  it("does not report Codex complete when only the marketplace file is present", () => {
+  it("does not report Codex complete when only the marketplace file is present", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-codex-partial-"));
     writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
-    mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
+    mkdirSync(path.join(cwd, ".agents", "skills", "make-it-so"), { recursive: true });
     mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
-    writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
+    writeFileSync(path.join(cwd, ".agents", "skills", "make-it-so", "SKILL.md"), "make it so\n");
     writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
     writeInitRecord(cwd, createInitRecord({
       hosts: ["codex"],
@@ -4003,12 +3891,12 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: true });
+    const probed = await probeHostToolkits({ cwd, env: { PATH: "" }, offline: true });
     assert.equal(probed.status, "missing");
     assert.ok(probed.hosts[0].missing.includes("plugins/ai-umpire/hooks/hooks.json"));
   });
 
-  it("fails doctor when a required GitHub CLI dependency is missing", () => {
+  it("fails doctor when a required GitHub CLI dependency is missing", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-gh-missing-"));
     writeRequiredAssets(cwd, "claude-code");
     writeInitRecord(cwd, createInitRecord({
@@ -4017,7 +3905,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: false });
+    const probed = await probeHostToolkits({ cwd, env: { PATH: "" }, offline: false });
     assert.equal(probed.status, "partial");
     assert.equal(probed.cliDependencies[0].status, "missing");
 
@@ -4080,44 +3968,25 @@ describe("composer surface envelopes and naming", () => {
   });
 
   it("lists only the canonical continuation command in root help", () => {
-    // Dispatch of the hidden synonyms to aiu status stays pinned by the direct-dispatch mapping test above.
     const help = runCli(["--help"], {});
     assert.match(help.stdout, /^\s{2}continue\s{2,}/m);
     assert.doesNotMatch(help.stdout, /^\s{2}status\s{2,}/m);
     assert.doesNotMatch(help.stdout, /^\s{2}continue status\s{2,}/m);
   });
 
-  it("renders composer-facing names in alias and direct command help", () => {
-    const packageShimRoot = mkdtempSync(path.join(tmpdir(), "qube-alias-help-packages-"));
-    const binDir = path.join(packageShimRoot, "node_modules", ".bin");
-    const packageDir = path.join(packageShimRoot, "node_modules", "@tjalve", "aiu");
-    mkdirSync(binDir, { recursive: true });
-    mkdirSync(packageDir, { recursive: true });
-    const helpText = "Usage: aiu status [--json]";
-    const commandPath = path.join(binDir, process.platform === "win32" ? "aiu.cmd" : "aiu");
-    writeFileSync(commandPath, process.platform === "win32"
-      ? `@echo off\r\necho ${helpText}\r\n`
-      : `#!/bin/sh\nprintf '%s\\n' '${helpText}'\n`, "utf8");
-    if (process.platform !== "win32") chmodSync(commandPath, 0o755);
-    writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiu", version: "0.0.5" })}\n`, "utf8");
-
-    const aliasHelp = runCli(["status", "--help"], { env: { QUBE_TEST_PACKAGE_ROOT: packageShimRoot } });
-    assert.match(aliasHelp.stdout, /qube continue/);
-    assert.doesNotMatch(aliasHelp.stdout, /aiu status \[--json\]/);
-    assert.match(aliasHelp.stdout, /Equivalent paths: `qube aiu status` or `aiu status`\./);
+  it("renders the canonical planning status help", () => {
     const directHelp = runCli(["plan", "status", "--help"], {});
     assert.match(directHelp.stdout, /qube plan status/);
     assert.doesNotMatch(directHelp.stdout, /Usage:\s*\r?\n?\s*aib status/);
   });
 
-  it("marks hidden synonyms in the schema", () => {
+  it("does not publish continuation aliases in the schema", () => {
     const schema = runCli(["schema", "--json"], {});
     const parsed = JSON.parse(schema.stdout);
     const commands = parsed.commands.filter(command => command.kind === "command");
     const statusEntry = commands.find(command => command.name === "status");
     const continueEntry = commands.find(command => command.name === "continue");
-    assert.equal(statusEntry.hidden, true);
-    assert.equal(statusEntry.aliasOf, "continue");
+    assert.equal(statusEntry, undefined);
     assert.equal(continueEntry.hidden, false);
     assert.equal(continueEntry.aliasOf, null);
   });
@@ -4126,8 +3995,8 @@ describe("composer surface envelopes and naming", () => {
     const committed = readFileSync(path.join(path.resolve(packageRoot, "..", ".."), "docs", "qube-command-surfaces.md"), "utf8").replace(/\r\n/g, "\n");
     const rendered = renderCommandSurfacesDoc().replace(/\r\n/g, "\n");
     assert.equal(committed, rendered);
-    assert.match(rendered, /## Hidden synonyms/);
-    assert.match(rendered, /`qube status` \| `qube continue`/);
+    assert.doesNotMatch(rendered, /## Hidden synonyms/);
+    assert.doesNotMatch(rendered, /`qube status`/);
     assert.match(rendered, /`qube plan status` \| `aib status`/);
   });
 });

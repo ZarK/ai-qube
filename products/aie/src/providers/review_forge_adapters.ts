@@ -23,7 +23,6 @@ import {
   type ReviewForgeReviewTarget,
   type ReviewForgeRoundSummaryPublishResult,
   type ReviewForgeSnapshot,
-  type ReviewForgeSnapshotLoadOptions,
 } from './review_forge_provider.js';
 
 export interface ReviewForgeAdapterOptions {
@@ -179,13 +178,12 @@ interface LoadedReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
   loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
-  loadPullRequestReview(prNumber: number, options?: ReviewForgeSnapshotLoadOptions): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLocalReviewFeedback?(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
-  publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
-  publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  publishLaneReviewFeedbackForPullRequest(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<import('./review_forge_provider.js').ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
   loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
@@ -228,7 +226,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     loadLaneReviewHistory: provider.loadLaneReviewHistory
       ? (prNumber) => provider.loadLaneReviewHistory!(prNumber)
       : undefined,
-    loadPullRequestReview: (prNumber, options) => provider.loadPullRequestReview(prNumber, options),
+    loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
     loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
       ? (prNumber) => provider.loadPullRequestReviewTarget!(prNumber)
       : undefined,
@@ -246,10 +244,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
         nextAction: 'Use per-lane review publishing when the adapter supports publishLaneReview, or select a review provider with publishLocalReview support.',
       });
     },
-    publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
-    publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
-      ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)
-      : undefined,
+    publishLaneReviewFeedback: (input) => provider.publishLaneReviewFeedbackForPullRequest(input),
     describeReviewPublisher: provider.describeReviewPublisher
       ? (prAuthorLogin, options) => provider.describeReviewPublisher!(prAuthorLogin, options)
       : undefined,
@@ -326,11 +321,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
     throw this.error('publish local review feedback');
   }
 
-  async publishLaneReviewFeedback(_item: ReviewItem, _input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
-    throw this.error('publish lane review feedback');
-  }
-
-  async publishLaneReviewFeedbackForPullRequest(_input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
+  async publishLaneReviewFeedback(_input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
     throw this.error('publish lane review feedback');
   }
 

@@ -8,7 +8,7 @@ M1 created the package and CLI foundation. M2 added labels, queue, and dependenc
 
 This milestone implements `aie init`, managed instruction sections, host-specific install targets, `/make-it-so`, config prompts, non-interactive init, optional naming-rules instruction injection, and the generic autonomous work-cycle wording.
 
-M4 does not implement the PR review polling command, Oracle fallback prompt/skill, manual UI audit guidance/evidence helper, or optional Quality Control gate guidance. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
+M4 does not implement the PR review polling command, review-harness prompt and evidence support, manual UI audit guidance/evidence helper, or optional Quality Control gate guidance. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
 
 After M4, a developer or agent should be able to run:
 
@@ -23,12 +23,12 @@ Then, in a supported agent host, the agent should have always-loaded instruction
 
 M4 delivers seven things:
 
-1. **Init planner** - a dry-runnable plan for config changes, instruction-file updates, command-file writes, and detected legacy state.
+1. **Init planner** - a dry-runnable plan for config changes, instruction-file updates, and command-file writes.
 2. **Managed instruction writer** - safe append/update behavior for `AGENTS.md`, `CLAUDE.md`, and host-specific command files.
 3. **Repository policy capture** - interactive and non-interactive config for branch policy, tools, component labels, optional GitHub milestone ordering, autonomous mode, review agents, manual UI audit, agent-run quality gates, and safety toggles.
 4. **Shared agent instruction renderer** - generic always-loaded Executor instructions for the issue work cycle, todos, shipping authority, safety, and continuation.
 5. **Optional naming rules section** - an init-controlled instruction section that teaches agents to produce clear, concrete, human-friendly code names.
-6. **Host projections** - first-class OpenCode support plus Codex and Claude Code instruction projections.
+6. **Host projections** - instruction and workflow entry points for Codex, Claude Code, OpenCode, Grok Build, and Cursor.
 7. **Make-it-so command** - a host command that starts or resumes the autonomous Executor issue work cycle and keeps going until no work can be started.
 
 The important success condition is that M5 can add richer quality/review guidance, evidence, and PR-state commands without rewriting the installed instruction system.
@@ -39,7 +39,7 @@ The important success condition is that M5 can add richer quality/review guidanc
 
 M4 is the primary implementation foundation for:
 
-- **FR-03-001 through FR-03-015** - initialization, installed instructions, OpenCode command, tool selection, config capture, non-interactive init, and legacy detection.
+- **FR-03-001 through FR-03-014 and FR-03-016 through FR-03-018** - initialization, installed instructions, tool selection, config capture, and non-interactive init.
 - **FR-08-001 through FR-08-011** - autonomous issue work cycle, `/make-it-so`, todo expectations, continuation, pre-start git/PR policy, failure loops, and clean stopping states.
 - **FR-11-001 through FR-11-007** - OpenCode, Codex, Claude Code, shared tool-aware instructions, host-neutral todo expectations, and OpenCode polish.
 - **FR-12-001 through FR-12-003 and FR-12-008 through FR-12-009** - installed instruction hygiene, prompt-injection/no-credit blocks, and init toggles for those blocks.
@@ -58,11 +58,9 @@ M4 also adds milestone-level detail to installed instruction behavior: `aie init
 M4 intentionally does not complete:
 
 - PR review polling and comment/review-state inspection. That is M5.
-- Oracle fallback prompt/skill and review-agent prompt/evidence helpers. That is M5.
+- Review-harness prompt and evidence helpers. That is M5.
 - Manual UI audit guidance and evidence handling. That is M5 or later.
 - Optional Quality Control gate guidance and status reporting. That is M5.
-- Legacy cleanup, compatibility wrappers, and migration. Those are M6, though M4 detects and reports legacy state during init.
-- QUBE wrapper command aliases.
 
 ---
 
@@ -155,7 +153,6 @@ The plan must include:
 - command files to create or update
 - files skipped
 - existing managed sections found
-- legacy state detected
 - warnings
 - required confirmations
 
@@ -185,7 +182,6 @@ M4 may create or update:
 - `AGENTS.md`
 - `CLAUDE.md`
 - `.opencode/commands/make-it-so.md`
-- `.opencode/commands/makeitso.md` when alias support is enabled
 - equivalent host command files when a selected host supports them
 
 M4 must not:
@@ -193,8 +189,6 @@ M4 must not:
 - write package manager hook files
 - install hidden git hooks
 - modify shell profiles
-- install compatibility wrappers
-- remove legacy files
 - create specs, milestones, or issue batches
 - create pull requests
 
@@ -254,7 +248,6 @@ Interactive init must gather or confirm:
 - no-credit instruction block
 - supply-chain safety policy
 - project-level package-manager secure defaults preference
-- whether detected legacy state should be left untouched or handled later
 
 M4 may collect configuration for gates that M5 implements. The generated instructions must be honest about command availability: if a gate command does not exist yet, instructions should describe the configured gate obligation generically rather than claiming a specific command works.
 
@@ -273,11 +266,11 @@ Non-interactive init must:
 
 ### 2.4 - Config Updates
 
-Init must write or update the versioned Executor config without losing unrelated future-compatible fields.
+Init must write or update the Executor config without losing unrelated current fields.
 
 Config updates must:
 
-- preserve unknown future-compatible fields when possible
+- preserve unrelated current fields
 - validate before writing
 - show diffs or summaries in dry-run
 - use defaults from M1
@@ -545,7 +538,7 @@ M4 tests must cover:
 
 ## Part 5: Host Projections
 
-M4 supports OpenCode, Codex, and Claude Code.
+M4 supports OpenCode, Codex, Claude Code, Grok Build, and Cursor.
 
 ### 5.1 - OpenCode
 
@@ -553,7 +546,6 @@ OpenCode support must include:
 
 - full managed `AGENTS.md` section
 - `.opencode/commands/make-it-so.md`
-- optional `.opencode/commands/makeitso.md`
 - command text that starts or resumes the Executor issue work cycle
 - OpenCode-specific todo wording that names `todowrite` and `todoread`
 - instruction text that todo operations must be performed directly by the main agent, not delegated to Task/subagents
@@ -720,48 +712,19 @@ Stop output should tell the agent what it found and what command or configuratio
 
 ---
 
-## Part 7: Legacy Detection During Init
-
-M4 detects legacy state but does not perform cleanup.
-
-### 7.1 - Detection
-
-`aie init` must detect:
-
-- known copied helper files
-- old instruction sections
-- old project command files
-- old queue documentation
-- existing config-like files
-- existing host-specific command files
-
-Detection output must be product-generic. It should describe the category found and the path, not private source provenance.
-
-### 7.2 - Init Choices
-
-When legacy state is detected, init must offer safe choices:
-
-- leave untouched
-- install Executor alongside existing files
-- defer cleanup to migration
-
-M4 must not delete, rewrite, or migrate legacy files. M6 owns cleanup and compatibility wrappers.
-
-### 7.3 - Doctor Integration
+## Part 7: Doctor Integration
 
 `aie doctor` must report installed instruction state:
 
 - config present and valid
 - managed `AGENTS.md` section present or missing
 - managed `CLAUDE.md` section present or missing when selected
-- OpenCode command present or missing when selected
-- command alias present or missing when enabled
+- the selected harness workflow entry point present or missing
 - stale managed section version
 - configured naming-rules instruction state
 - configured no-worktree policy
 - configured open-PR blocking policy and ignored automation authors
 - configured base branch and remote
-- detected legacy state
 - recommended next command
 
 `doctor` remains non-mutating.
@@ -809,7 +772,6 @@ M4 tests must cover:
 - preserving user-authored file content
 - refusal to overwrite unmanaged conflicts without `--force`
 - OpenCode command installation
-- optional command alias installation
 - AGENTS-only install
 - CLAUDE install
 - tool selection
@@ -820,7 +782,6 @@ M4 tests must cover:
 - prompt-injection/no-credit block toggles
 - naming-rules instruction block toggles
 - generated content uses only Executor product wording and configured repository policy
-- legacy detection without cleanup
 - doctor installed-state checks
 
 Normal tests must not require live GitHub access.
@@ -899,23 +860,21 @@ CLI UX acceptance:
 - tests assert generated instructions prohibit fake runtime surfaces, meta documentation, planning-language leakage, and committing generated build output unless policy allows it
 - tests assert generated instructions require package-age gates, exact versions, lockfile care, lifecycle-script disabling, and explicit approval for unverifiable dependency risk
 
-### M4.4 - Implement Host Projections And OpenCode Make-It-So Command
+### M4.4 - Implement Harness Projections And Make-It-So Entry Points
 
-Install host-specific command files and instruction projections for OpenCode, Codex, and Claude Code, with OpenCode as the primary tested path.
+Install one harness-specific Make It So entry point and the correct instruction projection for Codex, Claude Code, OpenCode, Grok Build, and Cursor.
 
 Primary FRs: FR-03-002, FR-03-003, FR-03-007 through FR-03-011, FR-11-001 through FR-11-007.
 
 CLI UX acceptance:
 
-- `--tool opencode` installs the OpenCode command and managed always-loaded instructions
+- each selected harness receives its canonical instruction file and exactly one Make It So entry point
 - OpenCode instructions name `todowrite` and `todoread` directly and preserve protected todo ids
-- optional command alias can be enabled and is documented
-- `--tool codex` installs the supported Codex instruction projection with `update_plan` or visible-checklist fallback wording
+- `--tool codex` installs the supported Codex instruction projection with `update_plan` wording
 - `--tool claude-code` installs the supported Claude Code instruction projection with `TodoWrite`/`TodoRead` wording
 - `--tool all` plans and applies every supported projection
-- unsupported host command mechanisms degrade to always-loaded instructions with clear output
-- installed command text starts or resumes the Executor issue work cycle without source-specific wording
-- installed OpenCode command preserves the Part 6 trust, autonomy, shipping authority, and direct execution cue
+- installed entry-point text starts or resumes the Executor issue work cycle without source-specific wording
+- every installed entry point preserves the Part 6 trust, autonomy, shipping authority, and direct execution cue
 
 ### M4.5 - Implement Autonomous Work Cycle And Continuation Wording
 
@@ -947,16 +906,14 @@ CLI UX acceptance:
 - instructions require supply-chain review before dependency, package-manager, generator, CI action/workflow, release, IDE/MCP, or AI-agent-tool work
 - instructions tell agents to stop for explicit approval when dependency identity, age, provenance, integrity, or execution risk cannot be verified
 
-### M4.6 - Implement Init Diagnostics, Legacy Detection, Schema, Help Metadata, And Tests
+### M4.6 - Implement Init Diagnostics, Schema, Help Metadata, And Tests
 
-Extend `aie doctor`, schema, help metadata, and tests for installed instruction state and legacy detection.
+Extend `aie doctor`, schema, help metadata, and tests for installed instruction state.
 
-Primary FRs: FR-03-015 through FR-03-018, FR-04-008, FR-12-012 through FR-12-014, FR-13-001 through FR-13-004, FR-14-001, FR-14-008, FR-15-001 through FR-15-021, FR-16-011 through FR-16-016.
+Primary FRs: FR-03-016 through FR-03-018, FR-04-008, FR-12-012 through FR-12-014, FR-13-001 through FR-13-004, FR-15-001 through FR-15-021, FR-16-011 through FR-16-016.
 
 CLI UX acceptance:
 
-- init detects legacy helper/instruction categories but does not clean them up
-- legacy output offers leave-untouched, install-alongside, or defer-to-migration choices
 - `aie doctor` reports managed instruction and command installation health
 - `aie doctor` reports whether naming-rules instructions are configured and installed
 - `aie doctor` reports whether supply-chain safety instructions and configured policy are installed
@@ -980,7 +937,6 @@ M4 is complete when:
 - `AGENTS.md` gets a managed Executor section unless disabled.
 - `CLAUDE.md` gets a managed Executor section when Claude Code support is selected.
 - OpenCode gets `.opencode/commands/make-it-so.md`.
-- Optional OpenCode command alias works when enabled.
 - project command wording grants explicit trust, autonomy, normal git/GitHub shipping authority, and continuation authority under configured repository policy.
 - generated instructions include the full issue work cycle, todo expectations, continuation rules, safety blocks, and autonomous shipping authority when enabled.
 - generated instructions include supply-chain safety rules by default.
@@ -994,7 +950,6 @@ M4 is complete when:
 - generated instructions are generic and contain only Executor product wording and configured repository policy.
 - `aie doctor` reports installed instruction, naming-rules, and command state.
 - `aie schema --json` and help metadata include M4 init, host-install, and naming-rules surfaces.
-- legacy state is detected and reported without cleanup.
 - normal tests cover file writes, managed section updates, dry-run, JSON output, host projections, prompt suppression, naming-rules toggles, safety toggles, product-generic generated output, and diagnostics.
 
 M4 should leave the repo ready for M5 to add review/audit/quality guidance, evidence, PR-state commands, and richer shipping support on top of the installed work-cycle instructions.

@@ -58,17 +58,13 @@ describe('AIQ review findings', () => {
     assert.match(context, /"rule":"biome\/no-debugger"/);
   });
 
-  it('falls back to a valid legacy report and ignores unreadable report data without failing', () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-fallback-'));
+  it('ignores reports outside the current QUBE output path', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-current-path-'));
     const canonical = join(repo, '.qube', 'aiq', 'out', 'aiq.report.json');
     mkdirSync(dirname(canonical), { recursive: true });
     writeFileSync(canonical, '{ malformed');
     copyFixture(repo, join('.aiq', 'out', 'aiq.report.json'));
 
-    const legacy = loadAiqReviewFindings(repo, ['src/changed.ts']);
-    assert.equal(legacy?.reportPath, '.aiq/out/aiq.report.json');
-
-    writeFileSync(join(repo, '.aiq', 'out', 'aiq.report.json'), '{}');
     assert.equal(loadAiqReviewFindings(repo, ['src/changed.ts']), null);
     assert.deepEqual(aiqReviewContextLines(null), []);
   });

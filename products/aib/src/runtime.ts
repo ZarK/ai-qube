@@ -69,8 +69,16 @@ export const aibCli = createCli({
       }
 
       const agentHost = typeof flags.agent === "string" && isAgentHost(flags.agent) ? flags.agent : undefined;
-      const config = agentHost
-        ? { ...loadedConfig.config, agent: { ...loadedConfig.config.agent, host: agentHost } }
+      const agentSurfaces = parseAgentSurfaces(flags.surfaces);
+      const config = agentHost || agentSurfaces
+        ? {
+            ...loadedConfig.config,
+            agent: {
+              ...loadedConfig.config.agent,
+              ...(agentHost ? { host: agentHost } : {}),
+              ...(agentSurfaces ? { surfaces: agentSurfaces } : {})
+            }
+          }
         : loadedConfig.config;
       const plan = createInitPlan({
         target: typeof args.target === "string" ? args.target : undefined,
@@ -660,6 +668,22 @@ export const aibCli = createCli({
   ]
 });
 
+function parseAgentSurfaces(value: unknown): readonly ReturnType<typeof requireAgentHost>[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new TypeError("--surfaces must contain one or more comma-separated agent harnesses.");
+  }
+  const surfaces = value.split(",").map((part) => part.trim()).filter((part) => part.length > 0).map(requireAgentHost);
+  return Object.freeze([...new Set(surfaces)]);
+}
+
+function requireAgentHost(value: string) {
+  if (!isAgentHost(value)) {
+    throw new TypeError(`Unsupported agent harness "${value}" in --surfaces.`);
+  }
+  return value;
+}
+
 runtimeRegistry = aibCli.registry;
 
 export async function runAibCli(input: readonly string[]): Promise<number> {
@@ -988,9 +1012,6 @@ function projectRootForState(statePath: string): string {
   const stateDir = dirname(statePath);
   if (basename(stateDir) === "aib" && basename(dirname(stateDir)) === ".qube") {
     return dirname(dirname(stateDir));
-  }
-  if (basename(stateDir) === ".bootstrap") {
-    return dirname(stateDir);
   }
   return dirname(dirname(statePath));
 }

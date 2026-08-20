@@ -164,12 +164,14 @@ export interface AiuWorkItemState extends AiuBaseState<"work-item"> {
   readonly lifecycle: "active" | "ready" | "blocked" | "closed" | "unknown" | "unsupported";
   readonly priority?: "low" | "normal" | "high" | "critical";
   readonly blockers: readonly string[];
+  readonly nextAction?: AiuTrustedStateCommandRef;
 }
 
 export interface AiuReviewState extends AiuBaseState<"review"> {
   readonly targetId?: string;
   readonly reviewStatus: "none" | "active" | "approved" | "changes-requested" | "blocked" | "unknown" | "unsupported";
   readonly unresolvedFeedbackCount?: number;
+  readonly nextAction?: AiuTrustedStateCommandRef;
 }
 
 export interface AiuRepositoryState extends AiuBaseState<"repository"> {

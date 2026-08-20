@@ -173,10 +173,8 @@ function connectionSignature(adapterId: string, config: Readonly<Record<string, 
 function findExecutorConfig(start: string): string | null {
   let current = path.resolve(start);
   for (;;) {
-    for (const relativePath of [".qube/aie/config.json", "aie.config.json"]) {
-      const candidate = path.join(current, relativePath);
-      if (existsSync(candidate)) return candidate;
-    }
+    const candidate = path.join(current, ".qube", "aie", "config.json");
+    if (existsSync(candidate)) return candidate;
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;

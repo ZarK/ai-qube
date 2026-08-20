@@ -259,8 +259,7 @@ describe('core policy model', () => {
         }],
       },
       audit: { manualUiAudit: false, appLaunch: '', target: '' },
-      instructions: { opencodeCommandAlias: false, namingRules: false, promptInjectionWarning: true, noCreditWarning: true, implementationGuardrails: true, supplyChainSafety: true },
-      migration: { legacyScripts: 'preserve', compatibilityWrappers: false, cleanupKnownHelpers: false },
+      instructions: { namingRules: false, promptInjectionWarning: true, noCreditWarning: true, implementationGuardrails: true, supplyChainSafety: true },
       supplyChain: {
         exactVersions: true,
         intentionalLockfileChanges: true,
@@ -299,8 +298,7 @@ describe('core policy model', () => {
       reviews: { adapter: 'github', reviewers: [], localReviewers: [], waitMinutes: -1, requestText: '' },
       gates: { definitions: [] },
       audit: { manualUiAudit: false, appLaunch: '', target: '' },
-      instructions: { opencodeCommandAlias: false, namingRules: false, promptInjectionWarning: true, noCreditWarning: true, implementationGuardrails: true, supplyChainSafety: true },
-      migration: { legacyScripts: 'preserve', compatibilityWrappers: false, cleanupKnownHelpers: false },
+      instructions: { namingRules: false, promptInjectionWarning: true, noCreditWarning: true, implementationGuardrails: true, supplyChainSafety: true },
       supplyChain: {
         exactVersions: true,
         intentionalLockfileChanges: true,

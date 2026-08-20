@@ -54,7 +54,7 @@ describe("package foundation", () => {
     assert.equal(Object.hasOwn(packageJson.scripts ?? {}, "postinstall"), false);
   });
 
-  it("does not publish legacy helper scripts or queue policy assets", async () => {
+  it("publishes only the declared runtime files", async () => {
     const packageJson = await readPackageJson();
 
     assert.deepEqual(packageJson.files, ["dist/src", "README.md"]);
@@ -98,17 +98,15 @@ describe("package foundation", () => {
       assert.equal(packedPath.startsWith("docs/"), false, `${packedPath} must not publish planning docs`);
       assert.equal(packedPath.startsWith(".github/"), false, `${packedPath} must not publish workflow internals`);
       assert.equal(packedPath.startsWith(".aie/"), false, `${packedPath} must not publish Executor state`);
-      assert.equal(packedPath.startsWith(".umpire/"), false, `${packedPath} must not publish local Umpire state`);
       assert.equal(packedPath.endsWith(".ts") && !packedPath.endsWith(".d.ts"), false, `${packedPath} must not publish TypeScript source artifacts`);
       assert.notEqual(packedPath, "pnpm-lock.yaml");
-      assert.notEqual(packedPath, "aiu.config.json");
       assert.notEqual(packedPath, ".npmrc");
     }
   });
 
   it("does not track generated build output or private local state", async () => {
     const packageJson = await readPackageJson();
-    const tracked = await gitLsFiles(["dist", ".aie", ".umpire", `tjalve-aiu-${packageJson.version}.tgz`]);
+    const tracked = await gitLsFiles(["dist", `tjalve-aiu-${packageJson.version}.tgz`]);
 
     assert.deepEqual(tracked, []);
   });

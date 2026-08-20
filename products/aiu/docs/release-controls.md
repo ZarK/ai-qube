@@ -63,5 +63,5 @@ depend on the package:
 pnpm remove @tjalve/aiu
 ```
 
-Use `aiu migrate --cleanup --dry-run --json` before deleting old copied helper
-assets.
+Review `aiu doctor --json`, `aiu paths --json`, and the repository diff before
+deleting host configuration.
