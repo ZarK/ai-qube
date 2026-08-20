@@ -104,6 +104,23 @@ describe("QUBE init configuration", () => {
     assert.equal(resolved.sources["review.externalReviewers"], "default");
   });
 
+  it("uses an empty model list as an explicit unpinned Review selection", () => {
+    const parsed = parseQubeInitConfig({
+      version: 1,
+      review: { mode: "host", models: [] },
+    });
+    const resolved = resolveQubeInitConfig({
+      defaults,
+      globalConfig: { version: 1, review: { models: ["codex:old-model"] } },
+      repoConfig: null,
+      explicit: parsed,
+    });
+
+    assert.deepEqual(resolved.config.review.models, []);
+    assert.equal(resolved.sources["review.models"], "explicit");
+    assert.deepEqual(configForQubeScope(resolved, "repo").review.models, []);
+  });
+
   it("derives a global host-review harness without seeding it into the repository", () => {
     const globalConfig = {
       version: 1,

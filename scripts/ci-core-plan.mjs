@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const suiteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageRoots = Object.freeze(['packages', 'adapters', 'products', 'plugins']);
 const excludedPackagePaths = Object.freeze(['products/aiq']);
+const explicitPackagePaths = Object.freeze(['products/aiq/packages/cli']);
 const fullPlanPrefixes = Object.freeze(['.github/workflows/', 'scripts/', 'test/']);
 const fullPlanFiles = new Set(['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']);
 
@@ -23,7 +24,7 @@ function isExcludedPackagePath(relativePath) {
 }
 
 export function loadCorePackages(root = suiteRoot) {
-  const manifests = [];
+  const packagePaths = [];
   for (const packageRoot of packageRoots) {
     const absoluteRoot = path.join(root, packageRoot);
     if (!existsSync(absoluteRoot)) continue;
@@ -33,26 +34,34 @@ export function loadCorePackages(root = suiteRoot) {
       if (isExcludedPackagePath(relativePath)) continue;
       const manifestPath = path.join(root, relativePath, 'package.json');
       if (!existsSync(manifestPath)) continue;
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-      if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
-        throw new Error(`${relativePath}/package.json must declare a package name.`);
-      }
-      if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/.test(manifest.name)) {
-        throw new Error(`${relativePath}/package.json declares an unsafe package name.`);
-      }
-      manifests.push({
-        name: manifest.name,
-        path: relativePath,
-        scripts: Object.freeze({ ...(manifest.scripts ?? {}) }),
-        dependencyNames: Object.freeze(Object.keys({
-          ...(manifest.dependencies ?? {}),
-          ...(manifest.optionalDependencies ?? {}),
-          ...(manifest.peerDependencies ?? {}),
-          ...(manifest.devDependencies ?? {}),
-        })),
-      });
+      packagePaths.push(relativePath);
     }
   }
+
+  for (const relativePath of explicitPackagePaths) {
+    if (existsSync(path.join(root, relativePath, 'package.json'))) packagePaths.push(relativePath);
+  }
+
+  const manifests = packagePaths.map(relativePath => {
+    const manifest = JSON.parse(readFileSync(path.join(root, relativePath, 'package.json'), 'utf8'));
+    if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
+      throw new Error(`${relativePath}/package.json must declare a package name.`);
+    }
+    if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/.test(manifest.name)) {
+      throw new Error(`${relativePath}/package.json declares an unsafe package name.`);
+    }
+    return {
+      name: manifest.name,
+      path: relativePath,
+      scripts: Object.freeze({ ...(manifest.scripts ?? {}) }),
+      dependencyNames: Object.freeze(Object.keys({
+        ...(manifest.dependencies ?? {}),
+        ...(manifest.optionalDependencies ?? {}),
+        ...(manifest.peerDependencies ?? {}),
+        ...(manifest.devDependencies ?? {}),
+      })),
+    };
+  });
 
   manifests.sort((left, right) => left.path.localeCompare(right.path));
   const packageNames = new Set(manifests.map(entry => entry.name));

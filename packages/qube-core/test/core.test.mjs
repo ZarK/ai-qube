@@ -433,7 +433,7 @@ describe("qube core contracts", () => {
     const pathsDoc = readRepoDoc("docs/qube-paths-and-artifacts.md");
 
     for (const product of qubeProductContracts) {
-      assert.match(hostSurfaceDoc, new RegExp(product.packageName.replace("/", "\\/")));
+      assert.match(hostSurfaceDoc, new RegExp(escapeRegExp(product.displayName)));
     }
     for (const hostId of core.AGENT_HOST_IDS) {
       const registration = core.AGENT_HOST_REGISTRATIONS[hostId];

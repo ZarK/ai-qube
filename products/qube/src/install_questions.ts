@@ -25,6 +25,11 @@ export const ISOLATED_REVIEW_HOSTS = Object.freeze(
     .filter(option => option.capabilities.some(capability => capability.id === "isolated-review" && capability.support !== "unsupported"))
     .map(option => option.id),
 );
+export const HOST_REVIEW_HOSTS = Object.freeze(
+  executorHostSurfaces
+    .filter(option => option.capabilities.some(capability => capability.id === "local-review" && capability.support !== "unsupported"))
+    .map(option => option.id),
+);
 export const INSTALL_REVIEW_MODES = Object.freeze(["isolated", "host", "external"] as const);
 export const DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT = "~/.qube/verification";
 export type InstallReviewMode = (typeof INSTALL_REVIEW_MODES)[number];
@@ -40,36 +45,82 @@ export function recommendedInstallPackageManager(cwd: string): "pnpm" | "npm" {
   return existsSync(join(cwd, "package-lock.json")) ? "npm" : "pnpm";
 }
 
-export function isolatedReviewAvailable(selectedHosts: readonly string[]): boolean {
-  return selectedHosts.some(host => (ISOLATED_REVIEW_HOSTS as readonly string[]).includes(host));
+export function isolatedReviewAvailable(
+  selectedHosts: readonly string[],
+  installedReviewHosts: readonly string[],
+): boolean {
+  const installed = new Set(installedReviewHosts);
+  return selectedHosts.slice(1).some(host => (
+    installed.has(host) && (ISOLATED_REVIEW_HOSTS as readonly string[]).includes(host)
+  ));
+}
+
+export function hostReviewAvailable(selectedHosts: readonly string[]): boolean {
+  const primaryHost = selectedHosts[0];
+  return primaryHost !== undefined && (HOST_REVIEW_HOSTS as readonly string[]).includes(primaryHost);
 }
 
 export function isInstallReviewMode(value: string): value is InstallReviewMode {
   return (INSTALL_REVIEW_MODES as readonly string[]).includes(value);
 }
 
-export function recommendedInstallReviewMode(selectedHosts: readonly string[]): InstallReviewMode {
-  return isolatedReviewAvailable(selectedHosts) ? "isolated" : "external";
+export function availableInstallReviewModes(
+  selectedHosts: readonly string[],
+  installedReviewHosts: readonly string[],
+  workProvider: string | undefined,
+): readonly InstallReviewMode[] {
+  return Object.freeze([
+    ...(isolatedReviewAvailable(selectedHosts, installedReviewHosts) ? ["isolated" as const] : []),
+    ...(hostReviewAvailable(selectedHosts) ? ["host" as const] : []),
+    ...(workProvider !== "gitlab" ? ["external" as const] : []),
+  ]);
+}
+
+export function recommendedInstallReviewMode(
+  selectedHosts: readonly string[],
+  installedReviewHosts: readonly string[],
+  workProvider: string | undefined,
+): InstallReviewMode | null {
+  if (isolatedReviewAvailable(selectedHosts, installedReviewHosts)) return "isolated";
+  if (hostReviewAvailable(selectedHosts)) return "host";
+  return workProvider === "gitlab" ? null : "external";
 }
 
 export function installQuestionGuideComplete(
   flags: Readonly<Record<string, unknown>>,
   cwd: string,
+  installedReviewHosts: readonly string[],
 ): boolean {
-  return buildInstallQuestions({ flags, cwd }).unansweredQuestionIds.length === 0;
+  return buildInstallQuestions({ flags, cwd, installedReviewHosts }).unansweredQuestionIds.length === 0;
 }
 
-export function invalidInstallGuideFlag(flags: Readonly<Record<string, unknown>>): string | undefined {
+export function invalidInstallGuideFlag(
+  flags: Readonly<Record<string, unknown>>,
+  installedReviewHosts: readonly string[],
+): string | undefined {
+  const hosts = readList(flags.host);
+  const useDefaults = flags.yes === true || flags.defaults === true;
+  const selectedHosts = hosts.length > 0 ? hosts : (useDefaults ? ["codex"] : []);
+  const workProviders = readList(flags["work-provider"]);
+  const workProvider = workProviders[0] ?? (useDefaults ? "github" : undefined);
+  const availableModes = availableInstallReviewModes(selectedHosts, installedReviewHosts, workProvider);
   const reviewMode = flags["review-mode"];
   if (typeof reviewMode === "string") {
     if (!isInstallReviewMode(reviewMode)) {
       return `Invalid install option --review-mode=${reviewMode}. Use one of: ${INSTALL_REVIEW_MODES.join(", ")}.`;
     }
-    const hosts = readList(flags.host);
-    const selectedHosts = hosts.length > 0 ? hosts : (flags.yes === true ? ["codex"] : []);
-    if (reviewMode === "isolated" && selectedHosts.length > 0 && !isolatedReviewAvailable(selectedHosts)) {
-      return `Isolated review is not available because no selected agent harness can run it. Use --review-mode host or --review-mode external, or select one of: ${ISOLATED_REVIEW_HOSTS.join(", ")}.`;
+    if (reviewMode === "isolated" && selectedHosts.length > 0 && !isolatedReviewAvailable(selectedHosts, installedReviewHosts)) {
+      return `Isolated review requires another selected, installed agent harness that can run it. Select and install one of: ${ISOLATED_REVIEW_HOSTS.join(", ")}; or use --review-mode host or --review-mode external.`;
     }
+    if (reviewMode === "host" && selectedHosts.length > 0 && !hostReviewAvailable(selectedHosts)) {
+      return `Host review is not available for the primary agent harness. Use --review-mode external, or select one of these primary harnesses: ${HOST_REVIEW_HOSTS.join(", ")}.`;
+    }
+    if (reviewMode === "external" && workProvider === "gitlab") {
+      return "External review services are not available for GitLab. Select a primary or isolated Review harness, or choose another Issue tracker.";
+    }
+  }
+  if (selectedHosts.length > 0 && workProvider && availableModes.length === 0) {
+    return "No Review source is available for the selected Agent harnesses and Issue tracker. Select and install a compatible Review harness, or choose an Issue tracker with an external Review service.";
   }
   const evidenceRoot = flags["ui-audit-evidence-root"];
   if (typeof evidenceRoot === "string") {
@@ -87,13 +138,17 @@ export function invalidInstallGuideFlag(flags: Readonly<Record<string, unknown>>
 export function buildInstallQuestions(input: {
   flags: Readonly<Record<string, unknown>>;
   cwd: string;
+  installedReviewHosts: readonly string[];
 }): { readonly questions: readonly InstallQuestion[]; readonly unansweredQuestionIds: readonly string[] } {
   const host = readList(input.flags.host);
   const work = readList(input.flags["work-provider"]);
   const ci = readList(input.flags["ci-provider"]);
-  const selectedHosts = host.length > 0 ? host : [];
-  const isolatedOk = isolatedReviewAvailable(selectedHosts);
-  const recommendedReviewMode = recommendedInstallReviewMode(selectedHosts);
+  const selectedHosts = host.length > 0 ? host : (input.flags.yes === true || input.flags.defaults === true ? ["codex"] : []);
+  const workProvider = work[0] ?? (input.flags.yes === true || input.flags.defaults === true ? "github" : undefined);
+  const isolatedOk = isolatedReviewAvailable(selectedHosts, input.installedReviewHosts);
+  const hostOk = hostReviewAvailable(selectedHosts);
+  const externalOk = workProvider !== "gitlab";
+  const recommendedReviewMode = recommendedInstallReviewMode(selectedHosts, input.installedReviewHosts, workProvider);
   const packageManager = recommendedInstallPackageManager(input.cwd);
   const workAnswered = work.length > 0;
   const ciImplied = !workAnswered || work[0] === "github" || work[0] === "gitlab";
@@ -182,18 +237,22 @@ export function buildInstallQuestions(input: {
       prompt: "Which review mode should this repository use?",
       options: [
         { value: "isolated", label: "isolated: Executor runs model CLIs for the lane batch.", available: isolatedOk },
-        { value: "host", label: "host: the coding agent runs one review subagent per lane." },
-        { value: "external", label: "external: a review service reviews the pull request." },
+        { value: "host", label: "host: the coding agent runs one review subagent per lane.", available: hostOk },
+        { value: "external", label: "external: a review service reviews the pull request.", available: externalOk },
       ],
       recommendation: isolatedOk
-        ? "Use isolated. A selected host adapter can run isolated review."
-        : "Use external. No selected host adapter exports an isolated-review runner.",
+        ? "Use isolated. Another selected agent harness can run Review in a separate session."
+        : hostOk
+          ? "Use host. The primary agent harness can run native Review subagents."
+          : externalOk
+            ? "Use external. The selected agent harnesses cannot run Review."
+            : "No Review source is available. Select and install a compatible Review harness, or choose another Issue tracker.",
       recommendedValue: recommendedReviewMode,
       answered: reviewModeFlag !== undefined,
       value: reviewModeFlag ?? null,
       reason: reviewModeFlag !== undefined
         ? "The invocation already selected the review mode."
-        : "Isolated review is available only when a selected host adapter can run it.",
+        : "Review mode depends on the selected agent harness capabilities.",
     }),
     question({
       id: "ui-audit-evidence",

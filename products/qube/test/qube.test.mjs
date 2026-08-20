@@ -55,6 +55,10 @@ import {
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const binPath = fileURLToPath(new URL("../dist/bin/qube.js", import.meta.url));
 
+function displayedShellArgument(value) {
+  return process.platform === "win32" ? `"${value}"` : `'${value}'`;
+}
+
 function runCli(args, options = {}) {
   const env = { ...process.env, ...options.env };
   if (process.platform === "win32" && Object.hasOwn(options.env ?? {}, "PATH") && !Object.hasOwn(options.env ?? {}, "Path")) {
@@ -93,6 +97,7 @@ function createInitComponentShim(root, componentId, options = {}) {
     plan: options.plan ?? { ok: true, command: componentId === "aiq" ? "config" : "init", actions: [{ operation: "create" }] },
     apply: options.apply ?? { ok: true, command: componentId === "aiq" ? "config" : "init", changed: true },
     labels: options.labels ?? { ok: true, command: "labels setup", changed: true },
+    reviewDoctor: options.reviewDoctor ?? { ok: true, command: "review doctor", readiness: "ready" },
     exitCodes: options.exitCodes ?? {},
   }), "utf8");
   writeFileSync(scriptPath, [
@@ -101,7 +106,7 @@ function createInitComponentShim(root, componentId, options = {}) {
     "const component = " + JSON.stringify(componentId) + ";",
     "const config = JSON.parse(readFileSync(" + JSON.stringify(configPath) + ", \"utf8\"));",
     "const args = process.argv.slice(2);",
-    "const phase = args[0] === \"labels\" ? \"labels\" : args.includes(\"--dry-run\") ? \"plan\" : \"apply\";",
+    "const phase = args[0] === \"labels\" ? \"labels\" : args[0] === \"review\" && args[1] === \"doctor\" ? \"reviewDoctor\" : args.includes(\"--dry-run\") ? \"plan\" : \"apply\";",
     "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify({ component, phase, args, cwd: process.cwd() }) + \"\\n\");",
     "let payload = { ...config[phase] };",
     "if (config.stateful && phase !== \"plan\" && payload.ok === true) {",
@@ -200,13 +205,24 @@ function createJsonEnvelopeShim(root, componentId, payload) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: `@tjalve/${componentId}`, version: findQubeComponent(componentId).packageVersion })}\n`, "utf8");
 }
 
-function createExecutableStub(root, name) {
+function createExecutableStub(root, name, stdout = "") {
   const binDir = path.join(root, "node_modules", ".bin");
   mkdirSync(binDir, { recursive: true });
+  const scriptName = `${name}-stub.js`;
+  const scriptPath = path.join(binDir, scriptName);
+  writeFileSync(scriptPath, `process.stdout.write(${JSON.stringify(stdout)});\n`, "utf8");
   const commandPath = path.join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
-  writeFileSync(commandPath, process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n", "utf8");
+  writeFileSync(commandPath, process.platform === "win32"
+    ? `@echo off\r\nrem %dp0%\\${scriptName}\r\n"${process.execPath}" "%~dp0${scriptName}" %*\r\n`
+    : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} "$@"\n`, "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
   return binDir;
+}
+
+function addExecutablePath(environment, binDir) {
+  const currentPath = environment.PATH ?? environment.Path ?? "";
+  const executablePath = currentPath ? `${binDir}${path.delimiter}${currentPath}` : binDir;
+  return { ...environment, PATH: executablePath, Path: executablePath };
 }
 
 function createAiuMergingShim(root) {
@@ -360,7 +376,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /review doctor\s+Validate reviewer publisher readiness/);
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
-    assert.match(help.stdout, /init\s+Initialize QUBE workspace setup by composing each installed component's init through its init capability contract\./);
+    assert.match(help.stdout, /init\s+Guide repository setup, apply the complete QUBE system, and show how to start work\./);
     assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
@@ -526,7 +542,7 @@ describe("qube composer CLI", () => {
       ciProviders: ["github"],
       lifecycleScripts: "disabled",
       packageManager: "pnpm",
-      reviewMode: "isolated",
+      reviewMode: "host",
       scope: "local",
       uiAuditEvidenceRoot: "~/.qube/verification",
       workProvider: "github",
@@ -541,14 +557,12 @@ describe("qube composer CLI", () => {
         "@tjalve/qube-adapter-codex",
         "@tjalve/qube-adapter-github",
       ),
-      "qube init . --host codex --work-provider github --ci-provider github --review-mode isolated --ui-audit-evidence-root ~/.qube/verification --credit-warning",
-      "qube aie labels setup",
+      `qube init . --host codex --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")} --credit-warning`,
       "qube doctor"
     ]);
     assert.deepEqual(parsed.installPlan.commands.map(step => step.stage), [
       "package-install",
       "workspace-init",
-      "provider-setup",
       "verify"
     ]);
     assert.ok(parsed.installPlan.notes.some(note => note.includes("Run `qube components` any time")));
@@ -586,12 +600,12 @@ describe("qube composer CLI", () => {
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
     const notes = parsed.installPlan.notes.join("\n");
-    assert.match(notes, /No package-manager command is executed/);
+    assert.doesNotMatch(notes, /No package-manager command is executed/);
     assert.match(notes, /Work provider: github \(installed, adapter-contract\)/);
     assert.match(notes, /Supported capabilities: .*read-merge-blockers/);
     assert.doesNotMatch(notes, /Supported capabilities: [^.]*run-aiq-github-action/);
     assert.match(notes, /Standalone capabilities: run-aiq-github-action/);
-    assert.deepEqual(parsed.installPlan.steps.map(step => step.status), ["missing", "missing", "missing", "missing"]);
+    assert.deepEqual(parsed.installPlan.steps.map(step => step.status), ["missing", "missing", "satisfied", "missing"]);
   });
 
   function writeManagedSection(filePath, body, checksum = null) {
@@ -614,6 +628,27 @@ describe("qube composer CLI", () => {
     writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name, version }, null, 2)}\n`);
   }
 
+  function writeInstallInitConfig(root, overrides = {}) {
+    const reviewMode = overrides.review?.mode ?? "host";
+    const review = reviewMode === "external"
+      ? { mode: reviewMode, publisher: "user", ...overrides.review }
+      : { mode: reviewMode, harness: "codex", publisher: "user", ...overrides.review };
+    mkdirSync(path.join(root, ".qube"), { recursive: true });
+    writeFileSync(path.join(root, ".qube", "init.json"), `${JSON.stringify({
+      version: 1,
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      continuousShipping: true,
+      umpire: { scope: "ready" },
+      quality: { stages: ["unit"] },
+      review,
+      mcp: { optIn: false },
+      ...overrides,
+      review,
+    }, null, 2)}\n`);
+  }
+
   function writeConfiguredRepo(root, options = {}) {
     const instructionPath = path.join(root, "AGENTS.md");
     const makeItSoPath = path.join(root, ".agents", "skills", "make-it-so", "SKILL.md");
@@ -632,7 +667,22 @@ describe("qube composer CLI", () => {
       writeInstalledPackage(root, "@tjalve/qube-adapter-github", adapterPackageVersions["@tjalve/qube-adapter-github"]);
       writeInstalledPackage(root, "@tjalve/qube-adapter-codex", adapterPackageVersions["@tjalve/qube-adapter-codex"]);
     }
-    writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1, providers: { work: { kind: "github" } } }, null, 2)}\n`);
+    writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+      policy: {
+        audit: { evidenceRoot: "~/.qube/verification" },
+        instructions: { noCreditWarning: true },
+        reviews: { mode: "host" },
+      },
+    }, null, 2)}\n`);
+    if (options.initConfig !== false) {
+      writeInstallInitConfig(root, typeof options.initConfig === "object" ? options.initConfig : {});
+    }
     if (options.staleManaged) {
       writeManagedSection(instructionPath, "Team rules.", "deadbeef");
       writeManagedSection(makeItSoPath, "Run QUBE Make It So.");
@@ -658,7 +708,12 @@ describe("qube composer CLI", () => {
     const scriptPath = path.join(binDir, `${name}.mjs`);
     writeFileSync(scriptPath, source);
     if (process.platform === "win32") {
-      writeFileSync(path.join(binDir, `${name}.cmd`), `@echo off\r\nnode "${scriptPath}" %*\r\n`);
+      writeFileSync(path.join(binDir, `${name}.cmd`), [
+        "@echo off",
+        `rem %dp0%\\${name}.mjs`,
+        `"${process.execPath}" "%~dp0${name}.mjs" %*`,
+        "",
+      ].join("\r\n"));
     } else {
       writeFileSync(path.join(binDir, name), `#!/usr/bin/env node\n${source}`);
       chmodSync(path.join(binDir, name), 0o755);
@@ -682,7 +737,14 @@ describe("qube composer CLI", () => {
     const tools = path.join(root, "tools");
     const packageRootDir = path.join(root, "qube-root");
     const binDir = path.join(packageRootDir, "node_modules", ".bin");
+    const codexTools = createExecutableStub(
+      path.join(root, "codex-tool"),
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
     const pmLog = path.join(root, "pm.log");
+    const initLog = path.join(root, "init.log");
+    const providerLog = path.join(root, "provider.log");
     mkdirSync(cwd, { recursive: true });
     mkdirSync(tools, { recursive: true });
     mkdirSync(binDir, { recursive: true });
@@ -745,18 +807,49 @@ writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\\n");
         repository: { kind: "local-git" },
         ci: { kind: "github" },
         layout: { kind: "local" }
+      },
+      policy: {
+        audit: { evidenceRoot: "~/.qube/verification" },
+        instructions: { noCreditWarning: true },
+        reviews: { mode: "host" }
       }
     }, null, 2);
     writeNodeShim(binDir, "aie", `
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-const args = process.argv.slice(2).join(" ");
+const rawArgs = process.argv.slice(2);
+const args = rawArgs.join(" ");
+if (process.env.QUBE_TEST_INIT_LOG && args.includes("init")) {
+  appendFileSync(process.env.QUBE_TEST_INIT_LOG, JSON.stringify(rawArgs) + "\\n");
+}
+if (process.env.QUBE_TEST_PROVIDER_LOG && args.includes("labels")) {
+  appendFileSync(process.env.QUBE_TEST_PROVIDER_LOG, JSON.stringify(rawArgs) + "\\n");
+}
+if (process.env.QUBE_TEST_AIE_INIT_FAILURE === "1" && args.includes("init")) {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    command: "init",
+    error: { kind: "fixture", message: "Executor setup is blocked." },
+    nextAction: "Repair the Executor setup and rerun qube init.",
+  }) + "\\n");
+  process.exit(9);
+}
 if (args.includes("init")) {
   const cwd = process.cwd();
   mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
   mkdirSync(path.join(cwd, ".agents", "skills", "make-it-so"), { recursive: true });
-  writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), ${JSON.stringify(`${initConfig}\n`)});
+  const configured = ${initConfig};
+  const evidenceRootIndex = rawArgs.indexOf("--ui-audit-evidence-root");
+  if (evidenceRootIndex >= 0 && rawArgs[evidenceRootIndex + 1]) {
+    configured.policy.audit.evidenceRoot = rawArgs[evidenceRootIndex + 1];
+  }
+  const reviewModeIndex = rawArgs.indexOf("--review-mode");
+  if (reviewModeIndex >= 0 && rawArgs[reviewModeIndex + 1]) {
+    configured.policy.reviews.mode = rawArgs[reviewModeIndex + 1];
+  }
+  configured.policy.instructions.noCreditWarning = !rawArgs.includes("--no-credit-warning");
+  writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), JSON.stringify(configured, null, 2) + "\\n");
   const body = "Team rules.\\n";
   const digest = createHash("sha256").update(body).digest("hex");
   writeFileSync(path.join(cwd, "AGENTS.md"), [
@@ -809,18 +902,51 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: component.name, version: component.version }, null, 2)}\n`);
     }
+    const executableEnvironment = addExecutablePath(addExecutablePath({ ...process.env }, tools), codexTools);
     return {
       cwd,
+      initLog,
       pmLog,
+      providerLog,
       root,
       env: {
-        ...process.env,
-        PATH: `${tools}${path.delimiter}${process.env.PATH ?? ""}`,
+        ...executableEnvironment,
         QUBE_TEST_PACKAGE_ROOT: packageRootDir,
+        QUBE_TEST_INIT_LOG: initLog,
         QUBE_TEST_PM_LOG: pmLog,
+        QUBE_TEST_PROVIDER_LOG: providerLog,
         QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root)
       }
     };
+  }
+
+  function readInstallInitCalls(harness) {
+    if (!existsSync(harness.initLog)) return [];
+    return readFileSync(harness.initLog, "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+  }
+
+  function readInstallProviderCalls(harness) {
+    if (!existsSync(harness.providerLog)) return [];
+    return readFileSync(harness.providerLog, "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+  }
+
+  function installArgumentValue(args, name) {
+    const index = args.indexOf(name);
+    return index < 0 ? undefined : args[index + 1];
+  }
+
+  function installedGrokEnvironment() {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-grok-cli-"));
+    const binDir = createExecutableStub(root, "grok", "Available models:\n- shared-review\n");
+    return addExecutablePath({ ...process.env }, binDir);
   }
 
   it("reports every step satisfied and a no-op command list for a configured repo", () => {
@@ -851,14 +977,117 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.ok(parsed.installPlan.commands.some(step => step.stage === "workspace-init"));
   });
 
+  it("requires canonical guided init state even when Executor config and managed files are current", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-aie-only-"));
+    writeConfiguredRepo(root, { initConfig: false });
+
+    const result = runCli([
+      "install", "--yes", "--dry-run", "--json",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "host",
+    ], { cwd: root });
+
+    assert.equal(result.status, 0, result.stderr);
+    const plan = JSON.parse(result.stdout).installPlan;
+    const workspace = plan.steps.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "missing");
+    assert.match(workspace.reason, /\.qube[\\/]init\.json/);
+    assert.ok(plan.commands.some(step => step.stage === "workspace-init"));
+  });
+
   it("plans workspace init when existing config does not match the selected providers", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-provider-mismatch-"));
     writeConfiguredRepo(root);
     const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "linear", "--ci-provider", "github"], { cwd: root });
     assert.equal(result.status, 0, result.stderr);
     const workspace = JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init");
-    assert.equal(workspace.status, "missing");
+    assert.equal(workspace.status, "stale");
     assert.ok(JSON.parse(result.stdout).installPlan.commands.some(step => step.stage === "workspace-init"));
+  });
+
+  it("does not satisfy canonical init state from a later provider or a different Review mode", () => {
+    const cases = [
+      {
+        name: "work provider",
+        initConfig: { workProviders: ["gitlab"] },
+        args: ["--work-provider", "github,gitlab", "--ci-provider", "github", "--review-mode", "host"],
+        reason: /work provider/i,
+      },
+      {
+        name: "CI provider",
+        initConfig: { ciProviders: ["jenkins"] },
+        args: ["--work-provider", "github", "--ci-provider", "github,jenkins", "--review-mode", "host"],
+        reason: /CI provider/i,
+      },
+      {
+        name: "Review mode",
+        initConfig: { review: { mode: "external" } },
+        args: ["--work-provider", "github", "--ci-provider", "github", "--review-mode", "host"],
+        reason: /Review source/i,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const root = mkdtempSync(path.join(tmpdir(), "qube-install-init-drift-"));
+      writeConfiguredRepo(root, { initConfig: testCase.initConfig });
+      const result = runCli([
+        "install", "--yes", "--dry-run", "--json", "--host", "codex", ...testCase.args,
+      ], { cwd: root });
+
+      assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+      const plan = JSON.parse(result.stdout).installPlan;
+      const workspace = plan.steps.find(step => step.stage === "workspace-init");
+      assert.notEqual(workspace.status, "satisfied", testCase.name);
+      assert.match(workspace.reason, testCase.reason, testCase.name);
+      assert.ok(plan.commands.some(step => step.stage === "workspace-init"), testCase.name);
+    }
+  });
+
+  it("does not let an exact canonical record mask Executor Review drift", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-aie-review-drift-"));
+    writeConfiguredRepo(root);
+    const configPath = path.join(root, ".qube", "aie", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.policy.reviews.mode = "external";
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = runCli([
+      "install", "--yes", "--dry-run", "--json",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "host",
+    ], { cwd: root });
+
+    assert.equal(result.status, 0, result.stderr);
+    const plan = JSON.parse(result.stdout).installPlan;
+    const workspace = plan.steps.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "stale");
+    assert.match(workspace.reason, /Executor Review setup/);
+    assert.equal(plan.commands.some(step => step.stage === "workspace-init"), true);
+  });
+
+  it("does not plan GitHub labels for an inactive secondary adapter", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-inactive-github-"));
+    const codexBin = createExecutableStub(root, "codex");
+    const result = runCli([
+      "install", "--yes", "--dry-run", "--json",
+      "--host", "codex",
+      "--work-provider", "gitlab,github",
+      "--ci-provider", "jenkins,github",
+      "--review-mode", "host",
+    ], { cwd: root, env: addExecutablePath({ ...process.env }, codexBin) });
+
+    assert.equal(result.status, 0, result.stderr);
+    const plan = JSON.parse(result.stdout).installPlan;
+    assert.deepEqual(plan.selections.workProviders, ["gitlab", "github"]);
+    assert.deepEqual(plan.selections.ciProviders, ["jenkins", "github"]);
+    assert.match(plan.commands.find(step => step.stage === "package-install").command, /qube-adapter-github/);
+    assert.equal(plan.steps.some(step => step.stage === "provider-setup"), false);
+    assert.equal(plan.commands.some(step => step.stage === "provider-setup"), false);
+    assert.doesNotMatch(plan.commands.map(step => step.command).join("\n"), /qube aie labels setup/);
   });
 
   it("does not treat declared but uninstalled packages as satisfied", () => {
@@ -910,7 +1139,16 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
 
   it("keeps unknown package state missing instead of satisfied", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-empty-"));
-    const state = probeInstallState(root, { scope: "local", packageManager: "pnpm", hosts: ["codex"], workProviders: ["github"], ciProviders: ["github"] });
+    const state = probeInstallState(root, {
+      scope: "local",
+      packageManager: "pnpm",
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      reviewMode: "host",
+      uiAuditEvidenceRoot: "~/.qube/verification",
+      creditWarning: true,
+    });
     assert.equal(state.find(step => step.stage === "package-install").status, "missing");
     assert.equal(state.find(step => step.stage === "workspace-init").status, "missing");
     assert.equal(state.every(step => step.status !== "satisfied"), true);
@@ -933,7 +1171,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "disabled",
       "--docs",
       "--review-mode",
-      "isolated",
+      "host",
       "--ui-audit-evidence-root",
       "~/.qube/verification",
       "--credit-warning"
@@ -1522,8 +1760,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommandWith("@tjalve/qube-adapter-github", "@tjalve/qube-adapter-grok-build"),
-      "qube init . --host grok-build --work-provider github --ci-provider github --review-mode isolated --ui-audit-evidence-root ~/.qube/verification --credit-warning",
-      "qube aie labels setup",
+      `qube init . --host grok-build --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")} --credit-warning`,
       "qube doctor"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md agent instructions"));
@@ -1575,7 +1812,8 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(work.answered, true);
     assert.ok(!parsed.unansweredQuestionIds.includes("host"));
     assert.ok(!parsed.unansweredQuestionIds.includes("work-provider"));
-    assert.equal(review.options.find(option => option.value === "isolated").available, true);
+    assert.equal(review.options.find(option => option.value === "isolated").available, false);
+    assert.equal(review.options.find(option => option.value === "host").available, true);
   });
 
   it("does not let default-answered questions block --yes", () => {
@@ -1592,7 +1830,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "install",
       "--json",
       "--host",
-      "grok-build",
+      "codex,grok-build",
       "--work-provider",
       "github",
       "--review-mode",
@@ -1600,7 +1838,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--ui-audit-evidence-root",
       "~/.qube/verification",
       "--credit-warning"
-    ]);
+    ], { env: installedGrokEnvironment() });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, true);
@@ -1612,7 +1850,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const workspace = parsed.installPlan.commands.find(step => step.stage === "workspace-init")
       ?? parsed.installPlan.steps.find(step => step.stage === "workspace-init");
     assert.match(workspace.command, /--review-mode isolated/);
-    assert.match(workspace.command, /--ui-audit-evidence-root ~\/\.qube\/verification/);
+    assert.ok(
+      workspace.command.includes(`--ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")}`),
+      workspace.command,
+    );
     assert.match(workspace.command, /--credit-warning/);
     assert.doesNotMatch(workspace.command, /--docs/);
   });
@@ -1622,12 +1863,12 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "install",
       "--json",
       "--host",
-      "grok-build",
+      "codex,grok-build",
       "--work-provider",
       "github",
       "--review-mode",
       "isolated"
-    ]);
+    ], { env: installedGrokEnvironment() });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.awaitingAnswers, true);
@@ -1642,7 +1883,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(review.value, "isolated");
   });
 
-  it("rejects isolated review when the selected agent harness cannot run it", () => {
+  it("rejects review modes that the selected agent harnesses cannot run", () => {
     const result = runCli([
       "install",
       "--json",
@@ -1654,7 +1895,59 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(result.status, 2, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
-    assert.match(parsed.error.likelyCause, /Isolated review is not available/);
+    assert.match(parsed.error.likelyCause, /Isolated review requires another selected, installed agent harness/);
+
+    const host = runCli([
+      "install",
+      "--json",
+      "--host",
+      "cursor",
+      "--review-mode",
+      "host"
+    ]);
+    assert.equal(host.status, 2, host.stderr);
+    assert.match(JSON.parse(host.stdout).error.likelyCause, /Host review is not available for the primary agent harness/);
+
+    const executableRoot = mkdtempSync(path.join(tmpdir(), "qube-install-review-cli-"));
+    const codexBin = createExecutableStub(
+      executableRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const executablePath = `${codexBin}${path.delimiter}${path.dirname(process.execPath)}`;
+    const missingIsolatedCli = runCli([
+      "install",
+      "--json",
+      "--host",
+      "codex,grok-build",
+      "--work-provider",
+      "github",
+      "--review-mode",
+      "isolated",
+    ], { env: { PATH: executablePath, Path: executablePath } });
+    assert.equal(missingIsolatedCli.status, 2, missingIsolatedCli.stderr);
+    const missingIsolatedCause = JSON.parse(missingIsolatedCli.stdout).error.likelyCause;
+    assert.match(missingIsolatedCause, /Isolated review requires another selected, installed agent harness/);
+    assert.match(missingIsolatedCause, /grok-build/);
+  });
+
+  it("rejects a GitLab setup with no available Review source", () => {
+    const result = runCli([
+      "install",
+      "--json",
+      "--host",
+      "cursor",
+      "--work-provider",
+      "gitlab",
+    ]);
+
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(
+      parsed.error.likelyCause,
+      "No Review source is available for the selected Agent harnesses and Issue tracker. Select and install a compatible Review harness, or choose an Issue tracker with an external Review service.",
+    );
   });
 
   it("rejects parent-directory evidence roots and the custom token", () => {
@@ -1677,6 +1970,25 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.match(JSON.parse(custom.stdout).error.likelyCause, /explicit directory/);
   });
 
+  it("quotes a custom evidence path as one literal displayed argument", () => {
+    const evidenceRoot = String.raw`C:\UI $audit`;
+    const result = runCli([
+      "install", "--yes", "--dry-run", "--json",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--ui-audit-evidence-root", evidenceRoot,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    const workspace = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "workspace-init");
+    const quotedEvidenceRoot = process.platform === "win32"
+      ? String.raw`--ui-audit-evidence-root "C:\UI $audit" --credit-warning`
+      : String.raw`--ui-audit-evidence-root 'C:\UI $audit' --credit-warning`;
+    assert.ok(workspace.command.includes(quotedEvidenceRoot), workspace.command);
+  });
+
   it("uses the repository package manager recommendation for --yes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-npm-lock-"));
     writeFileSync(path.join(root, "package-lock.json"), "{}\n");
@@ -1684,7 +1996,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.installPlan.selections.packageManager, "npm");
-    assert.equal(parsed.installPlan.selections.reviewMode, "isolated");
+    assert.equal(parsed.installPlan.selections.reviewMode, "host");
     assert.equal(parsed.installPlan.selections.uiAuditEvidenceRoot, "~/.qube/verification");
     assert.equal(parsed.installPlan.selections.creditWarning, true);
   });
@@ -1907,6 +2219,153 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
   });
 
+  it("applies every selected adapter while init receives only the first active providers and all guided choices", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-handoff-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github,gitlab",
+      "--ci-provider",
+      "github,jenkins",
+      "--review-mode",
+      "external",
+      "--ui-audit-evidence-root",
+      ".qube/ui-audit",
+      "--no-credit-warning",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+    ], { cwd: harness.cwd, env: harness.env });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(
+      readFileSync(harness.pmLog, "utf8").trim(),
+      qubePnpmAddCommandWith(
+        "@tjalve/qube-adapter-codex",
+        "@tjalve/qube-adapter-github",
+        "@tjalve/qube-adapter-gitlab",
+        "@tjalve/qube-adapter-jenkins",
+      ).replace(/^pnpm /, ""),
+    );
+    const workspaceCommand = parsed.installPlan.commands.find(step => step.stage === "workspace-init").command;
+    assert.equal(
+      workspaceCommand,
+      "qube init . --host codex --work-provider github --ci-provider github --review-mode external --ui-audit-evidence-root .qube/ui-audit --no-credit-warning",
+    );
+
+    const initCalls = readInstallInitCalls(harness);
+    assert.equal(initCalls.length, 2);
+    for (const args of initCalls) {
+      assert.equal(installArgumentValue(args, "--work-provider"), "github");
+      assert.equal(installArgumentValue(args, "--ci-provider"), "github");
+      assert.equal(installArgumentValue(args, "--review-mode"), "external");
+      assert.equal(installArgumentValue(args, "--ui-audit-evidence-root"), ".qube/ui-audit");
+      assert.equal(args.includes("--no-credit-warning"), true);
+      assert.doesNotMatch(args.join(" "), /--(?:work|ci)-provider [^ ]*,/);
+    }
+
+    const saved = JSON.parse(readFileSync(path.join(harness.cwd, ".qube", "init.json"), "utf8"));
+    assert.deepEqual(saved.workProviders, ["github"]);
+    assert.deepEqual(saved.ciProviders, ["github"]);
+    assert.equal(saved.review.mode, "external");
+    const workspace = parsed.apply.executed.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "executed");
+    assert.equal(workspace.init.ok, true);
+    assert.equal(workspace.init.command, "init");
+    assert.ok(Array.isArray(workspace.init.answers));
+    assert.ok(workspace.init.answers.every(answer => (
+      typeof answer.label === "string"
+      && typeof answer.value === "string"
+      && typeof answer.reason === "string"
+    )));
+  });
+
+  it("renders the successful public init completion after install apply", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-public-init-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--review-mode",
+      "external",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+    ], { cwd: harness.cwd, env: harness.env });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.match(result.stdout, /QUBE setup is complete\./);
+    assert.match(result.stdout, /Choices:/);
+    assert.match(result.stdout, /Start a new Codex session so it loads the setup\./);
+    assert.match(result.stdout, /In the new session, run `\$make-it-so`\./);
+  });
+
+  it("preserves the public guided-init failure reason and next action during install apply", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-init-failure-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--review-mode",
+      "external",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_AIE_INIT_FAILURE: "1" } });
+
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    const workspace = parsed.apply.executed.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "failed");
+    assert.equal(workspace.exitCode, 9);
+    assert.equal(workspace.failedAction, "Agent harness and Review setup");
+    assert.equal(workspace.error, "Executor setup is blocked.");
+    assert.equal(workspace.nextAction, "Repair the Executor setup and rerun qube init.");
+    assert.equal(workspace.init.ok, false);
+    assert.equal(workspace.init.command, "init");
+    assert.equal(workspace.init.failedAction, workspace.failedAction);
+    assert.equal(workspace.init.error, workspace.error);
+    assert.equal(workspace.init.nextAction, workspace.nextAction);
+    assert.doesNotMatch(workspace.error, /did not report success/i);
+    assert.equal(readInstallInitCalls(harness).length, 1);
+    assert.equal(existsSync(path.join(harness.cwd, ".qube", "init.json")), false);
+  });
+
   it("reads apply components from a Node companion after the child process closes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-silent-bin-"));
     const harness = createInstallApplyHarness(root);
@@ -1996,9 +2455,15 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.apply.registry.status, "plan-only");
     assert.match(parsed.apply.registry.reason, /publish-age gate/);
     assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
-    assert.equal(parsed.apply.executed.some(step => step.stage === "workspace-init" && step.status === "executed"), true);
+    assert.equal(parsed.apply.executed.some(step => step.stage === "workspace-init"), false);
+    assert.equal(parsed.apply.executed.some(step => step.stage === "provider-setup"), false);
+    assert.equal(parsed.apply.components, undefined);
+    assert.equal(parsed.apply.doctor, undefined);
+    assert.deepEqual(readInstallInitCalls(harness), []);
+    assert.deepEqual(readInstallProviderCalls(harness), []);
     assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
-    assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
+    assert.equal(existsSync(path.join(harness.cwd, ".qube", "init.json")), false);
+    assert.equal(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")), false);
   });
 
   it("downgrades apply to plan when registry metadata is unverifiable", () => {
@@ -2888,6 +3353,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.makeItSo.status, "dispatch");
     assert.equal(parsed.makeItSo.mappedCommand.component, "aib");
     assert.deepEqual(parsed.makeItSo.mappedCommand.args, ["init", ".", "--idea", "Ship a local notes CLI", "--json"]);
+    const displayedIntent = process.platform === "win32"
+      ? '"Ship a local notes CLI"'
+      : "'Ship a local notes CLI'";
+    assert.equal(parsed.makeItSo.mappedCommand.command, `qube aib init . --idea ${displayedIntent} --json`);
     assert.match(parsed.makeItSo.boundaries.join("\n"), /does not create a GitHub issue/);
 
     const forwarded = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--json", "--", "--acceptance", "fast"]);
@@ -3248,11 +3717,31 @@ describe("qube init orchestrator", () => {
     return index < 0 ? undefined : args[index + 1];
   }
 
+  function writeInitSetup(filePath, setup) {
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, `${JSON.stringify(setup, null, 2)}\n`, "utf8");
+  }
+
+  function completeInitSetup(overrides = {}) {
+    return {
+      version: 1,
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      continuousShipping: true,
+      umpire: { scope: "ready" },
+      quality: { stages: ["unit"] },
+      review: { mode: "host", harness: "codex", publisher: "user" },
+      mcp: { optIn: false },
+      ...overrides,
+    };
+  }
+
   it("fails closed when synchronous planning receives component-spanning init selections", () => {
     const cases = [
       ["--host", "codex,grok-build", "--work-provider", "gitlab", "--ci-provider", "jenkins"],
       ["--quality-stage", "security", "--umpire-scope", "custom"],
-      ["--review-mode", "isolated", "--review-harness", "grok-build", "--review-publisher", "github-app", "--config-scope", "global"],
+      ["--host", "codex,grok-build", "--review-mode", "isolated", "--review-harness", "grok-build", "--review-publisher", "github-app", "--config-scope", "global"],
     ];
 
     for (const selections of cases) {
@@ -3290,6 +3779,50 @@ describe("qube init orchestrator", () => {
     }
   });
 
+  it("returns public answers and keeps first-run human output free of component details", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-public-output-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-public-output-repo-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot);
+    const selections = [
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--review-publisher", "user",
+      "--yes",
+    ];
+
+    const jsonPlan = runCli([...selections, "--dry-run", "--json"], { cwd, env });
+    assert.equal(jsonPlan.status, 0, jsonPlan.stderr);
+    const parsed = JSON.parse(jsonPlan.stdout);
+    assert.equal(Array.isArray(parsed.answers), true);
+    assert.ok(parsed.answers.length >= 8);
+    assert.ok(parsed.answers.every(answer => (
+      typeof answer.id === "string"
+      && typeof answer.label === "string"
+      && typeof answer.value === "string"
+      && typeof answer.reason === "string"
+      && answer.reason.length > 0
+    )));
+    assert.ok(parsed.answers.every(answer => (
+      JSON.stringify(Object.keys(answer).sort()) === JSON.stringify(["id", "label", "reason", "value"])
+    )));
+
+    const human = runCli(selections, { cwd, env });
+    assert.equal(human.status, 0, human.stderr);
+    assert.equal(human.stderr, "");
+    assert.match(human.stdout, /^QUBE setup is complete\./);
+    assert.match(human.stdout, /Choices:/);
+    assert.match(human.stdout, /Reason:/);
+    assert.match(human.stdout, /Start a new Codex session/);
+    assert.match(human.stdout, /run `\$make-it-so`\./);
+    assert.doesNotMatch(human.stdout, /\b(?:aie|aib|aiq|aiu)\b/iu);
+    assert.doesNotMatch(human.stdout, /Components:|QUBE config|\.qube[\\/]init\.json|--(?:tool|surfaces|local-review-agent|isolated-review-agent)/u);
+  });
+
   it("rejects a global host update that repository config would override", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-override-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-override-repo-"));
@@ -3323,6 +3856,297 @@ describe("qube init orchestrator", () => {
     assert.equal(readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), "existing instructions\n");
   });
 
+  it("keeps a repository publisher-only update independent from the global review mode", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-repo-publisher-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-repo-publisher-repo-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot);
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({
+      review: { mode: "external", externalReviewers: ["coderabbit"], publisher: "user" },
+    }));
+
+    const result = runCli([
+      "init", ".",
+      "--review-publisher", "github-app",
+      "--config-scope", "repo",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.plan.resolved.review.mode, "external");
+    assert.equal(parsed.plan.resolved.review.publisher, "github-app");
+    assert.deepEqual(JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8")), {
+      version: 1,
+      review: { publisher: "github-app" },
+    });
+  });
+
+  it("keeps a global publisher-only update independent from repository review choices", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-publisher-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-publisher-repo-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot);
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({ review: undefined }));
+    writeInitSetup(repoQubeConfigPath(cwd), {
+      version: 1,
+      review: { mode: "external", externalReviewers: ["coderabbit"] },
+    });
+
+    const result = runCli([
+      "init", ".",
+      "--review-publisher", "github-app",
+      "--config-scope", "global",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.plan.resolved.review.mode, "external");
+    assert.equal(parsed.plan.resolved.review.publisher, "github-app");
+    const saved = JSON.parse(readFileSync(userQubeConfigPath(env.USERPROFILE), "utf8"));
+    assert.deepEqual(saved.review, { publisher: "github-app" });
+    assert.deepEqual(JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8")).review, {
+      mode: "external",
+      externalReviewers: ["coderabbit"],
+    });
+  });
+
+  it("does not copy repository review dependencies when the same global review source is repeated", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-source-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-source-repo-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot);
+    const globalPath = userQubeConfigPath(env.USERPROFILE);
+    writeInitSetup(globalPath, completeInitSetup({
+      review: { mode: "external", publisher: "user" },
+    }));
+    writeInitSetup(repoQubeConfigPath(cwd), {
+      version: 1,
+      review: { externalReviewers: ["coderabbit"] },
+    });
+    const before = readFileSync(globalPath, "utf8");
+
+    const result = runCli([
+      "init", ".",
+      "--review-mode", "external",
+      "--config-scope", "global",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.plan.config.operation, "skip");
+    assert.equal(readFileSync(globalPath, "utf8"), before);
+    assert.deepEqual(JSON.parse(readFileSync(globalPath, "utf8")).review, {
+      mode: "external",
+      publisher: "user",
+    });
+  });
+
+  it("normalizes an external reviewer and keeps a global host model pin cleared on rerun", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-external-source-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-external-source-repo-"));
+    const env = initEnv(packageRoot);
+    const stateful = { stateful: true };
+    createInitShims(packageRoot, { aie: stateful, aib: stateful, aiq: stateful, aiu: stateful });
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({
+      review: {
+        mode: "host",
+        harness: "codex",
+        publisher: "user",
+        models: ["codex:shared-review"],
+      },
+    }));
+    const args = [
+      "init", ".",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbitai",
+      "--yes",
+      "--json",
+    ];
+
+    const first = runCli(args, { cwd, env });
+    assert.equal(first.status, 0, first.stderr);
+    const firstPayload = JSON.parse(first.stdout);
+    assert.deepEqual(firstPayload.plan.resolved.review.externalReviewers, ["coderabbit"]);
+    assert.deepEqual(firstPayload.plan.resolved.review.models, []);
+    assert.equal(firstPayload.apply.changed, true);
+    const firstAieArgs = componentRows(firstPayload.plan).get("aie").args;
+    assert.equal(optionValue(firstAieArgs, "--review-agent"), "coderabbit");
+    assert.equal(optionValue(firstAieArgs, "--review-model"), undefined);
+    const configPath = repoQubeConfigPath(cwd);
+    assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")).review, {
+      mode: "external",
+      externalReviewers: ["coderabbit"],
+      models: [],
+    });
+    const firstConfig = readFileSync(configPath, "utf8");
+
+    const second = runCli(args, { cwd, env });
+    assert.equal(second.status, 0, second.stderr);
+    const secondPayload = JSON.parse(second.stdout);
+    assert.deepEqual(secondPayload.plan.resolved.review.models, []);
+    assert.equal(optionValue(componentRows(secondPayload.plan).get("aie").args, "--review-model"), undefined);
+    assert.equal(secondPayload.apply.changed, false);
+    assert.equal(readFileSync(configPath, "utf8"), firstConfig);
+    const aieApplyCalls = readInitCalls(packageRoot).filter(call => call.component === "aie" && call.phase === "apply");
+    assert.equal(aieApplyCalls.length, 2);
+    assert.ok(aieApplyCalls.every(call => !call.args.includes("--review-model")));
+  });
+
+  it("resets GitHub App publishing when a repository changes to GitLab", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-reset-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-reset-repo-"));
+    createInitShims(packageRoot);
+    writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup({
+      review: {
+        mode: "external",
+        externalReviewers: ["coderabbit"],
+        publisher: "github-app",
+      },
+    }));
+    const codexBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), codexBin);
+
+    const result = runCli([
+      "init", ".",
+      "--work-provider", "gitlab",
+      "--ci-provider", "gitlab",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.plan.resolved.workProviders, ["gitlab"]);
+    assert.equal(parsed.plan.resolved.review.mode, "host");
+    assert.equal(parsed.plan.resolved.review.publisher, "user");
+    assert.equal(parsed.plan.resolved.review.externalReviewers, undefined);
+    const aieArgs = componentRows(parsed.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-provider"), "gitlab");
+    assert.equal(optionValue(aieArgs, "--publisher"), undefined);
+    const saved = JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8"));
+    assert.deepEqual(saved.workProviders, ["gitlab"]);
+    assert.equal(saved.review.mode, "host");
+    assert.equal(saved.review.publisher, "user");
+    assert.equal(saved.review.externalReviewers, undefined);
+  });
+
+  it("applies sole dependent choices without prompting when a complete setup changes to GitLab", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-dependent-choice-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-dependent-choice-repo-"));
+    createInitShims(packageRoot);
+    writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup({
+      hosts: ["claude-code"],
+      review: {
+        mode: "external",
+        externalReviewers: ["coderabbit"],
+        publisher: "github-app",
+      },
+    }));
+
+    const result = runCli([
+      "init", ".",
+      "--work-provider", "gitlab",
+      "--ci-provider", "gitlab",
+      "--json",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.plan.resolved.continuousShipping, false);
+    assert.equal(parsed.plan.resolved.review.mode, "host");
+    assert.equal(parsed.plan.resolved.review.harness, "claude-code");
+    assert.deepEqual(parsed.plan.resolved.review.models, []);
+    assert.equal(parsed.plan.resolved.review.publisher, "user");
+    const answers = new Map(parsed.answers.map(answer => [answer.id, answer]));
+    assert.equal(answers.get("issue-tracker").value, "GitLab");
+    assert.equal(answers.get("automated-checks").value, "GitLab");
+    assert.equal(answers.get("continuous-shipping").value, "Off");
+    assert.equal(answers.get("review-source").value, "Primary-harness subagents");
+    assert.equal(answers.get("review-model").value, "Harness default (not pinned)");
+    assert.equal(answers.has("review-publisher"), false);
+    assert.ok([...answers.values()].every(answer => answer.reason.length > 0));
+    const saved = JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8"));
+    assert.deepEqual(saved.workProviders, ["gitlab"]);
+    assert.deepEqual(saved.ciProviders, ["gitlab"]);
+    assert.equal(saved.continuousShipping, false);
+    assert.equal(saved.review.mode, "host");
+    assert.deepEqual(saved.review.models, []);
+    assert.equal(saved.review.publisher, "user");
+    assert.equal(saved.review.externalReviewers, undefined);
+  });
+
+  it("rejects an explicit review publisher when GitLab publishes reviews", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-publisher-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-publisher-repo-"));
+    createInitShims(packageRoot);
+    const configPath = repoQubeConfigPath(cwd);
+    writeInitSetup(configPath, completeInitSetup({
+      workProviders: ["gitlab"],
+      ciProviders: ["gitlab"],
+      continuousShipping: false,
+    }));
+    const before = readFileSync(configPath, "utf8");
+
+    const result = runCli([
+      "init", ".",
+      "--review-publisher", "github-app",
+      "--yes",
+      "--json",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.failedAction, "Repository setup choices");
+    assert.equal(parsed.error, "Review publisher selection applies only when GitHub publishes reviews.");
+    assert.equal(parsed.nextAction, "Correct the Review selection, then rerun qube init.");
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(readFileSync(configPath, "utf8"), before);
+  });
+
+  it("rebinds a preserved live model when the primary Review host changes", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-model-rebind-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-model-rebind-repo-"));
+    createInitShims(packageRoot);
+    writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup({
+      review: {
+        mode: "host",
+        harness: "codex",
+        publisher: "user",
+        models: ["codex:shared-review"],
+      },
+    }));
+    const grokBin = createExecutableStub(packageRoot, "grok", "Available models:\n- shared-review\n");
+    const env = addExecutablePath(initEnv(packageRoot), grokBin);
+
+    const result = runCli([
+      "init", ".",
+      "--host", "grok-build",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.plan.resolved.hosts, ["grok-build"]);
+    assert.deepEqual(parsed.plan.resolved.review.models, ["grok-build:shared-review"]);
+    const aieArgs = componentRows(parsed.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--local-review-agent"), "grok-build");
+    assert.equal(optionValue(aieArgs, "--review-model"), "grok-build:shared-review");
+    const saved = JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8"));
+    assert.deepEqual(saved.review.models, ["grok-build:shared-review"]);
+    assert.equal(saved.review.models.includes("codex:shared-review"), false);
+  });
+
   it("rejects an exact linked repository config before child planning or apply", (context) => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-root-"));
     const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-workspace-"));
@@ -3335,6 +4159,8 @@ describe("qube init orchestrator", () => {
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
       "--yes",
       "--json",
     ];
@@ -3401,16 +4227,20 @@ describe("qube init orchestrator", () => {
       },
     });
 
+    const reviewBin = createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const env = addExecutablePath(initEnv(packageRoot), reviewBin);
     const result = runCli([
       "init", path.join("repo", "packages", "app"),
       "--host", "cursor,grok-build,codex,cursor",
       "--work-provider", "github",
       "--ci-provider", "github",
       "--quality-stage", "maintainability",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
       "--yes",
       "--dry-run",
       "--json",
-    ], { cwd: outer, env: initEnv(packageRoot) });
+    ], { cwd: outer, env });
 
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
@@ -3473,7 +4303,15 @@ describe("qube init orchestrator", () => {
       },
     });
 
-    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--yes",
+      "--json",
+    ], {
       cwd,
       env: initEnv(packageRoot),
     });
@@ -3503,7 +4341,15 @@ describe("qube init orchestrator", () => {
       },
     });
 
-    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--yes",
+      "--json",
+    ], {
       cwd,
       env: initEnv(packageRoot),
     });
@@ -3529,7 +4375,50 @@ describe("qube init orchestrator", () => {
     assert.equal(saved.continuousShipping, true);
     assert.deepEqual(saved.umpire, { scope: "ready" });
     assert.deepEqual(saved.quality, { stages: ["unit"] });
-    assert.deepEqual(saved.review, { mode: "host", harness: "codex", publisher: "user" });
+    assert.equal(saved.review.mode, "external");
+    assert.deepEqual(saved.review.externalReviewers, ["coderabbit"]);
+    assert.equal(saved.review.publisher, "user");
+    assert.deepEqual(saved.review.models, []);
+    assert.equal(saved.review.harness, undefined);
+  });
+
+  it("reports the exact failed action, reason, and next action in human output", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-human-failure-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-human-failure-repo-"));
+    createInitShims(packageRoot, {
+      aiq: {
+        apply: {
+          ok: false,
+          command: "config",
+          error: { message: "Quality configuration is read-only." },
+          nextAction: "Make the Quality configuration writable and rerun qube init.",
+        },
+        exitCodes: { apply: 9 },
+      },
+    });
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--yes",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 9);
+    assert.equal(result.stdout, "");
+    assert.equal(
+      result.stderr,
+      [
+        "Action: Quality checks setup",
+        "Reason: Quality configuration is read-only.",
+        "Next action: Make the Quality configuration writable and rerun qube init.",
+        "",
+      ].join("\n"),
+    );
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, /QUBE setup is complete|Start a new .* session/u);
   });
 
   it("rejects an invalid QUBE intent path before child planning", () => {
@@ -3573,6 +4462,8 @@ describe("qube init orchestrator", () => {
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
       "--review-publisher", "github-app",
       "--yes",
       "--dry-run",
@@ -3590,9 +4481,59 @@ describe("qube init orchestrator", () => {
     assert.ok(readInitCalls(packageRoot).every(call => call.phase === "plan"));
   });
 
+  it("shows the GitHub App follow-up and publisher readiness after apply", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-app-readiness-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-app-readiness-repo-"));
+    createInitShims(packageRoot, {
+      aie: {
+        plan: {
+          ok: true,
+          command: "init",
+          actions: [],
+          postInitActions: [{
+            id: "github-app",
+            command: "qube review setup github-app",
+            description: "Set up the QUBE Reviewer GitHub App after initialization.",
+          }],
+        },
+        reviewDoctor: {
+          ok: true,
+          command: "review doctor",
+          readiness: "degraded",
+          nextAction: "Authorize the QUBE Reviewer App, then run `qube review doctor` again.",
+        },
+      },
+    });
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--review-publisher", "github-app",
+      "--yes",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.match(result.stdout, /GitHub review publisher: needs attention\./);
+    assert.match(result.stdout, /Next actions:[\s\S]*Run `qube review setup github-app`\./);
+    assert.match(result.stdout, /Authorize the QUBE Reviewer App, then run `qube review doctor` again\./);
+    assert.equal(readInitCalls(packageRoot).at(-1)?.phase, "reviewDoctor");
+  });
+
   it("forwards host and isolated review harnesses to Executor", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-review-root-"));
     createInitShims(packageRoot);
+    createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const reviewBin = createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const reviewEnv = addExecutablePath(initEnv(packageRoot), reviewBin);
 
     const hostRepo = mkdtempSync(path.join(tmpdir(), "qube-init-host-review-"));
     const host = runCli([
@@ -3603,11 +4544,18 @@ describe("qube init orchestrator", () => {
       "--yes",
       "--dry-run",
       "--json",
-    ], { cwd: hostRepo, env: initEnv(packageRoot) });
+    ], { cwd: hostRepo, env: reviewEnv });
     assert.equal(host.status, 0, host.stderr);
-    const hostPlan = JSON.parse(host.stdout).plan;
+    const hostPayload = JSON.parse(host.stdout);
+    const hostPlan = hostPayload.plan;
+    const hostModelAnswer = hostPayload.answers.find(answer => answer.id === "review-model");
+    const hostModelArgument = optionValue(componentRows(hostPlan).get("aie").args, "--review-model");
     assert.equal(hostPlan.resolved.review.harness, "codex");
     assert.equal(optionValue(componentRows(hostPlan).get("aie").args, "--local-review-agent"), "codex");
+    assert.ok(hostModelAnswer);
+    assert.equal(hostModelAnswer.value, "shared-review");
+    assert.equal(hostModelArgument, "codex:shared-review");
+    assert.equal(hostModelArgument, `codex:${hostModelAnswer.value}`);
 
     const isolatedRepo = mkdtempSync(path.join(tmpdir(), "qube-init-isolated-review-"));
     const isolated = runCli([
@@ -3619,11 +4567,66 @@ describe("qube init orchestrator", () => {
       "--yes",
       "--dry-run",
       "--json",
-    ], { cwd: isolatedRepo, env: initEnv(packageRoot) });
+    ], { cwd: isolatedRepo, env: reviewEnv });
     assert.equal(isolated.status, 0, isolated.stderr);
     const isolatedPlan = JSON.parse(isolated.stdout).plan;
     assert.equal(isolatedPlan.resolved.review.harness, "grok-build");
     assert.equal(optionValue(componentRows(isolatedPlan).get("aie").args, "--isolated-review-agent"), "grok-build");
+  });
+
+  it("fails before child planning when a supported Review host catalog is unavailable", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-catalog-missing-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-catalog-missing-repo-"));
+    createInitShims(packageRoot);
+    const env = initEnv(packageRoot, { PATH: "", Path: "" });
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "host",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.failedAction, "Repository setup choices");
+    assert.equal(
+      parsed.error,
+      "Review model: codex review route is unavailable. Expose the authenticated codex CLI on PATH; QUBE does not install or authenticate model hosts.",
+    );
+    assert.equal(parsed.nextAction, "Make the selected harness live model list available, then rerun qube init.");
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+  });
+
+  it("reports when Cursor and GitLab have no available Review source", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-review-source-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-review-source-repo-"));
+    createInitShims(packageRoot);
+    const env = initEnv(packageRoot, { PATH: "", Path: "" });
+
+    const result = runCli([
+      "init", ".",
+      "--host", "cursor",
+      "--work-provider", "gitlab",
+      "--ci-provider", "gitlab",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 2, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.failedAction, "Repository setup choices");
+    assert.equal(parsed.error, "Review: no available Review source matches the selected Agent harnesses and issue tracker.");
+    assert.equal(
+      parsed.nextAction,
+      "Select and install a compatible Review harness, or choose an issue tracker with an available external review service.",
+    );
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
   });
 
   it("rejects review harnesses that violate the selected review mode", () => {
@@ -3694,13 +4697,21 @@ describe("qube init orchestrator", () => {
     }
   });
 
-  it("uses one detected CI provider and treats conflicting markers as ambiguous", () => {
+  it("uses one detected CI provider and the guided recommendation for conflicting markers under --yes", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-ci-root-"));
     createInitShims(packageRoot);
 
     const gitlabRepo = mkdtempSync(path.join(tmpdir(), "qube-init-gitlab-"));
     writeFileSync(path.join(gitlabRepo, ".gitlab-ci.yml"), "test: {}\n", "utf8");
-    const detected = runCli(["init", ".", "--host", "codex", "--yes", "--dry-run", "--json"], {
+    const detected = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], {
       cwd: gitlabRepo,
       env: initEnv(packageRoot),
     });
@@ -3714,15 +4725,24 @@ describe("qube init orchestrator", () => {
     mkdirSync(path.join(ambiguousRepo, ".github", "workflows"), { recursive: true });
     writeFileSync(path.join(ambiguousRepo, ".github", "workflows", "ci.yml"), "name: ci\n", "utf8");
     writeFileSync(path.join(ambiguousRepo, ".gitlab-ci.yml"), "test: {}\n", "utf8");
-    const ambiguous = runCli(["init", ".", "--host", "codex", "--yes", "--dry-run", "--json"], {
+    const ambiguous = runCli([
+      "init", ".",
+      "--host", "codex",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], {
       cwd: ambiguousRepo,
       env: initEnv(packageRoot),
     });
-    assert.equal(ambiguous.status, 2, ambiguous.stderr);
+    assert.equal(ambiguous.status, 0, ambiguous.stderr);
     const ambiguousPayload = JSON.parse(ambiguous.stdout);
-    assert.equal(ambiguousPayload.ok, false);
-    assert.match(ambiguousPayload.error, /multiple CI providers were detected: github, gitlab/);
-    assert.match(ambiguousPayload.error, /--ci-provider/);
+    assert.equal(ambiguousPayload.ok, true);
+    assert.deepEqual(ambiguousPayload.plan.resolved.ciProviders, ["github"]);
+    assert.equal(ambiguousPayload.plan.sources.ciProviders, "default");
+    assert.equal(optionValue(componentRows(ambiguousPayload.plan).get("aie").args, "--ci-provider"), "github");
   });
 
   it("reports an unchanged second apply without rewriting its QUBE config", () => {
@@ -3730,7 +4750,12 @@ describe("qube init orchestrator", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-noop-cwd-"));
     const stateful = { stateful: true };
     createInitShims(packageRoot, { aie: stateful, aib: stateful, aiq: stateful, aiu: stateful });
-    const env = initEnv(packageRoot);
+    const codexBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), codexBin);
     const args = [
       "init", ".",
       "--host", "codex",
@@ -3748,15 +4773,28 @@ describe("qube init orchestrator", () => {
     assert.equal(firstPayload.plan.config.operation, "create");
     assert.equal(firstPayload.apply.changed, true);
     assert.deepEqual(firstPayload.apply.steps.map(step => step.id), ["aie", "aib", "aiq", "aiu", "labels"]);
+    const firstModelAnswer = firstPayload.answers.find(answer => answer.id === "review-model");
+    const firstModelArgument = optionValue(componentRows(firstPayload.plan).get("aie").args, "--review-model");
+    assert.ok(firstModelAnswer);
+    assert.equal(firstModelAnswer.value, "shared-review");
+    assert.deepEqual(firstPayload.plan.resolved.review.models, ["codex:shared-review"]);
+    assert.equal(firstModelArgument, `codex:${firstModelAnswer.value}`);
 
     const configPath = path.join(cwd, ".qube", "init.json");
     const firstConfig = readFileSync(configPath, "utf8");
+    assert.deepEqual(JSON.parse(firstConfig).review.models, ["codex:shared-review"]);
     const second = runCli(args, { cwd, env });
     assert.equal(second.status, 0, second.stderr);
     const secondPayload = JSON.parse(second.stdout);
     assert.equal(secondPayload.plan.config.operation, "skip");
     assert.equal(secondPayload.apply.changed, false);
     assert.ok(secondPayload.apply.steps.every(step => step.status === "unchanged"));
+    assert.equal(readFileSync(configPath, "utf8"), firstConfig);
+
+    const quiet = runCli(args.filter(arg => arg !== "--json"), { cwd, env });
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.equal(quiet.stdout, "QUBE setup is already current.\n");
+    assert.equal(quiet.stderr, "");
     assert.equal(readFileSync(configPath, "utf8"), firstConfig);
   });
 
@@ -3767,14 +4805,32 @@ describe("qube init orchestrator", () => {
     assert.notEqual(unsupported.status, 0);
     const unsupportedPayload = JSON.parse(unsupported.stdout);
     assert.equal(unsupportedPayload.ok, false);
-    assert.match(unsupportedPayload.error.likelyCause, /Unsupported choice "bogus-host"/);
+    assert.equal(unsupportedPayload.command, "init");
+    assert.equal(unsupportedPayload.failedAction, "Repository setup choices");
+    assert.equal(unsupportedPayload.error, "Agent harnesses: includes unavailable choice: bogus-host.");
+    assert.equal(unsupportedPayload.nextAction, "Correct the selected setup value, then rerun qube init.");
 
-    const unanswered = runCli(["init", ".", "--json"], {
-      env: initEnv(mkdtempSync(path.join(tmpdir(), "qube-init-prompt-root-"))),
-    });
+    const promptRoot = mkdtempSync(path.join(tmpdir(), "qube-init-prompt-root-"));
+    const promptCwd = mkdtempSync(path.join(tmpdir(), "qube-init-prompt-cwd-"));
+    const promptEnv = initEnv(promptRoot);
+    const unanswered = runCli(["init", ".", "--json"], { cwd: promptCwd, env: promptEnv });
     assert.equal(unanswered.status, 2);
     const unansweredPayload = JSON.parse(unanswered.stdout);
-    assert.equal(unansweredPayload.error.kind, "prompt-blocked");
+    assert.equal(unansweredPayload.failedAction, "Repository setup choices");
+    assert.equal(unansweredPayload.error, "Guided setup still needs an answer for agent-harnesses.");
+    assert.equal(unansweredPayload.nextAction, "Rerun qube init in an interactive terminal, or supply the matching command option.");
+
+    const human = runCli(["init", "."], { cwd: promptCwd, env: promptEnv });
+    assert.equal(human.status, 2);
+    assert.equal(human.stdout, "");
+    assert.equal(human.stderr, [
+      "Action: Repository setup choices",
+      "Reason: Guided setup still needs an answer for agent-harnesses.",
+      "Next action: Rerun qube init in an interactive terminal, or supply the matching command option.",
+      "",
+    ].join("\n"));
+    assert.deepEqual(readInitCalls(promptRoot), []);
+    assert.equal(existsSync(repoQubeConfigPath(promptCwd)), false);
   });
 });
 
@@ -3943,6 +4999,9 @@ describe("host toolkit manifests", () => {
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--review-publisher", "user",
       "--yes",
       "--json",
     ], { cwd: outer, env });
@@ -4050,6 +5109,7 @@ describe("host toolkit manifests", () => {
     createInitShims(packageRoot);
     const planned = runCli([
       "init", ".", "--host", "grok-build", "--work-provider", "github", "--ci-provider", "github",
+      "--review-mode", "external", "--external-reviewer", "coderabbit",
       "--yes", "--dry-run", "--json",
     ], { cwd, env: initEnv(packageRoot) });
     assert.equal(planned.status, 0, planned.stderr);
@@ -4096,6 +5156,7 @@ describe("host toolkit manifests", () => {
 
     const implicit = runCli([
       "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
+      "--review-mode", "external", "--external-reviewer", "coderabbit",
       "--yes", "--json",
     ], { cwd, env });
     assert.equal(implicit.status, 0, implicit.stderr);
@@ -4109,6 +5170,7 @@ describe("host toolkit manifests", () => {
 
     const opted = runCli([
       "init", ".", "--host", "opencode", "--work-provider", "github", "--ci-provider", "github",
+      "--review-mode", "external", "--external-reviewer", "coderabbit",
       "--yes", "--mcp", "--json",
     ], { cwd, env });
     assert.equal(opted.status, 0, opted.stderr);

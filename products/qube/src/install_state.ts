@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { getAgentHostProfileSync } from "@tjalve/aie";
 import { AGENT_HOST_IDS, type AgentHostId } from "@tjalve/qube-core";
 
+import { initRecordPath, parseInitRecord } from "./host_toolkit.js";
+import { readQubeInitConfig } from "./init_config.js";
 import { selectedAdapterInstallSpecs } from "./install_packages.js";
 import { packageName, packageVersion } from "./package.js";
 
@@ -16,6 +18,9 @@ export interface InstallStateSelections {
   readonly hosts: readonly string[];
   readonly workProviders: readonly string[];
   readonly ciProviders: readonly string[];
+  readonly reviewMode: "external" | "host" | "isolated";
+  readonly uiAuditEvidenceRoot: string;
+  readonly creditWarning: boolean;
 }
 
 export interface InstallStepState {
@@ -181,7 +186,32 @@ function probePackageInstall(cwd: string, selections: InstallStateSelections): I
 }
 
 function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): InstallStepState {
-  const configPath = resolveContained(cwd, ".qube/aie/config.json");
+  const recordPath = initRecordPath(cwd);
+  const repoRoot = dirname(dirname(recordPath));
+  if (!existsSync(recordPath)) {
+    return { stage: "workspace-init", status: "missing", reason: "No .qube/init.json repository setup record is present." };
+  }
+  const recordResult = readQubeInitConfig(recordPath);
+  const record = recordResult.status === "valid" ? parseInitRecord(recordResult.config) : null;
+  if (!record) {
+    return { stage: "workspace-init", status: "missing", reason: ".qube/init.json is unreadable, unsafe, or incomplete." };
+  }
+  const activeWorkProviders = selections.workProviders[0] ? [selections.workProviders[0]] : [];
+  const activeCiProviders = selections.ciProviders[0] ? [selections.ciProviders[0]] : [];
+  if (!sameStrings(record.hosts, selections.hosts)) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured Agent harnesses do not match the selected harnesses." };
+  }
+  if (!sameStrings(record.workProviders, activeWorkProviders)) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured Issue tracker does not match the first selected work provider." };
+  }
+  if (!sameStrings(record.ciProviders, activeCiProviders)) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured Automated checks provider does not match the first selected CI provider." };
+  }
+  if (record.review.mode !== selections.reviewMode) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured Review source does not match the selected Review source." };
+  }
+
+  const configPath = resolveContained(repoRoot, ".qube/aie/config.json");
   if (!existsSync(configPath)) {
     return { stage: "workspace-init", status: "missing", reason: "No .qube/aie/config.json is present." };
   }
@@ -194,21 +224,36 @@ function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): In
     return { stage: "workspace-init", status: "missing", reason: ".qube/aie/config.json is missing or not a current-version config." };
   }
   const providers = isRecord(parsed.providers) ? parsed.providers : null;
-  const workKind = providers && isRecord(providers.work) && typeof providers.work.kind === "string" ? providers.work.kind : null;
-  const ciKind = providers && isRecord(providers.ci) && typeof providers.ci.kind === "string" ? providers.ci.kind : workKind;
-  if (!workKind) {
-    return { stage: "workspace-init", status: "missing", reason: ".qube/aie/config.json does not name a work provider." };
+  const work = providers && isRecord(providers.work) ? providers.work : null;
+  const ci = providers && isRecord(providers.ci) ? providers.ci : null;
+  const reviewProvider = providers && isRecord(providers.review) ? providers.review : null;
+  const policy = isRecord(parsed.policy) ? parsed.policy : null;
+  const audit = policy && isRecord(policy.audit) ? policy.audit : null;
+  const instructions = policy && isRecord(policy.instructions) ? policy.instructions : null;
+  const reviews = policy && isRecord(policy.reviews) ? policy.reviews : null;
+  if (!work || !ci || !reviewProvider || !audit || !instructions || !reviews) {
+    return { stage: "workspace-init", status: "missing", reason: ".qube/aie/config.json does not contain the current provider, Review, audit, and instruction policy." };
   }
-  if (workKind && !selections.workProviders.includes(workKind)) {
-    return { stage: "workspace-init", status: "missing", reason: `Workspace work provider is ${workKind}, not one of the selected providers.` };
+  if (work.kind !== selections.workProviders[0]) {
+    return { stage: "workspace-init", status: "stale", reason: "Executor is not configured for the first selected Issue tracker." };
   }
-  if (ciKind && !selections.ciProviders.includes(ciKind)) {
-    return { stage: "workspace-init", status: "missing", reason: `Workspace CI provider is ${ciKind}, not one of the selected providers.` };
+  if (ci.kind !== selections.ciProviders[0]) {
+    return { stage: "workspace-init", status: "stale", reason: "Executor is not configured for the first selected Automated checks provider." };
+  }
+  const expectedReviewProvider = selections.workProviders[0] === "gitlab" ? "gitlab" : "github";
+  if (reviewProvider.kind !== expectedReviewProvider || reviews.mode !== selections.reviewMode) {
+    return { stage: "workspace-init", status: "stale", reason: "Executor Review setup does not match the selected provider and Review source." };
+  }
+  if (audit.evidenceRoot !== selections.uiAuditEvidenceRoot) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured UI audit evidence directory does not match the selected directory." };
+  }
+  if (instructions.noCreditWarning !== selections.creditWarning) {
+    return { stage: "workspace-init", status: "stale", reason: "The configured attribution warning policy does not match the selected policy." };
   }
   const targets = hostSetupTargets(selections.hosts);
   let stale = false;
   for (const target of targets) {
-    const path = resolveContained(cwd, target);
+    const path = resolveContained(repoRoot, target);
     if (!existsSync(path)) {
       return { stage: "workspace-init", status: "missing", reason: `Managed instruction file ${target} is missing.` };
     }
@@ -221,15 +266,20 @@ function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): In
   if (stale) {
     return { stage: "workspace-init", status: "stale", reason: "A managed instruction section is present but its checksum does not match the section body." };
   }
-  return { stage: "workspace-init", status: "satisfied", reason: "Workspace config exists and selected host instruction sections are current." };
+  return { stage: "workspace-init", status: "satisfied", reason: "Repository choices and selected Agent harness instructions are current." };
+}
+
+function sameStrings(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
 function probeProviderSetup(cwd: string, selections: InstallStateSelections): InstallStepState {
-  const needsGithubLabels = selections.workProviders.includes("github") || selections.ciProviders.includes("github");
+  const needsGithubLabels = selections.workProviders[0] === "github" || selections.ciProviders[0] === "github";
   if (!needsGithubLabels) {
     return { stage: "provider-setup", status: "satisfied", reason: "No provider setup command is required for the current selections." };
   }
-  const configPath = resolveContained(cwd, ".qube/aie/config.json");
+  const repoRoot = dirname(dirname(initRecordPath(cwd)));
+  const configPath = resolveContained(repoRoot, ".qube/aie/config.json");
   if (!existsSync(configPath)) {
     return { stage: "provider-setup", status: "missing", reason: "GitHub labels setup still needs a configured workspace." };
   }

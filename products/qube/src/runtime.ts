@@ -9,11 +9,18 @@ import { createCliError } from "@tjalve/qube-cli/errors";
 import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { promptConfirm } from "@tjalve/qube-cli/prompts";
+import { evaluatePromptGate, promptConfirm } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
-import { getAgentHostProfileSync, listInitExternalReviewers } from "@tjalve/aie";
+import {
+  detectInstalledReviewHostsOnPath,
+  getAgentHostProfileSync,
+  listHostModels,
+  listInitExternalReviewers,
+} from "@tjalve/aie";
+import { aiqStageMetadata } from "@tjalve/aiq/config";
+import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
 import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 import { AGENT_HOST_IDS, qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
 
@@ -32,7 +39,6 @@ import {
 import {
   QUBE_REVIEW_MODES,
   QUBE_REVIEW_PUBLISHERS,
-  QUBE_UMPIRE_SCOPES,
   configForQubeScope,
   mergeQubeInitConfigs,
   readQubeInitConfig,
@@ -46,13 +52,36 @@ import {
   type QubeReviewPublisher,
   type QubeUmpireScope,
 } from "./init_config.js";
+import {
+  publicInitActionLabel,
+  renderInitFailure,
+  renderInitOutput,
+  type InitPublisherReadiness,
+  type PublicInitAnswer,
+} from "./init_output.js";
+import {
+  GUIDED_INIT_UNPINNED_MODEL,
+  buildGuidedInitQuestions,
+  normalizeGuidedInitAnswers,
+  type GuidedHarnessChoice,
+  type GuidedInitAnswers,
+  type GuidedInitCapabilities,
+  type GuidedInitChoice,
+  type GuidedInitNormalization,
+  type GuidedInitQuestion,
+  type GuidedInitQuestionId,
+  type GuidedIssueTrackerChoice,
+  type GuidedReviewModelCapability,
+  type GuidedReviewSource,
+} from "./init_questions.js";
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
-import { buildShellCommandPlan } from "./process_launch.js";
+import { buildShellCommandPlan, quoteShellArgument } from "./process_launch.js";
 import {
   buildInstallQuestions,
   DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
+  hostReviewAvailable,
   installQuestionGuideComplete,
   invalidInstallGuideFlag,
   isolatedReviewAvailable,
@@ -105,7 +134,7 @@ const dryRunFlag = defineFlag({
 const yesFlag = defineFlag({
   name: "yes",
   short: "y",
-  description: "Use safe defaults for non-interactive installer decisions.",
+  description: "Use the recommended answers without prompting.",
   type: "boolean"
 });
 const offlineFlag = defineFlag({
@@ -976,14 +1005,14 @@ const forceFlag = defineFlag({
 });
 const defaultsFlag = defineFlag({
   name: "defaults",
-  description: "Use default repository policy values without prompting.",
+  description: "Use the same recommended answers as the guided flow without prompting.",
   type: "boolean"
 });
 
 const initCommand = defineCommand({
   kind: "command",
   name: "init",
-  description: "Initialize QUBE workspace setup by composing each installed component's init through its init capability contract.",
+  description: "Guide repository setup, apply the complete QUBE system, and show how to start work.",
   arguments: [
     defineArgument({
       name: "target",
@@ -999,22 +1028,22 @@ const initCommand = defineCommand({
     defaultsFlag,
     defineFlag({
       name: "host",
-      description: `Comma-separated agent harnesses to initialize. Default: codex. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      description: `Comma-separated Agent harnesses. The first harness is primary. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
       name: "work-provider",
-      description: `Comma-separated work providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
+      description: `Issue tracker. Use one of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
       name: "ci-provider",
-      description: `Comma-separated CI providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
+      description: `Provider for Automated checks (CI). Use one of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
       name: "mcp",
-      description: "Opt in to host MCP wiring for exploratory reading. Default: off. Provider access stays on qube commands.",
+      description: "Allow selected Agent harnesses to use configured MCP connections for read-only exploration. Default: off.",
       type: "boolean",
       negatable: true
     }),
@@ -1026,30 +1055,30 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "continuous-shipping",
-      description: "Let QUBE complete the development cycle and continue with the next Ready issue. Default: on.",
+      description: "Let QUBE complete the development cycle and continue with the next Ready issue.",
       type: "boolean",
       negatable: true
     }),
     defineFlag({
       name: "umpire-scope",
-      description: "Choose what Umpire may do after the current issue: Ready issues, the standard quality set, or a configured custom set.",
+      description: "Choose what Umpire may do after the current issue: Ready issues only, standard post-queue work, or a configured custom set.",
       type: "option",
-      options: [...QUBE_UMPIRE_SCOPES]
+      options: [...AIU_POST_ISSUE_SCOPES]
     }),
     defineFlag({
       name: "quality-stage",
-      description: "Comma-separated Quality stages. One stage includes all earlier stages; multiple stages run exactly those stages.",
+      description: "Comma-separated Quality checks. One choice includes all earlier checks; multiple choices run exactly those checks.",
       type: "string"
     }),
     defineFlag({
       name: "review-mode",
-      description: "Choose review cost source: an external reviewer, subagents in the primary harness, or isolated agents in another harness.",
+      description: "Choose the account or service used for Review: an external service, the primary Agent harness, or another selected, installed Agent harness.",
       type: "option",
       options: [...QUBE_REVIEW_MODES]
     }),
     defineFlag({
       name: "review-harness",
-      description: "Agent harness that runs isolated review. It must differ from the primary harness and support isolated review.",
+      description: "Another selected, installed Agent harness that runs Review. It must differ from the primary harness and support this review source.",
       type: "string"
     }),
     defineFlag({
@@ -1065,12 +1094,12 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "ui-audit-evidence-root",
-      description: "UI audit evidence root forwarded to Executor init.",
+      description: "Directory for manual UI audit evidence.",
       type: "string"
     }),
     defineFlag({
       name: "credit-warning",
-      description: "Attribution hygiene policy forwarded to Executor init.",
+      description: "Require attribution warnings in generated Agent harness instructions.",
       type: "boolean",
       negatable: true
     })
@@ -1088,7 +1117,10 @@ const initCommand = defineCommand({
     noColor: true,
     nonInteractive: true,
     ttyPrompt: true
-  }
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files", "local-config", "external-service")
+  })
 });
 
 const directCommandDefinitions: readonly DirectQubeCommand[] = [
@@ -1772,34 +1804,644 @@ function initConfigError(source: "user-global" | "repository", result: ReturnTyp
     : undefined;
 }
 
-function initExplicitConfig(flags: Readonly<Record<string, unknown>>, interactiveAnswers: {
-  readonly hosts?: readonly string[];
-  readonly workProviders?: readonly string[];
-  readonly ciProviders?: readonly string[];
-} = {}): QubeInitConfig {
-  const explicitReviewMode = readOption<QubeReviewMode>(flags, "review-mode");
+const GUIDED_INIT_QUESTION_ORDER: readonly GuidedInitQuestionId[] = Object.freeze([
+  "agent-harnesses",
+  "issue-tracker",
+  "automated-checks",
+  "continuous-shipping",
+  "umpire-scope",
+  "quality-checks",
+  "review-source",
+  "external-reviewer",
+  "review-harness",
+  "review-model",
+  "review-publisher",
+]);
+
+const GUIDED_REVIEW_TRACKERS = Object.freeze(["github", "linear", "jira"]);
+
+const GUIDED_QUALITY_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  e2e: "End-to-end tests",
+  lint: "Lint checks",
+  format: "Formatting checks",
+  typecheck: "Type checks",
+  unit: "Unit tests",
+  sloc: "Source file size",
+  complexity: "Complexity checks",
+  maintainability: "Maintainability checks",
+  coverage: "Coverage checks",
+  security: "Security checks",
+});
+
+function guidedQualityWarning(stage: (typeof aiqStageMetadata)[number]): string | undefined {
+  return "warning" in stage ? stage.warning?.message : undefined;
+}
+
+function guidedReviewSource(mode: QubeReviewMode | undefined): GuidedReviewSource | undefined {
+  if (mode === "host") return "primary";
+  if (mode === "isolated") return "harness";
+  return mode;
+}
+
+function guidedReviewMode(source: GuidedReviewSource): QubeReviewMode {
+  if (source === "primary") return "host";
+  if (source === "harness") return "isolated";
+  return "external";
+}
+
+function singleGuidedFlag(values: readonly string[] | undefined): string | undefined {
+  if (!values || values.length === 0) return undefined;
+  return values.length === 1 ? values[0] : values.join(",");
+}
+
+function guidedAnswersFromFlags(
+  flags: Readonly<Record<string, unknown>>,
+  registeredReviewers: readonly { readonly id: string; readonly aliases: readonly string[] }[] = Object.freeze([]),
+): GuidedInitAnswers {
+  const hosts = readOptionList<string>(flags, "host");
+  const workProviders = readOptionList<string>(flags, "work-provider");
+  const ciProviders = readOptionList<string>(flags, "ci-provider");
+  const reviewMode = readOption<QubeReviewMode>(flags, "review-mode");
   const reviewHarness = readOption<string>(flags, "review-harness");
-  const externalReviewers = readOptionList<QubeExternalReviewer>(flags, "external-reviewer");
+  const externalReviewers = readOptionList<string>(flags, "external-reviewer");
+  const canonicalExternalReviewers = externalReviewers
+    ? Object.freeze([...new Set(externalReviewers.map(raw => {
+        const normalized = raw.trim().replace(/^@/, "").toLowerCase();
+        const registered = registeredReviewers.find(reviewer => (
+          reviewer.id === normalized || reviewer.aliases.some(alias => alias.toLowerCase() === normalized)
+        ));
+        return registered?.id ?? raw;
+      }))])
+    : undefined;
   const publisher = readOption<QubeReviewPublisher>(flags, "review-publisher");
-  const config: QubeInitConfig = {
+  return Object.freeze({
+    ...(hosts ? { agentHarnesses: hosts } : {}),
+    ...(workProviders ? { issueTracker: singleGuidedFlag(workProviders) } : {}),
+    ...(ciProviders ? { automatedChecks: singleGuidedFlag(ciProviders) } : {}),
+    ...(typeof flags["continuous-shipping"] === "boolean"
+      ? { continuousShipping: flags["continuous-shipping"] as boolean }
+      : {}),
+    ...(typeof flags["umpire-scope"] === "string"
+      ? { umpireScope: flags["umpire-scope"] as QubeUmpireScope }
+      : {}),
+    ...(readOptionList<string>(flags, "quality-stage")
+      ? { qualityStages: readOptionList<string>(flags, "quality-stage")! }
+      : {}),
+    ...(reviewMode ? { reviewSource: guidedReviewSource(reviewMode) } : {}),
+    ...(canonicalExternalReviewers ? { externalReviewers: canonicalExternalReviewers } : {}),
+    ...(reviewHarness ? { reviewHarness } : {}),
+    ...(publisher ? { reviewPublisher: publisher } : {}),
+  });
+}
+
+function explicitGuidedReviewError(flags: Readonly<Record<string, unknown>>, inherited: QubeInitConfig): string | undefined {
+  const mode = readOption<QubeReviewMode>(flags, "review-mode");
+  const hosts = readOptionList<string>(flags, "host") ?? inherited.hosts;
+  const primary = hosts?.[0];
+  const harness = readOption<string>(flags, "review-harness");
+  const reviewers = readOptionList<string>(flags, "external-reviewer");
+  const publisher = readOption<QubeReviewPublisher>(flags, "review-publisher");
+  const workProvider = singleGuidedFlag(readOptionList<string>(flags, "work-provider"))
+    ?? inherited.workProviders?.[0]
+    ?? "github";
+  const reviewProvider = workProvider === "gitlab" ? "gitlab" : "github";
+  if (publisher && reviewProvider !== "github") {
+    return "Review publisher selection applies only when GitHub publishes reviews.";
+  }
+  if (!mode) return undefined;
+  if (mode === "external") {
+    if (reviewProvider !== "github") return `External reviewer services are not registered for the ${reviewProvider} review provider.`;
+    if (harness) return "External review does not use an agent harness.";
+    return undefined;
+  }
+  if (reviewers && reviewers.length > 0) return "External reviewer services require external review mode.";
+  if (!primary) return undefined;
+  if (!(AGENT_HOST_IDS as readonly string[]).includes(primary)) return undefined;
+  if (mode === "host") {
+    if (harness && harness !== primary) return `Primary-harness review must use ${primary}.`;
+    if (getAgentHostProfileSync(primary as AgentHostId).review.local.support === "unsupported") {
+      return `${primary} does not support native review subagents.`;
+    }
+    return undefined;
+  }
+  if (!harness) return undefined;
+  if (!hosts || !primary) return undefined;
+  if (harness === primary) return "Isolated review must use an agent harness other than the primary harness.";
+  if (!hosts.includes(harness)) return `Isolated review harness ${harness} is not in the selected agent harnesses.`;
+  if (!(AGENT_HOST_IDS as readonly string[]).includes(harness)) return undefined;
+  if (getAgentHostProfileSync(harness as AgentHostId).review.isolated.support === "unsupported") {
+    return `${harness} does not support isolated review.`;
+  }
+  return undefined;
+}
+
+function configuredReviewModel(config: QubeInitConfig, reviewHost: string | undefined): string | undefined {
+  if (!reviewHost) return undefined;
+  const prefix = `${reviewHost}:`;
+  const binding = config.review?.models?.find(value => value.startsWith(prefix));
+  return binding?.slice(prefix.length);
+}
+
+function guidedAnswersFromConfig(config: QubeInitConfig | null, detectedCi: readonly InstallCiProvider[] = []): GuidedInitAnswers {
+  if (!config) {
+    return detectedCi.length === 1
+      ? Object.freeze({ automatedChecks: detectedCi[0] })
+      : Object.freeze({});
+  }
+  const reviewSource = guidedReviewSource(config.review?.mode);
+  const reviewHarness = reviewSource === "primary"
+    ? config.hosts?.[0]
+    : reviewSource === "harness"
+      ? config.review?.harness
+      : undefined;
+  const reviewModel = configuredReviewModel(config, reviewHarness);
+  return Object.freeze({
+    ...(config.hosts ? { agentHarnesses: config.hosts } : {}),
+    ...(config.workProviders?.[0] ? { issueTracker: config.workProviders[0] } : {}),
+    ...(config.ciProviders?.[0]
+      ? { automatedChecks: config.ciProviders[0] }
+      : detectedCi.length === 1
+        ? { automatedChecks: detectedCi[0] }
+        : {}),
+    ...(config.continuousShipping === undefined ? {} : { continuousShipping: config.continuousShipping }),
+    ...(config.umpire?.scope ? { umpireScope: config.umpire.scope } : {}),
+    ...(config.quality?.stages ? { qualityStages: config.quality.stages } : {}),
+    ...(reviewSource ? { reviewSource } : {}),
+    ...(reviewSource === "external" && config.review?.externalReviewers
+      ? { externalReviewers: config.review.externalReviewers }
+      : {}),
+    ...(reviewSource === "harness" && reviewHarness ? { reviewHarness } : {}),
+    ...(reviewSource && reviewSource !== "external"
+      ? { reviewModel: reviewModel ?? null }
+      : {}),
+    ...(config.review?.publisher ? { reviewPublisher: config.review.publisher } : {}),
+  });
+}
+
+function defaultGuidedInitAnswers(recommendedReviewer: string | undefined): GuidedInitAnswers {
+  return Object.freeze({
+    agentHarnesses: Object.freeze(["codex"]),
+    issueTracker: "github",
+    continuousShipping: true,
+    umpireScope: "ready",
+    qualityStages: Object.freeze(["unit"]),
+    ...(recommendedReviewer ? { externalReviewers: Object.freeze([recommendedReviewer]) } : {}),
+    reviewPublisher: "user",
+  });
+}
+
+function normalizedExplicitGuidedAnswers(
+  explicit: GuidedInitAnswers,
+  resolved: NonNullable<GuidedInitNormalization["answers"]>,
+  current: GuidedInitAnswers,
+): GuidedInitAnswers {
+  const normalized: GuidedInitAnswers = Object.freeze({
+    ...(Object.hasOwn(explicit, "agentHarnesses") ? { agentHarnesses: resolved.agentHarnesses } : {}),
+    ...(Object.hasOwn(explicit, "issueTracker") ? { issueTracker: resolved.issueTracker } : {}),
+    ...(Object.hasOwn(explicit, "automatedChecks") ? { automatedChecks: resolved.automatedChecks } : {}),
+    ...(Object.hasOwn(explicit, "continuousShipping") ? { continuousShipping: resolved.continuousShipping } : {}),
+    ...(Object.hasOwn(explicit, "umpireScope") ? { umpireScope: resolved.umpireScope } : {}),
+    ...(Object.hasOwn(explicit, "qualityStages") ? { qualityStages: resolved.qualityStages } : {}),
+    ...(Object.hasOwn(explicit, "reviewSource") ? { reviewSource: resolved.reviewSource } : {}),
+    ...(Object.hasOwn(explicit, "externalReviewers") && resolved.externalReviewers
+      ? { externalReviewers: resolved.externalReviewers }
+      : {}),
+    ...(Object.hasOwn(explicit, "reviewHarness") && resolved.reviewHarness
+      ? { reviewHarness: resolved.reviewHarness }
+      : {}),
+    ...(Object.hasOwn(explicit, "reviewModel") ? { reviewModel: resolved.reviewModel ?? null } : {}),
+    ...(Object.hasOwn(explicit, "reviewPublisher") && resolved.reviewPublisher
+      ? { reviewPublisher: resolved.reviewPublisher }
+      : {}),
+  });
+  const reviewSourceChanged = Object.hasOwn(normalized, "reviewSource")
+    && normalized.reviewSource !== current.reviewSource;
+  const withReviewDependencies: GuidedInitAnswers = reviewSourceChanged
+    ? Object.freeze({
+        ...normalized,
+        ...(resolved.reviewSource === "external"
+          ? { externalReviewers: resolved.externalReviewers ?? Object.freeze([]), reviewModel: null }
+          : resolved.reviewSource === "harness"
+            ? { reviewHarness: resolved.reviewHarness, reviewModel: resolved.reviewModel ?? null }
+            : { reviewModel: resolved.reviewModel ?? null }),
+      })
+    : normalized;
+  const withPublisherReset: GuidedInitAnswers = current.reviewPublisher === "github-app" && resolved.reviewPublisher === undefined
+    ? Object.freeze({ ...withReviewDependencies, reviewPublisher: "user" })
+    : withReviewDependencies;
+  const reviewHarnessChanged = Object.hasOwn(withPublisherReset, "reviewHarness")
+    && withPublisherReset.reviewHarness !== current.reviewHarness;
+  const currentReviewHost = current.reviewSource === "primary"
+    ? current.agentHarnesses?.[0]
+    : current.reviewSource === "harness"
+      ? current.reviewHarness
+      : undefined;
+  const resolvedReviewHost = resolved.reviewSource === "primary"
+    ? resolved.agentHarnesses[0]
+    : resolved.reviewSource === "harness"
+      ? resolved.reviewHarness
+      : undefined;
+  const reviewHostChanged = (
+    Object.hasOwn(withPublisherReset, "agentHarnesses")
+    || Object.hasOwn(withPublisherReset, "reviewSource")
+    || Object.hasOwn(withPublisherReset, "reviewHarness")
+  ) && currentReviewHost !== resolvedReviewHost;
+  const withModelReset = (reviewSourceChanged || reviewHarnessChanged || reviewHostChanged) && !Object.hasOwn(withPublisherReset, "reviewModel")
+    ? Object.freeze({ ...withPublisherReset, reviewModel: resolved.reviewModel ?? null })
+    : withPublisherReset;
+  return withModelReset;
+}
+
+function guidedConfigFromAnswers(
+  flags: Readonly<Record<string, unknown>>,
+  answers: GuidedInitAnswers,
+  resolved: NonNullable<GuidedInitNormalization["answers"]>,
+): QubeInitConfig {
+  const reviewSource = answers.reviewSource;
+  const reviewModelAnswered = Object.hasOwn(answers, "reviewModel");
+  const reviewHost = resolved.reviewSource === "primary"
+    ? resolved.agentHarnesses[0]
+    : resolved.reviewSource === "harness"
+      ? resolved.reviewHarness
+      : undefined;
+  const reviewModels = reviewModelAnswered
+    ? Object.freeze(resolved.reviewModel && reviewHost ? [`${reviewHost}:${resolved.reviewModel}`] : [])
+    : undefined;
+  return Object.freeze({
     version: 1,
-    ...(interactiveAnswers.hosts ? { hosts: interactiveAnswers.hosts } : readOptionList<string>(flags, "host") ? { hosts: readOptionList<string>(flags, "host") } : {}),
-    ...(interactiveAnswers.workProviders ? { workProviders: interactiveAnswers.workProviders } : readOptionList<string>(flags, "work-provider") ? { workProviders: readOptionList<string>(flags, "work-provider") } : {}),
-    ...(interactiveAnswers.ciProviders ? { ciProviders: interactiveAnswers.ciProviders } : readOptionList<string>(flags, "ci-provider") ? { ciProviders: readOptionList<string>(flags, "ci-provider") } : {}),
-    ...(typeof flags["continuous-shipping"] === "boolean" ? { continuousShipping: flags["continuous-shipping"] as boolean } : {}),
-    ...(typeof flags["umpire-scope"] === "string" ? { umpire: { scope: flags["umpire-scope"] as QubeUmpireScope } } : {}),
-    ...(readOptionList<string>(flags, "quality-stage") ? { quality: { stages: readOptionList<string>(flags, "quality-stage")! } } : {}),
-    ...(explicitReviewMode || reviewHarness || externalReviewers || publisher ? {
-      review: {
-        ...(explicitReviewMode ? { mode: explicitReviewMode } : {}),
-        ...(reviewHarness ? { harness: reviewHarness } : {}),
-        ...(externalReviewers ? { externalReviewers } : {}),
-        ...(publisher ? { publisher } : {}),
-      },
-    } : {}),
-    ...(typeof flags.mcp === "boolean" ? { mcp: { optIn: flags.mcp } } : {}),
+    ...(answers.agentHarnesses ? { hosts: Object.freeze([...answers.agentHarnesses]) } : {}),
+    ...(answers.issueTracker ? { workProviders: Object.freeze([answers.issueTracker]) } : {}),
+    ...(answers.automatedChecks ? { ciProviders: Object.freeze([answers.automatedChecks]) } : {}),
+    ...(answers.continuousShipping === undefined ? {} : { continuousShipping: answers.continuousShipping }),
+    ...(answers.umpireScope ? { umpire: Object.freeze({ scope: answers.umpireScope }) } : {}),
+    ...(answers.qualityStages ? { quality: Object.freeze({ stages: Object.freeze([...answers.qualityStages]) }) } : {}),
+    ...(reviewSource || answers.reviewHarness || answers.externalReviewers || answers.reviewPublisher || reviewModels
+      ? {
+          review: Object.freeze({
+            ...(reviewSource ? { mode: guidedReviewMode(reviewSource) } : {}),
+            ...(answers.reviewHarness ? { harness: answers.reviewHarness } : {}),
+            ...(answers.externalReviewers
+              ? { externalReviewers: Object.freeze([...answers.externalReviewers]) }
+              : {}),
+            ...(answers.reviewPublisher ? { publisher: answers.reviewPublisher } : {}),
+            ...(reviewModels ? { models: reviewModels } : {}),
+          }),
+        }
+      : {}),
+    ...(typeof flags.mcp === "boolean" ? { mcp: Object.freeze({ optIn: flags.mcp }) } : {}),
+  });
+}
+
+function guidedModelCapability(
+  host: AgentHostId,
+  requestedHost: AgentHostId | undefined,
+  listings: Map<AgentHostId, ReturnType<typeof listHostModels>>,
+): GuidedReviewModelCapability {
+  const profile = getAgentHostProfileSync(host);
+  if (profile.modelDiscovery.support === "unsupported") {
+    return Object.freeze({
+      kind: "unpinned",
+      label: "Harness default (not pinned)",
+      reason: `${profile.displayName} does not provide a live model list. Leave Review unpinned.`,
+    });
+  }
+  if (requestedHost !== host) {
+    return Object.freeze({ kind: "unavailable", reason: "Select this harness before QUBE loads its live model list." });
+  }
+  let listing = listings.get(host);
+  if (!listing) {
+    listing = listHostModels(host);
+    listings.set(host, listing);
+  }
+  if (listing.status !== "ready") {
+    return Object.freeze({
+      kind: "unavailable",
+      reason: listing.diagnostic ?? `${profile.displayName} did not provide a live model list.`,
+    });
+  }
+  return Object.freeze({
+    kind: "live",
+    models: Object.freeze(listing.models.map(model => Object.freeze({ value: model, label: model }))),
+  });
+}
+
+function createGuidedInitCapabilities(input: {
+  readonly environment: CliEnvironment;
+  readonly registeredReviewers: readonly { readonly id: string; readonly label: string }[];
+  readonly modelHost?: AgentHostId;
+  readonly modelListings: Map<AgentHostId, ReturnType<typeof listHostModels>>;
+}): GuidedInitCapabilities {
+  const installedReviewHosts = new Set(detectInstalledReviewHostsOnPath(command => (
+    resolveExecutable(command, { env: input.environment.env }).status === "found"
+  )));
+  const agentHarnesses: readonly GuidedHarnessChoice[] = Object.freeze(executorHostSurfaces.map(option => {
+    const profile = getAgentHostProfileSync(option.id as AgentHostId);
+    const availableForSeparateReview = installedReviewHosts.has(profile.id);
+    return Object.freeze({
+      value: profile.id,
+      label: profile.displayName,
+      description: `${profile.displayName} uses ${profile.makeItSo.invocation} to start QUBE.`,
+      recommended: option.default,
+      canRunPrimaryReview: profile.review.local.support !== "unsupported",
+      canRunSeparateReview: availableForSeparateReview && profile.review.isolated.support !== "unsupported",
+      reviewModels: guidedModelCapability(profile.id, input.modelHost, input.modelListings),
+    });
+  }));
+  const issueTrackers: readonly GuidedIssueTrackerChoice[] = Object.freeze(executorWorkProviders.map(option => Object.freeze({
+    value: option.id,
+    label: installOptionLabels[option.id] ?? option.id,
+    description: option.id === "github"
+      ? "Use GitHub issues and pull requests as the shared work queue."
+      : `Read the ${installOptionLabels[option.id] ?? option.id} work queue. Lifecycle updates remain manual.`,
+    recommended: option.default,
+    supportsContinuousShipping: option.capabilities.some(capability => (
+      capability.id === "sync-issue-status" && capability.support === "supported"
+    )),
+  })));
+  const automatedChecks: readonly GuidedInitChoice[] = Object.freeze(executorCiProviders.map(option => Object.freeze({
+    value: option.id,
+    label: installOptionLabels[option.id] ?? option.id,
+    description: `Read required check results from ${installOptionLabels[option.id] ?? option.id}.`,
+    recommended: option.default,
+  })));
+  const umpireLabels: Readonly<Record<QubeUmpireScope, string>> = Object.freeze({
+    ready: "Ready issues only",
+    standard: "Standard post-queue work",
+    custom: "Custom set",
+  });
+  return Object.freeze({
+    agentHarnesses,
+    issueTrackers,
+    automatedChecks,
+    umpireScopes: Object.freeze(AIU_POST_ISSUE_SCOPES.map(scope => Object.freeze({
+      value: scope,
+      label: umpireLabels[scope],
+      recommended: scope === "ready",
+    }))),
+    qualityStages: Object.freeze(aiqStageMetadata.map(stage => {
+      const warning = guidedQualityWarning(stage);
+      return Object.freeze({
+        value: stage.id,
+        label: GUIDED_QUALITY_LABELS[stage.id] ?? stage.id,
+        description: warning ? `${stage.description} ${warning}` : stage.description,
+        recommended: stage.id === "unit",
+      });
+    })),
+    externalReviewers: Object.freeze(input.registeredReviewers.map(reviewer => Object.freeze({
+      value: reviewer.id,
+      label: reviewer.label,
+      forIssueTrackers: GUIDED_REVIEW_TRACKERS,
+      recommended: reviewer.id === "coderabbit",
+    }))),
+    reviewPublishers: Object.freeze([
+      Object.freeze({
+        value: "user",
+        label: "Current GitHub account",
+        forIssueTrackers: GUIDED_REVIEW_TRACKERS,
+        recommended: true,
+      }),
+      Object.freeze({
+        value: "github-app",
+        label: "QUBE Reviewer App",
+        description: "Use a separate review identity for formal verdicts and inline comments.",
+        forIssueTrackers: GUIDED_REVIEW_TRACKERS,
+      }),
+    ]),
+  });
+}
+
+function selectedGuidedModelHost(questions: readonly GuidedInitQuestion[]): AgentHostId | undefined {
+  const byId = new Map(questions.map(question => [question.id, question]));
+  const source = byId.get("review-source")?.selectedValue;
+  if (source === "primary") {
+    const hosts = byId.get("agent-harnesses")?.selectedValue;
+    return Array.isArray(hosts) ? hosts[0] as AgentHostId | undefined : undefined;
+  }
+  if (source === "harness") {
+    const harness = byId.get("review-harness")?.selectedValue;
+    return typeof harness === "string" ? harness as AgentHostId : undefined;
+  }
+  return undefined;
+}
+
+function guidedQuestionChoices(question: GuidedInitQuestion): {
+  readonly choices: readonly InstallerChoice<string>[];
+  readonly values: ReadonlyMap<string, string>;
+} {
+  const values = new Map<string, string>();
+  const recommended = new Set(Array.isArray(question.recommendedValue)
+    ? question.recommendedValue
+    : typeof question.recommendedValue === "string"
+      ? [question.recommendedValue]
+      : []);
+  const preferredValue = question.selection === "single" && typeof question.preselectedValue === "string"
+    ? question.preselectedValue
+    : undefined;
+  const options = preferredValue
+    ? [
+        ...question.options.filter(option => option.value === preferredValue),
+        ...question.options.filter(option => option.value !== preferredValue),
+      ]
+    : question.options;
+  const choices = options.map((option, index) => {
+    const token = `choice-${index + 1}`;
+    values.set(token, option.value);
+    return Object.freeze({
+      value: token,
+      label: option.label,
+      ...(option.description ? { description: option.description } : {}),
+      ...(recommended.has(option.value) ? { recommended: true } : {}),
+    });
+  });
+  return { choices: Object.freeze(choices), values };
+}
+
+function showGuidedQuestion(question: GuidedInitQuestion): void {
+  process.stdout.write([
+    "",
+    `${question.step}. ${question.label}`,
+    question.explanation,
+    `Recommended: ${question.recommendation}. ${question.recommendationReason}`,
+    `Documentation: ${question.docsUrl}`,
+    "",
+  ].join("\n"));
+}
+
+async function promptGuidedQuestion(question: GuidedInitQuestion, jsonMode: boolean): Promise<GuidedInitQuestion["selectedValue"]> {
+  if (!jsonMode) showGuidedQuestion(question);
+  const mapped = guidedQuestionChoices(question);
+  if (question.selection === "multiple") {
+    const selected = await promptInstallerChoices({
+      command: initCommand,
+      promptName: question.label,
+      message: question.prompt,
+      choices: mapped.choices,
+      jsonMode,
+      yes: false,
+    });
+    return Object.freeze(selected.map(value => mapped.values.get(value)!));
+  }
+  const selected = await promptInstallerChoice({
+    command: initCommand,
+    promptName: question.label,
+    message: question.prompt,
+    choices: mapped.choices,
+    jsonMode,
+    yes: false,
+  });
+  return mapped.values.get(selected) ?? null;
+}
+
+function addGuidedAnswer(answers: GuidedInitAnswers, question: GuidedInitQuestion, value: GuidedInitQuestion["selectedValue"]): GuidedInitAnswers {
+  const list = Array.isArray(value) ? Object.freeze([...value]) : undefined;
+  const selected = typeof value === "string" ? value : undefined;
+  switch (question.id) {
+    case "agent-harnesses": return Object.freeze({ ...answers, agentHarnesses: list });
+    case "issue-tracker": return Object.freeze({ ...answers, issueTracker: selected });
+    case "automated-checks": return Object.freeze({ ...answers, automatedChecks: selected });
+    case "continuous-shipping": return Object.freeze({ ...answers, continuousShipping: selected === "on" });
+    case "umpire-scope": return Object.freeze({ ...answers, umpireScope: selected as QubeUmpireScope });
+    case "quality-checks": return Object.freeze({ ...answers, qualityStages: list });
+    case "review-source": return Object.freeze({ ...answers, reviewSource: selected as GuidedReviewSource });
+    case "external-reviewer": return Object.freeze({ ...answers, externalReviewers: list });
+    case "review-harness": return Object.freeze({ ...answers, reviewHarness: selected });
+    case "review-model": return Object.freeze({ ...answers, reviewModel: selected === GUIDED_INIT_UNPINNED_MODEL ? null : selected });
+    case "review-publisher": return Object.freeze({ ...answers, reviewPublisher: selected as QubeReviewPublisher });
+  }
+}
+
+function hasGuidedAnswer(answers: GuidedInitAnswers, id: GuidedInitQuestionId): boolean {
+  const keys: Readonly<Record<GuidedInitQuestionId, keyof GuidedInitAnswers>> = Object.freeze({
+    "agent-harnesses": "agentHarnesses",
+    "issue-tracker": "issueTracker",
+    "automated-checks": "automatedChecks",
+    "continuous-shipping": "continuousShipping",
+    "umpire-scope": "umpireScope",
+    "quality-checks": "qualityStages",
+    "review-source": "reviewSource",
+    "external-reviewer": "externalReviewers",
+    "review-harness": "reviewHarness",
+    "review-model": "reviewModel",
+    "review-publisher": "reviewPublisher",
+  });
+  return Object.hasOwn(answers, keys[id]);
+}
+
+function omitGuidedAnswer(answers: GuidedInitAnswers, id: GuidedInitQuestionId): GuidedInitAnswers {
+  const mutable = { ...answers } as Record<string, unknown>;
+  const keys: Readonly<Record<GuidedInitQuestionId, string>> = Object.freeze({
+    "agent-harnesses": "agentHarnesses",
+    "issue-tracker": "issueTracker",
+    "automated-checks": "automatedChecks",
+    "continuous-shipping": "continuousShipping",
+    "umpire-scope": "umpireScope",
+    "quality-checks": "qualityStages",
+    "review-source": "reviewSource",
+    "external-reviewer": "externalReviewers",
+    "review-harness": "reviewHarness",
+    "review-model": "reviewModel",
+    "review-publisher": "reviewPublisher",
+  });
+  delete mutable[keys[id]];
+  return Object.freeze(mutable as GuidedInitAnswers);
+}
+
+async function collectGuidedInitAnswers(input: {
+  readonly environment: CliEnvironment;
+  readonly registeredReviewers: readonly { readonly id: string; readonly label: string }[];
+  readonly answers: GuidedInitAnswers;
+  readonly current: GuidedInitAnswers;
+  readonly defaults: GuidedInitAnswers;
+  readonly resolveDefaults: boolean;
+  readonly jsonMode: boolean;
+}): Promise<{ readonly explicitAnswers: GuidedInitAnswers; readonly normalization: GuidedInitNormalization }> {
+  let answers = input.answers;
+  let current = input.current;
+  const modelListings = new Map<AgentHostId, ReturnType<typeof listHostModels>>();
+  const questions = (): readonly GuidedInitQuestion[] => {
+    const firstCapabilities = createGuidedInitCapabilities({
+      environment: input.environment,
+      registeredReviewers: input.registeredReviewers,
+      modelListings,
+    });
+    const firstQuestions = buildGuidedInitQuestions({
+      capabilities: firstCapabilities,
+      answers,
+      current,
+      defaults: input.defaults,
+      resolveDefaults: input.resolveDefaults,
+    });
+    const modelHost = selectedGuidedModelHost(firstQuestions);
+    const capabilities = createGuidedInitCapabilities({
+      environment: input.environment,
+      registeredReviewers: input.registeredReviewers,
+      ...(modelHost ? { modelHost } : {}),
+      modelListings,
+    });
+    return buildGuidedInitQuestions({
+      capabilities,
+      answers,
+      current,
+      defaults: input.defaults,
+      resolveDefaults: input.resolveDefaults,
+    });
   };
-  return Object.freeze(config);
+
+  for (const id of GUIDED_INIT_QUESTION_ORDER) {
+    let question = questions().find(candidate => candidate.id === id);
+    if (!question || !question.applicable) continue;
+    if (
+      question.validationError
+      && !hasGuidedAnswer(answers, id)
+      && question.options.length > 0
+    ) {
+      current = omitGuidedAnswer(current, id);
+      question = questions().find(candidate => candidate.id === id);
+      if (question && !question.promptNeeded && question.selectedValue !== null) {
+        answers = addGuidedAnswer(answers, question, question.selectedValue);
+        question = questions().find(candidate => candidate.id === id);
+      }
+    }
+    if (!question || !question.applicable || !question.promptNeeded || question.validationError) continue;
+    const promptGate = evaluatePromptGate({ command: initCommand, jsonMode: input.jsonMode });
+    if (!promptGate.allowed) continue;
+    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode));
+  }
+
+  const finalQuestions = questions();
+  const finalCapabilities = createGuidedInitCapabilities({
+    environment: input.environment,
+    registeredReviewers: input.registeredReviewers,
+    ...(selectedGuidedModelHost(finalQuestions) ? { modelHost: selectedGuidedModelHost(finalQuestions) } : {}),
+    modelListings,
+  });
+  return Object.freeze({
+    explicitAnswers: answers,
+    normalization: normalizeGuidedInitAnswers({
+      capabilities: finalCapabilities,
+      answers,
+      current,
+      defaults: input.defaults,
+      resolveDefaults: input.resolveDefaults,
+    }),
+  });
+}
+
+function publicGuidedAnswers(normalization: GuidedInitNormalization, detectedCiProvider = false): readonly PublicInitAnswer[] {
+  const selectedQualityStages = normalization.answers?.qualityStages ?? Object.freeze([]);
+  const qualityWarnings = [...new Set(aiqStageMetadata
+    .filter(stage => selectedQualityStages.includes(stage.id))
+    .flatMap(stage => guidedQualityWarning(stage) ? [guidedQualityWarning(stage)!] : []))];
+  return Object.freeze(normalization.summary.map(answer => Object.freeze({
+    id: answer.id,
+    label: answer.label,
+    value: answer.answer,
+    reason: detectedCiProvider && answer.id === "automated-checks"
+      ? "QUBE detected this provider from the repository's automated-check configuration."
+      : answer.id === "quality-checks" && qualityWarnings.length > 0
+        ? `${answer.reason} ${qualityWarnings.join(" ")}`
+      : answer.reason,
+  })));
 }
 
 function resolveExternalReviewerIds(
@@ -1901,6 +2543,28 @@ function childProviderActions(value: unknown): readonly unknown[] {
   return Object.freeze([]);
 }
 
+function publisherReadinessFromChild(result: QubeInitChildResult): InitPublisherReadiness {
+  if (!result.ok) {
+    return Object.freeze({
+      state: "unavailable",
+      nextAction: result.nextAction ?? "Run `qube review doctor --json` after you correct the review publisher setup.",
+    });
+  }
+  const record = childRecord(result.json);
+  const state = directText(record, ["readiness"]);
+  if (!state || !["ready", "degraded", "unavailable", "unconfigured"].includes(state)) {
+    return Object.freeze({
+      state: "unavailable",
+      nextAction: "Run `qube review doctor --json` to inspect review publisher readiness.",
+    });
+  }
+  const nextAction = directText(record, ["nextAction"]);
+  return Object.freeze({
+    state: state as InitPublisherReadiness["state"],
+    ...(nextAction ? { nextAction } : {}),
+  });
+}
+
 function childChanged(value: unknown): boolean {
   const record = childRecord(value);
   if (!record) return false;
@@ -1963,53 +2627,113 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const repositoryConfig = readQubeInitConfig(repositoryConfigPath);
   const configError = initConfigError("user-global", globalConfig) ?? initConfigError("repository", repositoryConfig);
   if (configError) {
-    const payload = { ok: false, command: "init", error: configError };
+    const nextAction = "Correct the invalid QUBE setup file, then rerun qube init.";
+    const payload = { ok: false, command: "init", failedAction: publicInitActionLabel("config"), error: configError, nextAction };
     return json
       ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${configError}\n` };
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: configError, nextAction }) };
   }
 
   const inherited = mergeQubeInitConfigs(globalConfig.config, repositoryConfig.config);
-  const choiceFlags = { ...flags, yes: useDefaults };
-  const hostSeed = readOptionList<InstallHost>(flags, "host") ?? inherited.hosts as readonly InstallHost[] | undefined;
-  const hosts = await resolveInstallChoices(hostChoices, hostSeed, choiceFlags, initCommand);
-  const workSeed = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? inherited.workProviders as readonly InstallWorkProvider[] | undefined;
-  const workProviders = await resolveInstallChoices(workProviderChoices, workSeed, choiceFlags, initCommand);
-  const detectedCi = detectCiProviders(targetPath);
-  const explicitCi = readOptionList<InstallCiProvider>(flags, "ci-provider");
-  if (useDefaults && !explicitCi && !inherited.ciProviders && detectedCi.length !== 1) {
-    const detail = detectedCi.length === 0 ? "no CI provider was detected" : `multiple CI providers were detected: ${detectedCi.join(", ")}`;
-    const error = `Automated checks (CI) are ambiguous because ${detail}. Pass --ci-provider with the provider that runs required checks.`;
+  const explicitReviewSelectionError = explicitGuidedReviewError(flags, inherited);
+  if (explicitReviewSelectionError) {
+    const nextAction = "Correct the Review selection, then rerun qube init.";
+    const payload = { ok: false, command: "init", failedAction: publicInitActionLabel("config"), error: explicitReviewSelectionError, nextAction };
     return json
-      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${error}\n` };
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: explicitReviewSelectionError, nextAction }) };
   }
-  const ciSeed = explicitCi
-    ?? inherited.ciProviders as readonly InstallCiProvider[] | undefined
-    ?? (detectedCi.length === 1 ? detectedCi : undefined);
-  const ciProviders = await resolveInstallChoices(ciProviderChoices, ciSeed, choiceFlags, initCommand);
-  const interactive = !useDefaults;
-  const explicit = initExplicitConfig(flags, {
-    ...(readOptionList(flags, "host") || (!inherited.hosts && interactive) ? { hosts } : {}),
-    ...(readOptionList(flags, "work-provider") || (!inherited.workProviders && interactive) ? { workProviders } : {}),
-    ...(readOptionList(flags, "ci-provider") || (!inherited.ciProviders && detectedCi.length !== 1 && interactive) ? { ciProviders } : {}),
-  });
+  const detectedCi = detectCiProviders(targetPath);
   const registeredReviewers = await listInitExternalReviewers();
   const recommendedReviewer = registeredReviewers.find(reviewer => reviewer.id === "coderabbit") ?? registeredReviewers[0];
-  const defaultReview = defaultReviewSelection(hosts);
+  const guidedDefaults = defaultGuidedInitAnswers(recommendedReviewer?.id);
+  const guidedFlagAnswers = guidedAnswersFromFlags(flags, registeredReviewers);
+  const guidedCurrent = guidedAnswersFromConfig(inherited, detectedCi);
+  const guidedRun = await collectGuidedInitAnswers({
+    environment,
+    registeredReviewers,
+    answers: guidedFlagAnswers,
+    current: guidedCurrent,
+    defaults: guidedDefaults,
+    resolveDefaults: useDefaults,
+    jsonMode: json,
+  });
+  if (!guidedRun.normalization.validation.ok || !guidedRun.normalization.answers) {
+    const firstBlocker = guidedRun.normalization.questions.find(question => (
+      question.applicable && (question.validationError || question.promptNeeded)
+    ));
+    const firstError = firstBlocker?.validationError;
+    const unresolved = !firstError && firstBlocker?.promptNeeded ? firstBlocker.id : undefined;
+    const error = firstError
+      ?? (unresolved
+        ? `Guided setup still needs an answer for ${unresolved}.`
+        : "Guided setup could not resolve the required answers.");
+    const nextAction = firstError?.includes("no available Review source")
+      ? "Select and install a compatible Review harness, or choose an issue tracker with an available external review service."
+      : firstError?.startsWith("Review model:")
+        ? "Make the selected harness live model list available, then rerun qube init."
+        : unresolved
+          ? "Rerun qube init in an interactive terminal, or supply the matching command option."
+          : "Correct the selected setup value, then rerun qube init.";
+    const payload = { ok: false, command: "init", failedAction: publicInitActionLabel("config"), error, nextAction };
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
+  }
+  const guidedAnswers = guidedRun.normalization.answers;
+  const detectedCiAnswer = !Object.hasOwn(guidedFlagAnswers, "automatedChecks")
+    && !inherited.ciProviders
+    && detectedCi.length === 1
+    && guidedAnswers.automatedChecks === detectedCi[0];
+  const answers = publicGuidedAnswers(guidedRun.normalization, detectedCiAnswer);
+  const requestedExternalReviewers = readOptionList<string>(flags, "external-reviewer");
+  const requestedReviewHarness = readOption<string>(flags, "review-harness");
+  const requestedPublisher = readOption<QubeReviewPublisher>(flags, "review-publisher");
+  let explicitReviewError: string | undefined;
+  if (requestedPublisher && guidedAnswers.issueTracker === "gitlab") {
+    explicitReviewError = "Review publisher selection applies only when GitHub publishes reviews.";
+  } else if (requestedExternalReviewers && guidedAnswers.reviewSource !== "external") {
+    explicitReviewError = "External reviewer services require external review mode.";
+  } else if (requestedReviewHarness && guidedAnswers.reviewSource === "external") {
+    explicitReviewError = "External review does not use an agent harness.";
+  } else if (requestedReviewHarness && guidedAnswers.reviewSource === "primary" && requestedReviewHarness !== guidedAnswers.agentHarnesses[0]) {
+    explicitReviewError = `Primary-harness review must use ${guidedAnswers.agentHarnesses[0]}.`;
+  }
+  if (explicitReviewError) {
+    const nextAction = "Correct the Review selection, then rerun qube init.";
+    const payload = { ok: false, command: "init", failedAction: publicInitActionLabel("config"), error: explicitReviewError, nextAction };
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: explicitReviewError, nextAction }) };
+  }
+  const explicitAnswers = normalizedExplicitGuidedAnswers(guidedRun.explicitAnswers, guidedAnswers, guidedCurrent);
+  const guidedExplicit = guidedConfigFromAnswers(flags, explicitAnswers, guidedAnswers);
+  const explicit: QubeInitConfig = guidedAnswers.reviewSource === "external" && (inherited.review?.models?.length ?? 0) > 0
+    ? Object.freeze({
+        ...guidedExplicit,
+        review: Object.freeze({ ...guidedExplicit.review, models: Object.freeze([]) }),
+      })
+    : guidedExplicit;
+  const guidedMode = guidedReviewMode(guidedAnswers.reviewSource);
+  const guidedReviewHarness = guidedAnswers.reviewSource === "primary"
+    ? guidedAnswers.agentHarnesses[0]
+    : guidedAnswers.reviewHarness;
   const defaultsConfig = Object.freeze({
     version: 1,
-    hosts: Object.freeze(["codex"]),
-    workProviders: Object.freeze(["github"]),
-    ciProviders: Object.freeze(["github"]),
-    continuousShipping: true,
-    umpire: Object.freeze({ scope: "ready" as const }),
-    quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
+    hosts: Object.freeze([...guidedAnswers.agentHarnesses]),
+    workProviders: Object.freeze([guidedAnswers.issueTracker]),
+    ciProviders: Object.freeze([guidedAnswers.automatedChecks]),
+    continuousShipping: guidedAnswers.continuousShipping,
+    umpire: Object.freeze({ scope: guidedAnswers.umpireScope }),
+    quality: Object.freeze({ stages: Object.freeze([...guidedAnswers.qualityStages]) }),
     review: Object.freeze({
-      mode: defaultReview.mode,
-      ...(defaultReview.harness ? { harness: defaultReview.harness } : {}),
-      externalReviewers: Object.freeze(recommendedReviewer ? [recommendedReviewer.id] : []),
-      publisher: "user" as const,
+      mode: guidedMode,
+      ...(guidedMode !== "external" && guidedReviewHarness ? { harness: guidedReviewHarness } : {}),
+      externalReviewers: Object.freeze(guidedAnswers.externalReviewers ?? (recommendedReviewer ? [recommendedReviewer.id] : [])),
+      publisher: guidedAnswers.reviewPublisher ?? "user",
+      ...(guidedMode !== "external" && guidedReviewHarness && guidedAnswers.reviewModel
+        ? { models: Object.freeze([`${guidedReviewHarness}:${guidedAnswers.reviewModel}`]) }
+        : {}),
     }),
     mcp: Object.freeze({ optIn: false }),
   });
@@ -2028,9 +2752,11 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   if (baseResolved.config.review.mode === "external") {
     const reviewerSelection = resolveExternalReviewerIds(baseResolved.config.review.externalReviewers ?? [], registeredReviewers);
     if (reviewerSelection.error) {
+      const nextAction = "Select an available external review service, then rerun qube init.";
+      const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error: reviewerSelection.error, nextAction };
       return json
-        ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: reviewerSelection.error })}\n` }
-        : { exitCode: 2, stdout: "", stderr: `${reviewerSelection.error}\n` };
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: reviewerSelection.error, nextAction }) };
     }
     resolved = Object.freeze({
       ...baseResolved,
@@ -2043,18 +2769,23 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const setup = resolved.config;
   const reviewProvider = setup.workProviders[0] === "gitlab" ? "gitlab" : "github";
   const primaryHarness = setup.hosts[0]!;
+  const primaryProfile = getAgentHostProfileSync(primaryHarness as AgentHostId);
+  const primaryHarnessPrompt = Object.freeze({
+    displayName: primaryProfile.displayName,
+    makeItSo: primaryProfile.makeItSo.invocation,
+  });
   const reviewHarness = setup.review.harness;
-  const requestedReviewHarness = explicit.review?.harness;
-  const requestedExternalReviewers = explicit.review?.externalReviewers;
+  const requestedResolvedReviewHarness = explicit.review?.harness;
+  const requestedResolvedExternalReviewers = explicit.review?.externalReviewers;
   let reviewError: string | undefined;
   if (setup.review.mode === "external" && reviewProvider !== "github") {
     reviewError = `External reviewer services are not registered for the ${reviewProvider} review provider.`;
-  } else if (setup.review.mode === "external" && requestedReviewHarness) {
+  } else if (setup.review.mode === "external" && requestedResolvedReviewHarness) {
     reviewError = "External review does not use an agent harness.";
-  } else if (setup.review.mode !== "external" && requestedExternalReviewers && requestedExternalReviewers.length > 0) {
+  } else if (setup.review.mode !== "external" && requestedResolvedExternalReviewers && requestedResolvedExternalReviewers.length > 0) {
     reviewError = "External reviewer services require external review mode.";
   } else if (setup.review.mode === "host") {
-    if (requestedReviewHarness && requestedReviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
+    if (requestedResolvedReviewHarness && requestedResolvedReviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
     else if (reviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
     else if (getAgentHostProfileSync(primaryHarness as AgentHostId).review.local.support === "unsupported") reviewError = `${primaryHarness} does not support native review subagents.`;
   } else if (setup.review.mode === "isolated") {
@@ -2064,15 +2795,19 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     else if (getAgentHostProfileSync(reviewHarness as AgentHostId).review.isolated.support === "unsupported") reviewError = `${reviewHarness} does not support isolated review.`;
   }
   if (reviewError) {
+    const nextAction = "Correct the Review selection, then rerun qube init.";
+    const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error: reviewError, nextAction };
     return json
-      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: reviewError })}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${reviewError}\n` };
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: reviewError, nextAction }) };
   }
   if (setup.review.publisher === "github-app" && reviewProvider !== "github") {
     const error = "QUBE Reviewer App publishing requires the GitHub review provider.";
+    const nextAction = "Use the current account for this provider, or select GitHub Review before choosing the QUBE Reviewer App.";
+    const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error, nextAction };
     return json
-      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
-      : { exitCode: 2, stdout: "", stderr: `${error}\n` };
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
   }
 
   const selectedConfigPath = configScope === "global" ? globalConfigPath : repositoryConfigPath;
@@ -2112,9 +2847,11 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     }
     if (JSON.stringify(projectedSetup) !== JSON.stringify(setup)) {
       const error = "Repository QUBE configuration overrides the requested global setup. Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.";
+      const nextAction = "Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.";
+      const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error, nextAction };
       return json
-        ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error })}\n` }
-        : { exitCode: 2, stdout: "", stderr: `${error}\n` };
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
     }
   }
 
@@ -2138,7 +2875,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         reviewAgents: setup.review.mode === "external" ? setup.review.externalReviewers : undefined,
         localReviewAgents: setup.review.mode === "host" ? [primaryHarness] : undefined,
         isolatedReviewAgent: setup.review.mode === "isolated" ? reviewHarness : undefined,
-        reviewModels: setup.review.models,
+        reviewModels: setup.review.mode === "external" ? undefined : setup.review.models,
         publisher: reviewProvider === "github" ? setup.review.publisher : undefined,
         continuousShipping: setup.continuousShipping,
         uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
@@ -2187,6 +2924,10 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const firstPlanFailureIndex = planResults.findIndex(result => !result.ok);
   const postInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
   const providerActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
+  const postInitCommands = Object.freeze(postInitActions.flatMap(action => {
+    const command = childRecord(action)?.command;
+    return typeof command === "string" && command.trim() !== "" ? [command.trim()] : [];
+  }));
   const plan = {
     target: targetPath,
     resolved: setup,
@@ -2201,29 +2942,48 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       operation: configOperation,
     },
   };
+  const planChanged = configOperation !== "skip" || planResults.some(result => childChanged(result.json));
   const planStderr = planResults.map(result => result.stderr ?? "").join("");
   if (firstPlanFailureIndex >= 0) {
     const failure = planResults[firstPlanFailureIndex]!;
+    const failedAction = planInvocations[firstPlanFailureIndex]!.id;
+    const nextAction = failure.nextAction ?? `Correct ${publicInitActionLabel(failedAction).toLowerCase()}, then rerun qube init.`;
     const payload = {
       ok: false,
       command: "init",
       mode: "plan",
+      answers,
       plan,
+      failedAction: publicInitActionLabel(failedAction),
       error: failure.error,
-      ...(failure.nextAction ? { nextAction: failure.nextAction } : {}),
+      nextAction,
     };
     return json
       ? { exitCode: failure.exitCode || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
-      : { exitCode: failure.exitCode || 1, stdout: "", stderr: `${failure.error ?? "QUBE init planning failed."}\n${failure.nextAction ? `${failure.nextAction}\n` : ""}${planStderr}` };
+      : {
+          exitCode: failure.exitCode || 1,
+          stdout: "",
+          stderr: renderInitFailure({
+            actionId: failedAction,
+            reason: failure.error ?? "QUBE setup planning failed.",
+            nextAction,
+          }),
+        };
   }
 
   if (dryRun) {
-    const payload = { ok: true, command: "init", mode: "plan", plan };
+    const payload = { ok: true, command: "init", mode: "plan", answers, plan };
     if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr };
     return {
       exitCode: 0,
-      stdout: renderQubeInitSummary("plan", setup, planInvocations.map(invocation => invocation.id), configOperation, postInitActions),
-      stderr: planStderr,
+      stdout: renderInitOutput({
+        mode: "plan",
+        changed: planChanged,
+        answers,
+        primaryHarness: primaryHarnessPrompt,
+        postInitCommands,
+      }),
+      stderr: "",
     };
   }
 
@@ -2240,13 +3000,14 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         changed: false,
         steps: Object.freeze([{ id: "config", status: "failed", exitCode: 1, error: message, nextAction }]),
       };
-      const payload = { ok: false, command: "init", mode: "apply", plan, apply, error: message, nextAction };
+      const payload = { ok: false, command: "init", mode: "apply", answers, plan, apply, failedAction: publicInitActionLabel("config"), error: message, nextAction };
       return json
         ? { exitCode: 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
-        : { exitCode: 1, stdout: "", stderr: `${message}\n${nextAction}\n${planStderr}` };
+        : { exitCode: 1, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: message, nextAction }) };
     }
   }
   let failedApply: QubeInitChildResult | undefined;
+  let failedApplyAction: QubeInitComponentId | undefined;
   for (const invocation of applyInvocations) {
     const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd);
     if (result.stderr) applyStderr.push(result.stderr);
@@ -2259,6 +3020,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     });
     if (!result.ok) {
       failedApply = result;
+      failedApplyAction = invocation.id;
       break;
     }
   }
@@ -2278,60 +3040,65 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       ...(result.ok ? {} : { error: result.error, ...(result.nextAction ? { nextAction: result.nextAction } : {}) }),
       result: result.json,
     });
-    if (!result.ok) failedApply = result;
+    if (!result.ok) {
+      failedApply = result;
+      failedApplyAction = invocation.id;
+    }
   }
   const changed = configOperation !== "skip" || applySteps.some(step => step.status === "changed");
-  const apply = { changed, steps: Object.freeze(applySteps) };
+  let reviewPublisherReadiness: InitPublisherReadiness | undefined;
+  if (!failedApply && changed && reviewProvider === "github" && setup.review.publisher === "github-app") {
+    const doctor = await dispatchInitChild("aie", ["review", "doctor", "--json"], environment, targetPath);
+    if (doctor.stderr) applyStderr.push(doctor.stderr);
+    reviewPublisherReadiness = publisherReadinessFromChild(doctor);
+  }
+  const apply = {
+    changed,
+    steps: Object.freeze(applySteps),
+    ...(reviewPublisherReadiness ? { reviewPublisherReadiness } : {}),
+  };
   const stderr = `${planStderr}${applyStderr.join("")}`;
   if (failedApply) {
+    const failedAction = failedApplyAction ?? "aie";
+    const nextAction = failedApply.nextAction ?? `Correct ${publicInitActionLabel(failedAction).toLowerCase()}, then rerun qube init.`;
     const payload = {
       ok: false,
       command: "init",
       mode: "apply",
+      answers,
       plan,
       apply,
+      failedAction: publicInitActionLabel(failedAction),
       error: failedApply.error,
-      ...(failedApply.nextAction ? { nextAction: failedApply.nextAction } : {}),
+      nextAction,
     };
     return json
       ? { exitCode: failedApply.exitCode || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr }
-      : { exitCode: failedApply.exitCode || 1, stdout: "", stderr: `${failedApply.error ?? "QUBE init apply failed."}\n${failedApply.nextAction ? `${failedApply.nextAction}\n` : ""}` };
+      : {
+          exitCode: failedApply.exitCode || 1,
+          stdout: "",
+          stderr: renderInitFailure({
+            actionId: failedAction,
+            reason: failedApply.error ?? "QUBE setup failed.",
+            nextAction,
+          }),
+        };
   }
 
-  const payload = { ok: true, command: "init", mode: "apply", plan, apply };
+  const payload = { ok: true, command: "init", mode: "apply", answers, plan, apply };
   if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   return {
     exitCode: 0,
-    stdout: renderQubeInitSummary("apply", setup, applySteps.map(step => String(step.id)), configOperation, postInitActions),
-    stderr,
+    stdout: renderInitOutput({
+      mode: "apply",
+      changed,
+      answers,
+      primaryHarness: primaryHarnessPrompt,
+      postInitCommands,
+      ...(reviewPublisherReadiness ? { reviewPublisherReadiness } : {}),
+    }),
+    stderr: "",
   };
-}
-
-function renderQubeInitSummary(
-  mode: "plan" | "apply",
-  setup: ReturnType<typeof resolveQubeInitConfig>["config"],
-  componentIds: readonly string[],
-  configOperation: "create" | "update" | "skip",
-  postInitActions: readonly unknown[],
-): string {
-  const lines = [
-    `QUBE init ${mode === "plan" ? "plan is ready" : "is complete"}.`,
-    `Agent harnesses: ${setup.hosts.join(", ")}`,
-    `Issue tracker: ${setup.workProviders.join(", ")}`,
-    `Automated checks (CI): ${setup.ciProviders.join(", ")}`,
-    `Continuous Shipping: ${setup.continuousShipping ? "on" : "off"}`,
-    `Umpire: ${setup.umpire.scope}`,
-    `Quality stages: ${setup.quality.stages.join(", ")}`,
-    `Review: ${setup.review.mode}; publisher ${setup.review.publisher}`,
-    `Components: ${componentIds.join(", ")}`,
-    `QUBE configuration: ${configOperation}`,
-  ];
-  for (const action of postInitActions) {
-    const command = childRecord(action)?.command;
-    if (typeof command === "string") lines.push(`Next: ${command}`);
-  }
-  if (mode === "apply") lines.push("Start a new agent session so the selected harness loads the new instructions.");
-  return `${lines.join("\n")}\n`;
 }
 
 async function executeQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -4956,11 +5723,7 @@ function renderMakeItSoPlan(plan: MakeItSoPlan): string {
 }
 
 function formatQubeCommand(component: QubeComponent["command"], args: readonly string[]): string {
-  return ["qube", component, ...args].map(quoteShellArg).join(" ");
-}
-
-function quoteShellArg(value: string): string {
-  return /^[A-Za-z0-9_./:@=-]+$/.test(value) ? value : JSON.stringify(value);
+  return ["qube", component, ...args].map(value => quoteShellArgument(value)).join(" ");
 }
 
 function parseMakeItSoArgs(args: readonly string[]):
@@ -5154,6 +5917,26 @@ interface InstallApplyStepResult {
   readonly status: "executed" | "skipped" | "failed" | "plan-only";
   readonly exitCode?: number;
   readonly error?: string;
+  readonly nextAction?: string;
+  readonly failedAction?: string;
+  readonly init?: InstallInitPublicResult;
+}
+
+interface InstallInitPublicResult {
+  readonly ok: boolean;
+  readonly command: "init";
+  readonly mode?: "plan" | "apply";
+  readonly answers: readonly PublicInitAnswer[];
+  readonly changed?: boolean;
+  readonly primaryHarness?: {
+    readonly displayName: string;
+    readonly makeItSo: string;
+  };
+  readonly postInitCommands?: readonly string[];
+  readonly reviewPublisherReadiness?: InitPublisherReadiness;
+  readonly failedAction?: string;
+  readonly error?: string;
+  readonly nextAction?: string;
 }
 
 interface InstallApplyReport {
@@ -5293,25 +6076,111 @@ async function runApplyPackageInstall(selections: InstallSelections, environment
   return { stage: "package-install", command, status: "executed", exitCode: spawned.exitCode };
 }
 
+function initAnswersFromEnvelope(record: Record<string, unknown>): readonly PublicInitAnswer[] {
+  if (!Array.isArray(record.answers)) return Object.freeze([]);
+  const answers: PublicInitAnswer[] = [];
+  for (const value of record.answers) {
+    const answer = childRecord(value);
+    if (!answer) continue;
+    const { id, label, value: selectedValue, reason } = answer;
+    if ([id, label, selectedValue, reason].every(entry => typeof entry === "string" && entry.trim() !== "")) {
+      answers.push(Object.freeze({
+        id: id as string,
+        label: label as string,
+        value: selectedValue as string,
+        reason: reason as string,
+      }));
+    }
+  }
+  return Object.freeze(answers);
+}
+
+function initReadinessFromEnvelope(record: Record<string, unknown>): InitPublisherReadiness | undefined {
+  const apply = childRecord(record.apply);
+  const readiness = childRecord(apply?.reviewPublisherReadiness);
+  const state = readiness?.state;
+  if (state !== "ready" && state !== "degraded" && state !== "unavailable" && state !== "unconfigured") return undefined;
+  return Object.freeze({
+    state,
+    ...(typeof readiness?.nextAction === "string" && readiness.nextAction.trim() !== ""
+      ? { nextAction: readiness.nextAction.trim() }
+      : {}),
+  });
+}
+
+function initPublicResult(record: Record<string, unknown>, selections: InstallSelections): InstallInitPublicResult {
+  const apply = childRecord(record.apply);
+  const profile = getAgentHostProfileSync(selections.host);
+  const postInitCommands = Object.freeze(childPostInitActions(record).flatMap(action => {
+    const command = childRecord(action)?.command;
+    return typeof command === "string" && command.trim() !== "" ? [command.trim()] : [];
+  }));
+  const readiness = initReadinessFromEnvelope(record);
+  return Object.freeze({
+    ok: record.ok === true,
+    command: "init",
+    ...(record.mode === "plan" || record.mode === "apply" ? { mode: record.mode } : {}),
+    answers: initAnswersFromEnvelope(record),
+    ...(typeof apply?.changed === "boolean" ? { changed: apply.changed } : {}),
+    ...(record.ok === true ? {
+      primaryHarness: Object.freeze({ displayName: profile.displayName, makeItSo: profile.makeItSo.invocation }),
+      postInitCommands,
+      ...(readiness ? { reviewPublisherReadiness: readiness } : {}),
+    } : {}),
+    ...(typeof record.failedAction === "string" && record.failedAction.trim() !== "" ? { failedAction: record.failedAction.trim() } : {}),
+    ...(typeof record.error === "string" && record.error.trim() !== "" ? { error: record.error.trim() } : {}),
+    ...(typeof record.nextAction === "string" && record.nextAction.trim() !== "" ? { nextAction: record.nextAction.trim() } : {}),
+  });
+}
+
+function parseInitPublicResult(result: RuntimeCommandResult, selections: InstallSelections): InstallInitPublicResult | undefined {
+  if (!result.jsonStdout || result.jsonStdout.trim() === "") return undefined;
+  try {
+    const record = childRecord(JSON.parse(result.jsonStdout));
+    return record && record.command === "init" && typeof record.ok === "boolean"
+      ? initPublicResult(record, selections)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function runApplyWorkspaceInit(selections: InstallSelections, environment: CliEnvironment): Promise<InstallApplyStepResult> {
   const command = buildQubeInitCommand(selections);
   const result = await executeQubeInit({
     json: true,
     yes: true,
     host: selections.hosts.join(","),
-    "work-provider": selections.workProviders.join(","),
-    "ci-provider": selections.ciProviders.join(",")
+    "work-provider": selections.workProvider,
+    "ci-provider": selections.ciProvider,
+    "review-mode": selections.reviewMode,
+    "ui-audit-evidence-root": selections.uiAuditEvidenceRoot,
+    "credit-warning": selections.creditWarning,
   }, { target: "." }, environment);
-  if ((result.exitCode ?? 0) !== 0) {
+  const init = parseInitPublicResult(result, selections);
+  if ((result.exitCode ?? 0) !== 0 || init?.ok === false) {
     return {
       stage: "workspace-init",
       command,
       status: "failed",
       exitCode: result.exitCode,
-      error: result.stderr?.trim() || "qube init did not report success."
+      error: init?.error || result.stderr?.trim() || "qube init did not report success.",
+      ...(init?.nextAction ? { nextAction: init.nextAction } : {}),
+      ...(init?.failedAction ? { failedAction: init.failedAction } : {}),
+      ...(init ? { init } : {}),
     };
   }
-  return { stage: "workspace-init", command, status: "executed", exitCode: result.exitCode ?? 0 };
+  if (!init || init.answers.length === 0) {
+    return {
+      stage: "workspace-init",
+      command,
+      status: "failed",
+      exitCode: 1,
+      error: "qube init did not return its public completion result.",
+      nextAction: "Rerun qube init directly and inspect its setup result.",
+    };
+  }
+  return { stage: "workspace-init", command, status: "executed", exitCode: result.exitCode ?? 0, init };
 }
 
 async function runApplyProviderSetup(step: InstallCommandStep, environment: CliEnvironment): Promise<InstallApplyStepResult> {
@@ -5395,16 +6264,38 @@ async function collectApplyVerification(selections: InstallSelections, environme
 function renderApplyReport(report: InstallApplyReport): string {
   const executed = report.executed.length === 0
     ? ["- No remaining install delta was applied."]
-    : report.executed.map(step => `- ${step.stage}: ${step.status}${step.error ? ` — ${step.error}` : ` (${step.command})`}`);
+    : report.executed.flatMap(step => step.status === "failed" && step.failedAction
+      ? [
+          `- ${step.stage}: failed`,
+          `  Action: ${step.failedAction}`,
+          `  Reason: ${step.error ?? "QUBE setup failed."}`,
+          ...(step.nextAction ? [`  Next action: ${step.nextAction}`] : []),
+        ]
+      : [
+          `- ${step.stage}: ${step.status}${step.error ? ` — ${step.error}` : ` (${step.command})`}`,
+          ...(step.nextAction ? [`  Next action: ${step.nextAction}`] : []),
+        ]);
   const mismatches = report.mismatches.length === 0 ? ["- none"] : report.mismatches.map(item => `- ${item}`);
   const findings = report.findings.length === 0 ? ["- none"] : report.findings.map(item => `- ${item}`);
   const registry = report.registry?.status === "plan-only" && report.registry.reason
     ? ["", "Registry gate:", `- ${report.registry.reason}`]
     : [];
+  const init = report.executed.find(step => step.stage === "workspace-init")?.init;
+  const initOutput = init?.ok === true && init.primaryHarness && init.changed !== undefined
+    ? renderInitOutput({
+        mode: "apply",
+        changed: init.changed,
+        answers: init.answers,
+        primaryHarness: init.primaryHarness,
+        ...(init.postInitCommands ? { postInitCommands: init.postInitCommands } : {}),
+        ...(init.reviewPublisherReadiness ? { reviewPublisherReadiness: init.reviewPublisherReadiness } : {}),
+      }).trimEnd()
+    : undefined;
   return [
     "Apply result:",
     ...executed,
     ...registry,
+    ...(initOutput ? ["", initOutput] : []),
     "",
     "Component mismatches:",
     ...mismatches,
@@ -5417,7 +6308,8 @@ function renderApplyReport(report: InstallApplyReport): string {
 
 async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const json = flags.json === true;
-  const validationError = validateInstallFlagChoices(flags);
+  const installedReviewHosts = detectInstallReviewHosts(environment.env);
+  const validationError = validateInstallFlagChoices(flags, installedReviewHosts);
   if (validationError) {
     throw createCliError({
       command: "install",
@@ -5428,8 +6320,8 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
       category: "usage"
     });
   }
-  if (json && flags.yes !== true && !hasCompleteInstallSelections(flags, environment.cwd)) {
-    const guide = buildInstallQuestions({ flags, cwd: environment.cwd });
+  if (json && flags.yes !== true && !hasCompleteInstallSelections(flags, environment.cwd, installedReviewHosts)) {
+    const guide = buildInstallQuestions({ flags, cwd: environment.cwd, installedReviewHosts });
     return {
       json: {
         awaitingAnswers: true,
@@ -5439,8 +6331,8 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
     };
   }
   const selections = flags.json === true
-    ? createInstallSelectionsFromFlags(flags, environment.cwd)
-    : await resolveInstallSelections(flags, environment.cwd);
+    ? createInstallSelectionsFromFlags(flags, environment.cwd, installedReviewHosts)
+    : await resolveInstallSelections(flags, environment.cwd, installedReviewHosts);
   const plan = createInstallPlan(selections, flags["dry-run"] === true, environment.cwd);
   if (shouldStayPlanOnly(flags)) {
     if (json) {
@@ -5503,23 +6395,25 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
     const result = await runApplyPackageInstall(selections, environment);
     executed.push(result);
   }
-  const workspaceStep = executed.some(step => step.status === "failed")
+  const workspaceStep = executed.some(step => step.status === "failed" || step.status === "plan-only")
     ? undefined
     : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "workspace-init");
   if (workspaceStep) {
     const result = await runApplyWorkspaceInit(selections, environment);
     executed.push(result);
   }
-  const providerStep = executed.some(step => step.status === "failed")
+  const providerStep = executed.some(step => step.status === "failed" || step.status === "plan-only")
     ? undefined
     : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "provider-setup");
   if (providerStep) {
     executed.push(await runApplyProviderSetup(providerStep, environment));
   }
 
-  const verification = await collectApplyVerification(selections, environment);
   const failedStep = executed.some(step => step.status === "failed");
   const registryBlocked = executed.some(step => step.status === "plan-only");
+  const verification = failedStep || registryBlocked
+    ? { components: undefined, doctor: undefined, mismatches: Object.freeze([]), findings: Object.freeze([]) }
+    : await collectApplyVerification(selections, environment);
   const verificationFailed = verification.mismatches.length > 0
     || isVerificationError(verification.components, "components")
     || isVerificationError(verification.doctor, "doctor");
@@ -5560,12 +6454,13 @@ function planQubeInstall(args: readonly string[]): CliExecution {
   if ("error" in parsed) {
     return parsed.error;
   }
-  const validationError = validateInstallFlagChoices(parsed.flags);
+  const installedReviewHosts = detectInstallReviewHosts(process.env);
+  const validationError = validateInstallFlagChoices(parsed.flags, installedReviewHosts);
   if (validationError) {
     return validationError;
   }
-  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags, process.cwd())) {
-    const guide = buildInstallQuestions({ flags: parsed.flags, cwd: process.cwd() });
+  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags, process.cwd(), installedReviewHosts)) {
+    const guide = buildInstallQuestions({ flags: parsed.flags, cwd: process.cwd(), installedReviewHosts });
     return {
       exitCode: 0,
       stdout: `${JSON.stringify({
@@ -5578,7 +6473,7 @@ function planQubeInstall(args: readonly string[]): CliExecution {
       stderr: ""
     };
   }
-  const selections = createInstallSelectionsFromFlags(parsed.flags);
+  const selections = createInstallSelectionsFromFlags(parsed.flags, process.cwd(), installedReviewHosts);
   const plan = createInstallPlan(selections, parsed.flags["dry-run"] === true);
   if (parsed.flags.json === true) {
     return {
@@ -5653,11 +6548,6 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
       continue;
     }
     return { exitCode: 2, stdout: "", stderr: `Unknown init flag or argument: ${token}\n` };
-  }
-
-  const validationError = validateInstallFlagChoices(flags);
-  if (validationError) {
-    return validationError;
   }
 
   if (positional.length > 1) {
@@ -5747,7 +6637,15 @@ function createDirectCommand(
   };
 }
 
-async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>, cwd: string): Promise<InstallSelections> {
+function detectInstallReviewHosts(env: NodeJS.ProcessEnv): readonly string[] {
+  return detectInstalledReviewHostsOnPath(command => resolveExecutable(command, { env }).status === "found");
+}
+
+async function resolveInstallSelections(
+  flags: Readonly<Record<string, unknown>>,
+  cwd: string,
+  installedReviewHosts: readonly string[],
+): Promise<InstallSelections> {
   const scope = await resolveInstallChoice(scopeChoices, readOption<InstallScope>(flags, "scope"), flags);
   const packageManager = await resolveInstallChoice(
     { ...packageManagerChoices, defaultValue: recommendedInstallPackageManager(cwd) },
@@ -5757,12 +6655,25 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
   const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags);
   const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags);
   const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags);
-  const isolatedOk = isolatedReviewAvailable(hosts);
+  const isolatedOk = isolatedReviewAvailable(hosts, installedReviewHosts);
+  const hostOk = hostReviewAvailable(hosts);
+  const externalOk = workProviders[0] !== "gitlab";
+  const recommendedReviewMode = recommendedInstallReviewMode(hosts, installedReviewHosts, workProviders[0]);
+  if (!recommendedReviewMode) {
+    throw createCliError({
+      command: "install",
+      kind: "unsupported-install-selection",
+      operation: "select Review source",
+      likelyCause: "No Review source is available for the selected Agent harnesses and Issue tracker.",
+      suggestedNextAction: "Select and install a compatible Review harness, or choose an Issue tracker with an external Review service.",
+      category: "validation",
+    });
+  }
   const reviewMode = await resolveInstallChoice(
     defineInstallerChoiceGroup({
       name: "review mode",
       message: "Which review mode should this repository use?",
-      defaultValue: recommendedInstallReviewMode(hosts),
+      defaultValue: recommendedReviewMode,
       choices: [
         ...(isolatedOk
           ? [{
@@ -5772,17 +6683,20 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
             recommended: true
           }]
           : []),
-        {
-          value: "host",
-          label: "host",
-          description: "The coding agent runs one review subagent per lane."
-        },
-        {
+        ...(hostOk
+          ? [{
+            value: "host" as const,
+            label: "host",
+            description: "The coding agent runs one review subagent per lane.",
+            recommended: !isolatedOk,
+          }]
+          : []),
+        ...(externalOk ? [{
           value: "external",
           label: "external",
           description: "A review service reviews the pull request.",
-          recommended: !isolatedOk
-        }
+          recommended: !isolatedOk && !hostOk
+        } as const] : [])
       ]
     }),
     readOption<InstallReviewMode>(flags, "review-mode"),
@@ -5864,11 +6778,20 @@ async function resolveInstallChoices<Value extends string>(
   return Object.freeze([...new Set(selected)]);
 }
 
-function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>, cwd = process.cwd()): InstallSelections {
+function createInstallSelectionsFromFlags(
+  flags: Readonly<Record<string, unknown>>,
+  cwd = process.cwd(),
+  installedReviewHosts: readonly string[] = detectInstallReviewHosts(process.env),
+): InstallSelections {
   // Keep these synchronous fallbacks aligned with the choice group defaults above.
   const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
   const workProviders = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? ["github"];
   const ciProviders = readOptionList<InstallCiProvider>(flags, "ci-provider") ?? ["github"];
+  const reviewMode = readOption<InstallReviewMode>(flags, "review-mode")
+    ?? recommendedInstallReviewMode(hosts, installedReviewHosts, workProviders[0]);
+  if (!reviewMode) {
+    throw new TypeError("No Review source is available for the selected Agent harnesses and Issue tracker.");
+  }
   return {
     scope: readOption<InstallScope>(flags, "scope") ?? "local",
     packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? recommendedInstallPackageManager(cwd),
@@ -5880,7 +6803,7 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
     ciProviders,
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
-    reviewMode: readOption<InstallReviewMode>(flags, "review-mode") ?? recommendedInstallReviewMode(hosts),
+    reviewMode,
     uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root") ?? DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
     creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : true
   };
@@ -5966,16 +6889,23 @@ function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieI
 }
 
 function buildQubeInitCommand(selections: InstallSelections): string {
-  const parts = [
-    "qube init .",
-    `--host ${selections.hosts.join(",")}`,
-    `--work-provider ${selections.workProviders.join(",")}`,
-    `--ci-provider ${selections.ciProviders.join(",")}`,
-    `--review-mode ${selections.reviewMode}`,
-    `--ui-audit-evidence-root ${selections.uiAuditEvidenceRoot}`,
+  const args = [
+    "qube",
+    "init",
+    ".",
+    "--host",
+    selections.hosts.join(","),
+    "--work-provider",
+    selections.workProvider,
+    "--ci-provider",
+    selections.ciProvider,
+    "--review-mode",
+    selections.reviewMode,
+    "--ui-audit-evidence-root",
+    selections.uiAuditEvidenceRoot,
     selections.creditWarning ? "--credit-warning" : "--no-credit-warning"
   ];
-  return parts.join(" ");
+  return args.map(value => quoteShellArgument(value)).join(" ");
 }
 
 function createPackageInstallCommand(selections: InstallSelections, status: InstallStepStatus, reason: string): InstallCommandStep {
@@ -5985,7 +6915,7 @@ function createPackageInstallCommand(selections: InstallSelections, status: Inst
 
 function createProviderSetupCommands(selections: InstallSelections, status: InstallStepStatus, reason: string): readonly InstallCommandStep[] {
   const commands: InstallCommandStep[] = [];
-  if (selections.workProviders.includes("github") || selections.ciProviders.includes("github")) {
+  if (selections.workProvider === "github" || selections.ciProvider === "github") {
     commands.push({ stage: "provider-setup", label: "Configure GitHub status labels.", command: "qube aie labels setup", status, reason });
   }
   return Object.freeze(commands);
@@ -6048,7 +6978,6 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
 
 function createInstallNotes(selections: InstallSelections): readonly string[] {
   const notes = [
-    "No package-manager command is executed by qube install.",
     "Commands use exact QUBE package versions.",
     selections.lifecycleScripts === "disabled"
       ? "Lifecycle scripts stay disabled where the selected package manager supports it."
@@ -6063,7 +6992,7 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
   notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
   if (selections.workProviders.length > 1) {
-    notes.push(`Additional installed work providers (not yet active): ${selections.workProviders.slice(1).join(", ")}. The first selected work provider stays active; Executor init still always writes GitHub as the provider kind, so switching the active kind for another provider requires a manual .qube/aie/config.json edit.`);
+    notes.push(`Additional installed work providers (not active): ${selections.workProviders.slice(1).join(", ")}. The first selected work provider is active.`);
   }
   if (selections.ciProviders.length > 1) {
     notes.push(`Additional installed CI providers (not yet active): ${selections.ciProviders.slice(1).join(", ")}. The first selected CI provider stays active.`);
@@ -6161,7 +7090,10 @@ function renderOptionSummary(label: string, options: readonly InstallOptionSumma
   return `${label}: ${options.map(option => `${option.value}${option.default ? " (default)" : ""}:${option.support}`).join(", ")}`;
 }
 
-function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): CliExecution | undefined {
+function validateInstallFlagChoices(
+  flags: Readonly<Record<string, unknown>>,
+  installedReviewHosts: readonly string[],
+): CliExecution | undefined {
   const singleGroups = [
     { key: "scope", choices: scopeChoices.choices },
     { key: "package-manager", choices: packageManagerChoices.choices },
@@ -6210,7 +7142,7 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
       stderr: `Invalid install option --${group.key}=${invalid.join(",")}. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
     };
   }
-  const guideError = invalidInstallGuideFlag(flags);
+  const guideError = invalidInstallGuideFlag(flags, installedReviewHosts);
   if (guideError) {
     return {
       exitCode: 2,
@@ -6236,8 +7168,12 @@ function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefin
   return undefined;
 }
 
-function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>, cwd: string): boolean {
-  return installQuestionGuideComplete(flags, cwd);
+function hasCompleteInstallSelections(
+  flags: Readonly<Record<string, unknown>>,
+  cwd: string,
+  installedReviewHosts: readonly string[],
+): boolean {
+  return installQuestionGuideComplete(flags, cwd, installedReviewHosts);
 }
 
 function splitCsvOption(value: string): readonly string[] {
