@@ -55,6 +55,10 @@ import {
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const binPath = fileURLToPath(new URL("../dist/bin/qube.js", import.meta.url));
 
+function displayedShellArgument(value) {
+  return process.platform === "win32" ? `"${value}"` : `'${value}'`;
+}
+
 function runCli(args, options = {}) {
   const env = { ...process.env, ...options.env };
   if (process.platform === "win32" && Object.hasOwn(options.env ?? {}, "PATH") && !Object.hasOwn(options.env ?? {}, "Path")) {
@@ -553,7 +557,7 @@ describe("qube composer CLI", () => {
         "@tjalve/qube-adapter-codex",
         "@tjalve/qube-adapter-github",
       ),
-      "qube init . --host codex --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root '~/.qube/verification' --credit-warning",
+      `qube init . --host codex --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")} --credit-warning`,
       "qube doctor"
     ]);
     assert.deepEqual(parsed.installPlan.commands.map(step => step.stage), [
@@ -1756,7 +1760,7 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommandWith("@tjalve/qube-adapter-github", "@tjalve/qube-adapter-grok-build"),
-      "qube init . --host grok-build --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root '~/.qube/verification' --credit-warning",
+      `qube init . --host grok-build --work-provider github --ci-provider github --review-mode host --ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")} --credit-warning`,
       "qube doctor"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md agent instructions"));
@@ -1846,7 +1850,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const workspace = parsed.installPlan.commands.find(step => step.stage === "workspace-init")
       ?? parsed.installPlan.steps.find(step => step.stage === "workspace-init");
     assert.match(workspace.command, /--review-mode isolated/);
-    assert.match(workspace.command, /--ui-audit-evidence-root '~\/\.qube\/verification'/);
+    assert.ok(
+      workspace.command.includes(`--ui-audit-evidence-root ${displayedShellArgument("~/.qube/verification")}`),
+      workspace.command,
+    );
     assert.match(workspace.command, /--credit-warning/);
     assert.doesNotMatch(workspace.command, /--docs/);
   });
@@ -1976,7 +1983,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
 
     assert.equal(result.status, 0, result.stderr);
     const workspace = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "workspace-init");
-    assert.match(workspace.command, /--ui-audit-evidence-root 'C:\\UI \$audit' --credit-warning/);
+    const quotedEvidenceRoot = process.platform === "win32"
+      ? String.raw`--ui-audit-evidence-root "C:\UI $audit" --credit-warning`
+      : String.raw`--ui-audit-evidence-root 'C:\UI $audit' --credit-warning`;
+    assert.ok(workspace.command.includes(quotedEvidenceRoot), workspace.command);
   });
 
   it("uses the repository package manager recommendation for --yes", () => {
@@ -3343,6 +3353,10 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(parsed.makeItSo.status, "dispatch");
     assert.equal(parsed.makeItSo.mappedCommand.component, "aib");
     assert.deepEqual(parsed.makeItSo.mappedCommand.args, ["init", ".", "--idea", "Ship a local notes CLI", "--json"]);
+    const displayedIntent = process.platform === "win32"
+      ? '"Ship a local notes CLI"'
+      : "'Ship a local notes CLI'";
+    assert.equal(parsed.makeItSo.mappedCommand.command, `qube aib init . --idea ${displayedIntent} --json`);
     assert.match(parsed.makeItSo.boundaries.join("\n"), /does not create a GitHub issue/);
 
     const forwarded = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--json", "--", "--acceptance", "fast"]);
@@ -4985,6 +4999,9 @@ describe("host toolkit manifests", () => {
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
+      "--review-mode", "external",
+      "--external-reviewer", "coderabbit",
+      "--review-publisher", "user",
       "--yes",
       "--json",
     ], { cwd: outer, env });

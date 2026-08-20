@@ -77,7 +77,7 @@ import {
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
-import { buildShellCommandPlan } from "./process_launch.js";
+import { buildShellCommandPlan, quoteShellArgument } from "./process_launch.js";
 import {
   buildInstallQuestions,
   DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
@@ -5723,15 +5723,7 @@ function renderMakeItSoPlan(plan: MakeItSoPlan): string {
 }
 
 function formatQubeCommand(component: QubeComponent["command"], args: readonly string[]): string {
-  return ["qube", component, ...args].map(quoteShellArg).join(" ");
-}
-
-function quoteShellArg(value: string): string {
-  if (/^[A-Za-z0-9_./:@=-]+$/.test(value)) return value;
-  const escaped = process.platform === "win32"
-    ? value.replace(/'/g, "''")
-    : value.replace(/'/g, `'"'"'`);
-  return `'${escaped}'`;
+  return ["qube", component, ...args].map(value => quoteShellArgument(value)).join(" ");
 }
 
 function parseMakeItSoArgs(args: readonly string[]):
@@ -6913,7 +6905,7 @@ function buildQubeInitCommand(selections: InstallSelections): string {
     selections.uiAuditEvidenceRoot,
     selections.creditWarning ? "--credit-warning" : "--no-credit-warning"
   ];
-  return args.map(quoteShellArg).join(" ");
+  return args.map(value => quoteShellArgument(value)).join(" ");
 }
 
 function createPackageInstallCommand(selections: InstallSelections, status: InstallStepStatus, reason: string): InstallCommandStep {

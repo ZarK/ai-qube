@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
-import { buildShellCommandPlan } from "../dist/process_launch.js";
+import { buildShellCommandPlan, quoteShellArgument } from "../dist/process_launch.js";
 
 describe("cross-platform process launch", () => {
   it("uses cmd.exe directly for Windows command strings and cmd shims", () => {
@@ -25,6 +25,12 @@ describe("cross-platform process launch", () => {
 
   it("rejects an empty command before process launch", () => {
     assert.throws(() => buildShellCommandPlan("   ", "win32"), /must not be empty/);
+  });
+
+  it("quotes displayed arguments for the platform command interpreter", () => {
+    assert.equal(quoteShellArgument(String.raw`C:\UI $audit`, "win32"), String.raw`"C:\UI $audit"`);
+    assert.equal(quoteShellArgument(`review Bob's $HOME`, "linux"), `'review Bob'"'"'s $HOME'`);
+    assert.equal(quoteShellArgument("codex", "win32"), "codex");
   });
 
   it("executes the current platform plan without shell mode", () => {
