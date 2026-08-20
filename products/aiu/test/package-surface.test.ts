@@ -57,7 +57,7 @@ describe("package foundation", () => {
   it("publishes only the declared runtime files", async () => {
     const packageJson = await readPackageJson();
 
-    assert.deepEqual(packageJson.files, ["dist/src", "README.md"]);
+    assert.deepEqual(packageJson.files, ["bin/", "dist/src", "README.md"]);
     assert.equal(packageJson.files?.includes("scripts"), false);
     assert.equal(packageJson.files?.includes("queue-policy.json"), false);
   });
@@ -74,13 +74,14 @@ describe("package foundation", () => {
     assert.equal(packageJson.license, "MIT");
     assert.equal(packageJson.main, "./dist/src/index.js");
     assert.equal(packageJson.types, "./dist/src/index.d.ts");
-    assert.equal(packageJson.bin?.aiu, "dist/src/bin/aiu.js");
+    assert.equal(packageJson.bin?.aiu, "bin/run");
     assert.equal(packageJson.publishConfig?.access, "public");
     assert.equal(packageJson.publishConfig?.provenance, true);
 
     for (const required of [
       "README.md",
       "package.json",
+      "bin/run",
       "dist/src/index.js",
       "dist/src/index.d.ts",
       "dist/src/opencode.js",
@@ -109,6 +110,17 @@ describe("package foundation", () => {
     const tracked = await gitLsFiles(["dist", `tjalve-aiu-${packageJson.version}.tgz`]);
 
     assert.deepEqual(tracked, []);
+  });
+
+  it("tracks an executable launcher that delegates only to the compiled CLI", async () => {
+    const launcherPath = path.join(repoRoot, "bin", "run");
+    const launcher = await readFile(launcherPath, "utf8");
+    const tracked = await gitLsFilesStage(["bin/run"]);
+
+    assert.match(launcher, /^#!\/usr\/bin\/env node\r?\n/);
+    assert.match(launcher, /import\("\.\.\/dist\/src\/cli\.js"\)/);
+    assert.doesNotMatch(launcher, /(?:pnpm|npm) install|ensure.*dist|run build/i);
+    assert.match(tracked, /^100755 [a-f0-9]+ 0\tbin\/run$/m);
   });
 
   it("exports only documented stable package entrypoints", async () => {
@@ -254,6 +266,14 @@ async function gitLsFiles(paths: readonly string[]): Promise<readonly string[]> 
     maxBuffer: 1024 * 1024,
   });
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
+}
+
+async function gitLsFilesStage(paths: readonly string[]): Promise<string> {
+  const result = await execFileAsync("git", ["ls-files", "--stage", "--", ...paths], {
+    cwd: repoRoot,
+    maxBuffer: 1024 * 1024,
+  });
+  return result.stdout.trim();
 }
 
 function parseNpmrc(raw: string): Map<string, string> {

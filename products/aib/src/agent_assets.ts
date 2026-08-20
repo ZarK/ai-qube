@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 
 import { getAgentHostProfileSync } from "@tjalve/aie";
 import { AGENT_HOST_IDS, type AgentHostProfile } from "@tjalve/qube-core";
@@ -50,20 +50,31 @@ export function writeAgentAssetFiles(target: string, files: readonly AgentAssetF
   const written: { path: string }[] = [];
   for (const file of files) {
     const path = safeAssetPath(realBaseDir, file.path);
-    mkdirSync(dirname(path), { recursive: true });
-    const current = existsSync(path) ? readAssetFile(path) : "";
+    const current = readAssetFile(path);
     const next = mergeManagedInstruction(current, file.body);
-    if (current !== next) writeFileSync(path, next);
+    if (current !== next) {
+      assertSafeAssetFile(path);
+      writeFileSync(path, next);
+    }
     written.push({ path });
   }
   return written;
 }
 
 function readAssetFile(path: string): string {
-  if (lstatSync(path).isSymbolicLink()) {
+  const status = assertSafeAssetFile(path);
+  return status === undefined ? "" : readFileSync(path, "utf8");
+}
+
+function assertSafeAssetFile(path: string): ReturnType<typeof lstatSync> | undefined {
+  const status = lstatSync(path, { throwIfNoEntry: false });
+  if (status?.isSymbolicLink()) {
     throw new TypeError(`refusing to write agent asset through a symlink: ${path}`);
   }
-  return readFileSync(path, "utf8");
+  if (status !== undefined && !status.isFile()) {
+    throw new TypeError(`refusing to replace a non-file agent asset: ${path}`);
+  }
+  return status;
 }
 
 function mergeManagedInstruction(current: string, body: string): string {
@@ -94,7 +105,14 @@ function safeAssetPath(realBaseDir: string, assetPath: string): string {
     if (!inside(realBaseDir, next)) {
       throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
     }
-    if (!existsSync(next)) mkdirSync(next);
+    const status = lstatSync(next, { throwIfNoEntry: false });
+    if (status?.isSymbolicLink()) {
+      throw new TypeError(`refusing to follow an agent asset directory symlink: ${assetPath}`);
+    }
+    if (status !== undefined && !status.isDirectory()) {
+      throw new TypeError(`refusing to use a non-directory agent asset path: ${assetPath}`);
+    }
+    if (status === undefined) mkdirSync(next);
     current = realpathSync(next);
     if (!inside(realBaseDir, current)) {
       throw new TypeError(`refusing to follow agent asset directory outside target: ${assetPath}`);

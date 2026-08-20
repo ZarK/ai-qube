@@ -24,7 +24,7 @@ export const COMPONENT_LINKS = Object.freeze([
   { id: "qube", command: "qube", packageDir: "products/qube", bin: "bin/run" },
   { id: "aib", command: "aib", packageDir: "products/aib", bin: "bin/run" },
   { id: "aie", command: "aie", packageDir: "products/aie", bin: "bin/run" },
-  { id: "aiu", command: "aiu", packageDir: "products/aiu", bin: "dist/src/bin/aiu.js" },
+  { id: "aiu", command: "aiu", packageDir: "products/aiu", bin: "bin/run" },
   { id: "aiq", command: "aiq", packageDir: "products/aiq/packages/cli", bin: "dist/bin/aiq.js" },
 ]);
 

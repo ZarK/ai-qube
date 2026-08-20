@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 
 import { getAllAgentHostProfiles } from "@tjalve/aie";
@@ -98,6 +101,64 @@ test("agent asset writes reject paths outside the target", () => {
     }]),
     /outside target/
   );
+});
+
+test("agent asset writes preserve normal files and remain idempotent", (context) => {
+  const target = mkdtempSync(join(tmpdir(), "aib-agent-assets-"));
+  context.after(() => rmSync(target, { force: true, recursive: true }));
+  const file = {
+    id: "codex:instructions",
+    host: "codex",
+    path: "nested/AGENTS.md",
+    kind: "instruction",
+    body: "Use AIB."
+  };
+
+  writeAgentAssetFiles(target, [file]);
+  const first = readFileSync(join(target, file.path), "utf8");
+  writeAgentAssetFiles(target, [file]);
+  const second = readFileSync(join(target, file.path), "utf8");
+
+  assert.equal(second, first);
+  assert.equal(second.match(/BEGIN QUBE BOOTSTRAP MANAGED SECTION/gu)?.length, 1);
+});
+
+test("agent asset writes reject dangling symlink destinations", (context) => {
+  const target = mkdtempSync(join(tmpdir(), "aib-agent-symlink-"));
+  const outside = join(tmpdir(), `${basename(target)}-outside.md`);
+  const destination = join(target, "AGENTS.md");
+  context.after(() => {
+    rmSync(target, { force: true, recursive: true });
+    rmSync(outside, { force: true });
+  });
+
+  try {
+    symlinkSync(outside, destination, "file");
+  } catch (error) {
+    if (
+      error !== null
+      && typeof error === "object"
+      && "code" in error
+      && ["EACCES", "ENOSYS", "ENOTSUP", "EPERM"].includes(error.code)
+    ) {
+      context.skip(`symlink creation is unavailable: ${error.code}`);
+      return;
+    }
+    throw error;
+  }
+
+  assert.equal(existsSync(outside), false);
+  assert.throws(
+    () => writeAgentAssetFiles(target, [{
+      id: "codex:instructions",
+      host: "codex",
+      path: "AGENTS.md",
+      kind: "instruction",
+      body: "Use AIB."
+    }]),
+    /symlink/
+  );
+  assert.equal(existsSync(outside), false);
 });
 
 test("markdown work item rendering does not require GitHub auth or IDs", () => {

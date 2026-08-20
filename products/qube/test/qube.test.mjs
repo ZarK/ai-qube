@@ -3271,7 +3271,7 @@ describe("qube init composer orchestrator", () => {
     const options = { cwd: outer, env: { QUBE_TEST_PACKAGE_ROOT: packageRoot } };
 
     const first = runCli(args, options);
-    assert.equal(first.status, 0, first.stderr);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
     const firstResult = JSON.parse(first.stdout);
     assert.equal(firstResult.ok, true);
     assert.deepEqual(firstResult.selections.hosts, expectedHosts);
@@ -3304,7 +3304,7 @@ describe("qube init composer orchestrator", () => {
     ]);
 
     const second = runCli(args, options);
-    assert.equal(second.status, 0, second.stderr);
+    assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
     const secondResult = JSON.parse(second.stdout);
     assert.equal(secondResult.ok, true);
     assert.deepEqual(secondResult.selections.hosts, expectedHosts);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -54,6 +54,8 @@ describe("packed tarball install smoke", () => {
     await runPnpm(["fetch", "--frozen-lockfile", "--ignore-scripts"], target);
     await rm(path.join(target, "node_modules"), { recursive: true, force: true });
     await runPnpm(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], target);
+    const installedCommand = path.join(target, "node_modules", ".bin", process.platform === "win32" ? "aiu.cmd" : "aiu");
+    assert.equal(existsSync(installedCommand), true, "pnpm must create the AIU command shim during install");
     const result = await runPnpm(["exec", "aiu", "init", "--json"], target);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
 
@@ -114,6 +116,16 @@ describe("packed tarball install smoke", () => {
     });
 
     const installedAiuRoot = await realpath(path.join(target, "node_modules", "@tjalve", "aiu"));
+    const installedAiuManifest = JSON.parse(
+      await readFile(path.join(installedAiuRoot, "package.json"), "utf8"),
+    ) as { bin?: Record<string, string> };
+    const installedLauncher = path.join(installedAiuRoot, "bin", "run");
+    assert.deepEqual(installedAiuManifest.bin, { aiu: "bin/run" });
+    assert.equal(existsSync(installedLauncher), true);
+    assert.match(await readFile(installedLauncher, "utf8"), /\.\.\/dist\/src\/cli\.js/);
+    if (process.platform !== "win32") {
+      assert.notEqual((await stat(installedLauncher)).mode & 0o111, 0, "the packed launcher must be executable");
+    }
     for (const packedPackage of packedPackages) {
       const installedPackageRoot = packedPackage.name === "@tjalve/aiu"
         ? installedAiuRoot
