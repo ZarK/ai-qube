@@ -269,9 +269,7 @@ function normalizeAiuConfig(rawConfig: unknown, repoRoot: string): { readonly co
   validateWritablePath("stateDir", pathsConfig.stateDir, repoRoot, diagnostics);
   validateWritablePath("lockDir", pathsConfig.lockDir, repoRoot, diagnostics);
   validateWritablePath("logDir", pathsConfig.logDir, repoRoot, diagnostics);
-  if (whip.enabled) {
-    validateWritableFilePath("whip.statePath", whip.statePath, repoRoot, "$.whip.statePath", diagnostics);
-  }
+  validateWritableFilePath("whip.statePath", whip.statePath, repoRoot, "$.whip.statePath", diagnostics);
   if (postIssueScope === "custom" && whip.tasks.length === 0) {
     diagnostics.push(diagnostic(
       "custom-post-issue-tasks-required",

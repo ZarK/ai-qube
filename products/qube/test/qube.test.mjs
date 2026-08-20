@@ -3323,6 +3323,50 @@ describe("qube init orchestrator", () => {
     assert.equal(readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), "existing instructions\n");
   });
 
+  it("rejects an exact linked repository config before child planning or apply", (context) => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-root-"));
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-linked-config-workspace-"));
+    const cwd = path.join(workspace, "repo");
+    const env = initEnv(packageRoot);
+    mkdirSync(cwd, { recursive: true });
+    createInitShims(packageRoot);
+    const initArgs = [
+      "init", ".",
+      "--host", "codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--yes",
+      "--json",
+    ];
+    const initialized = runCli(initArgs, { cwd, env });
+    assert.equal(initialized.status, 0, initialized.stderr);
+
+    const configPath = repoQubeConfigPath(cwd);
+    const exactConfig = readFileSync(configPath, "utf8");
+    const outsidePath = path.join(workspace, "outside-init.json");
+    writeFileSync(outsidePath, exactConfig, "utf8");
+    unlinkSync(configPath);
+    try {
+      symlinkSync(outsidePath, configPath, "file");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EPERM") {
+        context.skip("Symbolic link creation is unavailable on this platform.");
+        return;
+      }
+      throw error;
+    }
+    const callLog = path.join(packageRoot, "init-calls.ndjson");
+    if (existsSync(callLog)) unlinkSync(callLog);
+
+    const rejected = runCli(initArgs, { cwd, env });
+    assert.equal(rejected.status, 2, rejected.stderr);
+    const payload = JSON.parse(rejected.stdout);
+    assert.equal(payload.ok, false);
+    assert.match(payload.error, /repository QUBE config is invalid.*symbolic link or directory junction/iu);
+    assert.deepEqual(readInitCalls(packageRoot), []);
+    assert.equal(readFileSync(outsidePath, "utf8"), exactConfig);
+  });
+
   it("plans all four components against one absolute target and canonical harness set", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-plan-root-"));
     const outer = mkdtempSync(path.join(tmpdir(), "qube-init-plan-cwd-"));
@@ -3488,7 +3532,7 @@ describe("qube init orchestrator", () => {
     assert.deepEqual(saved.review, { mode: "host", harness: "codex", publisher: "user" });
   });
 
-  it("stops before child apply when the QUBE intent record cannot be written", () => {
+  it("rejects an invalid QUBE intent path before child planning", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-config-failure-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-config-failure-cwd-"));
     createInitShims(packageRoot);
@@ -3499,12 +3543,11 @@ describe("qube init orchestrator", () => {
       env: initEnv(packageRoot),
     });
 
-    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.status, 2, result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.mode, "apply");
-    assert.deepEqual(parsed.apply.steps.map(step => [step.id, step.status]), [["config", "failed"]]);
-    assert.match(parsed.nextAction, /Check write access/);
-    assert.ok(readInitCalls(packageRoot).every(call => call.phase === "plan"));
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error, /repository QUBE config is invalid.*non-directory parent/iu);
+    assert.deepEqual(readInitCalls(packageRoot), []);
   });
 
   it("returns the QUBE Reviewer App setup as a post-init action", () => {

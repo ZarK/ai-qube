@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -258,14 +258,92 @@ describe("QUBE init configuration", () => {
     assert.equal(Object.hasOwn(record.review, "externalReviewers"), false);
   });
 
-  it("writes the current contract once and then reports an exact no-op", () => {
+  it("writes, updates, and reports an exact no-op for the current contract", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-init-config-"));
-    const filePath = path.join(root, ".qube", "config.json");
+    const filePath = repoQubeConfigPath(root);
     assert.equal(writeQubeInitConfig(filePath, defaults), "create");
     const first = readFileSync(filePath, "utf8");
     assert.equal(writeQubeInitConfig(filePath, defaults), "skip");
     assert.equal(readFileSync(filePath, "utf8"), first);
+    assert.equal(writeQubeInitConfig(filePath, { ...defaults, continuousShipping: false }), "update");
+    assert.equal(JSON.parse(readFileSync(filePath, "utf8")).continuousShipping, false);
     assert.equal(readQubeInitConfig(filePath).status, "valid");
+  });
+
+  it("rejects existing and dangling config-file symlinks without changing outside files", (context) => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-config-links-"));
+    const repoRoot = path.join(workspace, "repo");
+    const outsidePath = path.join(workspace, "outside-init.json");
+    const configPath = repoQubeConfigPath(repoRoot);
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(outsidePath, "outside sentinel\n", "utf8");
+    if (!createConfigLink(outsidePath, configPath, "file", context)) return;
+
+    const linkedRead = readQubeInitConfig(configPath);
+    assert.equal(linkedRead.status, "invalid");
+    assert.match(linkedRead.error ?? "", /symbolic link or directory junction/u);
+    assert.throws(() => writeQubeInitConfig(configPath, defaults), /symbolic link or directory junction/u);
+    assert.equal(readFileSync(outsidePath, "utf8"), "outside sentinel\n");
+
+    const danglingRepo = path.join(workspace, "dangling-repo");
+    const danglingPath = repoQubeConfigPath(danglingRepo);
+    const missingTarget = path.join(workspace, "missing-init.json");
+    mkdirSync(path.dirname(danglingPath), { recursive: true });
+    if (!createConfigLink(missingTarget, danglingPath, "file", context)) return;
+    assert.equal(readQubeInitConfig(danglingPath).status, "invalid");
+    assert.throws(() => writeQubeInitConfig(danglingPath, defaults), /symbolic link or directory junction/u);
+    assert.equal(existsSync(missingTarget), false);
+  });
+
+  it("rejects a linked config parent before changing its outside target", (context) => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-parent-link-"));
+    const repoRoot = path.join(workspace, "repo");
+    const outsideQube = path.join(workspace, "outside-qube");
+    const outsideConfig = path.join(outsideQube, "init.json");
+    mkdirSync(repoRoot, { recursive: true });
+    mkdirSync(outsideQube, { recursive: true });
+    writeFileSync(outsideConfig, "outside sentinel\n", "utf8");
+    if (!createConfigLink(outsideQube, path.join(repoRoot, ".qube"), process.platform === "win32" ? "junction" : "dir", context)) return;
+
+    assert.equal(readQubeInitConfig(repoQubeConfigPath(repoRoot)).status, "invalid");
+    assert.throws(
+      () => writeQubeInitConfig(repoQubeConfigPath(repoRoot), defaults),
+      /symbolic link or directory junction/u,
+    );
+    assert.equal(readFileSync(outsideConfig, "utf8"), "outside sentinel\n");
+  });
+
+  it("rejects a linked config root without writing through it", (context) => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-invalid-path-"));
+    const actualRoot = path.join(workspace, "actual-repo");
+    const linkedRoot = path.join(workspace, "linked-repo");
+    mkdirSync(actualRoot, { recursive: true });
+    if (!createConfigLink(actualRoot, linkedRoot, process.platform === "win32" ? "junction" : "dir", context)) return;
+    assert.equal(readQubeInitConfig(repoQubeConfigPath(linkedRoot)).status, "invalid");
+    assert.throws(
+      () => writeQubeInitConfig(repoQubeConfigPath(linkedRoot), defaults),
+      /unsafe root|canonical root/u,
+    );
+    assert.equal(existsSync(repoQubeConfigPath(actualRoot)), false);
+  });
+
+  it("rejects non-directory config parents and non-file leaves", () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "qube-init-non-file-path-"));
+    const blockedParentRoot = path.join(workspace, "blocked-parent-repo");
+    mkdirSync(blockedParentRoot, { recursive: true });
+    writeFileSync(path.join(blockedParentRoot, ".qube"), "parent sentinel\n", "utf8");
+    assert.throws(
+      () => writeQubeInitConfig(repoQubeConfigPath(blockedParentRoot), defaults),
+      /non-directory parent/u,
+    );
+    assert.equal(readFileSync(path.join(blockedParentRoot, ".qube"), "utf8"), "parent sentinel\n");
+
+    const directoryLeafRoot = path.join(workspace, "directory-leaf-repo");
+    mkdirSync(repoQubeConfigPath(directoryLeafRoot), { recursive: true });
+    assert.throws(
+      () => writeQubeInitConfig(repoQubeConfigPath(directoryLeafRoot), defaults),
+      /non-file path/u,
+    );
   });
 
   it("rejects fields outside the current greenfield contract", () => {
@@ -275,3 +353,16 @@ describe("QUBE init configuration", () => {
     );
   });
 });
+
+function createConfigLink(targetPath, linkPath, type, context) {
+  try {
+    symlinkSync(targetPath, linkPath, type);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("Symbolic link creation is unavailable on this platform.");
+      return false;
+    }
+    throw error;
+  }
+}

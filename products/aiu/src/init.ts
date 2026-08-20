@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -68,6 +68,14 @@ export interface AiuInitPlan {
   readonly recommendedNextCommand: string;
 }
 
+interface AiuInitRootIdentity {
+  readonly canonicalPath: string;
+  readonly device: number;
+  readonly inode: number;
+}
+
+const initRootIdentities = new WeakMap<AiuInitPlan, AiuInitRootIdentity>();
+
 export interface AiuInitFileAction {
   readonly relativePath: string;
   readonly absolutePath: string;
@@ -97,6 +105,7 @@ export interface AiuInitConflict {
 export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
   const configLoad = loadAiuConfig({ cwd: options.cwd });
   const repoRoot = configLoad.repoRoot;
+  const rootIdentity = captureInitRootIdentity(repoRoot);
   const tool = options.tool ?? "all";
   const tools = expandInitTools(tool);
   const postIssueScope = options.postIssueScope ?? configLoad.config.postIssueScope;
@@ -105,7 +114,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
   const hostProfiles = getAiuHostCapabilityProfiles(tools);
   const files = hostProfiles.flatMap((profile) => profile.managedFiles.map((file) => planFile(repoRoot, file, force)));
   const config = planConfig(repoRoot, configLoad.selectedPath, configLoad.config, tools, postIssueScope);
-  const configError = configLoad.found && !configLoad.ok
+  const configError = !configLoad.ok
     ? configLoad.diagnostics.find((diagnostic) => diagnostic.severity === "error")
     : undefined;
   const customScopeMissingTasks = postIssueScope === "custom" && configLoad.config.whip.tasks.length === 0;
@@ -142,7 +151,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
       : []),
   ];
 
-  return Object.freeze({
+  const plan = Object.freeze({
     ok: conflicts.length === 0,
     dryRun,
     force,
@@ -157,11 +166,23 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
     requiredTrustSteps: Object.freeze([...new Set(hostProfiles.flatMap((profile) => profile.trustSteps))]),
     recommendedNextCommand: "aiu config --json",
   });
+  initRootIdentities.set(plan, rootIdentity);
+  return plan;
 }
 
 export function applyAiuInitPlan(plan: AiuInitPlan): AiuInitPlan {
   if (plan.dryRun || !plan.ok) {
     return plan;
+  }
+
+  const rootIdentity = initRootIdentities.get(plan);
+  if (rootIdentity === undefined) {
+    return initRootConflictPlan(plan, "Init plan does not have a trusted repository root identity.");
+  }
+
+  const initialRootError = validateInitRoot(plan.repoRoot, rootIdentity);
+  if (initialRootError !== undefined) {
+    return initRootConflictPlan(plan, initialRootError);
   }
 
   const refreshed = planAiuInit({
@@ -173,15 +194,187 @@ export function applyAiuInitPlan(plan: AiuInitPlan): AiuInitPlan {
   if (!refreshed.ok) {
     return refreshed;
   }
+  const refreshedRootIdentity = initRootIdentities.get(refreshed);
+  const refreshedRootError = refreshedRootIdentity === undefined
+    ? "Refreshed init plan does not have a trusted repository root identity."
+    : compareInitRootIdentity(rootIdentity, refreshedRootIdentity)
+      ?? validateInitRoot(plan.repoRoot, rootIdentity);
+  if (refreshedRootError !== undefined) {
+    return initRootConflictPlan(refreshed, refreshedRootError);
+  }
 
-  for (const file of [...refreshed.files, refreshed.config]) {
+  const validated = validateInitDestinations(refreshed);
+  if (!validated.ok) {
+    return validated;
+  }
+
+  const finalRootError = validateInitRoot(plan.repoRoot, rootIdentity);
+  if (finalRootError !== undefined) {
+    return initRootConflictPlan(validated, finalRootError);
+  }
+
+  for (const file of [...validated.files, validated.config]) {
     if (file.operation === "create" || file.operation === "update") {
-      mkdirSync(path.dirname(file.absolutePath), { recursive: true });
-      writeFileSync(file.absolutePath, file.content, "utf8");
+      try {
+        mkdirSync(path.dirname(file.absolutePath), { recursive: true });
+        writeFileSync(file.absolutePath, file.content, {
+          encoding: "utf8",
+          flag: file.operation === "create" ? "wx" : "w",
+        });
+      } catch (error) {
+        return initWriteConflictPlan(
+          validated,
+          file.absolutePath,
+          `Managed destination could not be written: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
-  return refreshed;
+  return validated;
+}
+
+function captureInitRootIdentity(repoRoot: string): AiuInitRootIdentity {
+  const status = lstatSync(repoRoot);
+  return Object.freeze({
+    canonicalPath: realpathSync.native(repoRoot),
+    device: status.dev,
+    inode: status.ino,
+  });
+}
+
+function validateInitRoot(repoRoot: string, expected: AiuInitRootIdentity): string | undefined {
+  let status: ReturnType<typeof lstatSync>;
+  let canonicalPath: string;
+  try {
+    status = lstatSync(repoRoot);
+    canonicalPath = realpathSync.native(repoRoot);
+  } catch (error) {
+    return `Repository root could not be inspected after init planning: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (status.isSymbolicLink()) {
+    return "Repository root must not be a symbolic link or directory junction.";
+  }
+  if (!status.isDirectory()) {
+    return "Repository root is no longer a directory.";
+  }
+  return compareInitRootIdentity(expected, {
+    canonicalPath,
+    device: status.dev,
+    inode: status.ino,
+  });
+}
+
+function compareInitRootIdentity(expected: AiuInitRootIdentity, current: AiuInitRootIdentity): string | undefined {
+  if (path.relative(expected.canonicalPath, current.canonicalPath) !== ""
+    || expected.device !== current.device
+    || expected.inode !== current.inode) {
+    return "Repository root changed after init planning.";
+  }
+  return undefined;
+}
+
+function initRootConflictPlan(plan: AiuInitPlan, reason: string): AiuInitPlan {
+  return Object.freeze({
+    ...plan,
+    ok: false,
+    conflicts: Object.freeze([
+      ...plan.conflicts,
+      Object.freeze({
+        relativePath: ".",
+        reason,
+        suggestedNextAction: "Restore the original repository directory, then create a new init plan.",
+      }),
+    ]),
+  });
+}
+
+function initWriteConflictPlan(plan: AiuInitPlan, absolutePath: string, reason: string): AiuInitPlan {
+  const relativePath = path.relative(plan.repoRoot, absolutePath);
+  const files = plan.files.map((file) => path.relative(file.absolutePath, absolutePath) === ""
+    ? Object.freeze({ ...file, operation: "conflict" as const, reason })
+    : file);
+  const config = path.relative(plan.config.absolutePath, absolutePath) === ""
+    ? Object.freeze({ ...plan.config, operation: "conflict" as const, reason })
+    : plan.config;
+  return Object.freeze({
+    ...plan,
+    ok: false,
+    files: Object.freeze(files),
+    config,
+    conflicts: Object.freeze([...plan.conflicts, initPathConflict(relativePath, reason)]),
+  });
+}
+
+function validateInitDestinations(plan: AiuInitPlan): AiuInitPlan {
+  const pathConflicts: AiuInitConflict[] = [];
+  const files = plan.files.map((file) => {
+    const reason = validateInitDestination(plan.repoRoot, file.absolutePath);
+    if (reason === undefined) {
+      return file;
+    }
+    pathConflicts.push(initPathConflict(file.relativePath, reason));
+    return Object.freeze({ ...file, operation: "conflict" as const, reason });
+  });
+  const configReason = validateInitDestination(plan.repoRoot, plan.config.absolutePath);
+  const config = configReason === undefined
+    ? plan.config
+    : Object.freeze({ ...plan.config, operation: "conflict" as const, reason: configReason });
+  if (configReason !== undefined) {
+    pathConflicts.push(initPathConflict(plan.config.relativePath, configReason));
+  }
+  if (pathConflicts.length === 0) {
+    return plan;
+  }
+  return Object.freeze({
+    ...plan,
+    ok: false,
+    files: Object.freeze(files),
+    config,
+    conflicts: Object.freeze([...plan.conflicts, ...pathConflicts]),
+  });
+}
+
+function validateInitDestination(repoRoot: string, absolutePath: string): string | undefined {
+  const relativePath = path.relative(repoRoot, absolutePath);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    return "Managed destination must resolve to a file inside the repository.";
+  }
+
+  let currentPath = repoRoot;
+  const segments = relativePath.split(path.sep).filter((segment) => segment.length > 0);
+  for (const [index, segment] of segments.entries()) {
+    currentPath = path.join(currentPath, segment);
+    let status: ReturnType<typeof lstatSync>;
+    try {
+      status = lstatSync(currentPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        break;
+      }
+      return `Managed destination could not be inspected: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    const displayPath = path.relative(repoRoot, currentPath).replace(/\\/gu, "/");
+    if (status.isSymbolicLink()) {
+      return `Managed destination must not traverse symbolic links or directory junctions (${displayPath}).`;
+    }
+    const isDestination = index === segments.length - 1;
+    if (!isDestination && !status.isDirectory()) {
+      return `Managed destination parent is not a directory (${displayPath}).`;
+    }
+    if (isDestination && !status.isFile()) {
+      return `Managed destination must be a regular file (${displayPath}).`;
+    }
+  }
+  return undefined;
+}
+
+function initPathConflict(relativePath: string, reason: string): AiuInitConflict {
+  return Object.freeze({
+    relativePath,
+    reason,
+    suggestedNextAction: `Replace linked or invalid segments in ${relativePath} with repository-owned directories and a regular file, then run aiu init again.`,
+  });
 }
 
 export function formatInitPlan(plan: AiuInitPlan): string {

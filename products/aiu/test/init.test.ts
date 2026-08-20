@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -542,6 +542,105 @@ describe("init planner", () => {
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
+  it("makes zero writes when the repository root becomes a linked directory after planning", async (t) => {
+    const target = await createRepoRoot();
+    const originalRoot = `${target}-original`;
+    tempRoots.push(originalRoot);
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-root-"));
+    tempRoots.push(outsideRoot);
+    await mkdir(path.join(outsideRoot, ".git"));
+    const sentinelPath = path.join(outsideRoot, "sentinel.txt");
+    await writeFile(sentinelPath, "outside sentinel\n", "utf8");
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    await rename(target, originalRoot);
+    try {
+      await symlink(outsideRoot, target, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("repository root link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+
+    assert.equal(applied.ok, false);
+    assert.ok(applied.conflicts.some((conflict) => conflict.relativePath === "." && /symbolic link or directory junction/u.test(conflict.reason)));
+    assert.equal(await readFile(sentinelPath, "utf8"), "outside sentinel\n");
+    assert.equal(existsSync(path.join(outsideRoot, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
+    assert.equal(existsSync(path.join(outsideRoot, ".qube", "aiu", "config.json")), false);
+    assert.equal(existsSync(path.join(originalRoot, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("makes zero writes when a managed parent becomes a linked directory after planning", async (t) => {
+    const target = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-parent-"));
+    tempRoots.push(outsideRoot);
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    try {
+      await symlink(outsideRoot, path.join(target, ".opencode"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+    const wrapper = applied.files.find((file) => file.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts"));
+
+    assert.equal(applied.ok, false);
+    assert.equal(wrapper?.operation, "conflict");
+    assert.match(wrapper?.reason ?? "", /symbolic links or directory junctions/u);
+    assert.equal(existsSync(path.join(outsideRoot, "plugins", "ai-umpire-continuation.ts")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("makes zero writes when a managed leaf becomes a matching symbolic link after planning", async (t) => {
+    const target = await createRepoRoot();
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "aiu-init-linked-leaf-"));
+    tempRoots.push(outsideRoot);
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
+      applyAiuInitPlan: (plan: InitPlan) => InitPlan;
+      planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
+    };
+    const plan = planAiuInit({ cwd: target, tool: "opencode" });
+    const plannedWrapper = plan.files.find((file) => file.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts"));
+    assert(plannedWrapper);
+    const wrapperPath = path.join(target, plannedWrapper.relativePath);
+    const outsideWrapper = path.join(outsideRoot, "ai-umpire-continuation.ts");
+    await mkdir(path.dirname(wrapperPath), { recursive: true });
+    await writeFile(outsideWrapper, plannedWrapper.content, "utf8");
+    try {
+      await symlink(outsideWrapper, wrapperPath, "file");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        t.skip("file link creation is unavailable on this platform");
+        return;
+      }
+      throw error;
+    }
+
+    const applied = applyAiuInitPlan(plan);
+    const wrapper = applied.files.find((file) => file.relativePath === plannedWrapper.relativePath);
+
+    assert.equal(applied.ok, false);
+    assert.equal(wrapper?.operation, "conflict");
+    assert.match(wrapper?.reason ?? "", /symbolic links or directory junctions/u);
+    assert.equal(await readFile(outsideWrapper, "utf8"), plannedWrapper.content);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
   it("treats unreadable managed paths as conflicts", async () => {
     const target = await createRepoRoot();
     const wrapper = path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts");
@@ -615,7 +714,14 @@ function findFile(plan: InitEnvelope, relativePath: string): InitEnvelope["init"
 
 interface InitPlan {
   readonly ok: boolean;
-  readonly files: Array<{ operation: string }>;
+  readonly conflicts: Array<{ readonly relativePath: string; readonly reason: string }>;
+  readonly files: Array<{
+    readonly relativePath: string;
+    readonly absolutePath: string;
+    readonly operation: string;
+    readonly reason: string;
+    readonly content: string;
+  }>;
 }
 
 async function createRepoRoot(): Promise<string> {

@@ -423,6 +423,19 @@ describe("config foundation", () => {
 
     assert.equal(result.ok, false);
     assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "linked-state-path" && diagnostic.path === "$.paths.stateDir"));
+
+    await writeConfig(repoRoot, {
+      version: 1,
+      postIssueScope: "ready",
+      whip: {
+        statePath: "linked-state/whip.json",
+      },
+    });
+    const readyScope = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(readyScope.config.whip.enabled, false);
+    assert.equal(readyScope.ok, false);
+    assert.ok(readyScope.diagnostics.some((diagnostic) => diagnostic.kind === "linked-state-path" && diagnostic.path === "$.whip.statePath"));
   });
 
   it("rejects state paths below file ancestors and non-searchable directories", async (t) => {

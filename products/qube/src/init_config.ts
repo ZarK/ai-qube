@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, type Stats } from "node:fs";
 import path from "node:path";
 
 export const QUBE_USER_CONFIG_PATH = ".qube/config.json";
@@ -94,12 +94,15 @@ export function repoQubeConfigPath(repoRoot: string): string {
 
 export function readQubeInitConfig(filePath: string): QubeInitConfigReadResult {
   const resolved = path.resolve(filePath);
-  if (!existsSync(resolved)) {
-    return Object.freeze({ path: resolved, status: "missing", config: null, error: null });
-  }
   try {
-    const config = parseQubeInitConfig(JSON.parse(readFileSync(resolved, "utf8")) as unknown);
-    return Object.freeze({ path: resolved, status: "valid", config, error: null });
+    const target = resolveQubeConfigTarget(resolved);
+    const targetStatus = assertSafeQubeConfigPath(target);
+    if (!targetStatus) {
+      return Object.freeze({ path: target.path, status: "missing", config: null, error: null });
+    }
+    const config = parseQubeInitConfig(JSON.parse(readFileSync(target.path, "utf8")) as unknown);
+    assertSafeQubeConfigPath(target);
+    return Object.freeze({ path: target.path, status: "valid", config, error: null });
   } catch (error) {
     return Object.freeze({
       path: resolved,
@@ -344,16 +347,100 @@ export function configForQubeScope(
 }
 
 export function writeQubeInitConfig(filePath: string, config: QubeInitConfig): QubeInitConfigWriteOperation {
-  const resolved = path.resolve(filePath);
+  const target = resolveQubeConfigTarget(filePath);
   const content = `${JSON.stringify(config, null, 2)}\n`;
-  if (existsSync(resolved)) {
-    const current = readFileSync(resolved, "utf8");
+  let targetStatus = assertSafeQubeConfigPath(target);
+  if (targetStatus) {
+    const current = readFileSync(target.path, "utf8");
     if (current === content) return "skip";
   }
-  const operation: QubeInitConfigWriteOperation = existsSync(resolved) ? "update" : "create";
-  mkdirSync(path.dirname(resolved), { recursive: true });
-  writeFileSync(resolved, content, "utf8");
+
+  mkdirSync(path.dirname(target.path), { recursive: true });
+  targetStatus = assertSafeQubeConfigPath(target);
+  if (targetStatus && readFileSync(target.path, "utf8") === content) return "skip";
+
+  const operation: QubeInitConfigWriteOperation = targetStatus ? "update" : "create";
+  assertSafeQubeConfigPath(target);
+  writeFileSync(target.path, content, { encoding: "utf8", flag: operation === "create" ? "wx" : "w" });
   return operation;
+}
+
+interface QubeConfigTarget {
+  readonly path: string;
+  readonly root: string;
+}
+
+function resolveQubeConfigTarget(filePath: string): QubeConfigTarget {
+  const selectedPath = path.resolve(filePath);
+  const configDirectory = path.dirname(selectedPath);
+  const fileName = path.basename(selectedPath);
+  if (path.basename(configDirectory) !== ".qube" || !["config.json", "init.json"].includes(fileName)) {
+    throw new Error("Refusing to use QUBE config outside a supported .qube/config.json or .qube/init.json path.");
+  }
+
+  const selectedRoot = path.dirname(configDirectory);
+  const rootStatus = readQubeConfigPathStatus(selectedRoot);
+  if (!rootStatus || rootStatus.isSymbolicLink() || !rootStatus.isDirectory()) {
+    throw new Error(`Refusing to use QUBE config through an unsafe root: ${selectedRoot}.`);
+  }
+  const canonicalRoot = realpathSync(selectedRoot);
+  const canonicalPath = path.join(canonicalRoot, ".qube", fileName);
+  if (path.relative(canonicalPath, selectedPath) !== "") {
+    throw new Error(`Refusing to use QUBE config outside the canonical root: ${canonicalRoot}.`);
+  }
+  return Object.freeze({ path: canonicalPath, root: canonicalRoot });
+}
+
+function assertSafeQubeConfigPath(target: QubeConfigTarget): Stats | undefined {
+  const relativePath = path.relative(target.root, target.path);
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(`Refusing to use QUBE config outside the canonical root: ${target.root}.`);
+  }
+
+  const rootStatus = readQubeConfigPathStatus(target.root);
+  if (!rootStatus || rootStatus.isSymbolicLink() || !rootStatus.isDirectory()) {
+    throw new Error(`Refusing to use QUBE config through an unsafe root: ${target.root}.`);
+  }
+
+  const segments = relativePath.split(path.sep).filter(segment => segment.length > 0);
+  let currentPath = target.root;
+  for (const [index, segment] of segments.entries()) {
+    currentPath = path.join(currentPath, segment);
+    const status = readQubeConfigPathStatus(currentPath);
+    if (!status) return undefined;
+    if (status.isSymbolicLink()) {
+      throw new Error(`Refusing to use QUBE config through a symbolic link or directory junction: ${currentPath}.`);
+    }
+
+    const isLeaf = index === segments.length - 1;
+    if (isLeaf ? !status.isFile() : !status.isDirectory()) {
+      throw new Error(
+        isLeaf
+          ? `Refusing to use QUBE config at a non-file path: ${currentPath}.`
+          : `Refusing to use QUBE config through a non-directory parent: ${currentPath}.`,
+      );
+    }
+    if (isLeaf) return status;
+  }
+  return undefined;
+}
+
+function readQubeConfigPathStatus(filePath: string): Stats | undefined {
+  try {
+    return lstatSync(filePath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return undefined;
+    throw new Error(`Failed to inspect QUBE config path ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function cloneReview(review: NonNullable<QubeInitConfig["review"]>): NonNullable<QubeInitConfig["review"]> {
