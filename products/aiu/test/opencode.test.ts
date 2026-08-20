@@ -21,7 +21,14 @@ describe("OpenCode continuation runtime", () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-"));
     tempContinuationRoots.add(target);
     await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
-    const config = opencodeConfig();
+    const config = {
+      ...opencodeConfig(),
+      paths: {
+        stateDir: ".qube/aiu/state",
+        lockDir: ".qube/aiu/locks",
+        logDir: ".qube/aiu/logs",
+      },
+    } satisfies AiuConfig;
     await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
     const requests: Array<{ readonly path: { readonly id: string }; readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] }; readonly query?: { readonly directory: string } }> = [];
     const serverPlugin = createAiuOpenCodeServerPlugin({

@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
@@ -728,12 +728,8 @@ function normalizeWhip(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuW
     enabled,
     usePackageDefaults: normalizeBoolean(value.usePackageDefaults, DEFAULT_CONFIG.whip.usePackageDefaults, "$.whip.usePackageDefaults", diagnostics),
     tasks: Object.freeze(normalizeWhipTasks(value.tasks, diagnostics)),
-    statePath: enabled ? normalizePathValue(value.statePath, DEFAULT_CONFIG.whip.statePath, "$.whip.statePath", diagnostics) : normalizeDisabledWhipStatePath(value.statePath),
+    statePath: normalizePathValue(value.statePath, DEFAULT_CONFIG.whip.statePath, "$.whip.statePath", diagnostics),
   });
-}
-
-function normalizeDisabledWhipStatePath(value: unknown): string {
-  return typeof value === "string" && value.length > 0 && !value.includes("\0") ? value : DEFAULT_CONFIG.whip.statePath;
 }
 
 function normalizeWhipTasks(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuWhipTaskDefinition[] {
@@ -870,20 +866,35 @@ function normalizePathValue(value: unknown, defaultValue: string, fieldPath: str
   if (value === undefined) {
     return defaultValue;
   }
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
-    diagnostics.push(diagnostic("invalid-path", fieldPath, "Paths must be non-empty strings without NUL bytes.", "Use a safe repository-relative or absolute path."));
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || !isRepositoryRelativePath(value)) {
+    diagnostics.push(diagnostic(
+      "invalid-path",
+      fieldPath,
+      "Paths must be non-empty repository-relative strings without NUL bytes or parent-directory segments.",
+      "Use a repository-relative path without .. segments.",
+    ));
     return defaultValue;
   }
   return value;
 }
 
+function isRepositoryRelativePath(value: string): boolean {
+  return path.win32.parse(value).root.length === 0
+    && !path.posix.isAbsolute(value.replace(/\\/gu, "/"))
+    && !value.split(/[\\/]+/u).includes("..");
+}
+
 function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string, repoRoot: string, diagnostics: AiuConfigDiagnostic[]): void {
-  const resolved = path.resolve(repoRoot, configuredPath);
+  const fieldPath = `$.paths.${name}`;
+  const resolved = resolveRepositoryStatePath(configuredPath, repoRoot, fieldPath, diagnostics);
+  if (resolved === null) {
+    return;
+  }
   try {
     if (existsSync(resolved)) {
       const stat = statSync(resolved);
       if (!stat.isDirectory()) {
-        diagnostics.push(diagnostic("path-not-directory", `$.paths.${name}`, `${name} resolves to a file, not a directory.`, "Choose a directory path for Umpire state."));
+        diagnostics.push(diagnostic("path-not-directory", fieldPath, `${name} resolves to a file, not a directory.`, "Choose a directory path for Umpire state."));
         return;
       }
       accessSync(resolved, constants.W_OK | constants.X_OK);
@@ -895,7 +906,7 @@ function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string
     diagnostics.push(
       diagnostic(
         "path-not-writable",
-        `$.paths.${name}`,
+        fieldPath,
         `${name} is not writable or cannot be created: ${error instanceof Error ? error.message : String(error)}`,
         "Choose a writable repository-local path or fix directory permissions.",
       ),
@@ -904,7 +915,10 @@ function validateWritablePath(name: keyof AiuPathsConfig, configuredPath: string
 }
 
 function validateWritableFilePath(name: string, configuredPath: string, repoRoot: string, fieldPath: string, diagnostics: AiuConfigDiagnostic[]): void {
-  const resolved = path.resolve(repoRoot, configuredPath);
+  const resolved = resolveRepositoryStatePath(configuredPath, repoRoot, fieldPath, diagnostics);
+  if (resolved === null) {
+    return;
+  }
   try {
     if (existsSync(resolved)) {
       const stat = statSync(resolved);
@@ -927,6 +941,66 @@ function validateWritableFilePath(name: string, configuredPath: string, repoRoot
       ),
     );
   }
+}
+
+function resolveRepositoryStatePath(
+  configuredPath: string,
+  repoRoot: string,
+  fieldPath: string,
+  diagnostics: AiuConfigDiagnostic[],
+): string | null {
+  if (!isRepositoryRelativePath(configuredPath)) {
+    diagnostics.push(diagnostic(
+      "path-outside-repository",
+      fieldPath,
+      "Umpire state paths must stay inside the repository and must not contain parent-directory segments.",
+      "Use a repository-relative path without .. segments.",
+    ));
+    return null;
+  }
+
+  const resolved = path.resolve(repoRoot, configuredPath);
+  const relativePath = path.relative(repoRoot, resolved);
+  if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    diagnostics.push(diagnostic(
+      "path-outside-repository",
+      fieldPath,
+      "Umpire state paths must resolve inside the repository.",
+      "Use a repository-relative path inside the current repository.",
+    ));
+    return null;
+  }
+
+  let currentPath = repoRoot;
+  for (const segment of relativePath.split(path.sep).filter((segment) => segment.length > 0)) {
+    currentPath = path.join(currentPath, segment);
+    let status: ReturnType<typeof lstatSync>;
+    try {
+      status = lstatSync(currentPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        break;
+      }
+      diagnostics.push(diagnostic(
+        "path-not-writable",
+        fieldPath,
+        `Umpire state path inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+        "Choose a readable repository-owned state path.",
+      ));
+      return null;
+    }
+    if (status.isSymbolicLink()) {
+      diagnostics.push(diagnostic(
+        "linked-state-path",
+        fieldPath,
+        "Umpire state paths must not traverse symbolic links or directory junctions.",
+        "Use a repository-owned path whose existing segments are real directories or files.",
+      ));
+      return null;
+    }
+  }
+
+  return resolved;
 }
 
 function findExistingDirectoryAncestor(targetPath: string): string {
