@@ -150,7 +150,10 @@ describe("package foundation", () => {
 
     assert.equal(Object.hasOwn(dependencies, "@tjalve/aie"), false);
     assert.equal(Object.hasOwn(dependencies, "@tjalve/aiq"), false);
-    assert.equal(dependencies["@tjalve/qube-cli"], "0.2.1");
+    const cliPackage = JSON.parse(
+      await readFile(path.join(repoRoot, "..", "..", "packages", "qube-cli", "package.json"), "utf8"),
+    ) as PackageJson;
+    assert.equal(dependencies["@tjalve/qube-cli"], cliPackage.version);
   });
 
   it("does not pull frontend build tooling through the test runner", async () => {
