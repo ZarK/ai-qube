@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-linear",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Linear work provider adapter for QUBE issue reads, draft rendering, and unsupported lifecycle reporting.",
   "keywords": [
     "cli",

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-opencode",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "OpenCode host capability adapter for QUBE command, prompt, and stop-hook integrations.",
   "keywords": [
     "cli",
