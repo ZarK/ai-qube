@@ -88,6 +88,13 @@ describe("Cursor Windows ACP runner", () => {
     });
     assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "gpt-5.6-luna[reasoning=high]", name: "GPT 5.6 Luna High" }] }] }, "gpt-5.6-luna-high"), "gpt-5.6-luna[reasoning=high]");
     assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "one" }, { value: "two" }] }] }, "missing"), null);
+    const grokSession = { configOptions: [{ id: "model", options: [
+      { value: "grok-4.6[effort=high,fast=true]", name: "Grok 4.6" },
+      { value: "composer-2.5[fast=true]", name: "Composer 2.5" },
+    ] }] };
+    assert.equal(selectCursorAcpModel(grokSession, "cursor-grok-4.6-high"), "grok-4.6[effort=high,fast=true]");
+    assert.equal(selectCursorAcpModel(grokSession, "cursor-grok-4.6-high-fast"), "grok-4.6[effort=high,fast=true]");
+    assert.equal(selectCursorAcpModel(grokSession, "composer-2.5"), "composer-2.5[fast=true]");
   });
 
   it("runs a fresh ACP session with a strict isolated config and returns one envelope", () => {

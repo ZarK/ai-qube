@@ -58,19 +58,25 @@ function configOptions(value: unknown): JsonObject[] {
   return value.configOptions.filter(isRecord);
 }
 
+function catalogModelParts(requested: string): { base: string; effort: string | null } {
+  const stripped = requested.replace(/^cursor-/iu, "").replace(/-fast$/iu, "");
+  const effort = /-(low|medium|high|xhigh)$/iu.exec(stripped)?.[1]?.toLowerCase() ?? null;
+  const base = normalizeModel(stripped.replace(/-(?:low|medium|high|xhigh)$/iu, ""));
+  return { base, effort };
+}
+
 export function selectCursorAcpModel(session: unknown, requested: string): string | null {
   const model = configOptions(session).find(option => option.id === "model");
   if (!model || !Array.isArray(model.options)) return null;
   const options = model.options.filter(isRecord);
   const exact = options.find(option => option.value === requested);
   if (typeof exact?.value === "string") return exact.value;
-  const requestedBase = normalizeModel(requested.replace(/-(?:low|medium|high)$/iu, ""));
-  const requestedEffort = /-(low|medium|high)$/iu.exec(requested)?.[1]?.toLowerCase() ?? null;
+  const { base, effort } = catalogModelParts(requested);
   const matches = options.filter(option => {
     if (typeof option.value !== "string") return false;
     const label = `${option.value} ${typeof option.name === "string" ? option.name : ""}`;
-    if (!normalizeModel(label).includes(requestedBase)) return false;
-    return requestedEffort === null || new RegExp(`(?:reasoning|effort)[= _-]?${requestedEffort}|\\b${requestedEffort}\\b`, "iu").test(label);
+    if (!normalizeModel(label).includes(base)) return false;
+    return effort === null || new RegExp(`(?:reasoning|effort)[= _-]?${effort}|\\b${effort}\\b`, "iu").test(label);
   });
   return matches.length === 1 && typeof matches[0].value === "string" ? matches[0].value : null;
 }
