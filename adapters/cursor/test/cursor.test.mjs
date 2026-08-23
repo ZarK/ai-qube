@@ -121,6 +121,14 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.parseCursorEnvelope(`${JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "failed" })}\n${valid}`), null);
     assert.equal(cursor.parseCursorEnvelope(JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "failed" })), null);
     assert.equal(cursor.parseCursorEnvelope('{"type":"assistant"}'), null);
+    const prefixed = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "Delta re-review of this head. Next I will check the proofs.{\"status\":\"passed\",\"lane\":\"issue-compliance\"}",
+      session_id: "fresh",
+    });
+    assert.deepEqual(cursor.parseCursorEnvelope(prefixed), { text: '{"status":"passed","lane":"issue-compliance"}', sessionId: "fresh" });
   });
 
   it("parses authentication without returning account fields", () => {

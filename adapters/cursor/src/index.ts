@@ -137,6 +137,25 @@ export function parseCursorModelCatalog(output: string): string[] | null {
   return models.length > 0 ? models : null;
 }
 
+function extractJsonObject(text: string): string | null {
+  const trimmed = text.trim();
+  try {
+    if (isRecord(JSON.parse(trimmed))) return trimmed;
+  } catch {
+    // Cursor Grok often prefixes the lane JSON with a short thinking sentence.
+  }
+  for (let index = trimmed.lastIndexOf("{"); index >= 0; index = trimmed.lastIndexOf("{", Math.max(0, index - 1))) {
+    const candidate = trimmed.slice(index);
+    try {
+      if (isRecord(JSON.parse(candidate))) return candidate;
+    } catch {
+      // Keep scanning earlier object starts.
+    }
+    if (index === 0) break;
+  }
+  return null;
+}
+
 export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnvelope | null {
   const records: Record<string, unknown>[] = [];
   try {
@@ -159,8 +178,10 @@ export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnv
     || parsed.is_error !== false
     || typeof parsed.result !== "string"
     || parsed.result.trim() === "") return null;
+  const text = extractJsonObject(parsed.result);
+  if (!text) return null;
   return {
-    text: parsed.result,
+    text,
     sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : null,
   };
 }
