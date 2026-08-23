@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
+import { delimiter, extname, isAbsolute, join } from "node:path";
 import { redactText } from "@tjalve/qube-cli/redaction";
 
 import type { AiuTrustedStateCommandDescriptor } from "./config.js";
@@ -169,7 +171,11 @@ export function executeAiuTrustedCommand(
   let forceKill: NodeJS.Timeout | undefined;
 
   return new Promise((resolve) => {
-    const [executable, ...args] = descriptor.argv;
+    const [commandName, ...commandArgs] = descriptor.argv;
+    const resolved = resolveTrustedCommandExecutable(commandName, descriptor.cwd ?? options.cwd) ?? commandName;
+    const useWindowsCmd = process.platform === "win32" && /\.(cmd|bat)$/iu.test(resolved);
+    const executable = useWindowsCmd ? (process.env.ComSpec ?? "cmd.exe") : resolved;
+    const args = useWindowsCmd ? ["/d", "/s", "/c", resolved, ...commandArgs] : commandArgs;
     const child = spawn(executable, args, {
       cwd: descriptor.cwd ?? options.cwd,
       env: options.env,
@@ -854,4 +860,40 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+export function resolveTrustedCommandExecutable(executable: string, cwd?: string): string | undefined {
+  if (isAbsolute(executable)) {
+    return isWindowsAwareExecutable(executable) ? executable : undefined;
+  }
+  const names = windowsCommandNames(executable);
+  if (executable.includes("/") || executable.includes("\\")) {
+    const base = cwd ?? process.cwd();
+    return names.map((name) => join(base, name)).find((candidate) => isWindowsAwareExecutable(candidate));
+  }
+  return (process.env.PATH ?? "").split(delimiter).filter(Boolean).flatMap((entry) => names.map((name) => join(entry, name))).find((candidate) => isWindowsAwareExecutable(candidate));
+}
+
+function windowsCommandNames(executable: string): readonly string[] {
+  if (process.platform !== "win32" || extname(executable) !== "") return [executable];
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((extension) => extension.trim())
+    .filter((extension) => extension.length > 0);
+  return [executable, ...extensions.map((extension) => `${executable}${extension}`)];
+}
+
+function isWindowsAwareExecutable(targetPath: string): boolean {
+  try {
+    const stat = statSync(targetPath);
+    if (!stat.isFile()) return false;
+    if (process.platform !== "win32") return true;
+    const executableExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+      .split(";")
+      .map((extension) => extension.trim().toUpperCase())
+      .filter((extension) => extension.length > 0);
+    return executableExtensions.includes(extname(targetPath).toUpperCase());
+  } catch {
+    return false;
+  }
 }

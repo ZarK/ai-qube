@@ -501,7 +501,7 @@ function mergeConfig(
     trustedStateCommands: {
       ...config.trustedStateCommands,
       work: config.trustedStateCommands.work ?? {
-        argv: ["aie", "status", "--json"],
+        argv: ["qube", "aie", "status", "--json"],
         timeoutMs: defaults.timeouts.commandMs,
         maxOutputBytes: 1_048_576,
       },

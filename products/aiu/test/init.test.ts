@@ -454,7 +454,7 @@ describe("init planner", () => {
     assert.deepEqual(config.hosts.modes["claude-code"], ["continue", "repair", "stop"]);
     assert.deepEqual(config.hosts.modes["grok-build"], ["continue", "repair", "stop"]);
     assert.deepEqual(config.hosts.stopHookBlocking, { opencode: false, codex: true, "claude-code": true, "grok-build": true });
-    assert.deepEqual(config.trustedStateCommands.work.argv, ["aie", "status", "--json"]);
+    assert.deepEqual(config.trustedStateCommands.work.argv, ["qube", "aie", "status", "--json"]);
   });
 
   it("preserves existing host overrides while seeding missing init defaults", async () => {
