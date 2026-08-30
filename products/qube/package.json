@@ -51,6 +51,8 @@
     "@tjalve/aie": "0.2.9",
     "@tjalve/aiq": "0.2.6",
     "@tjalve/aiu": "0.0.10",
+    "@tjalve/qube-adapter-codex": "0.1.8",
+    "@tjalve/qube-adapter-github": "0.1.8",
     "@tjalve/qube-cli": "0.2.2",
     "@tjalve/qube-core": "0.2.6"
   },

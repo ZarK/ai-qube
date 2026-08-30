@@ -14,14 +14,14 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-npm install --save-exact --ignore-scripts @tjalve/qube-adapter-jira@0.1.1 @tjalve/qube-core@0.2.1
+npm install --save-exact --ignore-scripts @tjalve/qube-adapter-jira@0.1.6 @tjalve/qube-core@0.2.6
 ```
 
-Or use the guided composer:
+Or install QUBE and initialize the provider:
 
 ```sh
-npm install -g --ignore-scripts @tjalve/qube@0.2.0
-qube install --scope local --work-provider jira --yes
+npm install --save-exact --ignore-scripts @tjalve/qube@0.2.12 @tjalve/qube-adapter-jira@0.1.6
+qube init --work-provider jira --yes
 ```
 
 ## Requirements

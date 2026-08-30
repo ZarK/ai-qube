@@ -4,6 +4,7 @@ import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { WorkItem, WorkItemKey } from '../core/work_item.js';
 import type { WorkProvider, WorkProviderCapabilities, WorkProviderId } from './work_provider.js';
+import { adapterInstallAndInitGuidance } from '../missing_adapter_package.js';
 
 export interface WorkProviderAdapterOptions {
   readonly exec?: GhExec;
@@ -228,7 +229,7 @@ class MissingWorkProvider implements WorkProvider {
     return [
       `Cannot ${operation} with the ${this.id} work provider because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --work-provider ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--work-provider ${this.id}`),
     ].join(' ');
   }
 }

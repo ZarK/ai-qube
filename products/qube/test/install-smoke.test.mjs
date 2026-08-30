@@ -8,7 +8,6 @@ import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { createPassingPackument } from "../dist/index.js";
 import { adapterPackageVersions, componentFixtures, expectedComponentRows, qubePackageName, qubePackageVersion } from "./workspace-versions.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -19,12 +18,12 @@ const tempRoots = [];
 
 const fakeComponents = componentFixtures;
 
-describe("packed QUBE install smoke", () => {
+describe("packed QUBE package and init smoke", () => {
   afterEach(async () => {
     await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it("installs QUBE into a blank project and dispatches install-scoped component bins", async () => {
+  it("installs QUBE with default adapters and dispatches package-scoped component bins", async () => {
     const root = await createTempRoot("qube-install-smoke-");
     const packDir = path.join(root, "pack");
     const target = path.join(root, "repo");
@@ -34,6 +33,8 @@ describe("packed QUBE install smoke", () => {
     const qubeTarball = await packPackage(packageRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
+    const codexAdapterTarball = await packPackage(path.resolve(packageRoot, "..", "..", "adapters", "codex"), packDir);
+    const githubAdapterTarball = await packPackage(path.resolve(packageRoot, "..", "..", "adapters", "github"), packDir);
     const componentTarballs = new Map();
     for (const component of fakeComponents) {
       componentTarballs.set(component.name, await createFakeComponentTarball(component, root, packDir));
@@ -63,6 +64,10 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
+        ...Object.entries({
+          "@tjalve/qube-adapter-codex": fileSpecifier(target, codexAdapterTarball),
+          "@tjalve/qube-adapter-github": fileSpecifier(target, githubAdapterTarball),
+        }).map(([name, specifier]) => "          " + JSON.stringify(name) + ": " + JSON.stringify(specifier) + ","),
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(target, qubeCliTarball))},`,
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
@@ -79,7 +84,7 @@ describe("packed QUBE install smoke", () => {
     );
 
     await runPnpm(["install", "--ignore-scripts"], target);
-    assert.deepEqual(installedAdapterPackages(target), []);
+    assert.deepEqual(installedAdapterPackages(target), ["@tjalve/qube-adapter-codex", "@tjalve/qube-adapter-github"]);
 
     const components = await runPnpm(["exec", "qube", "components", "--json"], target);
     const parsedComponents = JSON.parse(components.stdout).components;
@@ -116,36 +121,26 @@ describe("packed QUBE install smoke", () => {
     assert.equal(dispatched.stdout.trim(), `${aibFixture.command} ${aibFixture.version} status --json`);
   });
 
-  it("applies install end to end from packed tarballs and is a no-op on the second run", async () => {
-    const root = await createTempRoot("qube-install-apply-smoke-");
+  it("initializes a prospective repository from a package-manager-installed QUBE tarball", async () => {
+    const root = await createTempRoot("qube-init-packed-smoke-");
     const packDir = path.join(root, "pack");
     const installer = path.join(root, "installer");
-    const target = path.join(root, "blank");
     const initTarget = path.join(root, "init-target");
     const testHome = path.join(root, "home");
-    const tools = path.join(root, "tools");
     const packageRootDir = path.join(root, "qube-root");
     await mkdir(packDir);
     await mkdir(installer);
-    await mkdir(target);
     await mkdir(initTarget);
     await mkdir(testHome);
-    await mkdir(tools);
 
     const qubeTarball = await packPackage(packageRoot, packDir);
-    const githubAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "github");
-    const codexAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "codex");
-    const githubTarball = await packPackage(githubAdapterRoot, packDir);
-    const codexTarball = await packPackage(codexAdapterRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
-    const tarballByName = new Map([
-      [qubePackageName, qubeTarball],
-      ["@tjalve/qube-adapter-github", githubTarball],
-      ["@tjalve/qube-adapter-codex", codexTarball],
-    ]);
+    const codexAdapterTarball = await packPackage(path.resolve(packageRoot, "..", "..", "adapters", "codex"), packDir);
+    const githubAdapterTarball = await packPackage(path.resolve(packageRoot, "..", "..", "adapters", "github"), packDir);
+    const componentTarballs = new Map();
     for (const component of fakeComponents) {
-      tarballByName.set(component.name, await createFakeComponentTarball(component, root, packDir));
+      componentTarballs.set(component.name, await createFakeComponentTarball(component, root, packDir));
     }
 
     await writeFile(
@@ -153,8 +148,8 @@ describe("packed QUBE install smoke", () => {
       `${JSON.stringify({
         private: true,
         packageManager: "pnpm@11.0.4",
-        dependencies: { [qubePackageName]: fileSpecifier(installer, qubeTarball) }
-      }, null, 2)}\n`
+        dependencies: { [qubePackageName]: fileSpecifier(installer, qubeTarball) },
+      }, null, 2)}\n`,
     );
     await writeFile(path.join(installer, ".npmrc"), "ignore-scripts=true\nsave-exact=true\n");
     await writeFile(
@@ -166,111 +161,53 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
+        ...Object.entries({
+          "@tjalve/qube-adapter-codex": fileSpecifier(installer, codexAdapterTarball),
+          "@tjalve/qube-adapter-github": fileSpecifier(installer, githubAdapterTarball),
+        }).map(([name, specifier]) => "          " + JSON.stringify(name) + ": " + JSON.stringify(specifier) + ","),
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(installer, qubeCliTarball))},`,
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(installer, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
-          `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(installer, tarballByName.get(component.name)))},`
+          `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(installer, componentTarballs.get(component.name)))},`
         ),
-        "        };",
-        "      }",
-        "      if (pkg.name === '@tjalve/qube-adapter-github') {",
-        "        pkg.dependencies = {",
-        "          ...pkg.dependencies,",
-        `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(installer, qubeCoreTarball))},`,
         "        };",
         "      }",
         "      return pkg;",
         "    },",
         "  },",
         "};",
-        ""
-      ].join("\n")
+        "",
+      ].join("\n"),
     );
-    await runPnpm(["install", "--ignore-scripts"], installer);
-
-    const registryPath = path.join(root, "registry.json");
-    const packuments = {
-      [qubePackageName]: createPassingPackument(qubePackageName, qubePackageVersion)
-    };
-    for (const [name, version] of Object.entries(adapterPackageVersions)) {
-      packuments[name] = createPassingPackument(name, version);
-    }
-    await writeFile(registryPath, `${JSON.stringify(packuments)}\n`);
-
-    const pmLog = path.join(root, "pm.log");
+    await runPnpm(["install", "--ignore-scripts", "--frozen-lockfile=false"], installer);
     await writeApplyComponentStubs(packageRootDir);
-    await writeApplyPnpmShim(tools, { tarballByName });
+    for (const [name, version] of Object.entries(adapterPackageVersions)) {
+      const adapterRoot = path.join(packageRootDir, "node_modules", ...name.split("/"));
+      await mkdir(adapterRoot, { recursive: true });
+      await writeFile(path.join(adapterRoot, "package.json"), `${JSON.stringify({ name, version })}\n`);
+    }
 
-    const applyArgs = [
-      "install",
-      "--apply",
-      "--yes",
-      "--json",
-      "--scope",
-      "local",
-      "--package-manager",
-      "pnpm",
-      "--host",
-      "codex",
-      "--work-provider",
-      "github",
-      "--ci-provider",
-      "github",
-      "--lifecycle-scripts",
-      "disabled",
-      "--docs",
-    ];
     const env = {
       ...process.env,
       HOME: testHome,
-      PATH: `${tools}${path.delimiter}${process.env.PATH ?? ""}`,
+      QUBE_PACKAGE_PLACEMENT: "global",
       QUBE_TEST_PACKAGE_ROOT: packageRootDir,
-      QUBE_TEST_PM_LOG: pmLog,
-      QUBE_TEST_INSTALL_PACKAGES: registryPath,
       USERPROFILE: testHome,
     };
     const qubeBin = path.join(installer, "node_modules", qubePackageName, "dist", "bin", "qube.js");
-    const first = await runPackedQube(qubeBin, applyArgs, { cwd: target, env });
-    const firstParsed = JSON.parse(first.stdout);
-    assert.equal(firstParsed.ok, true, `${first.stdout}\n${first.stderr}`);
-    assert.equal(firstParsed.installPlan.mode, "apply");
-    assert.deepEqual(firstParsed.apply.executed.map(step => step.stage), ["package-install", "workspace-init"]);
-    assert.equal(firstParsed.apply.executed.every(step => step.status === "executed"), true);
-    const pmCommands = (await readFile(pmLog, "utf8")).trim();
-    assert.match(pmCommands, /--ignore-scripts/);
-    assert.match(pmCommands, /--save-exact/);
-    assert.equal(pmCommands.split(/\s+/).includes("latest"), false);
-    assert.match(pmCommands, new RegExp(`${qubePackageName.replace("/", "\\/")}@${qubePackageVersion}`));
-    assert.match(pmCommands, /@tjalve\/qube-adapter-github@/);
-
-    const manifest = JSON.parse(await readFile(path.join(target, "package.json"), "utf8"));
-    assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
-    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
-    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-codex"], adapterPackageVersions["@tjalve/qube-adapter-codex"]);
-    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-claude-code"], undefined);
-    assert.equal(manifest.dependencies?.["@tjalve/qube-adapter-claude-code"], undefined);
-    assert.equal(existsSync(path.join(target, ".qube", "aie", "config.json")), true);
-    assert.equal(firstParsed.apply.components.ok, true);
-    assert.equal(firstParsed.apply.components.command, "components");
-    assert.ok(Array.isArray(firstParsed.apply.components.components));
-    assert.equal(firstParsed.apply.doctor !== null && typeof firstParsed.apply.doctor === "object", true);
-    assert.equal(firstParsed.apply.doctor.command, "doctor");
-    assert.equal(typeof firstParsed.apply.doctor.error, "undefined");
-    assert.deepEqual(firstParsed.apply.mismatches, []);
-
-    const second = await runPackedQube(qubeBin, applyArgs, { cwd: target, env });
-    const secondParsed = JSON.parse(second.stdout);
-    assert.equal(secondParsed.ok, true, `${second.stdout}\n${second.stderr}`);
-    assert.deepEqual(secondParsed.apply.executed, []);
-    assert.equal((await readFile(pmLog, "utf8")).trim().split(/\r?\n/).length, 1);
+    const migration = await runPackedQube(qubeBin, ["install", "--json"], { cwd: initTarget, env });
+    const migrationPayload = JSON.parse(migration.stdout);
+    assert.equal(migrationPayload.mode, "migration");
+    assert.equal(migrationPayload.changed, false);
+    assert.equal(existsSync(path.join(initTarget, ".git")), false);
+    assert.equal(existsSync(path.join(initTarget, ".qube")), false);
 
     const initArgs = [
       "init",
       ".",
+      "--git-init",
       "--yes",
       "--json",
-      "--config-scope",
-      "repo",
       "--host",
       "codex",
       "--work-provider",
@@ -304,21 +241,25 @@ describe("packed QUBE install smoke", () => {
     const firstInitParsed = JSON.parse(firstInit.stdout);
     assert.equal(firstInitParsed.ok, true, `${firstInit.stdout}\n${firstInit.stderr}`);
     assert.equal(firstInitParsed.command, "init");
+    assert.equal(firstInitParsed.scope, "repository");
     assert.equal(firstInitParsed.mode, "apply");
-    assert.equal(firstInitParsed.apply.changed, true);
+    assert.equal(firstInitParsed.changed, true);
+    assert.equal(firstInitParsed.plan.git.operation, "initialize");
+    assert.equal(existsSync(path.join(initTarget, ".git")), true);
     assertPublicInitAnswers(firstInitParsed.answers, expectedAnswerIds);
     const firstInitArtifacts = await readInitArtifacts(initTarget);
 
-    const secondInit = await runPackedQube(qubeBin, initArgs, { cwd: initTarget, env });
+    const secondArgs = initArgs.filter(argument => argument !== "--git-init");
+    const secondInit = await runPackedQube(qubeBin, secondArgs, { cwd: initTarget, env });
     const secondInitParsed = JSON.parse(secondInit.stdout);
     assert.equal(secondInitParsed.ok, true, `${secondInit.stdout}\n${secondInit.stderr}`);
     assert.equal(secondInitParsed.command, "init");
+    assert.equal(secondInitParsed.scope, "repository");
     assert.equal(secondInitParsed.mode, "apply");
-    assert.equal(secondInitParsed.apply.changed, false);
+    assert.equal(secondInitParsed.changed, false);
     assertPublicInitAnswers(secondInitParsed.answers, expectedAnswerIds);
     assert.deepEqual(await readInitArtifacts(initTarget), firstInitArtifacts);
     assert.equal(existsSync(path.join(initTarget, "package.json")), false);
-    assert.deepEqual(JSON.parse(await readFile(path.join(target, "package.json"), "utf8")), manifest);
   });
 });
 
@@ -446,68 +387,6 @@ async function writeNodeShim(binDir, name, source) {
   } else {
     await writeFile(path.join(binDir, name), `#!/usr/bin/env node\n${source}`);
     await chmod(path.join(binDir, name), 0o755);
-  }
-}
-
-async function writeApplyPnpmShim(toolsDir, input) {
-  const script = `
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-const args = process.argv.slice(2);
-const log = process.env.QUBE_TEST_PM_LOG;
-if (log) appendFileSync(log, args.join(" ") + "\\n");
-if (!args.includes("--ignore-scripts")) {
-  process.stderr.write("apply smoke pnpm requires --ignore-scripts\\n");
-  process.exit(1);
-}
-if (!args.includes("--save-exact")) {
-  process.stderr.write("apply smoke pnpm requires --save-exact\\n");
-  process.exit(1);
-}
-const tarballs = ${JSON.stringify(Object.fromEntries(input.tarballByName))};
-const specs = args.flatMap((token) => {
-  const match = token.match(/^(@[^/]+\\/[^@]+)@(\\d+\\.\\d+\\.\\d+)$/);
-  return match ? [{ name: match[1], version: match[2] }] : [];
-});
-if (specs.length === 0) process.exit(0);
-const manifestPath = path.join(process.cwd(), "package.json");
-const manifest = existsSync(manifestPath)
-  ? JSON.parse(readFileSync(manifestPath, "utf8"))
-  : { name: "blank-app", version: "0.0.0", private: true, devDependencies: {} };
-manifest.devDependencies = manifest.devDependencies ?? {};
-for (const spec of specs) {
-  if (!tarballs[spec.name]) {
-    process.stderr.write("missing local tarball for " + spec.name + "\\n");
-    process.exit(1);
-  }
-  manifest.devDependencies[spec.name] = spec.version;
-  const dir = path.join(process.cwd(), "node_modules", ...spec.name.split("/"));
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: spec.name, version: spec.version }, null, 2) + "\\n");
-  if (spec.name === ${JSON.stringify(qubePackageName)}) {
-    const binDir = path.join(process.cwd(), "node_modules", ".bin");
-    mkdirSync(binDir, { recursive: true });
-    const scriptBody = "process.stdout.write(JSON.stringify({ ok: true, command: \\"components\\", components: [{ id: \\"executor\\" }] }) + \\"\\\\n\\");";
-    writeFileSync(path.join(binDir, "qube.mjs"), scriptBody);
-    if (process.platform === "win32") {
-      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\n\\"" + process.execPath + "\\" \\"%~dp0qube.mjs\\" %*\\r\\n");
-    } else {
-      writeFileSync(path.join(binDir, "qube"), [
-        "#!/bin/sh",
-        "exec " + JSON.stringify(process.execPath) + " " + JSON.stringify(path.join(binDir, "qube.mjs")) + " \\"$@\\"",
-        ""
-      ].join("\\n"));
-      chmodSync(path.join(binDir, "qube"), 0o755);
-    }
-  }
-}
-writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\\n");
-`;
-  await writeFile(path.join(toolsDir, "pnpm.mjs"), script);
-  await writeFile(path.join(toolsDir, "pnpm.cmd"), `@echo off\r\nnode "%~dp0pnpm.mjs" %*\r\n`);
-  if (process.platform !== "win32") {
-    await writeFile(path.join(toolsDir, "pnpm"), `#!/usr/bin/env node\n${script}`);
-    await chmod(path.join(toolsDir, "pnpm"), 0o755);
   }
 }
 

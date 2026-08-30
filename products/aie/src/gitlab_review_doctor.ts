@@ -1,6 +1,7 @@
 import type { GitLabReviewPermissionDiagnosis } from '@tjalve/qube-adapter-gitlab';
 import type { Config } from './config/index.js';
 import type { GitHubReviewPublisherIdentity } from '@tjalve/qube-adapter-github';
+import { adapterInstallAndInitGuidance } from './missing_adapter_package.js';
 import {
   REVIEW_PUBLISHER_ROLE_BOUNDARY,
   type ReviewDoctorResult,
@@ -98,7 +99,7 @@ export async function runGitLabReviewDoctor(options: {
         apiScope: missingAdapter && !tokenPresent ? 'missing' : 'unknown',
         approvalPermission: missingAdapter && !tokenPresent ? 'missing' : 'unknown',
         failure: missingAdapter
-          ? 'GitLab review doctor requires optional adapter @tjalve/qube-adapter-gitlab. Run qube install --work-provider gitlab --yes --dry-run to review the adapter-backed install plan.'
+          ? `GitLab review doctor requires optional adapter @tjalve/qube-adapter-gitlab. ${adapterInstallAndInitGuidance('@tjalve/qube-adapter-gitlab', '--work-provider gitlab')}`
           : error instanceof Error ? error.message : String(error),
       };
     }

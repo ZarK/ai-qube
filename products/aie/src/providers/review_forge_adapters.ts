@@ -5,6 +5,7 @@ import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
 import type { ReviewProviderPlanOptions } from './review_provider.js';
+import { adapterInstallAndInitGuidance } from '../missing_adapter_package.js';
 
 import {
   MISSING_REVIEW_FORGE_CAPABILITIES,
@@ -346,7 +347,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
     return [
       `Cannot ${operation} with the ${this.id} review forge because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --review-forge ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--review-mode external --work-provider ${this.id}`),
     ].join(' ');
   }
 }

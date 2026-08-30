@@ -12,6 +12,12 @@ let gitlabAdapterPromise: Promise<GitLabAdapter> | undefined;
 let jiraAdapterPromise: Promise<JiraAdapter> | undefined;
 let linearAdapterPromise: Promise<LinearAdapter> | undefined;
 
+const ADAPTER_VERSIONS: Readonly<Record<string, string>> = Object.freeze({
+  "@tjalve/qube-adapter-gitlab": "0.1.8",
+  "@tjalve/qube-adapter-jira": "0.1.6",
+  "@tjalve/qube-adapter-linear": "0.1.6",
+});
+
 function isModuleMissing(error: unknown, packageName: string): boolean {
   if (!(error instanceof Error)) return false;
   const code = "code" in error ? String((error as { code?: unknown }).code) : "";
@@ -19,10 +25,12 @@ function isModuleMissing(error: unknown, packageName: string): boolean {
 }
 
 function missingAdapterError(packageName: string, provider: string): Error {
+  const version = ADAPTER_VERSIONS[packageName];
+  const spec = version ? `${packageName}@${version}` : packageName;
   return new Error([
     `Work item rendering with provider ${provider} requires optional adapter ${packageName}.`,
-    `Install ${packageName} before using --provider ${provider}.`,
-    `Run qube install --work-provider ${provider} --yes --dry-run to review the adapter-backed install plan.`,
+    `Run \`npm install --save-exact --ignore-scripts ${spec}\` or \`pnpm add --save-exact --ignore-scripts ${spec}\` for the package placement that owns QUBE.`,
+    `Then rerun \`qube init --work-provider ${provider}\`.`,
   ].join(" "));
 }
 

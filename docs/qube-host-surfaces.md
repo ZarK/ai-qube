@@ -2,7 +2,7 @@
 
 QUBE configures an agent harness. You can still run every QUBE command in a terminal, but the terminal is not an agent harness and has no instruction, task, review, or continuation surface.
 
-The five harness profiles below are the current source of truth for `qube install`, `qube init`, Executor instructions, Make It So, review routing, model discovery, and Umpire continuation.
+The five harness profiles below are the current source of truth for `qube init`, Executor instructions, Make It So, review routing, model discovery, and Umpire continuation.
 
 ## Harness setup
 

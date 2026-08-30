@@ -31,6 +31,7 @@ const primaryHarness = Object.freeze({
 describe("public QUBE init output", () => {
   it("confirms a plan with public answers and no apply instructions", () => {
     const output = renderInitOutput({
+      scope: "repository",
       mode: "plan",
       changed: true,
       answers,
@@ -42,7 +43,9 @@ describe("public QUBE init output", () => {
       },
     });
 
-    assert.match(output, /^QUBE setup plan is ready\./u);
+    assert.match(output, /^Repository QUBE initialization plan is ready\./u);
+    assert.match(output, /Mode: plan\./u);
+    assert.match(output, /Persistent values changed: yes\./u);
     assert.match(output, /- Agent harnesses: Codex and OpenCode/u);
     assert.match(output, /Reason: Use the installed harnesses that support this workflow\./u);
     assert.match(output, /- Review source: Another installed harness/u);
@@ -53,13 +56,14 @@ describe("public QUBE init output", () => {
 
   it("shows a changed apply, a new-session instruction, and applicable follow-ups", () => {
     const output = renderInitOutput({
+      scope: "repository",
       mode: "apply",
       changed: true,
       answers,
       primaryHarness,
-      postInitCommands: [
-        "qube review setup github-app",
-        "qube review setup github-app",
+      pendingNextActions: [
+        "Rerun `qube init` to continue Reviewer App setup.",
+        "Rerun `qube init` to continue Reviewer App setup.",
         "  ",
       ],
       reviewPublisherReadiness: {
@@ -68,34 +72,32 @@ describe("public QUBE init output", () => {
       },
     });
 
-    assert.match(output, /^QUBE setup is complete\./u);
+    assert.match(output, /^Repository QUBE initialization is complete\./u);
+    assert.match(output, /Mode: apply\./u);
     assert.match(output, /Choices:\n- Agent harnesses: Codex and OpenCode/u);
     assert.match(output, /Start a new Codex session so it loads the setup\./u);
     assert.match(output, /In the new session, run `\$make-it-so`\./u);
     assert.match(output, /GitHub review publisher: needs attention\./u);
-    assert.match(output, /Next actions:\n- Run `qube review setup github-app`\./u);
+    assert.match(output, /Next actions:\n- Rerun `qube init` to continue Reviewer App setup\./u);
     assert.match(output, /- Run `qube review doctor --json` after you update the publisher\./u);
-    assert.equal(output.match(/qube review setup github-app/gu)?.length, 1);
+    assert.equal(output.match(/Rerun `qube init`/gu)?.length, 1);
   });
 
   it("emits one quiet line for an unchanged apply", () => {
     const output = renderInitOutput({
+      scope: "repository",
       mode: "apply",
       changed: false,
       answers,
       primaryHarness,
-      postInitCommands: ["qube review setup github-app"],
-      reviewPublisherReadiness: {
-        state: "unavailable",
-        nextAction: "Run the review doctor.",
-      },
     });
 
-    assert.equal(output, "QUBE setup is already current.\n");
+    assert.equal(output, "Repository QUBE initialization is already current.\n");
   });
 
   it("does not add a follow-up for a ready review publisher", () => {
     const output = renderInitOutput({
+      scope: "repository",
       mode: "apply",
       changed: true,
       answers,
@@ -112,6 +114,7 @@ describe("public QUBE init output", () => {
 
   it("does not expose implementation details from normalized answer IDs", () => {
     const output = renderInitOutput({
+      scope: "repository",
       mode: "apply",
       changed: true,
       answers: [
@@ -132,6 +135,20 @@ describe("public QUBE init output", () => {
       assert.doesNotMatch(output, new RegExp(internalTerm, "iu"));
     }
   });
+
+  it("reports global scope without repository session instructions", () => {
+    const output = renderInitOutput({
+      scope: "global",
+      mode: "apply",
+      changed: true,
+      answers,
+      primaryHarness,
+    });
+
+    assert.match(output, /^Global QUBE initialization is complete\./u);
+    assert.match(output, /Persistent values changed: yes\./u);
+    assert.doesNotMatch(output, /Start a new|make-it-so/u);
+  });
 });
 
 describe("public QUBE init failures", () => {
@@ -143,6 +160,8 @@ describe("public QUBE init failures", () => {
       aiu: "Umpire setup",
       labels: "Issue tracker labels",
       config: "Repository setup choices",
+      git: "Git initialization",
+      packages: "Package requirements",
     });
   });
 

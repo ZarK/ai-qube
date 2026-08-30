@@ -1,4 +1,5 @@
 import type { DiscoverGitHubAppInstallationsOptions, GitHubAppInstallationCandidate, GitHubAppInstallationDiscoveryConfig, GitHubIssue, GitHubMilestone, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
+import { adapterInstallAndInitGuidance } from '../missing_adapter_package.js';
 
 export type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult };
 
@@ -12,7 +13,7 @@ async function loadGitHubAdapter(): Promise<GitHubAdapterExports> {
       throw new Error([
         'GitHub provider operation requires optional adapter @tjalve/qube-adapter-github.',
         'Install the optional adapter before selecting providers.work.kind=github.',
-        'Run qube install --work-provider github --yes --dry-run to review the adapter-backed install plan.',
+        adapterInstallAndInitGuidance('@tjalve/qube-adapter-github', '--work-provider github'),
       ].join(' '));
     }
     throw error;

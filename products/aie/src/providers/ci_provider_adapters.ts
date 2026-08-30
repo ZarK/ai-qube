@@ -1,4 +1,5 @@
 import type { CiProviderKind } from '../config/types.js';
+import { adapterInstallAndInitGuidance } from '../missing_adapter_package.js';
 import {
   MISSING_CI_CAPABILITIES,
   type CiCheckResult,
@@ -284,7 +285,7 @@ class MissingCiProvider implements CiProvider {
     return new Error([
       `Cannot ${operation} with the ${this.id} CI provider because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --ci-provider ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--ci-provider ${this.id}`),
     ].join(' '));
   }
 }

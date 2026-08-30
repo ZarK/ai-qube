@@ -183,7 +183,7 @@ describe('work provider adapter boundary', () => {
     assert.match(capability.nextAction, /does not guarantee a fresh read-only subagent/);
   });
 
-  it('names the adapter package and qube install when a work adapter is not installed', async () => {
+  it('names the exact adapter package and qube init when a work adapter is not installed', async () => {
     const { createMissingWorkProvider } = require('../dist/providers/work_provider_adapters.js');
     const provider = createMissingWorkProvider('linear', '@tjalve/qube-adapter-linear', [
       'Install the optional Linear work-provider adapter package before selecting providers.work.kind=linear.',
@@ -193,14 +193,16 @@ describe('work provider adapter boundary', () => {
       error => {
         const message = error instanceof Error ? error.message : String(error);
         assert.match(message, /@tjalve\/qube-adapter-linear/);
-        assert.match(message, /qube install --work-provider linear/);
+        assert.match(message, /@tjalve\/qube-adapter-linear@0\.1\.6/);
+        assert.match(message, /qube init --work-provider linear/);
+        assert.doesNotMatch(message, /qube install/);
         assert.doesNotMatch(message, /github/i);
         return true;
       },
     );
   });
 
-  it('names the adapter package and qube install when a CI adapter is not installed', () => {
+  it('names the exact adapter package and qube init when a CI adapter is not installed', () => {
     const { createMissingCiProvider } = require('../dist/providers/ci_provider_adapters.js');
     const provider = createMissingCiProvider('jenkins', '@tjalve/qube-adapter-jenkins', [
       'Install the optional Jenkins adapter package before selecting providers.ci.kind=jenkins.',
@@ -208,7 +210,9 @@ describe('work provider adapter boundary', () => {
     assert.throws(() => provider.mapCheck({}), error => {
       const message = error instanceof Error ? error.message : String(error);
       assert.match(message, /@tjalve\/qube-adapter-jenkins/);
-      assert.match(message, /qube install --ci-provider jenkins/);
+      assert.match(message, /@tjalve\/qube-adapter-jenkins@0\.1\.6/);
+      assert.match(message, /qube init --ci-provider jenkins/);
+      assert.doesNotMatch(message, /qube install/);
       assert.doesNotMatch(message, /github/i);
       return true;
     });

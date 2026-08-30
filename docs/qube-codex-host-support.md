@@ -40,9 +40,8 @@ Unsupported Codex host behavior:
 Use QUBE commands when setting up a repository for Codex:
 
 ```sh
-qube install --host codex --work-provider github --yes --dry-run --json
-qube aib init . --agent codex --idea "Plan this project" --json
-qube aie init . --tool codex --defaults --yes --json
+qube init . --host codex --work-provider github --yes --dry-run --json
+qube init . --host codex --work-provider github --yes
 ```
 
 Codex reads `AGENTS.md` from the repository instruction chain. QUBE writes or

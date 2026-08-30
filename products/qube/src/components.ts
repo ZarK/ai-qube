@@ -42,6 +42,7 @@ export interface QubeDiscoveryCapability {
 
 export interface QubeInitCapability {
   readonly participatesByDefault: boolean;
+  readonly scopes: readonly ("global" | "repository")[];
   readonly command: readonly string[];
   readonly supportsToolSelection: boolean;
   readonly alreadyInitializedHint: string;
@@ -163,6 +164,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Plan projects, specs, milestones, and work-item drafts.",
     initCapability: {
       participatesByDefault: true,
+      scopes: ["repository"],
       command: ["init"],
       supportsToolSelection: false,
       alreadyInitializedHint: "aib init reports its own file actions (create/update/skip) for the planning state directory."
@@ -176,6 +178,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     initCapability: {
       participatesByDefault: true,
+      scopes: ["repository"],
       command: ["init"],
       supportsToolSelection: true,
       alreadyInitializedHint: "aie init reports create/update/skip per managed file and config field."
@@ -208,6 +211,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Run staged quality gates and produce agent-readable evidence.",
     initCapability: {
       participatesByDefault: true,
+      scopes: ["repository"],
       command: ["config"],
       supportsToolSelection: false,
       alreadyInitializedHint: "aiq config reports create, update, skip, or conflict for Quality configuration and progress state."
@@ -221,6 +225,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Guard agent continuation, host policy, and safe idle-work decisions.",
     initCapability: {
       participatesByDefault: true,
+      scopes: ["repository"],
       command: ["init"],
       supportsToolSelection: true,
       alreadyInitializedHint: "aiu init reports create/update/skip per managed host file and continuation config."

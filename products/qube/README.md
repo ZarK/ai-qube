@@ -10,36 +10,29 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 
 ## Install
 
-Prefer project-local installs for automation:
+Use npm or pnpm to install an exact version. Prefer project installation for
+reproducible automation:
 
 ```sh
-qube install
-qube install --yes --dry-run --json
-qube install --apply --yes
-qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
-qube install --scope local --package-manager pnpm --host claude-code --work-provider github --yes
-qube install --scope local --package-manager pnpm --host codex --work-provider linear --yes
-qube install --scope local --package-manager pnpm --host codex --work-provider gitlab --yes
+npm install --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-`qube install` is a guided installer planner by default. It asks about
-project-local versus global use, package manager, agent harness, issue tracker,
-automated checks, review mode, and lifecycle-script posture. In agent and CI contexts, pass explicit flags or `--yes` for
-safe defaults. Plan mode prints copyable commands and does not run package
-managers. `--apply` executes the remaining pinned install delta after a TTY
-confirmation, or immediately with `--yes`. `--json` without `--yes` stays
-plan-only. Apply finishes with `qube components --json` and `qube doctor`.
+Use a global installation for manual shell use:
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.0
-pnpm exec qube components
+npm install --global --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-Global installs are acceptable for manual use when the exact version is pinned:
+Package placement and QUBE configuration scope are independent. After the
+`qube` command is available, use one setup entry point:
 
 ```sh
-npm install -g @tjalve/qube@0.2.0 --ignore-scripts
-qube components
+qube init --global
+qube init
+qube init <target>
+qube init <target> --git-init
 ```
 
 ## Components
@@ -56,7 +49,8 @@ qube components
 ```sh
 qube --help
 qube components
-qube install --yes --dry-run --json
+qube init --global
+qube init
 qube autoresearch init ./scratch "improve notes summary quality" --json
 qube oneshot "Ship a local notes CLI" --kind code --json
 qube make-it-so "Ship a local notes CLI" --dry-run --json

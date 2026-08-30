@@ -5,8 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createCliError } from "@tjalve/qube-cli/errors";
-import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
+import { promptInstallerChoice, promptInstallerChoices, type InstallerChoice } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { evaluatePromptGate, promptConfirm } from "@tjalve/qube-cli/prompts";
@@ -21,12 +20,12 @@ import {
 } from "@tjalve/aie";
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
-import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
+import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
 import { AGENT_HOST_IDS, qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
 
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 import { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
-import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
+import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
 import {
   applyUmpireHostProbes,
   composeHostToolkitManifests,
@@ -74,21 +73,8 @@ import {
   type GuidedReviewModelCapability,
   type GuidedReviewSource,
 } from "./init_questions.js";
-import { probeInstallState, type InstallStepStatus } from "./install_state.js";
-import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
-import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
+import { formatPackageInstallCommand, selectedAdapterInstallSpecs } from "./install_packages.js";
 import { buildShellCommandPlan, quoteShellArgument } from "./process_launch.js";
-import {
-  buildInstallQuestions,
-  DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
-  hostReviewAvailable,
-  installQuestionGuideComplete,
-  invalidInstallGuideFlag,
-  isolatedReviewAvailable,
-  recommendedInstallPackageManager,
-  recommendedInstallReviewMode,
-  type InstallReviewMode,
-} from "./install_questions.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -143,73 +129,9 @@ const offlineFlag = defineFlag({
   type: "boolean"
 });
 
-type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "codex" | "opencode" | "claude-code" | "grok-build" | "cursor";
-type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira";
 type InstallCiProvider = "github" | "gitlab" | "jenkins";
-type InstallLifecycleScripts = "disabled" | "review";
-type YesNo = "yes" | "no";
-
-interface InstallSelections {
-  readonly scope: InstallScope;
-  readonly packageManager: InstallPackageManager;
-  readonly host: InstallHost;
-  readonly hosts: readonly InstallHost[];
-  readonly workProvider: InstallWorkProvider;
-  readonly workProviders: readonly InstallWorkProvider[];
-  readonly ciProvider: InstallCiProvider;
-  readonly ciProviders: readonly InstallCiProvider[];
-  readonly lifecycleScripts: InstallLifecycleScripts;
-  readonly docs: boolean;
-  readonly reviewMode: InstallReviewMode;
-  readonly uiAuditEvidenceRoot: string;
-  readonly creditWarning: boolean;
-}
-
-type InstallCommandStage = "package-install" | "workspace-init" | "provider-setup" | "verify";
-
-interface InstallCommandStep {
-  readonly stage: InstallCommandStage;
-  readonly label: string;
-  readonly command: string;
-  readonly status: InstallStepStatus;
-  readonly reason: string;
-}
-
-interface InstallOptionSummary {
-  readonly value: string;
-  readonly label: string;
-  readonly support: QubeDiscoveryOption["support"];
-  readonly default: boolean;
-  readonly packageName: string | null;
-  readonly source: QubeDiscoveryOption["source"];
-  readonly summary: string;
-  readonly capabilities: QubeDiscoveryOption["capabilities"];
-  readonly connection: ConnectionContract | null;
-}
-
-interface InstallOptionGroups {
-  readonly hosts: readonly InstallOptionSummary[];
-  readonly workProviders: readonly InstallOptionSummary[];
-  readonly ciProviders: readonly InstallOptionSummary[];
-}
-
-interface InstallPlan {
-  readonly package: {
-    readonly name: string;
-    readonly version: string;
-  };
-  readonly selections: InstallSelections;
-  readonly options: InstallOptionGroups;
-  readonly mode: "copy-commands" | "apply";
-  readonly dryRun: boolean;
-  readonly steps: readonly InstallCommandStep[];
-  readonly commands: readonly InstallCommandStep[];
-  readonly connections: readonly ConnectionContract[];
-  readonly files: readonly string[];
-  readonly notes: readonly string[];
-}
 
 type AutoresearchCommandName = "init" | "baseline" | "run" | "status" | "dashboard" | "promote";
 type AutoresearchPhase = "initialized" | "baselined" | "ran" | "promoted";
@@ -434,43 +356,6 @@ interface MakeItSoPlan {
   readonly nextAction: string;
 }
 
-const scopeChoices = defineInstallerChoiceGroup({
-  name: "install scope",
-  message: "Where should QUBE be installed?",
-  defaultValue: "local",
-  choices: [
-    {
-      value: "local",
-      label: "Project-local",
-      description: "Install into the current project for reproducible automation.",
-      recommended: true
-    },
-    {
-      value: "global",
-      label: "Global manual",
-      description: "Install for direct human shell use."
-    }
-  ]
-});
-const packageManagerChoices = defineInstallerChoiceGroup({
-  name: "package manager",
-  message: "Which package manager should the commands use?",
-  defaultValue: "pnpm",
-  choices: [
-    {
-      value: "pnpm",
-      label: "pnpm",
-      description: "Use pnpm with exact package specifiers and disabled lifecycle scripts.",
-      recommended: true
-    },
-    {
-      value: "npm",
-      label: "npm",
-      description: "Use npm with exact package specifiers and disabled lifecycle scripts."
-    }
-  ]
-});
-
 const installOptionLabels: Readonly<Record<string, string>> = Object.freeze({
   "codex": "Codex",
   "opencode": "OpenCode",
@@ -485,212 +370,27 @@ const installOptionLabels: Readonly<Record<string, string>> = Object.freeze({
   "local": "Local only",
 });
 
-function discoveryChoices<Value extends string>(options: readonly QubeDiscoveryOption[]): readonly InstallerChoice<Value>[] {
-  return Object.freeze(options.map(option => Object.freeze({
-    value: option.id as Value,
-    label: installOptionLabels[option.id] ?? option.id,
-    description: `${option.support}: ${option.summary}`,
-    ...(option.default ? { recommended: true } : {}),
-  })));
-}
-
-function discoveryOptionValues(options: readonly QubeDiscoveryOption[]): string[] {
-  return options.map(option => option.id);
-}
-
-const hostChoices = defineInstallerChoiceGroup({
-  name: "agent harness",
-  message: "Which agent harness should QUBE configure?",
-  defaultValue: "codex",
-  choices: discoveryChoices<InstallHost>(executorHostSurfaces)
-});
-const workProviderChoices = defineInstallerChoiceGroup({
-  name: "issue tracker",
-  message: "Which issue tracker should QUBE use?",
-  defaultValue: "github",
-  choices: discoveryChoices<InstallWorkProvider>(executorWorkProviders)
-});
-const ciProviderChoices = defineInstallerChoiceGroup({
-  name: "automated checks",
-  message: "Which provider runs this repository's automated checks (CI)?",
-  defaultValue: "github",
-  choices: discoveryChoices<InstallCiProvider>(executorCiProviders)
-});
-const lifecycleChoices = defineInstallerChoiceGroup({
-  name: "lifecycle scripts",
-  message: "How should package lifecycle scripts be handled?",
-  defaultValue: "disabled",
-  choices: [
-    {
-      value: "disabled",
-      label: "Disabled",
-      description: "Add package-manager flags that keep install lifecycle scripts off.",
-      recommended: true
-    },
-    {
-      value: "review",
-      label: "Review before enabling",
-      description: "Keep generated commands safe and document any manual exception."
-    }
-  ]
-});
-const docsChoices = defineInstallerChoiceGroup({
-  name: "docs generation",
-  message: "Should the plan include docs/config notes?",
-  defaultValue: "yes",
-  choices: [
-    {
-      value: "yes",
-      label: "Include docs notes",
-      description: "Show README and config guidance after install.",
-      recommended: true
-    },
-    {
-      value: "no",
-      label: "Commands only",
-      description: "Only show package install and verification commands."
-    }
-  ]
-});
-const evidenceRootChoices = defineInstallerChoiceGroup({
-  name: "UI audit evidence root",
-  message: "Where should this machine keep local UI audit evidence?",
-  defaultValue: "qube",
-  choices: [
-    {
-      value: "qube",
-      label: "QUBE user default",
-      description: "Store UI audit evidence under ~/.qube/verification/.",
-      recommended: true
-    }
-  ]
-});
-const attributionChoices = defineInstallerChoiceGroup({
-  name: "attribution hygiene",
-  message: "Should installed agent instructions keep public git and GitHub writes on the human project identity?",
-  defaultValue: "true",
-  choices: [
-    {
-      value: "true",
-      label: "Yes. Install attribution hygiene rules.",
-      description: "Public git and GitHub writes stay on the human project identity.",
-      recommended: true
-    },
-    {
-      value: "false",
-      label: "No. Omit those rules from installed instructions.",
-      description: "Do not add attribution hygiene rules."
-    }
-  ]
-});
-
-const applyFlag = defineFlag({
-  name: "apply",
-  description: "Execute the remaining install delta after confirmation. Pass --yes to skip the confirmation prompt.",
-  type: "boolean"
-});
-
 const installCommand = defineCommand({
   kind: "command",
   name: "install",
-  description: "Build a guided, supply-chain-safe QUBE install plan and optionally apply it.",
-  flags: [
-    jsonFlag,
-    dryRunFlag,
-    yesFlag,
-    applyFlag,
-    offlineFlag,
-    defineFlag({
-      name: "scope",
-      description: "Install scope to plan.",
-      type: "option",
-      options: ["local", "global"]
-    }),
-    defineFlag({
-      name: "package-manager",
-      description: "Package manager to use in generated commands.",
-      type: "option",
-      options: ["pnpm", "npm"]
-    }),
-    defineFlag({
-      name: "host",
-      description: `Comma-separated agent harnesses to select; the first is active. Default: codex. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
-      type: "string"
-    }),
-    defineFlag({
-      name: "work-provider",
-      description: `Comma-separated work providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
-      type: "string"
-    }),
-    defineFlag({
-      name: "ci-provider",
-      description: `Comma-separated CI providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
-      type: "string"
-    }),
-    defineFlag({
-      name: "lifecycle-scripts",
-      description: "Lifecycle script posture for generated install commands.",
-      type: "option",
-      options: ["disabled", "review"]
-    }),
-    defineFlag({
-      name: "docs",
-      description: "Include README and configuration guidance in the generated plan.",
-      type: "boolean",
-      negatable: true
-    }),
-    defineFlag({
-      name: "review-mode",
-      description: "Review mode written into the workspace-init command. Isolated is available only when a selected host adapter can run isolated review.",
-      type: "option",
-      options: ["isolated", "host", "external"]
-    }),
-    defineFlag({
-      name: "ui-audit-evidence-root",
-      description: "User-local directory that UI audit evidence should use. Default: ~/.qube/verification.",
-      type: "string"
-    }),
-    defineFlag({
-      name: "credit-warning",
-      description: "Install attribution hygiene rules so public git and GitHub writes stay on the human project identity.",
-      type: "boolean",
-      negatable: true
-    })
-  ],
-  examples: [
-    {
-      description: "Render an interactive guided install plan.",
-      command: "qube install"
-    },
-    {
-      description: "Render a non-interactive local install plan as JSON.",
-      command: "qube install --yes --dry-run --json"
-    },
-    {
-      description: "Render a global npm install plan.",
-      command: "qube install --scope global --package-manager npm --yes"
-    },
-    {
-      description: "Apply the remaining install delta without prompting.",
-      command: "qube install --apply --yes"
-    }
-  ],
+  hidden: true,
+  description: "Explain the package-manager installation migration and direct QUBE setup to qube init.",
+  flags: [jsonFlag],
+  examples: [{
+    description: "Show the non-mutating package-manager migration response.",
+    command: "qube install --json"
+  }],
   output: {
     formats: ["human", "json"],
     defaultFormat: "human"
   },
   interactions: {
     json: true,
-    dryRun: {
-      supported: true
-    },
+    dryRun: { supported: true },
     noColor: true,
     nonInteractive: true,
-    ttyPrompt: true
+    ttyPrompt: false
   },
-  mutation: defineMutationMetadata({
-    categories: mutationCategories("dependency", "local-files")
-  }),
   supplyChain: {
     sensitive: true,
     reason: "Installer output contains package-manager commands and dependency setup guidance.",
@@ -1012,7 +712,7 @@ const defaultsFlag = defineFlag({
 const initCommand = defineCommand({
   kind: "command",
   name: "init",
-  description: "Guide repository setup, apply the complete QUBE system, and show how to start work.",
+  description: "Initialize user-global QUBE choices or prepare one repository through the complete guided setup flow.",
   arguments: [
     defineArgument({
       name: "target",
@@ -1027,18 +727,28 @@ const initCommand = defineCommand({
     forceFlag,
     defaultsFlag,
     defineFlag({
+      name: "global",
+      description: "Initialize user-global QUBE settings without resolving or inspecting a repository.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "git-init",
+      description: "Permit repository initialization to create Git metadata in a target that is not yet a repository.",
+      type: "boolean"
+    }),
+    defineFlag({
       name: "host",
-      description: `Comma-separated Agent harnesses. The first harness is primary. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      description: `Comma-separated Agent harnesses. The first harness is primary. Use one or more of: ${executorHostSurfaces.map(option => option.id).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
       name: "work-provider",
-      description: `Issue tracker. Use one of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
+      description: `Issue tracker. Use one of: ${executorWorkProviders.map(option => option.id).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
       name: "ci-provider",
-      description: `Provider for Automated checks (CI). Use one of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
+      description: `Provider for Automated checks (CI). Use one of: ${executorCiProviders.map(option => option.id).join(", ")}.`,
       type: "string"
     }),
     defineFlag({
@@ -1049,7 +759,7 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "config-scope",
-      description: "Store QUBE setup choices for this repository or as user-global defaults. Reviewer App follow-up uses the same scope; repository values override global values.",
+      description: "Compatibility alias for --global or repository initialization. Use --global for new commands.",
       type: "option",
       options: ["repo", "global"]
     }),
@@ -1105,9 +815,10 @@ const initCommand = defineCommand({
     })
   ],
   examples: [
-    { description: "Initialize the current directory for Claude Code with GitHub providers.", command: "qube init . --host claude-code --work-provider github --ci-provider github --yes" },
-    { description: "Initialize all components for multiple agent harnesses.", command: "qube init . --host claude-code,codex --yes --json" },
-    { description: "Record an explicit MCP opt-in. This does not install provider MCP servers.", command: "qube init . --host claude-code --mcp --yes --dry-run --json" }
+    { description: "Initialize user-global QUBE choices from any directory.", command: "qube init --global" },
+    { description: "Initialize the current repository.", command: "qube init" },
+    { description: "Initialize an explicit repository target.", command: "qube init <target>" },
+    { description: "Initialize Git and QUBE in a prospective repository target.", command: "qube init <target> --git-init" }
   ],
   interactions: {
     json: true,
@@ -1304,7 +1015,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
 let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function renderCommandSurfacesDoc(): string {
-  const composerCommands = [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
+  const composerCommands = [componentsCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
   const lines: string[] = [
     "# QUBE Command Surfaces",
     "",
@@ -1443,7 +1154,7 @@ function createQubeCli(environment: CliEnvironment) {
         return { stdout: renderComponents() };
       }),
       createRuntimeCommand(installCommand, async ({ flags }) => {
-        return executeQubeInstall(flags, environment);
+        return executeQubeInstall(flags);
       }),
       createRuntimeCommand(initCommand, ({ flags, args }) => executeQubeInit(flags, args, environment)),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
@@ -1725,7 +1436,7 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly configScope?: 'repo' | 'global'; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly prospectiveRoot?: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly configScope?: 'repo' | 'global'; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
   if (options.workProvider) args.push("--work-provider", options.workProvider);
@@ -1745,6 +1456,7 @@ function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options
   if (options.creditWarning === true) args.push("--credit-warning");
   if (options.creditWarning === false) args.push("--no-credit-warning");
   if (options.dryRun) args.push("--dry-run");
+  if (options.prospectiveRoot) args.push("--prospective-root");
   if (options.force) args.push("--force");
   if (options.yes) args.push("--yes");
   if (options.defaults) args.push("--defaults");
@@ -1770,17 +1482,6 @@ interface QubeInitInvocation {
 
 function homeDirectory(environment: CliEnvironment): string {
   return environment.env.USERPROFILE ?? environment.env.HOME ?? homedir();
-}
-
-function resolveInitTarget(cwd: string, target: string): string {
-  const selected = path.resolve(cwd, target);
-  const probe = spawnSync("git", ["-C", selected, "rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (probe.status !== 0) return selected;
-  const repositoryRoot = probe.stdout.trim();
-  return repositoryRoot === "" ? selected : path.resolve(repositoryRoot);
 }
 
 function detectCiProviders(target: string): readonly InstallCiProvider[] {
@@ -2615,18 +2316,318 @@ function qubeConfigOperation(
   return "update";
 }
 
+interface InitAggregateDiagnostics {
+  readonly id: "aggregate-diagnostics";
+  readonly status: "ready" | "attention";
+  readonly exitCode: number;
+  readonly result?: unknown;
+  readonly error?: string;
+  readonly nextAction?: string;
+}
+
+async function runInitAggregateDiagnostics(
+  environment: CliEnvironment,
+  targetPath: string,
+  targetArgument: string | undefined,
+): Promise<InitAggregateDiagnostics> {
+  const result = await executeQubeDoctor(true, false, { ...environment, cwd: targetPath });
+  let parsed: unknown;
+  let parseError: string | undefined;
+  try {
+    parsed = result.jsonStdout ? JSON.parse(result.jsonStdout) : undefined;
+    if (!parsed || typeof parsed !== "object") {
+      parseError = "Aggregate diagnostics returned no structured result.";
+    }
+  } catch {
+    parseError = "Aggregate diagnostics returned invalid JSON.";
+  }
+  const ready = result.exitCode === 0
+    && !parseError
+    && (parsed as { ok?: unknown } | undefined)?.ok === true;
+  if (ready) {
+    return Object.freeze({
+      id: "aggregate-diagnostics",
+      status: "ready",
+      exitCode: 0,
+      result: parsed,
+    });
+  }
+  const error = parseError
+    || result.stderr?.trim()
+    || `Aggregate diagnostics exited with code ${result.exitCode}.`;
+  return Object.freeze({
+    id: "aggregate-diagnostics",
+    status: "attention",
+    exitCode: result.exitCode || 1,
+    ...(parsed === undefined ? {} : { result: parsed }),
+    error,
+    nextAction: `Correct the reported readiness problems, then rerun \`${initRerunCommand("repository", targetArgument)}\`.`,
+  });
+}
+
+type QubeInitScope = "global" | "repository";
+
+function resolveQubeInitScope(
+  flags: Readonly<Record<string, unknown>>,
+  args: Readonly<Record<string, unknown>>,
+): { readonly scope: QubeInitScope; readonly error?: string } {
+  const canonicalGlobal = flags.global === true;
+  const compatibilityScope = readOption<"repo" | "global">(flags, "config-scope");
+  const hasTarget = readString(args.target) !== undefined;
+  const wantsGitInit = flags["git-init"] === true;
+  if (canonicalGlobal && compatibilityScope === "repo") {
+    return { scope: "global", error: "--global conflicts with --config-scope repo." };
+  }
+  const scope: QubeInitScope = canonicalGlobal || compatibilityScope === "global" ? "global" : "repository";
+  if (canonicalGlobal && hasTarget) {
+    return { scope, error: "Global initialization does not accept a target. `qube init global` remains a repository target; use `qube init --global`." };
+  }
+  if (scope === "global" && wantsGitInit) {
+    return { scope, error: "--git-init applies only to repository initialization and cannot be combined with --global." };
+  }
+  return { scope };
+}
+
+interface InitGitState {
+  readonly selectedTarget: string;
+  readonly repositoryRoot: string | null;
+  readonly gitAvailable: boolean;
+  readonly reason: string | null;
+}
+
+function inspectInitGitState(cwd: string, target: string): InitGitState {
+  const selectedTarget = path.resolve(cwd, target);
+  if (!existsSync(selectedTarget) || !statSync(selectedTarget).isDirectory()) {
+    return { selectedTarget, repositoryRoot: null, gitAvailable: true, reason: "The repository target must be an existing directory." };
+  }
+  const probe = spawnSync("git", ["-C", selectedTarget, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (probe.error && (probe.error as NodeJS.ErrnoException).code === "ENOENT") {
+    return { selectedTarget, repositoryRoot: null, gitAvailable: false, reason: "Git is not installed or is not available on PATH." };
+  }
+  if (probe.status !== 0) {
+    return { selectedTarget, repositoryRoot: null, gitAvailable: true, reason: "The selected target is not inside a Git repository." };
+  }
+  const repositoryRoot = probe.stdout.trim();
+  return {
+    selectedTarget,
+    repositoryRoot: repositoryRoot === "" ? selectedTarget : path.resolve(repositoryRoot),
+    gitAvailable: true,
+    reason: null,
+  };
+}
+
+function missingConfigRead(pathValue: string): ReturnType<typeof readQubeInitConfig> {
+  return Object.freeze({ path: pathValue, status: "missing" as const, config: null, error: null });
+}
+
+type InitPackagePlacement = "global" | "project" | "unknown";
+
+interface InitPackageRequirementReport {
+  readonly placement: InitPackagePlacement;
+  readonly packageManager: InstallPackageManager;
+  readonly requirements: readonly {
+    readonly name: string;
+    readonly version: string;
+    readonly status: "ready" | "missing";
+  }[];
+  readonly installCommand: string | null;
+}
+
+function findProjectPackageRoot(cwd: string): string | null {
+  let current = path.resolve(cwd);
+  while (true) {
+    const manifestPath = path.join(current, "package.json");
+    if (existsSync(manifestPath) && statSync(manifestPath).isFile()) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relativePath = path.relative(path.resolve(root), path.resolve(candidate));
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+function declaredQubePackage(projectRoot: string | null): boolean {
+  if (!projectRoot) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(projectRoot, "package.json"), "utf8")) as Record<string, unknown>;
+    return ["dependencies", "devDependencies", "optionalDependencies"].some(field => {
+      const values = manifest[field];
+      return values !== null && typeof values === "object" && !Array.isArray(values)
+        && typeof (values as Record<string, unknown>)[packageName] === "string";
+    });
+  } catch {
+    return false;
+  }
+}
+
+function detectInitPackagePlacement(environment: CliEnvironment): {
+  readonly placement: InitPackagePlacement;
+  readonly packageManager: InstallPackageManager;
+  readonly projectRoot: string | null;
+} {
+  const explicitPlacement = environment.env.QUBE_PACKAGE_PLACEMENT;
+  const projectRoot = findProjectPackageRoot(environment.cwd);
+  const packageRoot = environment.packageRoot ?? defaultPackageRoot(environment.env);
+  const placement: InitPackagePlacement = explicitPlacement === "global" || explicitPlacement === "project" || explicitPlacement === "unknown"
+    ? explicitPlacement
+    : projectRoot && (declaredQubePackage(projectRoot) || pathIsWithin(projectRoot, packageRoot))
+      ? "project"
+      : packageRoot.toLowerCase().includes(`${path.sep}node_modules${path.sep}`)
+        ? "global"
+        : "unknown";
+  const userAgent = environment.env.npm_config_user_agent ?? "";
+  const packageManager: InstallPackageManager = projectRoot && existsSync(path.join(projectRoot, "pnpm-lock.yaml"))
+    ? "pnpm"
+    : projectRoot && existsSync(path.join(projectRoot, "package-lock.json"))
+      ? "npm"
+      : userAgent.startsWith("pnpm/")
+        ? "pnpm"
+        : "npm";
+  return { placement, packageManager, projectRoot };
+}
+
+function installedInitPackageVersion(
+  packageNameValue: string,
+  environment: CliEnvironment,
+  projectRoot: string | null,
+): string | null {
+  const packageParts = packageNameValue.split("/");
+  const packageRoot = environment.packageRoot ?? defaultPackageRoot(environment.env);
+  const aie = qubeComponents.find(component => component.command === "aie");
+  const aieResolution = aie ? resolveComponentCommand(aie, environment) : undefined;
+  const candidateRoots = [
+    path.join(packageRoot, "node_modules"),
+    ...(projectRoot ? [path.join(projectRoot, "node_modules")] : []),
+    ...(aieResolution?.packageJsonPath ? [path.join(path.dirname(aieResolution.packageJsonPath), "node_modules")] : []),
+  ];
+  for (const root of candidateRoots) {
+    const manifestPath = path.join(root, ...packageParts, "package.json");
+    const version = readPackageVersion(packageNameValue, manifestPath);
+    if (version) return version;
+  }
+  return null;
+}
+
+function inspectInitPackageRequirements(
+  setup: QubeInitConfig & { readonly hosts: readonly string[]; readonly workProviders: readonly string[]; readonly ciProviders: readonly string[] },
+  scope: QubeInitScope,
+  environment: CliEnvironment,
+): InitPackageRequirementReport {
+  const detected = detectInitPackagePlacement(environment);
+  const selections = {
+    scope: detected.placement === "project" ? "local" as const : "global" as const,
+    packageManager: detected.packageManager,
+    hosts: setup.hosts,
+    workProviders: setup.workProviders,
+    ciProviders: setup.ciProviders,
+    lifecycleScripts: "disabled" as const,
+  };
+  const componentRequirements = scope === "repository"
+    ? qubeComponents.filter(component => component.initCapability?.scopes.includes("repository"))
+    : setup.review?.publisher === "github-app"
+      ? qubeComponents.filter(component => component.command === "aie")
+      : [];
+  const requirements = [
+    ...componentRequirements.map(component => ({
+      name: component.packageName,
+      version: component.packageVersion,
+      status: resolveComponentCommand(component, environment) ? "ready" as const : "missing" as const,
+    })),
+    ...selectedAdapterInstallSpecs(selections).map(spec => ({
+      name: spec.name,
+      version: spec.version,
+      status: installedInitPackageVersion(spec.name, environment, detected.projectRoot) === spec.version
+        ? "ready" as const
+        : "missing" as const,
+    })),
+  ];
+  const deduplicated = [...new Map(requirements.map(requirement => [requirement.name, requirement])).values()];
+  return Object.freeze({
+    placement: detected.placement,
+    packageManager: detected.packageManager,
+    requirements: Object.freeze(deduplicated),
+    installCommand: deduplicated.some(requirement => requirement.status === "missing")
+      ? formatPackageInstallCommand(selections)
+      : null,
+  });
+}
+
+function initRerunCommand(scope: QubeInitScope, target: string | undefined): string {
+  return scope === "global" ? "qube init --global" : `qube init ${target ?? "."}`;
+}
+
+function initComponentFailureNextAction(
+  scope: QubeInitScope,
+  target: string | undefined,
+  actionId: QubeInitComponentId,
+  childNextAction: string | undefined,
+): string {
+  const force = childNextAction?.includes("--force") ? " --force" : "";
+  return `Correct ${publicInitActionLabel(actionId).toLowerCase()}, then rerun \`${initRerunCommand(scope, target)}${force}\`.`;
+}
+
+function initOwnedAction(action: unknown, scope: QubeInitScope, target: string | undefined, status: "planned" | "pending"): Readonly<Record<string, unknown>> {
+  const record = childRecord(action) ?? {};
+  const { command: _command, ...publicFields } = record;
+  void _command;
+  return Object.freeze({
+    ...publicFields,
+    status,
+    handledBy: "qube init",
+    nextAction: `Rerun \`${initRerunCommand(scope, target)}\` to resume this action.`,
+  });
+}
+
+function repositoryHasOrigin(targetPath: string): boolean {
+  const remote = spawnSync("git", ["-C", targetPath, "remote", "get-url", "origin"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return remote.status === 0 && remote.stdout.trim() !== "";
+}
+
+function deferredProviderFailure(error: string | undefined): boolean {
+  return Boolean(error && /authentication|authenticate|credential|login|remote|repository identity|not a git repository|could not resolve repository/i.test(error));
+}
+
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  const targetPath = resolveInitTarget(environment.cwd, readString(args.target) ?? ".");
   const json = flags.json === true;
   const dryRun = flags["dry-run"] === true;
   const force = flags.force === true;
   const useDefaults = flags.yes === true || flags.defaults === true;
-  const configScope = readOption<"repo" | "global">(flags, "config-scope") ?? "repo";
+  const scopeResult = resolveQubeInitScope(flags, args);
+  if (scopeResult.error) {
+    const nextAction = "Use `qube init --global` without a target, or use `qube init [target]` for repository initialization.";
+    const payload = { ok: false, command: "init", scope: scopeResult.scope, failedAction: publicInitActionLabel("config"), error: scopeResult.error, nextAction };
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: scopeResult.error, nextAction }) };
+  }
+  const scope = scopeResult.scope;
+  const configScope = scope === "global" ? "global" : "repo";
+  const gitState = scope === "repository" ? inspectInitGitState(environment.cwd, readString(args.target) ?? ".") : null;
+  if (gitState?.reason === "The repository target must be an existing directory.") {
+    const nextAction = "Create the target directory, then rerun `qube init <target>`.";
+    const payload = { ok: false, command: "init", scope, failedAction: "Repository target", error: gitState.reason, nextAction };
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: gitState.reason, nextAction }) };
+  }
+  const targetPath = gitState?.repositoryRoot ?? gitState?.selectedTarget ?? environment.cwd;
   const globalConfigPath = userQubeConfigPath(homeDirectory(environment));
-  const repositoryConfigPath = repoQubeConfigPath(targetPath);
+  const repositoryConfigPath = scope === "repository" ? repoQubeConfigPath(targetPath) : "";
   const globalConfig = readQubeInitConfig(globalConfigPath);
-  const repositoryConfig = readQubeInitConfig(repositoryConfigPath);
-  const configError = initConfigError("user-global", globalConfig) ?? initConfigError("repository", repositoryConfig);
+  const repositoryConfig = scope === "repository"
+    ? readQubeInitConfig(repositoryConfigPath)
+    : missingConfigRead(path.join(globalConfigPath, "global-init-does-not-read-repository-config"));
+  const configError = initConfigError("user-global", globalConfig)
+    ?? (scope === "repository" ? initConfigError("repository", repositoryConfig) : undefined);
   if (configError) {
     const nextAction = "Correct the invalid QUBE setup file, then rerun qube init.";
     const payload = { ok: false, command: "init", failedAction: publicInitActionLabel("config"), error: configError, nextAction };
@@ -2635,7 +2636,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: configError, nextAction }) };
   }
 
-  const inherited = mergeQubeInitConfigs(globalConfig.config, repositoryConfig.config);
+  const inherited = mergeQubeInitConfigs(globalConfig.config, scope === "repository" ? repositoryConfig.config : null);
   const explicitReviewSelectionError = explicitGuidedReviewError(flags, inherited);
   if (explicitReviewSelectionError) {
     const nextAction = "Correct the Review selection, then rerun qube init.";
@@ -2644,7 +2645,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
       : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: explicitReviewSelectionError, nextAction }) };
   }
-  const detectedCi = detectCiProviders(targetPath);
+  const detectedCi = scope === "repository" ? detectCiProviders(targetPath) : Object.freeze([]) as readonly InstallCiProvider[];
   const registeredReviewers = await listInitExternalReviewers();
   const recommendedReviewer = registeredReviewers.find(reviewer => reviewer.id === "coderabbit") ?? registeredReviewers[0];
   const guidedDefaults = defaultGuidedInitAnswers(recommendedReviewer?.id);
@@ -2808,63 +2809,41 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error, nextAction };
     return json
       ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
-      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
+        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
+  }
+
+  const packageRequirements = inspectInitPackageRequirements(setup, scope, environment);
+  const missingPackages = packageRequirements.requirements.filter(requirement => requirement.status === "missing");
+  if (missingPackages.length > 0) {
+    const missing = missingPackages.map(requirement => `${requirement.name}@${requirement.version}`).join(", ");
+    const error = `Required QUBE packages are unavailable for the detected ${packageRequirements.placement} package placement: ${missing}.`;
+    const installCommand = packageRequirements.installCommand!;
+    const rerun = scope === "global" ? "qube init --global" : `qube init ${readString(args.target) ?? "."}`;
+    const nextAction = `Run \`${installCommand}\`, then rerun \`${rerun}\`.`;
+    const payload = { ok: false, command: "init", scope, mode: "preflight", changed: false, packageRequirements, failedAction: "Package requirements", error, nextAction };
+    return json
+      ? { exitCode: 4, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 4, stdout: "", stderr: renderInitFailure({ actionId: "packages", reason: error, nextAction }) };
   }
 
   const selectedConfigPath = configScope === "global" ? globalConfigPath : repositoryConfigPath;
   const selectedConfigRead = configScope === "global" ? globalConfig : repositoryConfig;
   const selectedConfig = configForQubeScope(resolved, configScope, globalConfig.config);
   const configOperation = qubeConfigOperation(selectedConfigRead, selectedConfig, configScope === "repo");
-  if (configScope === "global") {
-    const projectedMerged = mergeQubeInitConfigs(selectedConfig, repositoryConfig.config);
-    const projectedHosts = projectedMerged.hosts && projectedMerged.hosts.length > 0
-      ? projectedMerged.hosts
-      : defaultsConfig.hosts;
-    const projectedReview = defaultReviewSelection(projectedHosts);
-    const projectedDefaults = Object.freeze({
-      ...defaultsConfig,
-      review: Object.freeze({
-        mode: projectedReview.mode,
-        ...(projectedReview.harness ? { harness: projectedReview.harness } : {}),
-        externalReviewers: defaultsConfig.review.externalReviewers,
-        publisher: defaultsConfig.review.publisher,
-      }),
-    });
-    const projectedResolved = resolveQubeInitConfig({
-      globalConfig: selectedConfig,
-      repoConfig: repositoryConfig.config,
-      detected: detectedConfig,
-      defaults: projectedDefaults,
-    });
-    let projectedSetup = projectedResolved.config;
-    if (projectedSetup.review.mode === "external") {
-      const reviewerSelection = resolveExternalReviewerIds(projectedSetup.review.externalReviewers ?? [], registeredReviewers);
-      if (!reviewerSelection.error) {
-        projectedSetup = Object.freeze({
-          ...projectedSetup,
-          review: Object.freeze({ ...projectedSetup.review, externalReviewers: reviewerSelection.values }),
-        });
-      }
-    }
-    if (JSON.stringify(projectedSetup) !== JSON.stringify(setup)) {
-      const error = "Repository QUBE configuration overrides the requested global setup. Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.";
-      const nextAction = "Use --config-scope repo for this repository, or remove the conflicting repository values before updating global defaults.";
-      const payload = { ok: false, command: "init", answers, failedAction: publicInitActionLabel("config"), error, nextAction };
-      return json
-        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
-        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
-    }
-  }
 
   const aieTool = resolveAieInitToolTargets(setup.hosts as readonly InstallHost[])[0];
   const aiuTool = resolveAiuInitToolTargets(setup.hosts as readonly InstallHost[])[0] ?? "none";
-  const buildInvocations = (planOnly: boolean): readonly QubeInitInvocation[] => Object.freeze([
+  const prospectiveRoot = scope === "repository" && gitState?.repositoryRoot === null;
+  const buildInvocations = (planOnly: boolean): readonly QubeInitInvocation[] => scope === "global"
+    ? Object.freeze([])
+    : Object.freeze([
     {
       id: "aie",
       component: "aie",
       cwd: targetPath,
       args: buildAieInitArgs(targetPath, aieTool, {
         dryRun: planOnly,
+        prospectiveRoot: planOnly && prospectiveRoot,
         force,
         yes: true,
         defaults: false,
@@ -2924,32 +2903,77 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const planResults = await Promise.all(planInvocations.map(invocation =>
     dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd)));
   const firstPlanFailureIndex = planResults.findIndex(result => !result.ok);
-  const postInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
-  const providerActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
-  const postInitCommands = Object.freeze(postInitActions.flatMap(action => {
-    const command = childRecord(action)?.command;
-    return typeof command === "string" && command.trim() !== "" ? [command.trim()] : [];
-  }));
+  const targetArgument = readString(args.target);
+  const rawPostInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
+  const rawProviderActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
+  const providerPrerequisitesReady = scope === "repository" && !prospectiveRoot && repositoryHasOrigin(targetPath);
+  const postInitActions = Object.freeze(rawPostInitActions.map(action => initOwnedAction(action, scope, targetArgument, "pending")));
+  const providerActions = Object.freeze(rawProviderActions.map(action => initOwnedAction(
+    action,
+    scope,
+    targetArgument,
+    providerPrerequisitesReady ? "planned" : "pending",
+  )));
+  const pendingExternalActions: Array<Readonly<Record<string, unknown>>> = [
+    ...postInitActions,
+    ...(!providerPrerequisitesReady ? providerActions : []),
+  ];
+  if (scope === "repository" && setup.workProviders[0] === "github" && !providerPrerequisitesReady) {
+    pendingExternalActions.push(Object.freeze({
+      id: "labels-setup",
+      status: "pending",
+      handledBy: "qube init",
+      reason: "Repository labels require a configured origin remote and authenticated provider access.",
+      nextAction: `Add the repository origin and authenticate the provider, then rerun \`${initRerunCommand(scope, targetArgument)}\`.`,
+    }));
+  }
+  if (scope === "global" && reviewProvider === "github" && setup.review.publisher === "github-app") {
+    pendingExternalActions.push(Object.freeze({
+      id: "github-app-publisher-readiness",
+      status: "pending",
+      handledBy: "qube init",
+      reason: "QUBE Reviewer App identity and installation access must be verified before readiness can be claimed.",
+      nextAction: "Rerun `qube init --global` to continue Reviewer App onboarding and readiness checks.",
+    }));
+  }
   const plan = {
-    target: targetPath,
+    scope,
+    ...(scope === "repository" ? { target: targetPath } : {}),
     resolved: setup,
     sources: resolved.sources,
     deviations: resolved.deviations,
     components: planInvocations.map((invocation, index) => planRow(invocation, planResults[index]!)),
     providerActions,
     postInitActions,
+    diagnosticActions: scope === "repository"
+      ? Object.freeze([Object.freeze({
+          id: "aggregate-diagnostics",
+          status: "planned",
+          reason: "Run aggregate QUBE diagnostics after local repository setup succeeds.",
+        })])
+      : Object.freeze([]),
+    pendingExternalActions,
+    packageRequirements,
+    ...(scope === "repository" ? {
+      git: {
+        operation: prospectiveRoot ? "initialize" : "skip",
+        status: prospectiveRoot ? (gitState?.gitAvailable ? "planned" : "unavailable") : "ready",
+        baseBranch: "main",
+        reason: gitState?.reason,
+      },
+    } : {}),
     config: {
       scope: configScope,
       path: selectedConfigPath,
       operation: configOperation,
     },
   };
-  const planChanged = configOperation !== "skip" || planResults.some(result => childChanged(result.json));
+  const planChanged = prospectiveRoot || configOperation !== "skip" || planResults.some(result => childChanged(result.json));
   const planStderr = planResults.map(result => result.stderr ?? "").join("");
   if (firstPlanFailureIndex >= 0) {
     const failure = planResults[firstPlanFailureIndex]!;
     const failedAction = planInvocations[firstPlanFailureIndex]!.id;
-    const nextAction = failure.nextAction ?? `Correct ${publicInitActionLabel(failedAction).toLowerCase()}, then rerun qube init.`;
+    const nextAction = initComponentFailureNextAction(scope, targetArgument, failedAction, failure.nextAction);
     const payload = {
       ok: false,
       command: "init",
@@ -2974,19 +2998,92 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
 
   if (dryRun) {
-    const payload = { ok: true, command: "init", mode: "plan", answers, plan };
+    const readiness = pendingExternalActions.length > 0 ? "pending" : "planned";
+    const payload = { ok: true, command: "init", scope, mode: "plan", changed: planChanged, answers, plan, readiness, pendingExternalActions };
     if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr };
     return {
       exitCode: 0,
       stdout: renderInitOutput({
+        scope,
         mode: "plan",
         changed: planChanged,
         answers,
         primaryHarness: primaryHarnessPrompt,
-        postInitCommands,
+        pendingNextActions: pendingExternalActions.flatMap(action => typeof action.nextAction === "string" ? [action.nextAction] : []),
       }),
       stderr: "",
     };
+  }
+
+  if (planChanged && !json && !useDefaults && process.stdin.isTTY === true) {
+    const approved = await promptConfirm({
+      command: initCommand,
+      promptName: `apply ${scope} QUBE initialization changes`,
+      jsonMode: false,
+      yes: false,
+      clack: {
+        message: `Apply the planned ${scope} QUBE initialization changes?`,
+        initialValue: true,
+      },
+    });
+    if (!approved) {
+      const error = `${scope === "global" ? "Global" : "Repository"} initialization changes were declined; no changes were made.`;
+      const nextAction = `Rerun \`${initRerunCommand(scope, targetArgument)}\` when you are ready to apply the plan.`;
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }),
+      };
+    }
+  }
+
+  let gitInitialized = false;
+  if (prospectiveRoot) {
+    const gitUnavailable = gitState?.gitAvailable === false;
+    if (gitUnavailable) {
+      const error = "Git is required to initialize the selected repository target but is not available on PATH.";
+      const nextAction = "Install Git, then rerun `qube init <target> --git-init`.";
+      const payload = { ok: false, command: "init", scope, mode: "apply", changed: false, answers, plan, failedAction: "Git initialization", error, nextAction };
+      return json
+        ? { exitCode: 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+        : { exitCode: 1, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
+    }
+    let gitApproved = flags["git-init"] === true;
+    if (!gitApproved && !json && !useDefaults) {
+      gitApproved = await promptConfirm({
+        command: initCommand,
+        promptName: "initialize Git in the selected repository target",
+        jsonMode: false,
+        yes: false,
+        clack: {
+          message: `QUBE repository setup requires Git. Initialize Git in ${targetPath}?`,
+          initialValue: true,
+        },
+      });
+    }
+    if (!gitApproved) {
+      const error = json || useDefaults
+        ? "Repository initialization outside Git requires --git-init in non-interactive mode."
+        : "Git initialization was declined; no changes were made.";
+      const nextAction = `Rerun \`qube init ${readString(args.target) ?? "."} --git-init\` when you are ready to initialize this repository.`;
+      const payload = { ok: false, command: "init", scope, mode: "apply", changed: false, answers, plan, failedAction: "Git initialization", error, nextAction };
+      return json
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
+    }
+    const initialized = spawnSync("git", ["-C", targetPath, "init", "--initial-branch", "main"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (initialized.status !== 0) {
+      const error = initialized.stderr.trim() || "Git initialization failed.";
+      const nextAction = `Correct Git access for ${targetPath}, then rerun \`qube init ${readString(args.target) ?? "."} --git-init\`.`;
+      const payload = { ok: false, command: "init", scope, mode: "apply", changed: false, answers, plan, failedAction: "Git initialization", error, nextAction };
+      return json
+        ? { exitCode: initialized.status || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+        : { exitCode: initialized.status || 1, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
+    }
+    gitInitialized = true;
   }
 
   const applyInvocations = buildInvocations(false);
@@ -3026,7 +3123,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       break;
     }
   }
-  if (!failedApply && setup.workProviders[0] === "github") {
+  if (!failedApply && scope === "repository" && setup.workProviders[0] === "github" && providerPrerequisitesReady) {
     const invocation: QubeInitInvocation = {
       id: "labels",
       component: "aie",
@@ -3035,34 +3132,68 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     };
     const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd);
     if (result.stderr) applyStderr.push(result.stderr);
+    const pendingFailure = !result.ok && deferredProviderFailure(result.error);
     applySteps.push({
       id: invocation.id,
-      status: result.ok ? (childChanged(result.json) ? "changed" : "unchanged") : "failed",
+      status: result.ok ? (childChanged(result.json) ? "changed" : "unchanged") : pendingFailure ? "pending" : "failed",
       exitCode: result.exitCode,
       ...(result.ok ? {} : { error: result.error, ...(result.nextAction ? { nextAction: result.nextAction } : {}) }),
       result: result.json,
     });
-    if (!result.ok) {
+    if (pendingFailure) {
+      pendingExternalActions.push(Object.freeze({
+        id: "labels-setup",
+        status: "pending",
+        handledBy: "qube init",
+        reason: result.error ?? "Repository provider prerequisites are not ready.",
+        nextAction: `Rerun \`${initRerunCommand(scope, targetArgument)}\` after repository identity and authentication are ready.`,
+      }));
+    } else if (!result.ok) {
       failedApply = result;
       failedApplyAction = invocation.id;
     }
   }
-  const changed = configOperation !== "skip" || applySteps.some(step => step.status === "changed");
+  const changed = gitInitialized || configOperation !== "skip" || applySteps.some(step => step.status === "changed");
   let reviewPublisherReadiness: InitPublisherReadiness | undefined;
-  if (!failedApply && changed && reviewProvider === "github" && setup.review.publisher === "github-app") {
-    const doctor = await dispatchInitChild("aie", ["review", "doctor", "--json"], environment, targetPath);
+  if (!failedApply && reviewProvider === "github" && setup.review.publisher === "github-app") {
+    const doctorCwd = scope === "global" ? homeDirectory(environment) : targetPath;
+    const doctor = await dispatchInitChild("aie", ["review", "doctor", "--json"], environment, doctorCwd);
     if (doctor.stderr) applyStderr.push(doctor.stderr);
-    reviewPublisherReadiness = publisherReadinessFromChild(doctor);
+    const observedReadiness = publisherReadinessFromChild(doctor);
+    reviewPublisherReadiness = observedReadiness.state === "ready"
+      ? observedReadiness
+      : Object.freeze({
+          ...observedReadiness,
+          nextAction: `Rerun \`${initRerunCommand(scope, targetArgument)}\` to continue Reviewer App onboarding and readiness checks.`,
+        });
+    const publisherPendingIndex = pendingExternalActions.findIndex(action => action.id === "github-app-publisher-readiness");
+    if (observedReadiness.state === "ready" && publisherPendingIndex >= 0) {
+      pendingExternalActions.splice(publisherPendingIndex, 1);
+    } else if (observedReadiness.state !== "ready" && publisherPendingIndex < 0) {
+      pendingExternalActions.push(Object.freeze({
+        id: "github-app-publisher-readiness",
+        status: "pending",
+        handledBy: "qube init",
+        reason: `Reviewer App readiness is ${observedReadiness.state}.`,
+        nextAction: reviewPublisherReadiness.nextAction,
+      }));
+    }
+  }
+  let aggregateDiagnostics: InitAggregateDiagnostics | undefined;
+  if (!failedApply && scope === "repository") {
+    aggregateDiagnostics = await runInitAggregateDiagnostics(environment, targetPath, targetArgument);
   }
   const apply = {
     changed,
     steps: Object.freeze(applySteps),
+    pendingExternalActions: Object.freeze([...pendingExternalActions]),
     ...(reviewPublisherReadiness ? { reviewPublisherReadiness } : {}),
+    ...(aggregateDiagnostics ? { aggregateDiagnostics } : {}),
   };
   const stderr = `${planStderr}${applyStderr.join("")}`;
   if (failedApply) {
     const failedAction = failedApplyAction ?? "aie";
-    const nextAction = failedApply.nextAction ?? `Correct ${publicInitActionLabel(failedAction).toLowerCase()}, then rerun qube init.`;
+    const nextAction = initComponentFailureNextAction(scope, targetArgument, failedAction, failedApply.nextAction);
     const payload = {
       ok: false,
       command: "init",
@@ -3087,16 +3218,21 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         };
   }
 
-  const payload = { ok: true, command: "init", mode: "apply", answers, plan, apply };
+  const readiness = pendingExternalActions.length > 0 || aggregateDiagnostics?.status === "attention" ? "pending" : "ready";
+  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, plan, apply, readiness, pendingExternalActions };
   if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   return {
     exitCode: 0,
     stdout: renderInitOutput({
+      scope,
       mode: "apply",
       changed,
       answers,
       primaryHarness: primaryHarnessPrompt,
-      postInitCommands,
+      pendingNextActions: [
+        ...pendingExternalActions.flatMap(action => typeof action.nextAction === "string" ? [action.nextAction] : []),
+        ...(aggregateDiagnostics?.nextAction ? [aggregateDiagnostics.nextAction] : []),
+      ],
       ...(reviewPublisherReadiness ? { reviewPublisherReadiness } : {}),
     }),
     stderr: "",
@@ -5913,584 +6049,66 @@ function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): 
   return { args: definition.mapArgs(args) };
 }
 
-interface InstallApplyStepResult {
-  readonly stage: InstallCommandStage;
-  readonly command: string;
-  readonly status: "executed" | "skipped" | "failed" | "plan-only";
-  readonly exitCode?: number;
-  readonly error?: string;
-  readonly nextAction?: string;
-  readonly failedAction?: string;
-  readonly init?: InstallInitPublicResult;
-}
-
-interface InstallInitPublicResult {
-  readonly ok: boolean;
-  readonly command: "init";
-  readonly mode?: "plan" | "apply";
-  readonly answers: readonly PublicInitAnswer[];
-  readonly changed?: boolean;
-  readonly primaryHarness?: {
-    readonly displayName: string;
-    readonly makeItSo: string;
-  };
-  readonly postInitCommands?: readonly string[];
-  readonly reviewPublisherReadiness?: InitPublisherReadiness;
-  readonly failedAction?: string;
-  readonly error?: string;
-  readonly nextAction?: string;
-}
-
-interface InstallApplyReport {
-  readonly confirmed: true;
-  readonly executed: readonly InstallApplyStepResult[];
-  readonly registry?: RegistryGateResult;
-  readonly components?: unknown;
-  readonly doctor?: unknown;
-  readonly mismatches: readonly string[];
-  readonly findings: readonly string[];
-}
-
-function shouldStayPlanOnly(flags: Readonly<Record<string, unknown>>): boolean {
-  return flags.apply !== true || flags["dry-run"] === true || (flags.json === true && flags.yes !== true);
-}
-
-function unsupportedApplySelections(selections: InstallSelections): readonly string[] {
-  const reasons: string[] = [];
-  for (const [label, ids, catalog] of [
-    ["host", selections.hosts, executorHostSurfaces],
-    ["work-provider", selections.workProviders, executorWorkProviders],
-    ["ci-provider", selections.ciProviders, executorCiProviders]
-  ] as const) {
-    for (const id of ids) {
-      const option = catalog.find(candidate => candidate.id === id);
-      if (option?.support === "unsupported") {
-        reasons.push(`${label} ${id}`);
-      }
-    }
-  }
-  return Object.freeze(reasons);
-}
-
-function applyConfirmMessage(plan: InstallPlan): string {
-  const commands = plan.commands.filter(step => step.stage !== "verify");
-  const listed = commands.length === 0
-    ? "No remaining install delta. Verification will still run."
-    : commands.map((step, index) => `${index + 1}. ${step.command}`).join("\n");
-  return `Apply these install commands?\n${listed}\nThen verify with qube components --json and qube doctor.`;
-}
-
-function remainingApplySteps(selections: InstallSelections, cwd: string): readonly InstallCommandStep[] {
-  return createInstallCommands(selections, cwd).filter(step => step.stage !== "verify" && (step.status === "missing" || step.status === "stale"));
-}
-
-function collectInstallMismatches(selections: InstallSelections, environment: CliEnvironment): readonly string[] {
-  const mismatches: string[] = [];
-  const packageState = probeInstallState(environment.cwd, selections).find(step => step.stage === "package-install");
-  if (packageState && packageState.status !== "satisfied") {
-    mismatches.push(packageState.reason);
-  }
-  for (const component of qubeComponents) {
-    const resolution = resolveComponentCommand(component, environment);
-    if (!resolution) {
-      mismatches.push(`Missing ${component.packageName}@${component.packageVersion}.`);
-      continue;
-    }
-    if (resolution.packageVersion && resolution.packageVersion !== component.packageVersion) {
-      mismatches.push(`Expected ${component.packageName}@${component.packageVersion}, found ${resolution.packageVersion}.`);
-    }
-  }
-  return Object.freeze(mismatches);
-}
-
-function isComponentsEnvelope(payload: unknown): payload is { readonly ok: true; readonly command: "components"; readonly components: readonly unknown[] } {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return false;
-  }
-  const record = payload as Record<string, unknown>;
-  return record.ok === true && record.command === "components" && Array.isArray(record.components);
-}
-
-function isVerificationError(payload: unknown, kind: "components" | "doctor"): boolean {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return true;
-  }
-  const record = payload as Record<string, unknown>;
-  if (typeof record.error === "string" && record.command === undefined) {
-    return true;
-  }
-  if (kind === "components") {
-    return !isComponentsEnvelope(payload);
-  }
-  return false;
-}
-
-function doctorFindings(payload: unknown): readonly string[] {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return Object.freeze(["Doctor did not return a JSON object."]);
-  }
-  const record = payload as Record<string, unknown>;
-  if (typeof record.error === "string" && record.error.trim() !== "") {
-    return Object.freeze([record.error]);
-  }
-  const findings: string[] = [];
-  if (record.ok === false) {
-    findings.push("Doctor reported a failed verification.");
-  }
-  if (record.connectionStatus === "fail") {
-    findings.push("A configured provider connection failed.");
-  }
-  const hosts = record.hosts;
-  if (hosts && typeof hosts === "object" && !Array.isArray(hosts)) {
-    const status = (hosts as { status?: unknown }).status;
-    if (status === "missing" || status === "partial") {
-      findings.push(`Host toolkit status is ${status}.`);
-    }
-  }
-  return Object.freeze(findings);
-}
-
-async function runApplyPackageInstall(selections: InstallSelections, environment: CliEnvironment): Promise<InstallApplyStepResult> {
-  const command = formatPackageInstallCommand(selections);
-  const argv = packageInstallArgv(selections);
-  const commandPath = resolveCommandFromEntries(argv.command, [
-    path.join(environment.cwd, "node_modules", ".bin"),
-    ...pathEntries(environment.env)
-  ], environment);
-  if (!commandPath) {
-    return {
-      stage: "package-install",
-      command,
-      status: "failed",
-      error: `Cannot find ${argv.command} on PATH. Install the selected package manager or pass a PATH that includes it.`
-    };
-  }
-  const spawned = await spawnCapturedPath(commandPath, argv.args, environment);
-  if (spawned.exitCode !== 0) {
-    return {
-      stage: "package-install",
-      command,
-      status: "failed",
-      exitCode: spawned.exitCode,
-      error: spawned.stderr.trim() || spawned.stdout.trim() || `${argv.command} exited with code ${spawned.exitCode}.`
-    };
-  }
-  return { stage: "package-install", command, status: "executed", exitCode: spawned.exitCode };
-}
-
-function initAnswersFromEnvelope(record: Record<string, unknown>): readonly PublicInitAnswer[] {
-  if (!Array.isArray(record.answers)) return Object.freeze([]);
-  const answers: PublicInitAnswer[] = [];
-  for (const value of record.answers) {
-    const answer = childRecord(value);
-    if (!answer) continue;
-    const { id, label, value: selectedValue, reason } = answer;
-    if ([id, label, selectedValue, reason].every(entry => typeof entry === "string" && entry.trim() !== "")) {
-      answers.push(Object.freeze({
-        id: id as string,
-        label: label as string,
-        value: selectedValue as string,
-        reason: reason as string,
-      }));
-    }
-  }
-  return Object.freeze(answers);
-}
-
-function initReadinessFromEnvelope(record: Record<string, unknown>): InitPublisherReadiness | undefined {
-  const apply = childRecord(record.apply);
-  const readiness = childRecord(apply?.reviewPublisherReadiness);
-  const state = readiness?.state;
-  if (state !== "ready" && state !== "degraded" && state !== "unavailable" && state !== "unconfigured") return undefined;
+function installCompatibilityPayload(): Readonly<Record<string, unknown>> {
+  const npmCommand = `npm install --global --ignore-scripts ${packageName}@${packageVersion}`;
+  const pnpmCommand = `pnpm add --global --ignore-scripts ${packageName}@${packageVersion}`;
   return Object.freeze({
-    state,
-    ...(typeof readiness?.nextAction === "string" && readiness.nextAction.trim() !== ""
-      ? { nextAction: readiness.nextAction.trim() }
-      : {}),
+    ok: true,
+    command: "install",
+    mode: "migration",
+    changed: false,
+    packageInstallation: Object.freeze({
+      owner: "package-manager",
+      commands: Object.freeze([npmCommand, pnpmCommand]),
+    }),
+    setupCommand: "qube init",
+    nextAction: "Install QUBE with npm or pnpm when needed, then run `qube init` for all QUBE setup and resume work.",
   });
 }
 
-function initPublicResult(record: Record<string, unknown>, selections: InstallSelections): InstallInitPublicResult {
-  const apply = childRecord(record.apply);
-  const profile = getAgentHostProfileSync(selections.host);
-  const postInitCommands = Object.freeze(childPostInitActions(record).flatMap(action => {
-    const command = childRecord(action)?.command;
-    return typeof command === "string" && command.trim() !== "" ? [command.trim()] : [];
-  }));
-  const readiness = initReadinessFromEnvelope(record);
-  return Object.freeze({
-    ok: record.ok === true,
-    command: "init",
-    ...(record.mode === "plan" || record.mode === "apply" ? { mode: record.mode } : {}),
-    answers: initAnswersFromEnvelope(record),
-    ...(typeof apply?.changed === "boolean" ? { changed: apply.changed } : {}),
-    ...(record.ok === true ? {
-      primaryHarness: Object.freeze({ displayName: profile.displayName, makeItSo: profile.makeItSo.invocation }),
-      postInitCommands,
-      ...(readiness ? { reviewPublisherReadiness: readiness } : {}),
-    } : {}),
-    ...(typeof record.failedAction === "string" && record.failedAction.trim() !== "" ? { failedAction: record.failedAction.trim() } : {}),
-    ...(typeof record.error === "string" && record.error.trim() !== "" ? { error: record.error.trim() } : {}),
-    ...(typeof record.nextAction === "string" && record.nextAction.trim() !== "" ? { nextAction: record.nextAction.trim() } : {}),
-  });
-}
-
-function parseInitPublicResult(result: RuntimeCommandResult, selections: InstallSelections): InstallInitPublicResult | undefined {
-  if (!result.jsonStdout || result.jsonStdout.trim() === "") return undefined;
-  try {
-    const record = childRecord(JSON.parse(result.jsonStdout));
-    return record && record.command === "init" && typeof record.ok === "boolean"
-      ? initPublicResult(record, selections)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function runApplyWorkspaceInit(selections: InstallSelections, environment: CliEnvironment): Promise<InstallApplyStepResult> {
-  const command = buildQubeInitCommand(selections);
-  const result = await executeQubeInit({
-    json: true,
-    yes: true,
-    host: selections.hosts.join(","),
-    "work-provider": selections.workProvider,
-    "ci-provider": selections.ciProvider,
-    "review-mode": selections.reviewMode,
-    "ui-audit-evidence-root": selections.uiAuditEvidenceRoot,
-    "credit-warning": selections.creditWarning,
-  }, { target: "." }, environment);
-  const init = parseInitPublicResult(result, selections);
-  if ((result.exitCode ?? 0) !== 0 || init?.ok === false) {
-    return {
-      stage: "workspace-init",
-      command,
-      status: "failed",
-      exitCode: result.exitCode,
-      error: init?.error || result.stderr?.trim() || "qube init did not report success.",
-      ...(init?.nextAction ? { nextAction: init.nextAction } : {}),
-      ...(init?.failedAction ? { failedAction: init.failedAction } : {}),
-      ...(init ? { init } : {}),
-    };
-  }
-  if (!init || init.answers.length === 0) {
-    return {
-      stage: "workspace-init",
-      command,
-      status: "failed",
-      exitCode: 1,
-      error: "qube init did not return its public completion result.",
-      nextAction: "Rerun qube init directly and inspect its setup result.",
-    };
-  }
-  return { stage: "workspace-init", command, status: "executed", exitCode: result.exitCode ?? 0, init };
-}
-
-async function runApplyProviderSetup(step: InstallCommandStep, environment: CliEnvironment): Promise<InstallApplyStepResult> {
-  const result = await executeQubeDispatch("aie", ["labels", "setup"], environment);
-  if ((result.exitCode ?? 0) !== 0) {
-    return {
-      stage: "provider-setup",
-      command: step.command,
-      status: "failed",
-      exitCode: result.exitCode,
-      error: result.stderr?.trim() || "Provider setup did not report success."
-    };
-  }
-  return { stage: "provider-setup", command: step.command, status: "executed", exitCode: result.exitCode ?? 0 };
-}
-
-async function runApplyComponents(environment: CliEnvironment, scope: InstallScope): Promise<unknown> {
-  const entries = scope === "global"
-    ? pathEntries(environment.env)
-    : [path.join(environment.cwd, "node_modules", ".bin")];
-  const commandPath = resolveCommandFromEntries("qube", entries, environment);
-  if (!commandPath) {
-    return { error: "Cannot find qube to run components --json after apply." };
-  }
-  const nodeScript = resolveNodeScriptForCommand(commandPath);
-  const spawned = nodeScript
-    ? await spawnCapturedPath(process.execPath, [nodeScript, "components", "--json"], environment)
-    : await spawnCapturedPath(commandPath, ["components", "--json"], environment);
-  const launched = nodeScript ?? commandPath;
-  if (spawned.truncated) {
-    return { error: "qube components --json output exceeded the capture limit." };
-  }
-  if (spawned.exitCode !== 0) {
-    return { error: spawned.stderr.trim() || `qube components --json exited with code ${spawned.exitCode}.` };
-  }
-  const stdout = spawned.stdout.trim();
-  if (stdout === "") {
-    return {
-      error: spawned.stderr.trim() || `qube components --json did not return a JSON envelope (${launched}).`
-    };
-  }
-  try {
-    const parsed = JSON.parse(stdout) as unknown;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { error: "qube components --json did not return a JSON object." };
-    }
-    return parsed;
-  } catch {
-    return { error: "qube components --json returned invalid JSON." };
-  }
-}
-
-async function collectApplyVerification(selections: InstallSelections, environment: CliEnvironment): Promise<{
-  readonly components: unknown;
-  readonly doctor: unknown;
-  readonly mismatches: readonly string[];
-  readonly findings: readonly string[];
-}> {
-  const mismatches = collectInstallMismatches(selections, environment);
-  const componentsPromise = runApplyComponents(environment, selections.scope);
-  const doctorResult = await executeQubeDoctor(true, false, environment);
-  let doctorPayload: unknown;
-  if (typeof doctorResult.jsonStdout === "string" && doctorResult.jsonStdout.trim() !== "") {
-    try {
-      doctorPayload = JSON.parse(doctorResult.jsonStdout);
-    } catch {
-      doctorPayload = { error: "Doctor returned invalid JSON." };
-    }
-  } else {
-    const detail = doctorResult.stderr?.trim() ?? "";
-    doctorPayload = { error: detail === "" ? "Doctor did not return a JSON envelope." : detail };
-  }
-  return {
-    components: await componentsPromise,
-    doctor: doctorPayload,
-    mismatches,
-    findings: doctorFindings(doctorPayload)
+function renderInstallCompatibility(): string {
+  const payload = installCompatibilityPayload() as {
+    readonly packageInstallation: { readonly commands: readonly string[] };
+    readonly nextAction: string;
   };
-}
-
-function renderApplyReport(report: InstallApplyReport): string {
-  const executed = report.executed.length === 0
-    ? ["- No remaining install delta was applied."]
-    : report.executed.flatMap(step => step.status === "failed" && step.failedAction
-      ? [
-          `- ${step.stage}: failed`,
-          `  Action: ${step.failedAction}`,
-          `  Reason: ${step.error ?? "QUBE setup failed."}`,
-          ...(step.nextAction ? [`  Next action: ${step.nextAction}`] : []),
-        ]
-      : [
-          `- ${step.stage}: ${step.status}${step.error ? ` — ${step.error}` : ` (${step.command})`}`,
-          ...(step.nextAction ? [`  Next action: ${step.nextAction}`] : []),
-        ]);
-  const mismatches = report.mismatches.length === 0 ? ["- none"] : report.mismatches.map(item => `- ${item}`);
-  const findings = report.findings.length === 0 ? ["- none"] : report.findings.map(item => `- ${item}`);
-  const registry = report.registry?.status === "plan-only" && report.registry.reason
-    ? ["", "Registry gate:", `- ${report.registry.reason}`]
-    : [];
-  const init = report.executed.find(step => step.stage === "workspace-init")?.init;
-  const initOutput = init?.ok === true && init.primaryHarness && init.changed !== undefined
-    ? renderInitOutput({
-        mode: "apply",
-        changed: init.changed,
-        answers: init.answers,
-        primaryHarness: init.primaryHarness,
-        ...(init.postInitCommands ? { postInitCommands: init.postInitCommands } : {}),
-        ...(init.reviewPublisherReadiness ? { reviewPublisherReadiness: init.reviewPublisherReadiness } : {}),
-      }).trimEnd()
-    : undefined;
   return [
-    "Apply result:",
-    ...executed,
-    ...registry,
-    ...(initOutput ? ["", initOutput] : []),
+    "QUBE package installation is now owned by npm or pnpm.",
     "",
-    "Component mismatches:",
-    ...mismatches,
+    "Package installation:",
+    ...payload.packageInstallation.commands.map(command => `  ${command}`),
     "",
-    "Doctor findings:",
-    ...findings,
-    ""
+    "QUBE setup:",
+    "  qube init",
+    "",
+    "No package, configuration, provider, or repository changes were made.",
+    `Next action: ${payload.nextAction}`,
+    "",
   ].join("\n");
 }
 
-async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  const json = flags.json === true;
-  const installedReviewHosts = detectInstallReviewHosts(environment.env);
-  const validationError = validateInstallFlagChoices(flags, installedReviewHosts);
-  if (validationError) {
-    throw createCliError({
-      command: "install",
-      kind: "invalid-command-usage",
-      operation: "validate install flags",
-      likelyCause: validationError.stderr.trim(),
-      suggestedNextAction: "Use a supported install option value.",
-      category: "usage"
-    });
-  }
-  if (json && flags.yes !== true && !hasCompleteInstallSelections(flags, environment.cwd, installedReviewHosts)) {
-    const guide = buildInstallQuestions({ flags, cwd: environment.cwd, installedReviewHosts });
-    return {
-      json: {
-        awaitingAnswers: true,
-        questions: guide.questions,
-        unansweredQuestionIds: guide.unansweredQuestionIds,
-      }
-    };
-  }
-  const selections = flags.json === true
-    ? createInstallSelectionsFromFlags(flags, environment.cwd, installedReviewHosts)
-    : await resolveInstallSelections(flags, environment.cwd, installedReviewHosts);
-  const plan = createInstallPlan(selections, flags["dry-run"] === true, environment.cwd);
-  if (shouldStayPlanOnly(flags)) {
-    if (json) {
-      return { json: { installPlan: plan } };
-    }
-    return { stdout: renderInstallPlan(plan) };
-  }
-
-  const unsupported = unsupportedApplySelections(selections);
-  if (unsupported.length > 0) {
-    throw createCliError({
-      command: "install",
-      kind: "unsupported-install-selection",
-      operation: "apply install plan",
-      likelyCause: `Apply does not support ${unsupported.join(", ")}.`,
-      suggestedNextAction: "Choose supported host, work-provider, and ci-provider values, or stay in plan mode.",
-      category: "validation"
-    });
-  }
-
-  if (flags.yes !== true) {
-    const confirmed = await promptConfirm({
-      command: installCommand,
-      promptName: "apply install plan",
-      jsonMode: json,
-      yes: false,
-      clack: {
-        message: applyConfirmMessage(plan)
-      }
-    });
-    if (confirmed !== true) {
-      throw createCliError({
-        command: "install",
-        kind: "prompt-cancelled",
-        operation: "apply install plan",
-        likelyCause: "Install apply was not confirmed.",
-        suggestedNextAction: "Rerun qube install --apply and confirm, or pass --yes for a non-interactive apply.",
-        category: "usage"
-      });
-    }
-  }
-
-  const executed: InstallApplyStepResult[] = [];
-  const packageStep = remainingApplySteps(selections, environment.cwd).find(step => step.stage === "package-install");
-  const registry = packageStep
-    ? await verifyInstallRegistryGate({
-      selections,
-      env: environment.env,
-      offline: flags.offline === true
-    })
-    : undefined;
-  if (packageStep && registry?.status === "plan-only") {
-    executed.push({
-      stage: "package-install",
-      command: formatPackageInstallCommand(selections),
-      status: "plan-only",
-      error: registry.reason ?? "Registry verification downgraded the package install to plan-only."
-    });
-  } else if (packageStep) {
-    const result = await runApplyPackageInstall(selections, environment);
-    executed.push(result);
-  }
-  const workspaceStep = executed.some(step => step.status === "failed" || step.status === "plan-only")
-    ? undefined
-    : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "workspace-init");
-  if (workspaceStep) {
-    const result = await runApplyWorkspaceInit(selections, environment);
-    executed.push(result);
-  }
-  const providerStep = executed.some(step => step.status === "failed" || step.status === "plan-only")
-    ? undefined
-    : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "provider-setup");
-  if (providerStep) {
-    executed.push(await runApplyProviderSetup(providerStep, environment));
-  }
-
-  const failedStep = executed.some(step => step.status === "failed");
-  const registryBlocked = executed.some(step => step.status === "plan-only");
-  const verification = failedStep || registryBlocked
-    ? { components: undefined, doctor: undefined, mismatches: Object.freeze([]), findings: Object.freeze([]) }
-    : await collectApplyVerification(selections, environment);
-  const verificationFailed = verification.mismatches.length > 0
-    || isVerificationError(verification.components, "components")
-    || isVerificationError(verification.doctor, "doctor");
-  const exitCode = failedStep || verificationFailed || registryBlocked ? 1 : 0;
-  const appliedPlan: InstallPlan = {
-    ...plan,
-    mode: registryBlocked ? "copy-commands" : "apply",
-    dryRun: false
-  };
-  const apply: InstallApplyReport = {
-    confirmed: true,
-    executed,
-    registry,
-    components: verification.components,
-    doctor: verification.doctor,
-    mismatches: verification.mismatches,
-    findings: verification.findings
-  };
-  if (json) {
-    return {
-      exitCode,
-      jsonStdout: `${JSON.stringify({
-        ok: exitCode === 0,
-        command: "install",
-        installPlan: appliedPlan,
-        apply
-      })}\n`
-    };
-  }
-  return {
-    exitCode,
-    stdout: `${renderInstallPlan(appliedPlan)}\n${renderApplyReport(apply)}`
-  };
+async function executeQubeInstall(flags: Readonly<Record<string, unknown>>): Promise<RuntimeCommandResult> {
+  const compatibility = installCompatibilityPayload();
+  const { ok: _ok, command: _command, ...result } = compatibility;
+  void _ok;
+  void _command;
+  return flags.json === true
+    ? { json: result }
+    : { stdout: renderInstallCompatibility() };
 }
-
 function planQubeInstall(args: readonly string[]): CliExecution {
-  const parsed = parseInstallArgs(args);
-  if ("error" in parsed) {
-    return parsed.error;
-  }
-  const installedReviewHosts = detectInstallReviewHosts(process.env);
-  const validationError = validateInstallFlagChoices(parsed.flags, installedReviewHosts);
-  if (validationError) {
-    return validationError;
-  }
-  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags, process.cwd(), installedReviewHosts)) {
-    const guide = buildInstallQuestions({ flags: parsed.flags, cwd: process.cwd(), installedReviewHosts });
+  const unsupported = args.filter(argument => argument !== "--json" && argument !== "--help" && argument !== "-h");
+  if (unsupported.length > 0) {
     return {
-      exitCode: 0,
-      stdout: `${JSON.stringify({
-        ok: true,
-        command: "install",
-        awaitingAnswers: true,
-        questions: guide.questions,
-        unansweredQuestionIds: guide.unansweredQuestionIds,
-      })}\n`,
-      stderr: ""
+      exitCode: 2,
+      stdout: "",
+      stderr: `QUBE install no longer accepts setup flags (${unsupported.join(", ")}). Install QUBE with npm or pnpm, then run qube init.\n`,
     };
   }
-  const selections = createInstallSelectionsFromFlags(parsed.flags, process.cwd(), installedReviewHosts);
-  const plan = createInstallPlan(selections, parsed.flags["dry-run"] === true);
-  if (parsed.flags.json === true) {
-    return {
-      exitCode: 0,
-      stdout: `${JSON.stringify({ ok: true, command: "install", installPlan: plan })}\n`,
-      stderr: ""
-    };
-  }
-  return {
-    exitCode: 0,
-    stdout: renderInstallPlan(plan),
-    stderr: ""
-  };
+  const json = args.includes("--json");
+  return json
+    ? { exitCode: 0, stdout: `${JSON.stringify(installCompatibilityPayload())}\n`, stderr: "" }
+    : { exitCode: 0, stdout: renderInstallCompatibility(), stderr: "" };
 }
-
 /** The synchronous API validates init syntax, then fails closed because only the async runtime can resolve and plan every component. */
 function planQubeInit(args: readonly string[], environment: CliEnvironment): CliExecution {
   const flags: Record<string, unknown> = {};
@@ -6518,6 +6136,14 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
     }
     if (token === "--defaults") {
       flags.defaults = true;
+      continue;
+    }
+    if (token === "--global") {
+      flags.global = true;
+      continue;
+    }
+    if (token === "--git-init") {
+      flags["git-init"] = true;
       continue;
     }
     if (token === "--mcp" || token === "--no-mcp") {
@@ -6639,227 +6265,6 @@ function createDirectCommand(
   };
 }
 
-function detectInstallReviewHosts(env: NodeJS.ProcessEnv): readonly string[] {
-  return detectInstalledReviewHostsOnPath(command => resolveExecutable(command, { env }).status === "found");
-}
-
-async function resolveInstallSelections(
-  flags: Readonly<Record<string, unknown>>,
-  cwd: string,
-  installedReviewHosts: readonly string[],
-): Promise<InstallSelections> {
-  const scope = await resolveInstallChoice(scopeChoices, readOption<InstallScope>(flags, "scope"), flags);
-  const packageManager = await resolveInstallChoice(
-    { ...packageManagerChoices, defaultValue: recommendedInstallPackageManager(cwd) },
-    readOption<InstallPackageManager>(flags, "package-manager"),
-    flags
-  );
-  const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags);
-  const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags);
-  const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags);
-  const isolatedOk = isolatedReviewAvailable(hosts, installedReviewHosts);
-  const hostOk = hostReviewAvailable(hosts);
-  const externalOk = workProviders[0] !== "gitlab";
-  const recommendedReviewMode = recommendedInstallReviewMode(hosts, installedReviewHosts, workProviders[0]);
-  if (!recommendedReviewMode) {
-    throw createCliError({
-      command: "install",
-      kind: "unsupported-install-selection",
-      operation: "select Review source",
-      likelyCause: "No Review source is available for the selected Agent harnesses and Issue tracker.",
-      suggestedNextAction: "Select and install a compatible Review harness, or choose an Issue tracker with an external Review service.",
-      category: "validation",
-    });
-  }
-  const reviewMode = await resolveInstallChoice(
-    defineInstallerChoiceGroup({
-      name: "review mode",
-      message: "Which review mode should this repository use?",
-      defaultValue: recommendedReviewMode,
-      choices: [
-        ...(isolatedOk
-          ? [{
-            value: "isolated" as const,
-            label: "isolated",
-            description: "Executor runs model CLIs for the lane batch.",
-            recommended: true
-          }]
-          : []),
-        ...(hostOk
-          ? [{
-            value: "host" as const,
-            label: "host",
-            description: "The coding agent runs one review subagent per lane.",
-            recommended: !isolatedOk,
-          }]
-          : []),
-        ...(externalOk ? [{
-          value: "external",
-          label: "external",
-          description: "A review service reviews the pull request.",
-          recommended: !isolatedOk && !hostOk
-        } as const] : [])
-      ]
-    }),
-    readOption<InstallReviewMode>(flags, "review-mode"),
-    flags
-  );
-  const uiAuditEvidenceRoot = await resolveUiAuditEvidenceRoot(flags);
-  const creditWarningValue = await resolveInstallChoice(
-    attributionChoices,
-    typeof flags["credit-warning"] === "boolean" ? String(flags["credit-warning"]) : undefined,
-    flags
-  );
-  const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
-  const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
-  return {
-    scope,
-    packageManager,
-    host: hosts[0] ?? "codex",
-    hosts,
-    workProvider: workProviders[0] ?? "github",
-    workProviders,
-    ciProvider: ciProviders[0] ?? "github",
-    ciProviders,
-    lifecycleScripts,
-    docs: docsValue === "yes",
-    reviewMode,
-    uiAuditEvidenceRoot,
-    creditWarning: creditWarningValue === "true"
-  };
-}
-
-function mapEvidenceRootChoice(value: string): string {
-  if (value === "qube") return DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT;
-  return value;
-}
-
-async function resolveUiAuditEvidenceRoot(flags: Readonly<Record<string, unknown>>): Promise<string> {
-  const flagged = readOption<string>(flags, "ui-audit-evidence-root");
-  if (flagged) return flagged;
-  const token = await resolveInstallChoice(evidenceRootChoices, undefined, flags);
-  return mapEvidenceRootChoice(token);
-}
-
-async function resolveInstallChoice<Value extends string>(
-  group: InstallerChoiceGroup<Value>,
-  value: Value | undefined,
-  flags: Readonly<Record<string, unknown>>,
-  command: Parameters<typeof promptInstallerChoice>[0]["command"] = installCommand
-): Promise<Value> {
-  const useDefaults = flags.yes === true || flags.defaults === true;
-  return promptInstallerChoice({
-    command,
-    promptName: group.name,
-    message: group.message,
-    choices: group.choices,
-    value,
-    defaultValue: useDefaults ? group.defaultValue : undefined,
-    jsonMode: flags.json === true,
-    yes: useDefaults
-  });
-}
-
-async function resolveInstallChoices<Value extends string>(
-  group: InstallerChoiceGroup<Value>,
-  values: readonly Value[] | undefined,
-  flags: Readonly<Record<string, unknown>>,
-  command: Parameters<typeof promptInstallerChoices>[0]["command"] = installCommand
-): Promise<readonly Value[]> {
-  const useDefaults = flags.yes === true || flags.defaults === true;
-  const selected = await promptInstallerChoices({
-    command,
-    promptName: group.name,
-    message: group.message,
-    choices: group.choices,
-    value: values,
-    defaultValue: useDefaults && group.defaultValue !== undefined ? [group.defaultValue] : undefined,
-    jsonMode: flags.json === true,
-    yes: useDefaults
-  });
-  return Object.freeze([...new Set(selected)]);
-}
-
-function createInstallSelectionsFromFlags(
-  flags: Readonly<Record<string, unknown>>,
-  cwd = process.cwd(),
-  installedReviewHosts: readonly string[] = detectInstallReviewHosts(process.env),
-): InstallSelections {
-  // Keep these synchronous fallbacks aligned with the choice group defaults above.
-  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["codex"];
-  const workProviders = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? ["github"];
-  const ciProviders = readOptionList<InstallCiProvider>(flags, "ci-provider") ?? ["github"];
-  const reviewMode = readOption<InstallReviewMode>(flags, "review-mode")
-    ?? recommendedInstallReviewMode(hosts, installedReviewHosts, workProviders[0]);
-  if (!reviewMode) {
-    throw new TypeError("No Review source is available for the selected Agent harnesses and Issue tracker.");
-  }
-  return {
-    scope: readOption<InstallScope>(flags, "scope") ?? "local",
-    packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? recommendedInstallPackageManager(cwd),
-    host: hosts[0] ?? "codex",
-    hosts,
-    workProvider: workProviders[0] ?? "github",
-    workProviders,
-    ciProvider: ciProviders[0] ?? "github",
-    ciProviders,
-    lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
-    docs: readDocsFlag(flags) !== "no",
-    reviewMode,
-    uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root") ?? DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT,
-    creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : true
-  };
-}
-
-function createInstallPlan(selections: InstallSelections, dryRun: boolean, cwd = process.cwd()): InstallPlan {
-  const steps = createInstallCommands(selections, cwd);
-  return {
-    package: {
-      name: packageName,
-      version: packageVersion
-    },
-    selections,
-    options: createInstallOptionGroups(),
-    mode: "copy-commands",
-    dryRun,
-    steps,
-    commands: steps.filter(step => step.status === "missing" || step.status === "stale"),
-    connections: createInstallConnections(selections),
-    files: createInstallFiles(selections),
-    notes: createInstallNotes(selections)
-  };
-}
-
-function createInstallOptionGroups(): InstallOptionGroups {
-  return Object.freeze({
-    hosts: summarizeDiscoveryOptions(executorHostSurfaces),
-    workProviders: summarizeDiscoveryOptions(executorWorkProviders),
-    ciProviders: summarizeDiscoveryOptions(executorCiProviders),
-  });
-}
-
-function summarizeDiscoveryOptions(options: readonly QubeDiscoveryOption[]): readonly InstallOptionSummary[] {
-  return Object.freeze(options.map(option => Object.freeze({
-    value: option.id,
-    label: installOptionLabels[option.id] ?? option.id,
-    support: option.support,
-    default: option.default,
-    packageName: option.packageName,
-    source: option.source,
-    summary: option.summary,
-    capabilities: option.capabilities,
-    connection: option.connection,
-  })));
-}
-
-function createInstallConnections(selections: InstallSelections): readonly ConnectionContract[] {
-  const selected = [
-    ...selections.workProviders.map(id => executorWorkProviders.find(option => option.id === id)?.connection),
-    ...selections.ciProviders.map(id => executorCiProviders.find(option => option.id === id)?.connection),
-  ].filter((connection): connection is ConnectionContract => connection !== null && connection !== undefined);
-  return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
-}
-
 const AIE_INIT_HOST_TOOLS = AGENT_HOST_IDS;
 type AieInitHostTool = AgentHostId;
 type AieInitTool = AieInitHostTool | "all" | `${AieInitHostTool},${string}`;
@@ -6890,292 +6295,9 @@ function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieI
   return Object.freeze([tools.join(",") as AieInitTool]);
 }
 
-function buildQubeInitCommand(selections: InstallSelections): string {
-  const args = [
-    "qube",
-    "init",
-    ".",
-    "--host",
-    selections.hosts.join(","),
-    "--work-provider",
-    selections.workProvider,
-    "--ci-provider",
-    selections.ciProvider,
-    "--review-mode",
-    selections.reviewMode,
-    "--ui-audit-evidence-root",
-    selections.uiAuditEvidenceRoot,
-    selections.creditWarning ? "--credit-warning" : "--no-credit-warning"
-  ];
-  return args.map(value => quoteShellArgument(value)).join(" ");
-}
-
-function createPackageInstallCommand(selections: InstallSelections, status: InstallStepStatus, reason: string): InstallCommandStep {
-  const label = selections.scope === "global" ? "Install QUBE globally for manual shell use." : "Install QUBE in the current project.";
-  return { stage: "package-install", label, command: formatPackageInstallCommand(selections), status, reason };
-}
-
-function createProviderSetupCommands(selections: InstallSelections, status: InstallStepStatus, reason: string): readonly InstallCommandStep[] {
-  const commands: InstallCommandStep[] = [];
-  if (selections.workProvider === "github" || selections.ciProvider === "github") {
-    commands.push({ stage: "provider-setup", label: "Configure GitHub status labels.", command: "qube aie labels setup", status, reason });
-  }
-  return Object.freeze(commands);
-}
-
-function createInstallCommands(selections: InstallSelections, cwd: string): readonly InstallCommandStep[] {
-  const probed = probeInstallState(cwd, selections);
-  const byStage = new Map(probed.map(step => [step.stage, step]));
-  const packageState = byStage.get("package-install") ?? { status: "missing" as const, reason: "Package install state could not be probed." };
-  const workspaceState = byStage.get("workspace-init") ?? { status: "missing" as const, reason: "Workspace init state could not be probed." };
-  const providerState = byStage.get("provider-setup") ?? { status: "missing" as const, reason: "Provider setup state could not be probed." };
-  const verifyState = byStage.get("verify") ?? { status: "missing" as const, reason: "Verify state could not be probed." };
-  return [
-    createPackageInstallCommand(selections, packageState.status, packageState.reason),
-    {
-      stage: "workspace-init",
-      label: "Initialize QUBE workspace setup for the selected hosts and providers.",
-      command: buildQubeInitCommand(selections),
-      status: workspaceState.status,
-      reason: workspaceState.reason
-    },
-    ...createProviderSetupCommands(selections, providerState.status, providerState.reason),
-    {
-      stage: "verify",
-      label: "Verify the workspace with the aggregating doctor.",
-      command: "qube doctor",
-      status: verifyState.status,
-      reason: verifyState.reason
-    }
-  ];
-}
-
-function createInstallFiles(selections: InstallSelections): readonly string[] {
-  if (!selections.docs) {
-    return [];
-  }
-  const files = ["README.md install snippet"];
-  for (const host of selections.hosts) {
-    const profile = getAgentHostProfileSync(host as AgentHostId);
-    files.push(`${profile.instructionTarget.path} agent instructions`);
-    files.push(`${profile.makeItSo.path} Make It So ${profile.makeItSo.kind}`);
-    if (selections.reviewMode === "host") {
-      for (const agent of profile.review.local.agents) {
-        files.push(`${agent.path} native review agent`);
-      }
-    }
-    for (const action of profile.trust.actions) {
-      if (action.kind !== "review-files") continue;
-      for (const actionPath of action.paths) files.push(`${actionPath} trust review`);
-    }
-  }
-  if (selections.workProviders.some(id => id === "github" || id === "gitlab" || id === "linear" || id === "jira")) {
-    files.push(".qube/aie/config.json provider notes");
-  }
-  if (selections.ciProviders.includes("jenkins")) {
-    files.push(".qube/aie/gates/jenkins gate evidence notes");
-  }
-  return Object.freeze([...new Set(files)]);
-}
-
-function createInstallNotes(selections: InstallSelections): readonly string[] {
-  const notes = [
-    "Commands use exact QUBE package versions.",
-    selections.lifecycleScripts === "disabled"
-      ? "Lifecycle scripts stay disabled where the selected package manager supports it."
-      : "Generated commands still keep lifecycle scripts disabled; review any manual exception before changing them."
-  ];
-  if (selections.scope === "global") {
-    notes.push("Prefer project-local installs for automation; global installs are for manual shell use.");
-  }
-  notes.push("Autoresearch agent entry: run `qube autoresearch --help`, translate natural-language requests to `<target>` plus `<goal>`, and synthesize the arena before edits.");
-  notes.push("QUBE provider probes verify only QUBE adapter credentials; host MCP server credentials are separate even when they use the same token.");
-  notes.push("Run `qube components` any time to confirm the installed component deck.");
-  notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
-  notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
-  if (selections.workProviders.length > 1) {
-    notes.push(`Additional installed work providers (not active): ${selections.workProviders.slice(1).join(", ")}. The first selected work provider is active.`);
-  }
-  if (selections.ciProviders.length > 1) {
-    notes.push(`Additional installed CI providers (not yet active): ${selections.ciProviders.slice(1).join(", ")}. The first selected CI provider stays active.`);
-  }
-  if (selections.hosts.length > 1) {
-    notes.push(`qube init fans out across all selected hosts (${selections.hosts.join(", ")}) inside one command.`);
-  }
-  notes.push("qube init initializes Bootstrap, Executor, Quality, and Umpire together.");
-  for (const host of selections.hosts) {
-    const profile = getAgentHostProfileSync(host as AgentHostId);
-    notes.push(`${profile.displayName}: reads ${profile.instructionTarget.path}; start with ${profile.makeItSo.invocation}.`);
-    notes.push(`${profile.displayName} capabilities: task list ${profile.taskList.support}; subagents ${profile.subagents.support}; native review ${profile.review.local.support}; isolated review ${profile.review.isolated.support}; Umpire continuation ${profile.umpire.continuation.support}; live models ${profile.modelDiscovery.support}.`);
-    if (profile.trust.required) {
-      notes.push(`${profile.displayName} requires trust after you review the installed files: ${profile.trust.actions.map(action => action.description).join(" ")}`);
-    }
-  }
-  return notes;
-}
-
-function installOptionNote(label: string, options: readonly QubeDiscoveryOption[], selected: string): string {
-  const option = options.find(candidate => candidate.id === selected);
-  if (!option) {
-    return `${label}: ${selected} is not a known current QUBE option.`;
-  }
-  const packageText = option.packageName ? ` Package: ${option.packageName}.` : "";
-  const supported = option.capabilities.filter(capability => capability.support === "supported").map(capability => capability.id);
-  const standalone = option.capabilities.filter(capability => capability.support === "standalone").map(capability => capability.id);
-  const hostProvided = option.capabilities.filter(capability => capability.support === "host-provided").map(capability => capability.id);
-  const unsupported = option.capabilities.filter(capability => capability.support === "unsupported").map(capability => capability.id);
-  const supportedText = supported.length > 0 ? ` Supported capabilities: ${supported.join(", ")}.` : "";
-  const standaloneText = standalone.length > 0 ? ` Standalone capabilities: ${standalone.join(", ")}.` : "";
-  const hostProvidedText = hostProvided.length > 0 ? ` Host-provided capabilities: ${hostProvided.join(", ")}.` : "";
-  const unsupportedText = unsupported.length > 0 ? ` Unsupported capabilities: ${unsupported.join(", ")}.` : "";
-  return `${label}: ${option.id} (${option.support}, ${option.source}). ${option.summary}${packageText}${supportedText}${standaloneText}${hostProvidedText}${unsupportedText}`;
-}
-
-function renderInstallPlan(plan: InstallPlan): string {
-  return [
-    "QUBE guided install plan",
-    "",
-    `Package: ${plan.package.name}@${plan.package.version}`,
-    `Scope: ${plan.selections.scope}`,
-    `Package manager: ${plan.selections.packageManager}`,
-    `Agent harnesses: ${plan.selections.hosts.join(", ")}`,
-    `Work provider: ${plan.selections.workProviders.join(", ")}`,
-    `CI provider: ${plan.selections.ciProviders.join(", ")}`,
-    `Lifecycle scripts: ${plan.selections.lifecycleScripts}`,
-    `Docs/config notes: ${plan.selections.docs ? "included" : "omitted"}`,
-    "",
-    "Commands to run:",
-    ...(plan.commands.length > 0
-      ? plan.commands.flatMap((step, index) => [`${index + 1}. [${step.status}] ${step.label}`, `   ${step.command}`, `   ${step.reason}`])
-      : ["None. Every probed setup step is already satisfied."]),
-    "",
-    "Step status:",
-    ...plan.steps.map(step => `- ${step.stage}: ${step.status} — ${step.reason}`),
-    "",
-    "Current options:",
-    renderOptionSummary("Agent harnesses", plan.options.hosts),
-    renderOptionSummary("Work providers", plan.options.workProviders),
-    renderOptionSummary("CI providers", plan.options.ciProviders),
-    "",
-    "Connections:",
-    ...(plan.connections.length > 0 ? plan.connections.flatMap(renderInstallConnection) : ["- No provider connection is selected."]),
-    "",
-    "Notes:",
-    ...plan.notes.map(note => `- ${note}`),
-    ...(plan.files.length > 0 ? ["", "Docs/config notes to add:", ...plan.files.map(file => `- ${file}`)] : []),
-    "",
-    plan.mode === "apply" ? "Install apply finished." : "No commands were run.",
-    ""
-  ].join("\n");
-}
-
-function renderInstallConnection(connection: ConnectionContract): readonly string[] {
-  const envVars = connection.envVars.length === 0
-    ? "none (credentials are delegated to the provider CLI)"
-    : connection.envVars.map(variable => `${variable.name}${variable.sensitive ? " (secret)" : " (non-secret)"}: ${variable.purpose}`).join("; ");
-  const configFields = connection.configFields.length === 0
-    ? "none"
-    : connection.configFields.map(field => `${field.name}${field.required ? " (required)" : " (optional)"}: ${field.purpose}`).join("; ");
-  return [
-    `- ${connection.adapterId} (${connection.authMethod})`,
-    `  Environment: ${envVars}`,
-    `  Config path: ${connection.configPath}`,
-    `  Config fields: ${configFields}`,
-    `  Token URL: ${connection.credentialUrl}`,
-    `  Minimal scopes: ${connection.scopes.join(", ") || "none"}`,
-    `  Read-only probe: ${connection.probe.name} (${connection.probe.timeoutMs}ms timeout)`,
-    `  Verify: ${connection.probe.verifyCommand}`,
-  ];
-}
-
-function renderOptionSummary(label: string, options: readonly InstallOptionSummary[]): string {
-  return `${label}: ${options.map(option => `${option.value}${option.default ? " (default)" : ""}:${option.support}`).join(", ")}`;
-}
-
-function validateInstallFlagChoices(
-  flags: Readonly<Record<string, unknown>>,
-  installedReviewHosts: readonly string[],
-): CliExecution | undefined {
-  const singleGroups = [
-    { key: "scope", choices: scopeChoices.choices },
-    { key: "package-manager", choices: packageManagerChoices.choices },
-    { key: "lifecycle-scripts", choices: lifecycleChoices.choices }
-  ];
-  for (const group of singleGroups) {
-    const value = flags[group.key];
-    if (typeof value !== "string") {
-      continue;
-    }
-    if (group.choices.some(choice => choice.value === value)) {
-      continue;
-    }
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `Invalid install option --${group.key}=${value}. Use one of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
-    };
-  }
-
-  const multiGroups = [
-    { key: "host", choices: hostChoices.choices },
-    { key: "work-provider", choices: workProviderChoices.choices },
-    { key: "ci-provider", choices: ciProviderChoices.choices }
-  ];
-  for (const group of multiGroups) {
-    const value = flags[group.key];
-    if (typeof value !== "string") {
-      continue;
-    }
-    const tokens = splitCsvOption(value);
-    if (tokens.length === 0) {
-      return {
-        exitCode: 2,
-        stdout: "",
-        stderr: `Invalid install option --${group.key}=. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
-      };
-    }
-    const invalid = tokens.filter(token => !group.choices.some(choice => choice.value === token));
-    if (invalid.length === 0) {
-      continue;
-    }
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `Invalid install option --${group.key}=${invalid.join(",")}. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
-    };
-  }
-  const guideError = invalidInstallGuideFlag(flags, installedReviewHosts);
-  if (guideError) {
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `${guideError}\n`
-    };
-  }
-  return undefined;
-}
-
 function readOption<Value extends string>(flags: Readonly<Record<string, unknown>>, key: string): Value | undefined {
   const value = flags[key];
   return typeof value === "string" ? value as Value : undefined;
-}
-
-function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefined {
-  if (flags.docs === true) {
-    return "yes";
-  }
-  if (flags.docs === false) {
-    return "no";
-  }
-  return undefined;
-}
-
-function hasCompleteInstallSelections(
-  flags: Readonly<Record<string, unknown>>,
-  cwd: string,
-  installedReviewHosts: readonly string[],
-): boolean {
-  return installQuestionGuideComplete(flags, cwd, installedReviewHosts);
 }
 
 function splitCsvOption(value: string): readonly string[] {
@@ -7189,127 +6311,6 @@ function readOptionList<Value extends string>(flags: Readonly<Record<string, unk
   }
   const tokens = splitCsvOption(value) as readonly Value[];
   return tokens.length > 0 ? tokens : undefined;
-}
-
-function parseInstallArgs(args: readonly string[]):
-  | { readonly flags: Readonly<Record<string, unknown>> }
-  | { readonly error: CliExecution } {
-  const flags: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (token === undefined) {
-      continue;
-    }
-    if (token === "--json") {
-      flags.json = true;
-      continue;
-    }
-    if (token === "--dry-run") {
-      flags["dry-run"] = true;
-      continue;
-    }
-    if (token === "--yes" || token === "-y") {
-      flags.yes = true;
-      continue;
-    }
-    if (token === "--apply") {
-      flags.apply = true;
-      continue;
-    }
-    if (token === "--offline") {
-      flags.offline = true;
-      continue;
-    }
-    if (token === "--docs") {
-      flags.docs = true;
-      continue;
-    }
-    if (token === "--no-docs") {
-      flags.docs = false;
-      continue;
-    }
-    if (token === "--credit-warning") {
-      flags["credit-warning"] = true;
-      continue;
-    }
-    if (token === "--no-credit-warning") {
-      flags["credit-warning"] = false;
-      continue;
-    }
-    const parsed = parseOptionToken(args, index);
-    if (parsed?.kind === "missing-value") {
-      return {
-        error: {
-          exitCode: 2,
-          stdout: "",
-          stderr: `Missing value for install option --${parsed.key}. Use one of: ${installOptionValues(parsed.key).join(", ")}.\n`
-        }
-      };
-    }
-    if (parsed?.kind === "parsed") {
-      flags[parsed.key] = parsed.value;
-      index = parsed.nextIndex;
-      continue;
-    }
-    return {
-      error: {
-        exitCode: 2,
-        stdout: "",
-        stderr: `Unknown install flag or argument: ${token}\n`
-      }
-    };
-  }
-  return { flags };
-}
-
-function parseOptionToken(
-  args: readonly string[],
-  index: number
-):
-  | { readonly kind: "parsed"; readonly key: string; readonly value: string; readonly nextIndex: number }
-  | { readonly kind: "missing-value"; readonly key: string }
-  | undefined {
-  const token = args[index];
-  if (!token) {
-    return undefined;
-  }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "review-mode", "ui-audit-evidence-root"]) {
-    const flag = `--${key}`;
-    if (token.startsWith(`${flag}=`)) {
-      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
-    }
-    if (token === flag) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("-")) {
-        return { kind: "missing-value", key };
-      }
-      return { kind: "parsed", key, value, nextIndex: index + 1 };
-    }
-  }
-  return undefined;
-}
-
-function installOptionValues(key: string): readonly string[] {
-  switch (key) {
-    case "scope":
-      return scopeChoices.choices.map(choice => choice.value);
-    case "package-manager":
-      return packageManagerChoices.choices.map(choice => choice.value);
-    case "host":
-      return hostChoices.choices.map(choice => choice.value);
-    case "work-provider":
-      return workProviderChoices.choices.map(choice => choice.value);
-    case "ci-provider":
-      return ciProviderChoices.choices.map(choice => choice.value);
-    case "lifecycle-scripts":
-      return lifecycleChoices.choices.map(choice => choice.value);
-    case "review-mode":
-      return ["isolated", "host", "external"];
-    case "ui-audit-evidence-root":
-      return [DEFAULT_INSTALL_UI_AUDIT_EVIDENCE_ROOT];
-    default:
-      return [];
-  }
 }
 
 function findDirectCommand(args: readonly string[]): { readonly definition: DirectQubeCommand; readonly args: readonly string[] } | undefined {

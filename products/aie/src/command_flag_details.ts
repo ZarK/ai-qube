@@ -30,6 +30,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--force', type: 'boolean', description: 'Replace blocked managed sections or known fields intentionally', default: false },
   { name: '--yes', type: 'boolean', description: 'Run non-interactively using provided values and defaults', default: false },
   { name: '--defaults', type: 'boolean', description: 'Use default repository policy values without prompting', default: false },
+  { name: '--prospective-root', type: 'boolean', description: 'Plan a dry run against a selected repository root before Git metadata exists', default: false },
   { name: '--from', type: 'string', description: 'Adopt policy from a working-directory-relative path or an owner/repo slug' },
   { name: '--review-mode', type: 'string', description: 'Review mode written to Executor config', options: ['external', 'host', 'isolated'] },
   { name: '--publisher', type: 'string', description: 'Review publisher identity', options: ['user', 'github-app'] },
