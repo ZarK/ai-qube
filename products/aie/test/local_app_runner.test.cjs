@@ -74,6 +74,24 @@ describe('local app runner service', () => {
     assert.equal(plan.windowsVerbatimArguments, true);
   });
 
+  it('wraps an explicit Windows launcher path through cmd.exe', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const launcher = join(root, 'tools', 'pnpm.cmd');
+    mkdirSync(join(root, 'tools'), { recursive: true });
+    writeFileSync(launcher, '@echo off\r\n');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      command: [launcher, 'dev'],
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    }, runPaths(root, 'ui-audit'));
+
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.match(plan.args[3], /pnpm\.cmd/i);
+  });
+
   it('does not wrap a missing Windows launcher as a successful command', async () => {
     const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();

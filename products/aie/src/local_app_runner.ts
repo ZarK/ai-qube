@@ -207,7 +207,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const requested = options.command[0];
-  const lookup = resolveExecutable(requested, { env, platform });
+  const lookup = lookupStartCommand(requested, env, platform);
   const resolved = lookup.status === 'found' && lookup.resolvedPath ? lookup.resolvedPath : null;
   const wrapLauncher = isWindowsPlatform(platform) && resolved !== null && isWindowsLauncher(resolved);
   if (wrapLauncher) {

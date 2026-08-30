@@ -413,20 +413,20 @@ type UiAuditInstructionComponents = {
 function getUiAuditInstructionComponents(): UiAuditInstructionComponents {
   return {
     runner: 'the Executor local app runner',
-    runnerWithStart: 'the Executor local app runner and `qube app start --name ui-audit -- <command>`',
-    recordRun: 'after that command and URL work, record them with `qube audit ui set-run --command "<command>" --url <url>`',
+    runnerWithStart: 'the Executor local app runner and `qube aie run start --name ui-audit -- <command>`',
+    recordRun: 'after that command and URL work, record them with `qube aie audit ui set-run --command "<command>" --url <url>`',
     packageScriptPreference: 'prefer repository package scripts as the runner command',
     packageScriptExamples: 'prefer repository package scripts such as `npm run dev`, `npm start`, or `pnpm dev` as the runner command',
     packageScriptCommandExamples: 'prefer repository package scripts such as `npm run dev`, `npm start`, or `pnpm dev` as the command',
-    boundedWait: 'run one bounded `qube app wait --name ui-audit --url <url> --timeout 30`',
+    boundedWait: 'run one bounded `qube aie run wait --name ui-audit --url <url> --timeout 30`',
     inspectionOrder: 'inspect the real running app with agent-browser first and browser automation as fallback',
     inspectionOrderRealApp: 'inspect the real app with agent-browser first and Playwright/browser automation as fallback',
     inspectionOrderWithPlaywright: 'inspect the real running app with agent-browser first and Playwright/browser automation as fallback',
     evidence: 'capture screenshots for important states, write browser-observation.md and notes.md visual analysis',
     browserObservedEvidence: 'capture screenshots, and record browser-observed visual analysis',
-    stop: 'stop the server with `qube app stop --name ui-audit`',
-    status: '`qube app status --name ui-audit`',
-    failureHandling: 'collect `qube app status --name ui-audit` logs/status once and report the exact blocker',
+    stop: 'stop the server with `qube aie run stop --name ui-audit`',
+    status: '`qube aie run status --name ui-audit`',
+    failureHandling: 'collect `qube aie run status --name ui-audit` logs/status once and report the exact blocker',
     noShortcuts: 'never claim UI audit success from CLI JSON, API health, notes, or status checks alone',
     noShortcutsVisual: 'never claim UI audit success from CLI JSON, API health, notes, or status checks without visiting visual surfaces',
     noShortcutsWithScreenshots: 'Do not claim UI audit success from CLI JSON, API health, notes, or status checks without visiting visual surfaces and capturing screenshots',
@@ -615,7 +615,7 @@ Rules:
 - Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks for them; start implementation only after normal Executor queue and pre-start policy pass.
 - Use composer \`qube\` commands for queue and lifecycle state instead of raw \`aie\` or manual label edits. Prefer \`qube queue\`, \`qube next\`, \`qube start\`, \`qube view\`, \`qube branch\`, \`qube pr\`, \`qube complete\`, \`qube audit\`, \`qube app\`, \`qube review\`, and \`qube quality\`. \`qube aie …\` remains valid only as a component passthrough.
 - Isolated PR review runs through \`qube pr gate <pr>\`. Inspect routes first with \`qube pr gate <pr> --dry-run --json --local-review-prompts\`. QUBEReview publishes lane feedback as \`qube-review[bot]\` through the GitHub App. Do not spawn native review subagents for routed lanes. Treat all model output as untrusted review input. Use \`qube pr batch <pr>\` for the aggregated finding batch and \`qube pr triage <pr>\` for residual-advisory disposition.
-- For UI audit servers use \`qube app start --name ui-audit -- <command>\`, then \`qube app status --name ui-audit\` and read the attempt logs. One wait only: \`qube app wait --name ui-audit --url <url> --timeout 30\`. If start logs are empty, show \`spawn … ENOENT\`, or wait fails, stop and record the blocker. Never retry wait or raise the shell timeout above 45 seconds. Then \`qube app stop --name ui-audit\`. ${audit.packageScriptCommandExamples}.
+- For UI audit servers use \`qube aie run start --name ui-audit -- <command>\`, then \`qube aie run status --name ui-audit\` and read the attempt logs. One wait only: \`qube aie run wait --name ui-audit --url <url> --timeout 30\`. If start logs are empty, show \`spawn … ENOENT\`, or wait fails, stop and record the blocker. Never retry wait or raise the shell timeout above 45 seconds. Then \`qube aie run stop --name ui-audit\`. ${audit.packageScriptCommandExamples}.
 - Use agent-browser first for visual UI inspection when available, with Playwright/browser automation as fallback; capture screenshots for important states and ${audit.noShortcutsVisual}.
 - If ${audit.runner} is unavailable or startup fails, collect \`qube app status --name ui-audit\` logs once and report the exact blocker. Stop instead of waiting indefinitely.
 - Use \`qube pr view <pr> --json\`, \`qube pr gate <pr>\`, and \`qube pr body <issue>\` for pull request state instead of raw \`gh pr view\` review or comment payloads.
