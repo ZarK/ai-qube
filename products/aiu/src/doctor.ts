@@ -18,6 +18,7 @@ import {
   resolveAiuHostActivationPath,
 } from "./continuation_store.js";
 import { inspectGrokFolderTrust } from "./grok_trust.js";
+import { resolveTrustedCommandExecutable } from "./trusted_adapter.js";
 import {
   evaluateAiuHostRuntimePolicy,
   getAiuHostCapabilityProfile,
@@ -704,7 +705,7 @@ function resolveTrustedCommandPaths(configLoad: AiuConfigLoadResult): readonly A
   return Object.entries(configLoad.config.trustedStateCommands).map(([sourceId, descriptor]) => {
     const executable = descriptor.argv[0];
     const cwd = descriptor.cwd ? path.resolve(configLoad.repoRoot, descriptor.cwd) : configLoad.repoRoot;
-    const resolvedPath = resolveExecutablePath(executable, cwd);
+    const resolvedPath = resolveTrustedCommandExecutable(executable, cwd);
     return {
       sourceId,
       executable,
@@ -713,15 +714,6 @@ function resolveTrustedCommandPaths(configLoad: AiuConfigLoadResult): readonly A
       found: resolvedPath !== undefined,
     };
   });
-}
-
-function resolveExecutablePath(executable: string, cwd: string): string | undefined {
-  const candidates = isDirectExecutablePath(executable) ? [path.resolve(cwd, executable)] : (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((entry) => path.join(entry, executable));
-  return candidates.find((candidate) => isExecutableFile(candidate));
-}
-
-function isDirectExecutablePath(executable: string): boolean {
-  return executable.includes("/") || executable.includes("\\");
 }
 
 function pathExistsCheck(

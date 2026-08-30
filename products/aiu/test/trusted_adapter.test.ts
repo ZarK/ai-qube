@@ -427,6 +427,27 @@ describe("trusted command adapters", () => {
     assert.deepEqual(value?.kind === "quality" ? value.failingChecks : [], ["typecheck"]);
     assert.deepEqual(value?.kind === "quality" ? value.affectedPaths : [], ["src/state.ts"]);
   });
+
+  it("resolves a Windows command through PATHEXT instead of a bare basename", async (t) => {
+    if (process.platform !== "win32") {
+      t.skip("PATHEXT resolution is a Windows host concern.");
+      return;
+    }
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { resolveTrustedCommandExecutable } = await loadTrustedAdapter();
+    const directory = mkdtempSync(path.join(tmpdir(), "aiu-qube-path-"));
+    const previousPath = process.env.PATH;
+    writeFileSync(path.join(directory, "qube"), "not-an-executable");
+    writeFileSync(path.join(directory, "qube.cmd"), "@echo off");
+    process.env.PATH = directory;
+    try {
+      assert.equal(resolveTrustedCommandExecutable("qube")?.toLowerCase(), path.join(directory, "qube.cmd").toLowerCase());
+    } finally {
+      process.env.PATH = previousPath;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 async function loadTrustedAdapter(): Promise<typeof TrustedAdapter> {

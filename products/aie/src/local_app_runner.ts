@@ -3,7 +3,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import { dirname, extname, join, resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolveExecutable } from '@tjalve/qube-core';
 import { processIdentity } from './local_app_runner_process.js';
@@ -43,6 +43,7 @@ export type {
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 500;
+const EARLY_SPAWN_WAIT_MS = 400;
 const LOG_TAIL_LINES = 30;
 const SAFE_RUN_NAME = /^[A-Za-z0-9._-]+$/;
 const SAFE_ATTEMPT_ID = /^[A-Za-z0-9._-]+$/;
@@ -188,6 +189,17 @@ function isWindowsLauncher(filePath: string): boolean {
   return ['.cmd', '.bat'].includes(extname(filePath).toLowerCase());
 }
 
+function lookupStartCommand(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, cwd?: string) {
+  const trimmed = command.trim();
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    const resolvedPath = resolve(cwd ?? process.cwd(), trimmed);
+    if (existsSync(resolvedPath)) {
+      return { command: trimmed, status: 'found', resolvedPath, reasonCode: 'found' };
+    }
+  }
+  return resolveExecutable(trimmed, { env, platform });
+}
+
 function quoteCmdArgument(value: string): string {
   if (!/[\s"]/.test(value)) return value;
   return `"${value.replace(/"/g, '""')}"`;
@@ -198,7 +210,8 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const requested = options.command[0];
-  const lookup = resolveExecutable(requested, { env, platform });
+  const cwd = resolveWorkingDirectory(options.repoRoot, options.cwd);
+  const lookup = lookupStartCommand(requested, env, platform, cwd);
   const resolved = lookup.status === 'found' && lookup.resolvedPath ? lookup.resolvedPath : null;
   const wrapLauncher = isWindowsPlatform(platform) && resolved !== null && isWindowsLauncher(resolved);
   if (wrapLauncher) {
@@ -207,7 +220,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
     return {
       command: comspec,
       args: ['/d', '/s', '/c', `"${commandLine}"`],
-      cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
+      cwd,
       detached: true,
       windowsHide: true,
       shell: false,
@@ -219,7 +232,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   return {
     command: requested,
     args: options.command.slice(1),
-    cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
+    cwd,
     detached: true,
     windowsHide: true,
     shell: false,
@@ -367,7 +380,55 @@ export function runStatus(options: RunNameOptions): RunStatusResult {
   }
 }
 
-export function runStart(options: RunStartOptions): RunStartResult {
+function waitForEarlySpawnFailure(child: ChildProcess, waitMs = EARLY_SPAWN_WAIT_MS): Promise<string | null> {
+  return new Promise(resolve => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (message: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off('error', onError);
+      child.off('exit', onExit);
+      resolve(message);
+    };
+    const onError = (err: Error) => finish(err.message);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      finish(`The app process exited immediately (${signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`}).`);
+    };
+    child.once('error', onError);
+    child.once('exit', onExit);
+    timer = setTimeout(() => finish(null), waitMs);
+    timer.unref();
+  });
+}
+
+function startFailure(
+  options: RunStartOptions,
+  paths: ReturnType<typeof runPaths>,
+  plan: SpawnPlan,
+  attemptId: string,
+  error: string,
+  pid: number | null = null,
+): RunStartResult {
+  return {
+    ok: false,
+    command: 'run start',
+    dryRun: options.dryRun === true,
+    name: validateName(options.name),
+    commandLine: options.command,
+    cwd: plan.cwd,
+    pid,
+    attemptId,
+    paths,
+    spawnPlan: plan,
+    status: 'missing',
+    nextAction: 'Fix the app command or working directory, inspect captured logs if present, then retry once.',
+    error,
+  };
+}
+
+export async function runStart(options: RunStartOptions): Promise<RunStartResult> {
   const existingPaths = runPaths(options.repoRoot, options.name);
   const existing = readRunMetadata(options.repoRoot, options.name);
   const existingStatus = statusFromMetadata(existing);
@@ -409,6 +470,19 @@ export function runStart(options: RunStartOptions): RunStartResult {
     };
   }
 
+  const lookup = lookupStartCommand(options.command[0], options.env ?? process.env, options.platform ?? process.platform, plan.cwd);
+  if (lookup.status !== 'found' || !lookup.resolvedPath) {
+    mkdirSync(paths.directory, { recursive: true });
+    writeCurrentAttempt(paths.currentAttemptPath, {
+      attemptId,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      startedAt: (options.now ?? new Date()).toISOString(),
+    });
+    recordSpawnError(paths.stderrPath, `${options.command[0]} is not on PATH (${lookup.reasonCode}).`);
+    return startFailure(options, paths, plan, attemptId, `Cannot start: ${options.command[0]} is not on PATH (${lookup.reasonCode}).`);
+  }
+
   mkdirSync(paths.directory, { recursive: true });
   const startedAt = (options.now ?? new Date()).toISOString();
   writeCurrentAttempt(paths.currentAttemptPath, {
@@ -421,6 +495,7 @@ export function runStart(options: RunStartOptions): RunStartResult {
   const stdout = openSync(paths.stdoutPath, 'a');
   const stderr = openSync(paths.stderrPath, 'a');
   try {
+    appendFileSync(paths.stdoutPath, `[aie-runner] spawn ${plan.command} ${plan.args.join(' ')}\n`);
     const child = spawn(plan.command, plan.args, {
       cwd: plan.cwd,
       detached: plan.detached,
@@ -431,27 +506,15 @@ export function runStart(options: RunStartOptions): RunStartResult {
     });
     safeClose(stdout);
     safeClose(stderr);
-    child.once('error', err => {
-      recordSpawnError(paths.stderrPath, err.message);
-      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
-    });
     if (!child.pid) {
       recordSpawnError(paths.stderrPath, 'The app process did not expose a PID after spawn.');
-      return {
-        ok: false,
-        command: 'run start',
-        dryRun: false,
-        name: validateName(options.name),
-        commandLine: options.command,
-        cwd: plan.cwd,
-        pid: null,
-        attemptId,
-        paths,
-        spawnPlan: plan,
-        status: 'missing',
-        nextAction: 'Fix the app command or working directory, inspect captured logs if present, then retry once.',
-        error: 'The app process did not expose a PID after spawn.',
-      };
+      return startFailure(options, paths, plan, attemptId, 'The app process did not expose a PID after spawn.');
+    }
+    const earlyFailure = await waitForEarlySpawnFailure(child);
+    if (earlyFailure) {
+      recordSpawnError(paths.stderrPath, earlyFailure);
+      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
+      return startFailure(options, paths, plan, attemptId, earlyFailure, child.pid);
     }
     const metadata = metadataFromPlan(options, paths, plan, child.pid, options.platform ?? process.platform);
     try {
@@ -475,6 +538,10 @@ export function runStart(options: RunStartOptions): RunStartResult {
         error: `Failed to write runner metadata: ${error}`,
       };
     }
+    child.once('error', err => {
+      recordSpawnError(paths.stderrPath, err.message);
+      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
+    });
     child.unref();
     return {
       ok: true,
@@ -642,6 +709,25 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
   let attempts = 0;
   let lastStatus: number | null = null;
   let lastError: string | undefined;
+  const spawnFailed = logTail(paths).stderr.some(line => /\[aie-runner\] spawn error:/.test(line));
+  if (spawnFailed) {
+    return {
+      ok: false,
+      command: 'run wait',
+      name: metadata.name,
+      url: options.url,
+      timeoutSeconds,
+      elapsedMs: 0,
+      attempts: 0,
+      attemptId: paths.attemptId,
+      status: 'stopped',
+      httpStatus: null,
+      paths,
+      logTail: logTail(paths),
+      nextAction: 'Inspect stdout/stderr logs, fix the startup command, and rerun `aie run start` once.',
+      error: `Run "${metadata.name}" never started. The spawn log reports an error.`,
+    };
+  }
   while (clock() - started <= timeoutSeconds * 1000) {
     if (processIdentity(metadata).state !== 'running') {
       return {

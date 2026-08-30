@@ -74,6 +74,44 @@ describe('local app runner service', () => {
     assert.equal(plan.windowsVerbatimArguments, true);
   });
 
+  it('wraps an explicit Windows launcher path through cmd.exe', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const launcher = join(root, 'tools', 'pnpm.cmd');
+    mkdirSync(join(root, 'tools'), { recursive: true });
+    writeFileSync(launcher, '@echo off\r\n');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      command: [launcher, 'dev'],
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    }, runPaths(root, 'ui-audit'));
+
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.match(plan.args[3], /pnpm\.cmd/i);
+  });
+
+  it('resolves a relative Windows launcher path from the run directory', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const app = join(root, 'apps', 'web');
+    const launcher = join(app, 'tools', 'pnpm.cmd');
+    mkdirSync(join(app, 'tools'), { recursive: true });
+    writeFileSync(launcher, '@echo off\r\n');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      cwd: 'apps/web',
+      command: ['tools/pnpm.cmd', 'dev'],
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    }, runPaths(root, 'ui-audit'));
+
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.match(plan.args[3], /pnpm\.cmd/i);
+  });
+
   it('does not wrap a missing Windows launcher as a successful command', async () => {
     const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
@@ -94,7 +132,7 @@ describe('local app runner service', () => {
   it('plans start without launching and reports persisted current-process status', async () => {
     const { runStart, runStatus, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const planned = runStart({ repoRoot: root, name: 'ui-audit', command: ['npm', 'run', 'dev'], dryRun: true });
+    const planned = await runStart({ repoRoot: root, name: 'ui-audit', command: ['npm', 'run', 'dev'], dryRun: true });
 
     assert.equal(planned.ok, true);
     assert.equal(planned.dryRun, true);
@@ -253,7 +291,7 @@ describe('local app runner service', () => {
   it('plans start against a new attempt log pair without writing files', async () => {
     const { runStart } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const planned = runStart({
+    const planned = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: ['npm', 'run', 'dev'],
@@ -428,13 +466,18 @@ describe('local app runner service', () => {
   it('isolates a live missing-command spawn error from a later successful start', async () => {
     const { runStart, runStatus, runStop } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const failed = runStart({
+    const failed = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: ['aie-missing-runner-307'],
       now: new Date('2026-06-18T00:00:00.000Z'),
     });
-    const succeeded = runStart({
+    assert.equal(failed.ok, false);
+    assert.match(failed.error ?? '', /not on PATH/);
+    assert.equal(failed.status, 'missing');
+    assert.ok(existsSync(failed.paths.stderrPath) && /spawn error/.test(readFileSync(failed.paths.stderrPath, 'utf8')));
+
+    const succeeded = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
@@ -442,13 +485,6 @@ describe('local app runner service', () => {
     });
 
     try {
-      const deadline = Date.now() + 2000;
-      while (Date.now() < deadline) {
-        if (existsSync(failed.paths.stderrPath) && /spawn error/.test(readFileSync(failed.paths.stderrPath, 'utf8'))) break;
-        await delay(50);
-      }
-      await delay(50);
-
       const status = runStatus({ repoRoot: root, name: 'ui-audit' });
       const historic = runStatus({ repoRoot: root, name: 'ui-audit', attemptId: failed.attemptId });
 

@@ -50,7 +50,7 @@ export const handleRunStart: RuntimeCommandHandler = async context => {
   try {
     const loaded = await loadConfigFile();
     if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix the selected Executor config, then start the local app runner again.');
-    const result = runStart({
+    const result = await runStart({
       repoRoot: loaded.root,
       name: runName(context),
       cwd: stringFlag(context, 'cwd'),
