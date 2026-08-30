@@ -113,10 +113,13 @@ export interface AiuOpenCodeServerPluginInput {
 
 export interface AiuOpenCodeServerClient {
   readonly session?: {
-    readonly promptAsync?: (input: {
+    readonly       promptAsync?: (input: {
       readonly path: { readonly id: string };
       readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] };
       readonly query?: { readonly directory: string };
+      readonly sessionID?: string;
+      readonly directory?: string;
+      readonly parts?: readonly [{ readonly type: "text"; readonly text: string }];
     }) => Promise<unknown>;
   };
 }
@@ -618,10 +621,14 @@ function createAiuOpenCodeClientDeliverer(
     if (!targetSessionId) {
       return Object.freeze({ delivered: false, reason: "missing-target-session" });
     }
+    const parts = [{ type: "text" as const, text: prompt.body }] as const;
     await promptAsync.call(client.session, {
       path: { id: targetSessionId },
-      body: { parts: [{ type: "text", text: prompt.body }] },
+      body: { parts },
       ...(cwd ? { query: { directory: cwd } } : {}),
+      sessionID: targetSessionId,
+      ...(cwd ? { directory: cwd } : {}),
+      parts,
     });
     return Object.freeze({ delivered: true, targetSessionId });
   };
