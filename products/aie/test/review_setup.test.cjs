@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const { generateKeyPairSync } = require('node:crypto');
 const { mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -13,7 +14,7 @@ const {
   normalizeReviewAvatarUrl,
   runReviewDoctor,
 } = require('../dist/review_setup.js');
-const { runReviewSetup } = require('../dist/runtime_review_setup.js');
+const { formatReviewSetup, normalizeReviewPrivateKeyPath, runReviewSetup } = require('../dist/runtime_review_setup.js');
 
 function binRun(args, cwd = process.cwd()) {
   return spawnSync(process.execPath, [join(__dirname, '..', 'bin/run'), ...args], { cwd, encoding: 'utf8' });
@@ -75,6 +76,8 @@ describe('review publisher setup guidance', () => {
     const appSetup = schema.commands.find(command => command.name === 'review setup github-app');
     assert.equal(appSetup.flags.find(flag => flag.name === 'app-id').type, 'string');
     assert.equal(appSetup.flags.find(flag => flag.name === 'private-key-env').type, 'string');
+    assert.deepEqual(appSetup.flags.find(flag => flag.name === 'config-scope').options, ['global', 'repo']);
+    assert.equal(appSetup.interactions.ttyPrompt, true);
     const init = schema.commands.find(command => command.name === 'init');
     assert.deepEqual(init.flags.find(flag => flag.name === 'publisher').options, ['github-app', 'user']);
   });
@@ -89,6 +92,198 @@ describe('review publisher setup guidance', () => {
 });
 
 describe('review publisher setup execution', () => {
+  it('writes complete user-global defaults outside the repository without credential material', async () => {
+    const root = makeDirectory();
+    const home = makeDirectory();
+    const repositoryConfigPath = join(root, '.qube', 'aie', 'config.json');
+    const writes = [];
+    const result = await runReviewSetup({
+      mode: 'github-app', scope: 'global', config: getDefaults(), configPath: repositoryConfigPath, root, homeDirectory: home,
+      appId: '123', installationId: '456', privateKeyEnv: 'QUBE_REVIEW_APP_KEY', login: 'review-app[bot]',
+      yes: true, noProbe: true, resolvePublisher: readyResolver,
+      writeConfig: async (path, content) => writes.push({ path, content }),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.applied, true);
+    assert.equal(result.scope, 'global');
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].path, join(home, '.qube', 'aie', 'review-publisher.json'));
+    assert.notEqual(writes[0].path, repositoryConfigPath);
+    assert.deepEqual(JSON.parse(writes[0].content).publisher.githubApp, {
+      appId: '123', installationId: '456', privateKeyEnv: 'QUBE_REVIEW_APP_KEY', login: 'review-app[bot]',
+    });
+    assert.doesNotMatch(JSON.stringify(result) + writes[0].content, /BEGIN PRIVATE KEY|github_pat_|ghp_/);
+  });
+
+  it('keeps global and repository next actions in the selected scope', async () => {
+    const root = makeDirectory();
+    const global = await runReviewSetup({ mode: 'github-app', scope: 'global', config: null, configPath: join(root, 'config.json'), root, appId: '123' });
+    const repository = await runReviewSetup({ mode: 'github-app', scope: 'repo', config: null, configPath: join(root, 'config.json'), root, appId: '123' });
+
+    assert.match(global.nextAction, /review setup github-app --config-scope global/);
+    assert.doesNotMatch(global.nextAction, /review setup github-app`/);
+    assert.match(repository.nextAction, /review setup github-app`/);
+    assert.doesNotMatch(repository.nextAction, /--config-scope global/);
+  });
+
+  it('discovers zero, one, and multiple named App installations safely', async () => {
+    const root = makeDirectory();
+    const candidate = (id, login) => ({ installationId: id, accountLogin: login, accountType: 'Organization', targetType: 'Organization', repositorySelection: 'selected', permissions: { pullRequests: 'write' }, label: `${login} · selected repositories · installation ${id}` });
+    const base = { mode: 'github-app', scope: 'global', config: getDefaults(), configPath: join(root, 'config.json'), root, appId: '123', privateKeyEnv: 'QUBE_KEY', dryRun: true, yes: true, json: true, resolvePublisher: readyResolver };
+    const zero = await runReviewSetup({ ...base, discoverInstallations: async () => [] });
+    const one = await runReviewSetup({ ...base, discoverInstallations: async () => [candidate(456, 'one-owner')] });
+    const multiple = await runReviewSetup({ ...base, discoverInstallations: async () => [candidate(456, 'one-owner'), candidate(789, 'two-owner')] });
+
+    assert.equal(zero.ok, false);
+    assert.equal(zero.discovery.status, 'unavailable');
+    assert.equal(one.discovery.status, 'selected');
+    assert.equal(one.publisher.githubApp.installationId, '456');
+    assert.equal(multiple.ok, false);
+    assert.equal(multiple.discovery.status, 'multiple');
+    assert.match(multiple.nextAction, /terminal.*named installation|named installation.*terminal/i);
+  });
+
+  it('filters repository discovery to installations that can access the repository', async () => {
+    const root = makeDirectory();
+    const candidates = [
+      { installationId: 456, accountLogin: 'wrong-owner', accountType: 'Organization', targetType: 'Organization', repositorySelection: 'all', permissions: {}, label: 'wrong-owner · all repositories · installation 456' },
+      { installationId: 789, accountLogin: 'right-owner', accountType: 'Organization', targetType: 'Organization', repositorySelection: 'selected', permissions: {}, label: 'right-owner · selected repositories · installation 789' },
+    ];
+    const result = await runReviewSetup({
+      mode: 'github-app', scope: 'repo', config: getDefaults(), configPath: join(root, 'config.json'), root,
+      appId: '123', privateKeyEnv: 'QUBE_KEY', dryRun: true, yes: true, json: true, resolvePublisher: readyResolver,
+      discoverInstallations: async () => candidates,
+      matchRepositoryInstallations: async values => values.filter(value => value.accountLogin === 'right-owner'),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.discovery.status, 'selected');
+    assert.equal(result.publisher.githubApp.installationId, '789');
+  });
+
+  it('normalizes balanced quoted paths with spaces and rejects unbalanced quotes', () => {
+    const root = makeDirectory();
+    const home = makeDirectory();
+    assert.equal(normalizeReviewPrivateKeyPath('"keys/review app.pem"', root, home), join(root, 'keys', 'review app.pem'));
+    assert.equal(normalizeReviewPrivateKeyPath('"~/.qube/review app.pem"', root, home), join(home, '.qube', 'review app.pem'));
+    assert.throws(() => normalizeReviewPrivateKeyPath('"keys/review app.pem', root, home), /unbalanced surrounding quotes/);
+  });
+
+  it('corrects Client IDs and unavailable key references at the affected guided question', async () => {
+    const root = makeDirectory();
+    const config = getDefaults();
+    config.providers.review.publisher = { mode: 'github-app', githubApp: { appId: 'Iv1.client', installationId: '456', privateKeyEnv: 'MISSING_REVIEW_KEY' } };
+    const questions = [];
+    const presenter = {
+      askText: async question => {
+        questions.push(question);
+        return { status: 'answered', value: question.label === 'GitHub App ID' ? '123' : 'WORKING_REVIEW_KEY', source: 'prompt' };
+      },
+      choose: async () => { throw new Error('unexpected choice'); },
+      confirm: async question => { questions.push(question); return { status: 'answered', value: true, source: 'prompt' }; },
+      progress: async (_options, operation) => operation(),
+      cancel: reason => ({ status: 'cancelled', reason, writeAllowed: false }),
+      summarize: () => {}, fail: () => {},
+    };
+    const previousKey = process.env.WORKING_REVIEW_KEY;
+    process.env.WORKING_REVIEW_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    let result;
+    try {
+      result = await runReviewSetup({ mode: 'github-app', config, configPath: join(root, 'config.json'), root, isTTY: true, presenter, noProbe: true, resolvePublisher: readyResolver });
+    } finally {
+      if (previousKey === undefined) delete process.env.WORKING_REVIEW_KEY;
+      else process.env.WORKING_REVIEW_KEY = previousKey;
+    }
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(questions.map(question => question.label), ['GitHub App ID', 'Private-key environment variable', 'Write repository Reviewer App config?']);
+    assert.match(await questions[0].validation.check('Iv1.client'), /looks like a GitHub Client ID/);
+    assert.equal(questions[1].validation.state, 'invalid');
+    assert.match(questions[1].validation.message, /missing or empty/);
+
+    const installationClientId = await runReviewSetup({
+      mode: 'github-app', config: null, configPath: join(root, 'other.json'), root,
+      appId: '123', installationId: 'Iv1.client', privateKeyEnv: 'WORKING_REVIEW_KEY', yes: true, noProbe: true,
+    });
+    assert.equal(installationClientId.ok, false);
+    assert.match(installationClientId.validationErrors.join('\n'), /looks like a GitHub Client ID/);
+  });
+
+  it('preserves an unchanged inherited publisher without prompts, writes, or verbose output', async () => {
+    const root = makeDirectory();
+    const publisher = { mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY' } };
+    const config = getDefaults();
+    config.providers.review.publisher = publisher;
+    let writes = 0;
+    const presenter = {
+      askText: async () => { throw new Error('unexpected text prompt'); },
+      choose: async () => { throw new Error('unexpected choice prompt'); },
+      confirm: async () => { throw new Error('unexpected confirmation'); },
+      progress: async (_options, operation) => operation(),
+      cancel: reason => ({ status: 'cancelled', reason, writeAllowed: false }),
+      summarize: () => {}, fail: () => {},
+    };
+    const previousKey = process.env.QUBE_KEY;
+    process.env.QUBE_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    let result;
+    try {
+      result = await runReviewSetup({
+        mode: 'github-app', scope: 'repo', config, configPath: join(root, 'config.json'), root,
+        publisherSource: 'user-global', publisherFieldSources: { mode: 'user-global', 'githubApp.appId': 'user-global', 'githubApp.installationId': 'user-global', 'githubApp.privateKeyEnv': 'user-global' },
+        isTTY: true, presenter, noProbe: true, resolvePublisher: readyResolver,
+        writeConfig: async () => { writes += 1; },
+      });
+    } finally {
+      if (previousKey === undefined) delete process.env.QUBE_KEY;
+      else process.env.QUBE_KEY = previousKey;
+    }
+    const output = formatReviewSetup(result);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, false);
+    assert.equal(writes, 0);
+    assert.match(output, /already configured/);
+    assert.doesNotMatch(output, /App ID:|Installation:|Review publisher readiness:/);
+  });
+
+  it('reports a written config separately from unavailable publisher verification', async () => {
+    const root = makeDirectory();
+    const result = await runReviewSetup({
+      mode: 'github-app', config: null, configPath: join(root, 'config.json'), root,
+      appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY', yes: true,
+      resolvePublisher: async () => { throw new Error('The installation cannot access this repository.'); },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.applied, true);
+    assert.equal(result.readiness, 'unavailable');
+    assert.match(result.nextAction, /review setup github-app/);
+  });
+
+  it('writes only the repository layer and never flattens machine-local overlay values', async () => {
+    const root = makeDirectory();
+    const config = getDefaults();
+    config.providers.review.connection = { machineOnly: 'local-overlay-value' };
+    let written = '';
+    const result = await runReviewSetup({
+      mode: 'github-app', scope: 'repo', config, configPath: join(root, '.qube', 'aie', 'config.json'), root,
+      repositoryConfig: { version: 1 },
+      appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY', yes: true, noProbe: true, resolvePublisher: readyResolver,
+      writeConfig: async (_path, content) => { written = content; },
+    });
+
+    assert.equal(result.applied, true);
+    assert.doesNotMatch(written, /machineOnly|local-overlay-value/);
+    assert.equal(JSON.parse(written).providers.review.publisher.githubApp.installationId, '456');
+  });
+
+  it('rejects an invalid config scope through the packed command without prompting', () => {
+    const result = binRun(['review', 'setup', 'github-app', '--config-scope', 'machine', '--json']);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout || result.stderr, /config-scope.*repo, global/);
+  });
+
   it('plans non-interactive GitHub App setup with safe references only', async () => {
     const root = makeDirectory();
     const result = await runReviewSetup({
@@ -147,24 +342,44 @@ describe('review publisher setup execution', () => {
     assert.match(rejectedLogin.validationErrors.join('\n'), /public identifier|credential/i);
   });
 
-  it('completes interactive setup through an injected prompt without requesting secrets', async () => {
+  it('completes interactive setup through the shared guided presenter without requesting secrets', async () => {
     const root = makeDirectory();
     const configPath = join(root, '.qube', 'aie', 'config.json');
     const questions = [];
-    const answers = { appId: '321', installationId: '654', privateKeyEnv: 'QUBE_INTERACTIVE_APP_KEY' };
-    const result = await runReviewSetup({
-      mode: 'github-app', config: getDefaults(), configPath, root, isTTY: true,
-      prompt: async question => {
+    const presenter = {
+      askText: async question => {
         questions.push(question);
-        return answers[question.id] ?? '';
+        return { status: 'answered', value: question.label === 'GitHub App ID' ? '321' : 'QUBE_INTERACTIVE_APP_KEY', source: 'prompt' };
       },
-      noProbe: true,
-      resolvePublisher: readyResolver,
-    });
+      choose: async (question) => {
+        questions.push(question);
+        return { status: 'answered', value: question.label === 'Private-key reference' ? 'environment' : 'installation-654', source: 'prompt' };
+      },
+      confirm: async question => { questions.push(question); return { status: 'answered', value: true, source: 'prompt' }; },
+      progress: async (_options, operation) => operation(),
+      cancel: reason => ({ status: 'cancelled', reason, writeAllowed: false }),
+      summarize: () => {}, fail: () => {},
+    };
+    const previousKey = process.env.QUBE_INTERACTIVE_APP_KEY;
+    process.env.QUBE_INTERACTIVE_APP_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    let result;
+    try {
+      result = await runReviewSetup({
+        mode: 'github-app', config: getDefaults(), configPath, root, isTTY: true, presenter,
+        discoverInstallations: async () => [{ installationId: 654, accountLogin: 'review-owner', accountType: 'Organization', targetType: 'Organization', repositorySelection: 'all', permissions: {}, label: 'review-owner · all repositories · installation 654' }],
+        matchRepositoryInstallations: async candidates => candidates,
+        noProbe: true,
+        resolvePublisher: readyResolver,
+      });
+    } finally {
+      if (previousKey === undefined) delete process.env.QUBE_INTERACTIVE_APP_KEY;
+      else process.env.QUBE_INTERACTIVE_APP_KEY = previousKey;
+    }
 
     assert.equal(result.applied, true);
-    assert.deepEqual(questions.map(question => question.id), ['appId', 'installationId', 'privateKeyEnv']);
-    assert.ok(questions.every(question => !/private key PEM$|token value/i.test(question.message)));
+    assert.deepEqual(questions.map(question => question.label), ['GitHub App ID', 'Private-key reference', 'Private-key environment variable', 'Write repository Reviewer App config?']);
+    assert.ok(questions.every(question => !/private key PEM$|token value/i.test(question.label)));
+    assert.ok(questions.every(question => question.explanation && question.recommendation?.reason));
     assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).providers.review.publisher.githubApp.privateKeyEnv, 'QUBE_INTERACTIVE_APP_KEY');
   });
 

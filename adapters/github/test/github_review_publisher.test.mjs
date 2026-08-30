@@ -4,6 +4,7 @@ import { describe, it, before, after } from 'node:test';
 
 import {
   createGitHubAppJwt,
+  discoverGitHubAppInstallations,
   resolveGitHubReviewPublisher,
 } from '../dist/github_review_publisher.js';
 
@@ -12,6 +13,24 @@ const { privateKey } = generateKeyPairSync('rsa', {
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   publicKeyEncoding: { type: 'spki', format: 'pem' },
 });
+
+function installationFixture(id, login, overrides = {}) {
+  return {
+    id,
+    account: { login, type: 'Organization' },
+    target_type: 'Organization',
+    repository_selection: 'selected',
+    permissions: { contents: 'read', pull_requests: 'write' },
+    ...overrides,
+  };
+}
+
+function discoveryRequest(payload, options = {}) {
+  return async () => new Response(
+    typeof payload === 'string' ? payload : JSON.stringify(payload),
+    { status: options.status ?? 200, headers: options.headers },
+  );
+}
 
 describe('github review publisher', () => {
   const previousEnv = { ...process.env };
@@ -31,6 +50,179 @@ describe('github review publisher', () => {
     assert.equal(payload.iss, '12345');
     assert.equal(payload.iat, 1_700_000_000 - 60);
     assert.equal(payload.exp, 1_700_000_000 + 9 * 60);
+  });
+
+  it('returns no candidates when the App has no installations', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const candidates = await discoverGitHubAppInstallations({
+      appId: '99',
+      privateKeyEnv: 'QUBE_TEST_APP_KEY',
+    }, {
+      request: discoveryRequest([]),
+      nowSeconds: 1_700_000_000,
+    });
+
+    assert.deepEqual(candidates, []);
+  });
+
+  it('returns one public installation candidate with a human label', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const candidates = await discoverGitHubAppInstallations({
+      appId: '99',
+      privateKeyEnv: 'QUBE_TEST_APP_KEY',
+    }, {
+      request: discoveryRequest([installationFixture(1001, 'qube-reviewers')]),
+      nowSeconds: 1_700_000_000,
+    });
+
+    assert.deepEqual(candidates, [{
+      installationId: 1001,
+      accountLogin: 'qube-reviewers',
+      accountType: 'Organization',
+      targetType: 'Organization',
+      repositorySelection: 'selected',
+      permissions: { contents: 'read', pull_requests: 'write' },
+      label: 'qube-reviewers (Organization) - selected repositories - installation 1001',
+    }]);
+    assert.equal(JSON.stringify(candidates).includes('Authorization'), false);
+  });
+
+  it('returns multiple installations in provider order', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const candidates = await discoverGitHubAppInstallations({
+      appId: '99',
+      privateKeyEnv: 'QUBE_TEST_APP_KEY',
+    }, {
+      request: discoveryRequest([
+        installationFixture(1001, 'first-owner'),
+        installationFixture(1002, 'second-owner', {
+          account: { login: 'second-owner', type: 'User' },
+          target_type: 'User',
+          repository_selection: 'all',
+        }),
+      ]),
+    });
+
+    assert.deepEqual(candidates.map(candidate => candidate.installationId), [1001, 1002]);
+    assert.match(candidates[1].label, /all repositories/);
+  });
+
+  it('rejects malformed installation responses without returning partial candidates', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const malformedResponses = [
+      { installations: [] },
+      [installationFixture(1001, 'valid-owner'), { id: 'not-numeric' }],
+      [installationFixture(1001, 'valid-owner', { repository_selection: 'unknown' })],
+      'not-json',
+    ];
+
+    for (const response of malformedResponses) {
+      await assert.rejects(
+        discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_TEST_APP_KEY' }, {
+          request: discoveryRequest(response),
+        }),
+        /not valid JSON|malformed/i,
+      );
+    }
+  });
+
+  it('applies a deadline to installation discovery requests', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const request = async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new Error('request included a secret')), { once: true });
+    });
+
+    await assert.rejects(
+      discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_TEST_APP_KEY' }, {
+        request,
+        timeoutMs: 5,
+      }),
+      /timed out or was aborted/i,
+    );
+  });
+
+  it('honors a caller abort during installation discovery', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const controller = new AbortController();
+    const request = async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new Error('request included a secret')), { once: true });
+      setImmediate(() => controller.abort());
+    });
+
+    await assert.rejects(
+      discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_TEST_APP_KEY' }, {
+        request,
+        signal: controller.signal,
+        timeoutMs: 1_000,
+      }),
+      /timed out or was aborted/i,
+    );
+  });
+
+  it('rejects missing and invalid private-key references without exposing key material', async () => {
+    delete process.env.QUBE_MISSING_APP_KEY;
+    await assert.rejects(
+      discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_MISSING_APP_KEY' }),
+      /missing or empty/i,
+    );
+
+    const invalidKey = '-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----';
+    process.env.QUBE_INVALID_APP_KEY = invalidKey;
+    await assert.rejects(
+      discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_INVALID_APP_KEY' }),
+      (error) => {
+        assert.match(error.message, /does not contain a valid RSA private key/i);
+        assert.equal(error.message.includes(invalidKey), false);
+        assert.equal(error.message.includes('secret-key-material'), false);
+        return true;
+      },
+    );
+  });
+
+  it('does not return or serialize PEM, JWT, tokens, response headers, or unsafe permissions', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const installationToken = 'ghs_test_installation_token_value_not_for_output';
+    let authorization = '';
+    const request = async (_url, init) => {
+      authorization = init.headers.Authorization;
+      return new Response(JSON.stringify({
+        message: installationToken,
+        key: privateKey,
+        authorization,
+      }), {
+        status: 401,
+        headers: { 'x-secret-token': installationToken },
+      });
+    };
+
+    await assert.rejects(
+      discoverGitHubAppInstallations({ appId: '99', privateKeyEnv: 'QUBE_TEST_APP_KEY' }, { request }),
+      (error) => {
+        assert.match(authorization, /^Bearer [^.]+\.[^.]+\.[^.]+$/);
+        const serialized = JSON.stringify(error, Object.getOwnPropertyNames(error));
+        assert.equal(serialized.includes(privateKey), false);
+        assert.equal(serialized.includes(authorization.slice('Bearer '.length)), false);
+        assert.equal(serialized.includes(installationToken), false);
+        assert.equal(serialized.includes('x-secret-token'), false);
+        return true;
+      },
+    );
+
+    const candidates = await discoverGitHubAppInstallations({
+      appId: '99',
+      privateKeyEnv: 'QUBE_TEST_APP_KEY',
+    }, {
+      request: discoveryRequest([installationFixture(1001, 'safe-owner', {
+        permissions: {
+          contents: 'read',
+          pull_requests: 'write',
+          unsafe_value: installationToken,
+        },
+      })]),
+    });
+    const serialized = JSON.stringify(candidates);
+    assert.equal(serialized.includes(installationToken), false);
+    assert.deepEqual(candidates[0].permissions, { contents: 'read', pull_requests: 'write' });
   });
 
   it('mints an installation token for github-app mode and submits identity without secrets', async () => {

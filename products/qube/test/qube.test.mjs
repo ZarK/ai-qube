@@ -457,6 +457,8 @@ describe("qube composer CLI", () => {
     const oneshotCommand = parsed.commands.find(command => command.name === "oneshot");
     assert.equal(oneshotCommand?.dryRun.supported, true);
     assert.deepEqual(oneshotCommand?.mutation.categories, ["local-files"]);
+    const reviewSetupCommand = parsed.commands.find(command => command.name === "review setup github-app");
+    assert.equal(reviewSetupCommand?.interactions.ttyPrompt, true);
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
@@ -467,10 +469,28 @@ describe("qube composer CLI", () => {
   it("routes short reviewer publisher help and JSON doctor output to Executor", () => {
     const shortHelp = runCli(["review", "--help"]);
     const productHelp = runCli(["aie", "review", "--help"]);
+    const setupHelp = runCli(["review", "setup", "github-app", "--help"]);
+    const invalidScope = runCli(["review", "setup", "github-app", "--config-scope", "machine", "--json"]);
+    const globalDryRun = runCli([
+      "review", "setup", "github-app", "--config-scope", "global",
+      "--app-id", "123", "--installation-id", "456", "--private-key-env", "QUBE_PACKED_TEST_KEY",
+      "--dry-run", "--yes", "--no-probe", "--json",
+    ]);
     const doctor = runCli(["review", "doctor", "--json", "--no-probe"]);
 
     assert.equal(shortHelp.status, 0, shortHelp.stderr);
     assert.equal(productHelp.status, 0, productHelp.stderr);
+    assert.equal(setupHelp.status, 0, setupHelp.stderr);
+    assert.match(setupHelp.stdout, /--config-scope.*repo.*global/s);
+    assert.notEqual(invalidScope.status, 0);
+    assert.match(invalidScope.stdout || invalidScope.stderr, /config-scope.*repo, global/s);
+    assert.equal(globalDryRun.status, 0, globalDryRun.stderr);
+    const globalPlan = JSON.parse(globalDryRun.stdout);
+    assert.equal(globalPlan.scope, "global");
+    assert.equal(globalPlan.dryRun, true);
+    assert.equal(globalPlan.applied, false);
+    assert.match(globalPlan.configPath, /\.qube[\\/]aie[\\/]review-publisher\.json$/);
+    assert.doesNotMatch(globalDryRun.stdout, /BEGIN PRIVATE KEY|github_pat_|ghp_/);
     assert.match(shortHelp.stdout, /Usage:\s*\r?\n\s*qube review/);
     assert.match(shortHelp.stdout, /Examples:[\s\S]*qube review setup github-app/);
     assert.match(shortHelp.stdout, /Equivalent paths: `qube aie review` or `aie review`\./);
@@ -488,6 +508,8 @@ describe("qube composer CLI", () => {
     assert.ok(["ready", "degraded", "unavailable", "unconfigured"].includes(parsed.readiness));
     assert.equal(typeof parsed.nextAction, "string");
     assert.equal(typeof parsed.probe, "object");
+    assert.ok(["repository-overlay", "repository", "user-global", "default"].includes(parsed.publisherSource));
+    assert.equal(typeof parsed.publisherFieldSources, "object");
   });
 
   it("keeps every short review help surface QUBE-primary", () => {

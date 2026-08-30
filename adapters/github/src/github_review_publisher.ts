@@ -23,6 +23,30 @@ export interface GitHubAppPublisherConfig {
   readonly login?: string;
 }
 
+export interface GitHubAppInstallationDiscoveryConfig {
+  readonly appId: string;
+  readonly privateKeyPath?: string;
+  readonly privateKeyEnv?: string;
+}
+
+/** Public installation details that are safe to show in setup output. */
+export interface GitHubAppInstallationCandidate {
+  readonly installationId: number;
+  readonly accountLogin: string;
+  readonly accountType: string;
+  readonly targetType: string;
+  readonly repositorySelection: string;
+  readonly permissions?: Readonly<Record<string, string>>;
+  readonly label: string;
+}
+
+export interface DiscoverGitHubAppInstallationsOptions {
+  readonly nowSeconds?: number;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly request?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+}
+
 export interface GitHubTokenPublisherConfig {
   readonly env: string;
   /** Optional public login used only for trust matching on load paths (never a secret). */
@@ -154,6 +178,173 @@ function readPrivateKeyPem(config: GitHubAppPublisherConfig): { pem: string | nu
     }
   }
   return { pem: null, error: 'GitHub App publisher requires privateKeyPath or privateKeyEnv.' };
+}
+
+const DEFAULT_INSTALLATION_DISCOVERY_TIMEOUT_MS = 10_000;
+const SAFE_INSTALLATION_PERMISSION = new Set(['read', 'write', 'admin']);
+
+function installationDiscoveryKey(
+  config: GitHubAppInstallationDiscoveryConfig,
+): { pem: string | null; error: string | null } {
+  const privateKeyEnv = typeof config.privateKeyEnv === 'string' && config.privateKeyEnv.trim() !== ''
+    ? config.privateKeyEnv.trim()
+    : undefined;
+  const privateKeyPath = typeof config.privateKeyPath === 'string' && config.privateKeyPath.trim() !== ''
+    ? config.privateKeyPath
+    : undefined;
+  if ((privateKeyEnv ? 1 : 0) + (privateKeyPath ? 1 : 0) !== 1) {
+    return {
+      pem: null,
+      error: 'GitHub App installation discovery requires exactly one private-key environment variable or local path reference.',
+    };
+  }
+  return readPrivateKeyPem({
+    appId: config.appId,
+    installationId: '',
+    ...(privateKeyEnv ? { privateKeyEnv } : { privateKeyPath }),
+  });
+}
+
+function publicInstallationCandidate(value: unknown): GitHubAppInstallationCandidate | null {
+  if (!isRecord(value) || !Number.isSafeInteger(value.id) || Number(value.id) <= 0) return null;
+  if (!isRecord(value.account)) return null;
+  const accountLogin = typeof value.account.login === 'string' ? value.account.login.trim() : '';
+  const accountType = typeof value.account.type === 'string' ? value.account.type.trim() : '';
+  const targetType = typeof value.target_type === 'string' ? value.target_type.trim() : '';
+  const repositorySelection = typeof value.repository_selection === 'string'
+    ? value.repository_selection.trim().toLowerCase()
+    : '';
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(accountLogin)) return null;
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(accountType)) return null;
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(targetType)) return null;
+  if (repositorySelection !== 'all' && repositorySelection !== 'selected') return null;
+
+  let permissions: Record<string, string> | undefined;
+  if (value.permissions !== undefined) {
+    if (!isRecord(value.permissions)) return null;
+    permissions = Object.fromEntries(
+      Object.entries(value.permissions).filter(
+        (entry): entry is [string, string] => (
+          /^[a-z][a-z0-9_]{0,63}$/.test(entry[0])
+          && typeof entry[1] === 'string'
+          && SAFE_INSTALLATION_PERMISSION.has(entry[1])
+        ),
+      ),
+    );
+  }
+
+  const scopeLabel = repositorySelection === 'all' ? 'all repositories' : 'selected repositories';
+  return {
+    installationId: Number(value.id),
+    accountLogin,
+    accountType,
+    targetType,
+    repositorySelection,
+    ...(permissions ? { permissions } : {}),
+    label: `${accountLogin} (${accountType}) - ${scopeLabel} - installation ${String(value.id)}`,
+  };
+}
+
+/**
+ * List installations for a GitHub App without returning credential material.
+ * The private key and signed JWT stay in memory for the authenticated request.
+ */
+export async function discoverGitHubAppInstallations(
+  config: GitHubAppInstallationDiscoveryConfig,
+  options: DiscoverGitHubAppInstallationsOptions = {},
+): Promise<readonly GitHubAppInstallationCandidate[]> {
+  const appId = typeof config.appId === 'string' ? config.appId.trim() : '';
+  if (!/^\d+$/.test(appId) || BigInt(appId) <= 0n) {
+    throw new Error('GitHub App installation discovery requires a positive numeric App ID.');
+  }
+  if (options.signal?.aborted) {
+    throw new Error('GitHub App installation discovery request timed out or was aborted.');
+  }
+
+  const key = installationDiscoveryKey(config);
+  if (!key.pem) throw new Error(key.error ?? 'GitHub App private key reference is unavailable.');
+
+  let jwt: string;
+  try {
+    jwt = createGitHubAppJwt(appId, key.pem, options.nowSeconds);
+  } catch {
+    throw new Error('GitHub App private key reference does not contain a valid RSA private key.');
+  }
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (options.signal) options.signal.addEventListener('abort', onAbort, { once: true });
+  const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+    ? options.timeoutMs
+    : DEFAULT_INSTALLATION_DISCOVERY_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const request = options.request ?? fetch;
+  try {
+    let response: Response;
+    try {
+      response = await request('https://api.github.com/app/installations?per_page=100', {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${jwt}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'qube-github-review-publisher',
+        },
+        signal: controller.signal,
+      });
+    } catch {
+      if (controller.signal.aborted) {
+        throw new Error('GitHub App installation discovery request timed out or was aborted.');
+      }
+      throw new Error('GitHub App installation discovery request failed.');
+    }
+    if (!response.ok) {
+      throw new Error(`GitHub App installation discovery request failed with status ${response.status}.`);
+    }
+
+    let text: string;
+    try {
+      text = await new Promise<string>((resolve, reject) => {
+        const onBodyAbort = () => reject(new Error('GitHub App installation discovery response timed out or was aborted.'));
+        if (controller.signal.aborted) {
+          onBodyAbort();
+          return;
+        }
+        controller.signal.addEventListener('abort', onBodyAbort, { once: true });
+        response.text()
+          .then((body) => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            resolve(body);
+          })
+          .catch(() => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            reject(new Error('GitHub App installation discovery response could not be read.'));
+          });
+      });
+    } catch {
+      if (controller.signal.aborted) {
+        throw new Error('GitHub App installation discovery response timed out or was aborted.');
+      }
+      throw new Error('GitHub App installation discovery response could not be read.');
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('GitHub App installation discovery response was not valid JSON.');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error('GitHub App installation discovery response was malformed.');
+    }
+    const candidates = parsed.map(publicInstallationCandidate);
+    if (candidates.some((candidate) => candidate === null)) {
+      throw new Error('GitHub App installation discovery response was malformed.');
+    }
+    return candidates as GitHubAppInstallationCandidate[];
+  } finally {
+    clearTimeout(timer);
+    if (options.signal) options.signal.removeEventListener('abort', onAbort);
+  }
 }
 
 async function defaultFetchInstallationToken(input: {

@@ -101,6 +101,13 @@ function addReviewGuidePolicy(context: RuntimeCommandContext, policy: InitPolicy
     policy.publisherIntent = publisher;
     if (publisher === 'user') policy.publisher = { mode: 'user' };
   }
+  const publisherConfigScope = stringFlag(context, 'config-scope');
+  if (publisherConfigScope !== undefined) {
+    if (publisherConfigScope !== 'repo' && publisherConfigScope !== 'global') {
+      throw new Error('--config-scope must be repo or global.');
+    }
+    policy.publisherConfigScope = publisherConfigScope;
+  }
 }
 
 function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolicyOptions): void {

@@ -95,6 +95,10 @@ describe("package metadata", () => {
         types: "./dist/installer/index.d.ts",
         import: "./dist/installer/index.js"
       },
+      "./guided": {
+        types: "./dist/guided/index.d.ts",
+        import: "./dist/guided/index.js"
+      },
       "./redaction": {
         types: "./dist/redaction/index.d.ts",
         import: "./dist/redaction/index.js"

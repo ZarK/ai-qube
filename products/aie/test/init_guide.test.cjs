@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
 const { spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
@@ -17,7 +17,7 @@ const {
 } = require('../dist/init/index.js');
 const { applyQuestionAnswersToPolicy, buildInitQuestions, detectGuideMachine, isolatedReviewHostsOnMachine, recommendedReviewMode } = require('../dist/init/questions.js');
 const { listInitExternalReviewers, resolveInitExternalReviewers, resolveInitReviewModels } = require('../dist/init/review_selections.js');
-const { configToFileShape, getDefaults, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, formatUserReviewPublisherFile, getDefaults, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
 
 function makeGitRepo() {
   const repo = cloneGitRepo('committed', 'aie-init-guide-');
@@ -429,6 +429,27 @@ describe('init guide questions', () => {
     assert.equal(result.providerActions[0].labels.length, 8);
     const written = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8'));
     assert.equal(written.providers.review.publisher, undefined);
+
+    const globalRepo = makeGitRepo();
+    const global = await runInit({
+      target: '.', tool: 'opencode', dryRun: true, force: false, cwd: globalRepo, guide: true, yes: true,
+      installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false,
+      policy: { publisherIntent: 'github-app', publisherConfigScope: 'global' },
+    });
+    assert.deepEqual(global.postInitActions.map(action => action.command), ['qube review setup github-app --config-scope global']);
+
+    const home = mkdtempSync(join(tmpdir(), 'aie-init-global-publisher-'));
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(userReviewPublisherPath(home), formatUserReviewPublisherFile({
+      mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_REVIEW_KEY' },
+    }));
+    const inheritedRepo = makeGitRepo();
+    const inherited = await runInit({
+      target: '.', tool: 'opencode', dryRun: true, force: false, cwd: inheritedRepo, homeDirectory: home, guide: true, yes: true,
+      installedHosts: [], agentBrowserAvailable: false, aiqAvailable: false,
+      policy: { publisherIntent: 'github-app', publisherConfigScope: 'global' },
+    });
+    assert.deepEqual(inherited.postInitActions, []);
 
     const userRepo = makeGitRepo();
     const user = await runInit({

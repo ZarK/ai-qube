@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode } from './config/index.js';
+import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode, ReviewPublisherConfigField, ReviewPublisherConfigSource } from './config/index.js';
 import type { GitHubReviewPublisherIdentity, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 import { resolveGitHubReviewPublisher, runGh } from './providers/github_adapter_exports.js';
 import { runGitLabReviewDoctor, type GitLabReviewDoctorProber } from './gitlab_review_doctor.js';
@@ -71,6 +71,8 @@ export interface ReviewDoctorResult {
   readonly fallbackReason: string | null;
   readonly missingFields: readonly string[];
   readonly secretReferences: Readonly<Record<string, string>>;
+  readonly publisherSource: ReviewPublisherConfigSource;
+  readonly publisherFieldSources: Readonly<Partial<Record<ReviewPublisherConfigField, ReviewPublisherConfigSource>>>;
   readonly probe: ReviewPublisherProbe;
   readonly nextAction: string;
   readonly roleBoundary: string;
@@ -108,6 +110,10 @@ export interface RunReviewDoctorOptions {
   readonly config: Config | null;
   readonly cwd?: string;
   readonly mintProbe?: boolean;
+  /** Global setup verifies the App identity without requiring a current repository. */
+  readonly repositoryRequired?: boolean;
+  readonly publisherSource?: ReviewPublisherConfigSource;
+  readonly publisherFieldSources?: Readonly<Partial<Record<ReviewPublisherConfigField, ReviewPublisherConfigSource>>>;
   /** Override probe deadline (ms). Defaults to REVIEW_DOCTOR_PROBE_TIMEOUT_MS. Injectable for tests. */
   readonly probeTimeoutMs?: number;
   readonly resolvePublisher?: ReviewPublisherResolver;
@@ -126,7 +132,7 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
       'Create or choose the QUBE Reviewer GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
-      'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',
+      'Let QUBE discover the App installations and select the named account or organization that can publish for the required repositories.',
       'Upload a distinct app logo and matching badge color in the GitHub App display settings. Do not rename the app; a rename can change the slug and `[bot]` login.',
       'Apply local config with `review setup github-app --app-id <id> --installation-id <id> --private-key-env <ENV_NAME> --yes` (prefer --private-key-env over --private-key-path).',
       'Run `review doctor --json` for a read-only identity and permission probe. The probe mints only a short-lived installation token in memory.',
@@ -459,12 +465,14 @@ function readinessFor(
   missingFields: readonly string[],
   configured: boolean,
   repository: ReviewRepositoryProbe,
+  repositoryRequired: boolean,
 ): ReviewPublisherReadiness {
   if (!configured) return 'unconfigured';
   if (missingFields.length > 0 || identity.permissionStatus === 'misconfigured') return 'unavailable';
   if (identity.permissionStatus === 'same-author') return 'degraded';
   if (repository.attempted && !repository.accessible) return 'unavailable';
   if (identity.permissionStatus === 'missing' && identity.identityClass === 'none') return 'unavailable';
+  if (!repositoryRequired && identity.permissionStatus === 'ok' && identity.formalEventCapability) return 'ready';
   // Ready only when identity is ok and the repository probe proved pull-request write.
   if (
     identity.permissionStatus === 'ok'
@@ -564,6 +572,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   const repositoryProber = options.probeRepositoryAccess ?? probeCurrentRepositoryAccess;
   const avatarProber = options.probePublisherAvatar ?? probePublisherAvatar;
   const probeTimeoutMs = options.probeTimeoutMs ?? REVIEW_DOCTOR_PROBE_TIMEOUT_MS;
+  const repositoryRequired = options.repositoryRequired !== false;
   let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
   try {
@@ -605,7 +614,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   // Skip repository probing when identity resolution failed or no access token is available
   // (missing credential env/key must not be reported as a repository-access problem).
   const canProbeRepository = Boolean(resolved?.accessToken);
-  if (attempted && canProbeRepository && resolved) {
+  if (attempted && repositoryRequired && canProbeRepository && resolved) {
     try {
       repository = repositoryProbe(await withProbeTimeout(
         (signal) => repositoryProber({
@@ -647,7 +656,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
       avatar = avatarProbeFrom({ botAvatarUrl: null, ownerAvatarUrl: repository.ownerAvatarUrl ?? null });
     }
   }
-  const readiness = readinessFor(identity, missingFields, configured, repository);
+  const readiness = readinessFor(identity, missingFields, configured, repository, repositoryRequired);
   // Do not coerce unobservable fine-grained-token PR permission (unknown) into missing.
   const effectivePermissionStatus = identity.permissionStatus === 'same-author'
     ? 'same-author'
@@ -658,10 +667,10 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
         : repository.attempted && repository.pullRequestPermission === 'unknown' && identity.permissionStatus === 'ok'
           ? 'unknown'
           : identity.permissionStatus;
-  const formalEventCapability = identity.formalEventCapability
-    && repository.attempted
-    && repository.accessible
-    && repository.pullRequestPermission === 'write';
+  const formalEventCapability = identity.formalEventCapability && (
+    !repositoryRequired
+    || (repository.attempted && repository.accessible && repository.pullRequestPermission === 'write')
+  );
   const fallbackReason = identity.fallbackReason ?? repository.fallbackReason;
   const probe: ReviewPublisherProbe = {
     attempted,
@@ -687,6 +696,8 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     fallbackReason,
     missingFields,
     secretReferences: safeSecretReferences(publisher),
+    publisherSource: options.publisherSource ?? 'default',
+    publisherFieldSources: options.publisherFieldSources ?? {},
     probe,
     nextAction: nextActionFor(readiness, mode, missingFields, probe),
     roleBoundary: REVIEW_PUBLISHER_ROLE_BOUNDARY,
@@ -703,6 +714,8 @@ export function formatReviewDoctor(result: ReviewDoctorResult): string {
     `Formal review events: ${result.formalEventCapability ? 'available' : 'unavailable'}`,
     `Missing fields: ${result.missingFields.join(', ') || 'none'}`,
     `Secret references: ${references}`,
+    `Config source: ${result.publisherSource}`,
+    `Field sources: ${Object.entries(result.publisherFieldSources).map(([field, source]) => `${field}=${source}`).join(', ') || 'none'}`,
     `Permission probe: ${result.probe.status}`,
     `Repository probe: ${result.probe.repository.status}${result.probe.repository.repository ? ` (${result.probe.repository.repository})` : ''}`,
     `Pull requests permission: ${result.probe.repository.pullRequestPermission}`,
