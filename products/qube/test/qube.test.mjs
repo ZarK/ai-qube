@@ -2423,8 +2423,13 @@ describe("qube init orchestrator", () => {
   it("keeps a global publisher-only update independent from repository review choices", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-publisher-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-publisher-repo-"));
-    const env = initEnv(packageRoot);
     createInitShims(packageRoot);
+    const codexBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), codexBin);
     writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({ review: undefined }));
     writeInitSetup(repoQubeConfigPath(cwd), {
       version: 1,
