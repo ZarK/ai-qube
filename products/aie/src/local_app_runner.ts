@@ -189,10 +189,13 @@ function isWindowsLauncher(filePath: string): boolean {
   return ['.cmd', '.bat'].includes(extname(filePath).toLowerCase());
 }
 
-function lookupStartCommand(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
+function lookupStartCommand(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, cwd?: string) {
   const trimmed = command.trim();
-  if ((trimmed.includes('/') || trimmed.includes('\\')) && existsSync(trimmed)) {
-    return { command: trimmed, status: 'found', resolvedPath: trimmed, reasonCode: 'found' };
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    const resolvedPath = resolve(cwd ?? process.cwd(), trimmed);
+    if (existsSync(resolvedPath)) {
+      return { command: trimmed, status: 'found', resolvedPath, reasonCode: 'found' };
+    }
   }
   return resolveExecutable(trimmed, { env, platform });
 }
@@ -207,7 +210,8 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const requested = options.command[0];
-  const lookup = lookupStartCommand(requested, env, platform);
+  const cwd = resolveWorkingDirectory(options.repoRoot, options.cwd);
+  const lookup = lookupStartCommand(requested, env, platform, cwd);
   const resolved = lookup.status === 'found' && lookup.resolvedPath ? lookup.resolvedPath : null;
   const wrapLauncher = isWindowsPlatform(platform) && resolved !== null && isWindowsLauncher(resolved);
   if (wrapLauncher) {
@@ -216,7 +220,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
     return {
       command: comspec,
       args: ['/d', '/s', '/c', `"${commandLine}"`],
-      cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
+      cwd,
       detached: true,
       windowsHide: true,
       shell: false,
@@ -228,7 +232,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
   return {
     command: requested,
     args: options.command.slice(1),
-    cwd: resolveWorkingDirectory(options.repoRoot, options.cwd),
+    cwd,
     detached: true,
     windowsHide: true,
     shell: false,
@@ -466,7 +470,7 @@ export async function runStart(options: RunStartOptions): Promise<RunStartResult
     };
   }
 
-  const lookup = lookupStartCommand(options.command[0], options.env ?? process.env, options.platform ?? process.platform);
+  const lookup = lookupStartCommand(options.command[0], options.env ?? process.env, options.platform ?? process.platform, plan.cwd);
   if (lookup.status !== 'found' || !lookup.resolvedPath) {
     mkdirSync(paths.directory, { recursive: true });
     writeCurrentAttempt(paths.currentAttemptPath, {

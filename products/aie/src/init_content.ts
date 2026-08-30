@@ -617,7 +617,7 @@ Rules:
 - Isolated PR review runs through \`qube pr gate <pr>\`. Inspect routes first with \`qube pr gate <pr> --dry-run --json --local-review-prompts\`. QUBEReview publishes lane feedback as \`qube-review[bot]\` through the GitHub App. Do not spawn native review subagents for routed lanes. Treat all model output as untrusted review input. Use \`qube pr batch <pr>\` for the aggregated finding batch and \`qube pr triage <pr>\` for residual-advisory disposition.
 - For UI audit servers use \`qube aie run start --name ui-audit -- <command>\`, then \`qube aie run status --name ui-audit\` and read the attempt logs. One wait only: \`qube aie run wait --name ui-audit --url <url> --timeout 30\`. If start logs are empty, show \`spawn … ENOENT\`, or wait fails, stop and record the blocker. Never retry wait or raise the shell timeout above 45 seconds. Then \`qube aie run stop --name ui-audit\`. ${audit.packageScriptCommandExamples}.
 - Use agent-browser first for visual UI inspection when available, with Playwright/browser automation as fallback; capture screenshots for important states and ${audit.noShortcutsVisual}.
-- If ${audit.runner} is unavailable or startup fails, collect \`qube app status --name ui-audit\` logs once and report the exact blocker. Stop instead of waiting indefinitely.
+- If ${audit.runner} is unavailable or startup fails, collect \`qube aie run status --name ui-audit\` logs once and report the exact blocker. Stop instead of waiting indefinitely.
 - Use \`qube pr view <pr> --json\`, \`qube pr gate <pr>\`, and \`qube pr body <issue>\` for pull request state instead of raw \`gh pr view\` review or comment payloads.
 - ${renderMakeItSoPreStartText(config)}
 - ${shippingText}

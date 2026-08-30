@@ -92,6 +92,26 @@ describe('local app runner service', () => {
     assert.match(plan.args[3], /pnpm\.cmd/i);
   });
 
+  it('resolves a relative Windows launcher path from the run directory', async () => {
+    const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const app = join(root, 'apps', 'web');
+    const launcher = join(app, 'tools', 'pnpm.cmd');
+    mkdirSync(join(app, 'tools'), { recursive: true });
+    writeFileSync(launcher, '@echo off\r\n');
+    const plan = buildSpawnPlan({
+      repoRoot: root,
+      name: 'ui-audit',
+      cwd: 'apps/web',
+      command: ['tools/pnpm.cmd', 'dev'],
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    }, runPaths(root, 'ui-audit'));
+
+    assert.match(plan.command, /cmd\.exe$/i);
+    assert.match(plan.args[3], /pnpm\.cmd/i);
+  });
+
   it('does not wrap a missing Windows launcher as a successful command', async () => {
     const { buildSpawnPlan, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
