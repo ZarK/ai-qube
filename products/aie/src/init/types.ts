@@ -46,7 +46,7 @@ export interface InitSetupSummary {
 
 export interface InitPostAction {
   id: 'github-app-publisher-setup';
-  command: 'qube review setup github-app';
+  command: string;
   reason: string;
 }
 
@@ -141,6 +141,8 @@ export interface InitPolicyOptions {
   publisher?: GitHubReviewPublisherConfig;
   /** Publisher choice that can require a separate credential setup command. */
   publisherIntent?: 'user' | 'github-app';
+  /** Scope used only for a matching Reviewer App setup follow-up. */
+  publisherConfigScope?: 'repo' | 'global';
   manualUiAudit?: boolean;
   uiAuditAppLaunch?: string;
   uiAuditTarget?: string;
@@ -169,4 +171,5 @@ export interface InitOptions {
   installedHosts?: readonly string[];
   agentBrowserAvailable?: boolean;
   aiqAvailable?: boolean;
+  homeDirectory?: string;
 }

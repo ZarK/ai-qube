@@ -5,6 +5,7 @@ export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'coderabbit', 'custom
 export const REVIEW_AGENT_VALUES = ['custom', 'local'];
 
 export const REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--config-scope', type: 'string', description: 'Write repository publisher config or user-global defaults', options: ['repo', 'global'], default: 'repo' },
   { name: '--app-id', type: 'string', description: 'Public GitHub App id' },
   { name: '--installation-id', type: 'string', description: 'Public GitHub App installation id' },
   { name: '--private-key-env', type: 'string', description: 'Environment variable name containing the private key PEM; never pass the PEM value' },
@@ -32,6 +33,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--from', type: 'string', description: 'Adopt policy from a working-directory-relative path or an owner/repo slug' },
   { name: '--review-mode', type: 'string', description: 'Review mode written to Executor config', options: ['external', 'host', 'isolated'] },
   { name: '--publisher', type: 'string', description: 'Review publisher identity', options: ['user', 'github-app'] },
+  { name: '--config-scope', type: 'string', description: 'Keep Reviewer App follow-up setup in repository or user-global scope', options: ['repo', 'global'], default: 'repo' },
   { name: '--tool', type: 'string', description: 'Comma-separated agent harness ids: opencode, codex, claude-code, grok-build, cursor; use all for every harness', default: 'opencode' },
   { name: '--work-provider', type: 'string', description: 'Active work provider written to Executor config', options: ['github', 'gitlab', 'linear', 'jira'] },
   { name: '--review-provider', type: 'string', description: 'Active review provider written to Executor config', options: ['github', 'gitlab'] },

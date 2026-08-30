@@ -135,6 +135,8 @@ export async function runGitLabReviewDoctor(options: {
   return {
     ok: true,
     command: 'review doctor',
+    publisherSource: 'repository',
+    publisherFieldSources: Object.freeze({}),
     readiness,
     mode: 'token',
     identityClass: diagnosis.tokenPresent ? 'fine-grained-token' : 'none',

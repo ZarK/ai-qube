@@ -1,4 +1,4 @@
-import type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
+import type { DiscoverGitHubAppInstallationsOptions, GitHubAppInstallationCandidate, GitHubAppInstallationDiscoveryConfig, GitHubIssue, GitHubMilestone, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 
 export type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult };
 
@@ -66,6 +66,16 @@ export async function resolveGitHubReviewPublisher(
   const adapter = await loadGitHubAdapter();
   return adapter.resolveGitHubReviewPublisher(config, options);
 }
+
+export async function discoverGitHubAppInstallations(
+  config: GitHubAppInstallationDiscoveryConfig,
+  options: DiscoverGitHubAppInstallationsOptions = {},
+): Promise<readonly GitHubAppInstallationCandidate[]> {
+  const adapter = await loadGitHubAdapter();
+  return adapter.discoverGitHubAppInstallations(config, options);
+}
+
+export type { GitHubAppInstallationCandidate, GitHubAppInstallationDiscoveryConfig, DiscoverGitHubAppInstallationsOptions };
 
 export function isGhExecutionError(error: unknown): error is Error & { stderr?: string; stdout?: string; exitCode?: number; kind?: string } {
   return error instanceof Error && (error.name === 'GhExecutionError' || (error as { kind?: unknown }).kind === 'execution');

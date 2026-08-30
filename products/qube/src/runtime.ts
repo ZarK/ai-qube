@@ -1049,7 +1049,7 @@ const initCommand = defineCommand({
     }),
     defineFlag({
       name: "config-scope",
-      description: "Store QUBE setup choices for this repository or as user-global defaults. Repository values override global values.",
+      description: "Store QUBE setup choices for this repository or as user-global defaults. Reviewer App follow-up uses the same scope; repository values override global values.",
       type: "option",
       options: ["repo", "global"]
     }),
@@ -1196,7 +1196,7 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("audit ui", "Plan or check manual UI audit evidence.", "aie", "audit ui"),
   createDirectCommand("review", "Set up and validate provider publishing or show host-run Executor review helpers.", "aie", "review", { supportsJson: false, qubePrimaryHelp: true }),
   createDirectCommand("review setup", "Explain the current GitHub account publisher and QUBE Reviewer App setup.", "aie", "review setup", { supportsJson: false, qubePrimaryHelp: true }),
-  createDirectCommand("review setup github-app", "Configure the QUBE Reviewer GitHub App with safe secret references.", "aie", "review setup github-app", { passthroughJson: true, qubePrimaryHelp: true }),
+  createDirectCommand("review setup github-app", "Configure the QUBE Reviewer GitHub App with safe secret references.", "aie", "review setup github-app", { passthroughJson: true, qubePrimaryHelp: true, ttyPrompt: true }),
   createDirectCommand("review doctor", "Validate reviewer publisher readiness and permissions without exposing secrets.", "aie", "review doctor", { passthroughJson: true, qubePrimaryHelp: true }),
   createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate", { qubePrimaryHelp: true }),
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
@@ -1725,7 +1725,7 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly configScope?: 'repo' | 'global'; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
   if (options.workProvider) args.push("--work-provider", options.workProvider);
@@ -1738,6 +1738,7 @@ function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options
   if (options.isolatedReviewAgent) args.push("--isolated-review-agent", options.isolatedReviewAgent);
   if (options.reviewModels && options.reviewModels.length > 0) args.push("--review-model", options.reviewModels.join(","));
   if (options.publisher) args.push("--publisher", options.publisher);
+  if (options.configScope) args.push("--config-scope", options.configScope);
   if (options.continuousShipping === true) args.push("--autonomous");
   if (options.continuousShipping === false) args.push("--no-autonomous");
   if (options.uiAuditEvidenceRoot) args.push("--ui-audit-evidence-root", options.uiAuditEvidenceRoot);
@@ -2877,6 +2878,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         isolatedReviewAgent: setup.review.mode === "isolated" ? reviewHarness : undefined,
         reviewModels: setup.review.mode === "external" ? undefined : setup.review.models,
         publisher: reviewProvider === "github" ? setup.review.publisher : undefined,
+        configScope,
         continuousShipping: setup.continuousShipping,
         uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
         creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined,
@@ -6594,7 +6596,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly ttyPrompt?: boolean } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -6620,7 +6622,7 @@ function createDirectCommand(
         json: supportsJson,
         noColor: true,
         nonInteractive: true,
-        ttyPrompt: false
+        ttyPrompt: options.ttyPrompt === true
       },
       extensions: passthroughExtensions
     }),

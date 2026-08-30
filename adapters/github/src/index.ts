@@ -408,9 +408,13 @@ export {
 export {
   createGitHubAppJwt,
   defaultGitHubReviewPublisherConfig,
+  discoverGitHubAppInstallations,
   emptyPublisherIdentity,
   publicPublisherIdentity,
   resolveGitHubReviewPublisher,
+  type DiscoverGitHubAppInstallationsOptions,
+  type GitHubAppInstallationCandidate,
+  type GitHubAppInstallationDiscoveryConfig,
   type GitHubAppPublisherConfig,
   type GitHubReviewPublisherConfig,
   type GitHubReviewPublisherIdentity,

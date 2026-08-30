@@ -1,5 +1,5 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
-import { createInterface } from 'node:readline/promises';
+import { createGuidedPresenter } from '@tjalve/qube-cli/guided';
 import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/pr_body.js';
 import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
@@ -37,7 +37,7 @@ import { formatViewHuman } from './renderers/view_renderer.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from './review.js';
 import { formatReviewDoctor, runReviewDoctor } from './review_setup.js';
-import { formatReviewSetup, runReviewSetup, type ReviewSetupMode, type ReviewSetupPromptFunction } from './runtime_review_setup.js';
+import { formatReviewSetup, runReviewSetup, type ReviewSetupMode, type ReviewSetupScope } from './runtime_review_setup.js';
 import { startIssue } from './start/index.js';
 import { switchIssue } from './switch/index.js';
 import { viewIssue } from './view.js';
@@ -372,19 +372,29 @@ async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], 
   const command = `review setup ${mode}`;
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, command, loaded, 'Fix the selected Executor config, then rerun reviewer publisher setup.');
-  let closePrompt: (() => void) | undefined;
-  let prompt: ReviewSetupPromptFunction | undefined;
-  if (process.stdin.isTTY && !readBooleanFlag(context, 'yes') && !readBooleanFlag(context, 'json')) {
-    const terminal = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-    closePrompt = () => terminal.close();
-    prompt = question => terminal.question(`${question.message}: `);
+  const scopeValue = stringFlag(context, 'config-scope') ?? 'repo';
+  if (scopeValue !== 'repo' && scopeValue !== 'global') {
+    const message = `Failed to run \`aie ${command}\`: --config-scope must be repo or global. Next action: rerun with \`--config-scope repo\` or \`--config-scope global\`.`;
+    return commandFailure(context, { ok: false, command, error: message }, message);
   }
+  const scope: ReviewSetupScope = scopeValue;
+  const interactive = process.stdin.isTTY && !readBooleanFlag(context, 'yes') && !readBooleanFlag(context, 'json');
+  const presenter = interactive ? createGuidedPresenter({
+    output: message => process.stderr.write(message.endsWith('\n') ? message : `${message}\n`),
+    gate: { command: `aie ${command}`, jsonMode: false, yes: false },
+  }) : undefined;
   try {
     const result = await runReviewSetup({
       mode,
+      scope,
       config: loaded.config ?? null,
       configPath: loaded.path,
       root: loaded.root,
+      repositoryConfig: loaded.layers?.repository,
+      userPublisher: loaded.layers?.userPublisher,
+      userConfigPath: loaded.layers?.userPublisherPath,
+      publisherSource: loaded.publisherSource,
+      publisherFieldSources: loaded.publisherFieldSources,
       appId: stringFlag(context, 'app-id'),
       installationId: stringFlag(context, 'installation-id'),
       privateKeyEnv: stringFlag(context, 'private-key-env'),
@@ -395,7 +405,24 @@ async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], 
       json: readBooleanFlag(context, 'json'),
       noProbe: readBooleanFlag(context, 'no-probe'),
       isTTY: process.stdin.isTTY === true,
-      prompt,
+      presenter,
+      matchRepositoryInstallations: async (candidates, publisherValues) => {
+        const matching = [];
+        for (const candidate of candidates) {
+          const publisher = {
+            mode: 'github-app' as const,
+            githubApp: {
+              ...publisherValues,
+              installationId: String(candidate.installationId),
+            },
+          };
+          const base = loaded.config ?? getDefaults();
+          const config = { ...base, providers: { ...base.providers, review: { ...base.providers.review, kind: 'github' as const, publisher } } };
+          const doctor = await runReviewDoctor({ config, cwd: loaded.root, mintProbe: true, repositoryRequired: true });
+          if (doctor.probe.repository.accessible) matching.push(candidate);
+        }
+        return matching;
+      },
     });
     if (!result.ok) return commandFailure(context, result, formatReviewSetup(result));
     return commandResult(context, result, formatReviewSetup(result));
@@ -403,8 +430,6 @@ async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], 
     const cause = error instanceof Error ? error.message : String(error);
     const message = `Failed to run \`aie ${command}\`. Likely cause: ${cause}. Next action: rerun with --dry-run --json and safe credential references only.`;
     return commandFailure(context, { ok: false, command, error: message }, message);
-  } finally {
-    closePrompt?.();
   }
 }
 
@@ -415,6 +440,8 @@ async function handleReviewDoctor(context: Parameters<RuntimeCommandHandler>[0])
     config: loaded.config ?? null,
     cwd: loaded.root,
     mintProbe: !readBooleanFlag(context, 'no-probe'),
+    publisherSource: loaded.publisherSource,
+    publisherFieldSources: loaded.publisherFieldSources,
   });
   return commandResult(context, result, formatReviewDoctor(result));
 }

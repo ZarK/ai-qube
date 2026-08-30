@@ -1,5 +1,5 @@
 import { join, relative, resolve } from 'path';
-import { AIE_CONFIG_FILENAME, type Config, type ReviewSourceConfig, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
+import { AIE_CONFIG_FILENAME, type Config, type GitHubReviewPublisherConfig, type ReviewSourceConfig, configToFileShape, getDefaults, parseUserReviewPublisherFile, userReviewPublisherPath, validateConfig } from '../config/index.js';
 import { defaultModelRoutingPolicy, resolveModelRouting, type ModelRoutingPolicy } from '../core/model_routing.js';
 import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
@@ -542,13 +542,36 @@ function hasCompleteGitHubAppPublisher(config: Config): boolean {
     && Boolean(app?.appId && app.installationId && (app.privateKeyEnv || app.privateKeyPath));
 }
 
-function postInitActions(policy: InitPolicyOptions, config: Config): InitPostAction[] {
-  if (config.providers.review.kind !== 'github' || policy.publisherIntent !== 'github-app' || hasCompleteGitHubAppPublisher(config)) return [];
+function hasCompletePublisher(publisher: GitHubReviewPublisherConfig | null | undefined): boolean {
+  const app = publisher?.githubApp;
+  return publisher?.mode === 'github-app' && Boolean(app?.appId && app.installationId && (app.privateKeyEnv || app.privateKeyPath));
+}
+
+function postInitActions(policy: InitPolicyOptions, config: Config, userPublisher: GitHubReviewPublisherConfig | null): InitPostAction[] {
+  if (
+    config.providers.review.kind !== 'github'
+    || policy.publisherIntent !== 'github-app'
+    || hasCompleteGitHubAppPublisher(config)
+    || hasCompletePublisher(userPublisher)
+  ) return [];
+  const global = policy.publisherConfigScope === 'global';
   return [{
     id: 'github-app-publisher-setup',
-    command: 'qube review setup github-app',
+    command: `qube review setup github-app${global ? ' --config-scope global' : ''}`,
     reason: 'Run the guided GitHub App setup after init. Init did not write incomplete publisher credentials.',
   }];
+}
+
+async function readUserPublisherForInit(homeDirectory?: string): Promise<GitHubReviewPublisherConfig | null> {
+  const content = await readTextIfPresent(userReviewPublisherPath(homeDirectory));
+  if (!content) return null;
+  try {
+    const parsed = parseUserReviewPublisherFile(JSON.parse(content) as unknown);
+    if (!parsed.ok || !parsed.publisher) return null;
+    return parsed.publisher as unknown as GitHubReviewPublisherConfig;
+  } catch {
+    return null;
+  }
 }
 
 function providerActions(config: Config): InitProviderAction[] {
@@ -591,6 +614,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   let currentConfig: Config | null = null;
   let existingConfigIsBase = false;
   let policy = options.policy ? { ...options.policy } : {};
+  const userPublisher = await readUserPublisherForInit(options.homeDirectory);
 
   if (!options.from && repoRoot) {
     const current = await readConfig(join(repoRoot, AIE_CONFIG_FILENAME));
@@ -946,7 +970,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       setupSummary,
       from: fromReport,
       awaitingAnswers,
-      postInitActions: postInitActions(policy, config),
+      postInitActions: postInitActions(policy, config, userPublisher),
       providerActions: providerActions(config),
     },
     writes: awaitingAnswers ? [] : writes,

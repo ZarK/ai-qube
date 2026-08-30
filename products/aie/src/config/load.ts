@@ -2,8 +2,9 @@ import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
-import { ConfigLoadError, type Config, type ConfigLoadResult } from './types.js';
+import { ConfigLoadError, type Config, type ConfigLoadResult, type ReviewPublisherConfigField, type ReviewPublisherConfigSource, type ValidationError } from './types.js';
 import { validateConfig } from './schema.js';
+import { parseUserReviewPublisherFile, userReviewPublisherPath } from './user_review_publisher.js';
 
 export const AIE_CONFIG_FILENAME = '.qube/aie/config.json';
 
@@ -21,6 +22,14 @@ export function mergeConfigOverlay(base: unknown, overlay: unknown): unknown {
   if (!isPlainObject(base)) return overlay;
   const merged: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(overlay)) {
+    if (key === 'publisher' && isPlainObject(value) && isPlainObject(base[key])) {
+      const lowerMode = base[key].mode;
+      const higherMode = value.mode;
+      merged[key] = typeof higherMode === 'string' && typeof lowerMode === 'string' && higherMode !== lowerMode
+        ? value
+        : mergeConfigOverlay(base[key], value);
+      continue;
+    }
     merged[key] = isPlainObject(value) && isPlainObject(base[key]) ? mergeConfigOverlay(base[key], value) : value;
   }
   return merged;
@@ -54,49 +63,70 @@ async function findRepoRoot(startDir: string): Promise<string> {
   }
 }
 
-export async function loadConfigFile(startDir: string = process.cwd()): Promise<ConfigLoadResult> {
+export async function loadConfigFile(
+  startDir: string = process.cwd(),
+  options: { readonly homeDirectory?: string } = {},
+): Promise<ConfigLoadResult> {
   const root = await findRepoRoot(startDir);
   const configPath = selectConfigPath(root);
   const overlayPath = overlayConfigPath(configPath);
+  const globalPublisherPath = userReviewPublisherPath(options.homeDirectory);
 
-  let raw: unknown;
-  let present = false;
-  try {
-    const content = await readFile(configPath, 'utf8');
-    raw = JSON.parse(content) as unknown;
-    present = true;
-  } catch (err: unknown) {
-    if (errorCode(err) !== 'ENOENT') {
-      const message = err instanceof Error ? err.message : String(err);
-      const displayPath = displayConfigPath(root, configPath);
-      return { root, path: configPath, present: true, ok: false, errors: [{ kind: 'invalid', path: displayPath, message: `Failed to read or parse ${displayPath}: ${message}` }] };
+  const repositoryRead = await readJsonFile(configPath, displayConfigPath(root, configPath), 'config');
+  if (repositoryRead.error) return { root, path: configPath, present: true, ok: false, errors: [repositoryRead.error] };
+  const overlayRead = await readJsonFile(overlayPath, displayConfigPath(root, overlayPath), 'local overlay');
+  if (overlayRead.error) return { root, path: configPath, present: repositoryRead.present, ok: false, errors: [overlayRead.error] };
+  const globalRead = await readJsonFile(globalPublisherPath, globalPublisherPath.replace(/\\/g, '/'), 'user-global review publisher config');
+  if (globalRead.error) return { root, path: configPath, present: repositoryRead.present || overlayRead.present || globalRead.present, ok: false, errors: [globalRead.error] };
+
+  let globalPublisher: Readonly<Record<string, unknown>> | null = null;
+  if (globalRead.present) {
+    const parsed = parseUserReviewPublisherFile(globalRead.raw);
+    if (!parsed.ok || !parsed.publisher) {
+      return {
+        root,
+        path: configPath,
+        present: true,
+        ok: false,
+        errors: parsed.errors.map(error => ({ ...error, path: `${globalPublisherPath.replace(/\\/g, '/')}:${error.path}` })),
+      };
     }
+    globalPublisher = parsed.publisher;
   }
 
-  let overlay: unknown;
-  let overlayPresent = false;
-  try {
-    const overlayContent = await readFile(overlayPath, 'utf8');
-    overlay = JSON.parse(overlayContent) as unknown;
-    overlayPresent = true;
-  } catch (err: unknown) {
-    if (errorCode(err) !== 'ENOENT') {
-      const message = err instanceof Error ? err.message : String(err);
-      const displayPath = displayConfigPath(root, overlayPath);
-      return { root, path: configPath, present, ok: false, errors: [{ kind: 'invalid', path: displayPath, message: `Failed to read or parse local overlay ${displayPath}: ${message}` }] };
-    }
+  const raw = repositoryRead.raw;
+  const overlay = overlayRead.raw;
+  const present = repositoryRead.present;
+  const overlayPresent = overlayRead.present;
+
+  if (!present && !overlayPresent && !globalPublisher) {
+    return {
+      root,
+      path: configPath,
+      present: false,
+      ok: true,
+      errors: [],
+      publisherSource: 'default',
+      publisherFieldSources: {},
+      layers: { userPublisherPath: globalPublisherPath, userPublisher: null, repository: null, repositoryOverlay: null },
+    };
   }
 
-  if (!present && !overlayPresent) {
-    return { root, path: configPath, present: false, ok: true, errors: [] };
-  }
-
-  const merged = overlayPresent ? mergeConfigOverlay(raw, overlay) : raw;
+  const globalLayer = globalPublisher ? { version: 1, providers: { review: { kind: 'github', publisher: globalPublisher } } } : undefined;
+  const withRepository = present ? mergeConfigOverlay(globalLayer, raw) : globalLayer;
+  const merged = overlayPresent ? mergeConfigOverlay(withRepository, overlay) : withRepository;
   const validation = validateConfig(merged);
+  const sourceState = publisherSourceState(globalPublisher, raw, overlay, validation.config?.providers.review.publisher?.mode);
+  const layers = {
+    userPublisherPath: globalPublisherPath,
+    userPublisher: globalPublisher,
+    repository: isPlainObject(raw) ? Object.freeze({ ...raw }) : null,
+    repositoryOverlay: isPlainObject(overlay) ? Object.freeze({ ...overlay }) : null,
+  } as const;
   if (validation.ok && validation.config) {
-    return { root, path: configPath, present: true, ok: true, errors: [], config: validation.config };
+    return { root, path: configPath, present: true, ok: true, errors: [], config: validation.config, ...sourceState, layers };
   }
-  return { root, path: configPath, present: true, ok: false, errors: validation.errors };
+  return { root, path: configPath, present: true, ok: false, errors: validation.errors, ...sourceState, layers };
 }
 
 export async function loadConfig(startDir: string = process.cwd()): Promise<Config | null> {
@@ -116,4 +146,76 @@ export function displayConfigPath(root: string, configPath: string): string {
     return configPath.replace(/\\/g, '/');
   }
   return relativePath.replace(/\\/g, '/');
+}
+
+async function readJsonFile(
+  path: string,
+  displayPath: string,
+  label: string,
+): Promise<{ readonly present: boolean; readonly raw?: unknown; readonly error?: ValidationError }> {
+  try {
+    return { present: true, raw: JSON.parse(await readFile(path, 'utf8')) as unknown };
+  } catch (err: unknown) {
+    if (errorCode(err) === 'ENOENT') return { present: false };
+    const message = err instanceof Error ? err.message : String(err);
+    const subject = label === 'config' ? displayPath : `${label} ${displayPath}`;
+    return { present: true, error: { kind: 'invalid', path: displayPath, message: `Failed to read or parse ${subject}: ${message}` } };
+  }
+}
+
+const PUBLISHER_FIELDS: readonly ReviewPublisherConfigField[] = [
+  'mode',
+  'githubApp.appId',
+  'githubApp.installationId',
+  'githubApp.privateKeyEnv',
+  'githubApp.privateKeyPath',
+  'githubApp.login',
+];
+
+function publisherSourceState(
+  globalPublisher: Readonly<Record<string, unknown>> | null,
+  repository: unknown,
+  overlay: unknown,
+  effectiveMode: string | undefined,
+): Pick<ConfigLoadResult, 'publisherSource' | 'publisherFieldSources'> {
+  const layers: readonly { source: ReviewPublisherConfigSource; publisher: unknown }[] = [
+    { source: 'repository-overlay', publisher: readPublisher(overlay) },
+    { source: 'repository', publisher: readPublisher(repository) },
+    { source: 'user-global', publisher: globalPublisher },
+  ];
+  const fieldSources: Partial<Record<ReviewPublisherConfigField, ReviewPublisherConfigSource>> = {};
+  for (const field of PUBLISHER_FIELDS) {
+    if (effectiveMode !== 'github-app' && field !== 'mode') continue;
+    for (const layer of layers) {
+      if (readPath(layer.publisher, field.split('.')) !== undefined) {
+        fieldSources[field] = layer.source;
+        break;
+      }
+    }
+  }
+  const values = Object.values(fieldSources);
+  const publisherSource: ReviewPublisherConfigSource = values.includes('repository-overlay')
+    ? 'repository-overlay'
+    : values.includes('repository')
+      ? 'repository'
+      : values.includes('user-global')
+        ? 'user-global'
+        : 'default';
+  return { publisherSource, publisherFieldSources: Object.freeze(fieldSources) };
+}
+
+function readPublisher(value: unknown): unknown {
+  if (!isPlainObject(value)) return undefined;
+  const providers = value.providers;
+  if (!isPlainObject(providers) || !isPlainObject(providers.review)) return undefined;
+  return providers.review.publisher;
+}
+
+function readPath(value: unknown, path: readonly string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!isPlainObject(current) || !(segment in current)) return undefined;
+    current = current[segment];
+  }
+  return current;
 }

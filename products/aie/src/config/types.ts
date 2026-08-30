@@ -301,6 +301,28 @@ export interface ConfigLoadResult {
   ok: boolean;
   errors: ValidationError[];
   config?: Config;
+  /** Safe provenance for the resolved review publisher. Repository overlay and config are both repository sources. */
+  publisherSource?: ReviewPublisherConfigSource;
+  publisherFieldSources?: Readonly<Partial<Record<ReviewPublisherConfigField, ReviewPublisherConfigSource>>>;
+  /** Parsed source layers. Callers that write config must select one layer instead of serializing the merged config. */
+  layers?: ConfigSourceLayers;
+}
+
+export type ReviewPublisherConfigSource = 'explicit' | 'repository-overlay' | 'repository' | 'user-global' | 'default';
+
+export type ReviewPublisherConfigField =
+  | 'mode'
+  | 'githubApp.appId'
+  | 'githubApp.installationId'
+  | 'githubApp.privateKeyEnv'
+  | 'githubApp.privateKeyPath'
+  | 'githubApp.login';
+
+export interface ConfigSourceLayers {
+  readonly userPublisherPath: string;
+  readonly userPublisher: Readonly<Record<string, unknown>> | null;
+  readonly repository: Readonly<Record<string, unknown>> | null;
+  readonly repositoryOverlay: Readonly<Record<string, unknown>> | null;
 }
 
 export class ConfigLoadError extends Error {

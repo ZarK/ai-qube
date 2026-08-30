@@ -3,7 +3,7 @@ const { writeFileSync, mkdtempSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
-const { configToFileShape, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, formatUserReviewPublisherFile, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, parseUserReviewPublisherFile, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
 
 function defaultFile() {
   return configToFileShape(getDefaults());
@@ -755,6 +755,13 @@ describe('config validation', () => {
     const pemResult = validateConfig(pemEnv);
     assert.equal(pemResult.ok, false);
     assert.ok(pemResult.errors.some((error) => error.path === 'providers.review.publisher.githubApp.privateKeyEnv'));
+
+    const certificatePath = parseUserReviewPublisherFile({
+      version: 1,
+      publisher: { mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyPath: '-----BEGIN CERTIFICATE-----' } },
+    });
+    assert.equal(certificatePath.ok, false);
+    assert.ok(certificatePath.errors.some((error) => error.path === 'publisher.githubApp.privateKeyPath'));
   });
 
   it('rejects invalid branch naming policy at config load time', () => {
@@ -863,6 +870,56 @@ describe('config validation', () => {
 
     assert.equal(result.ok, false);
     assert.ok(result.errors.some((entry) => entry.path.endsWith('config.local.json') && entry.message.includes('local overlay')));
+  });
+
+  it('inherits complete user-global publisher defaults and reports field provenance', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-global-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-config-global-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), '{"version":1}\n');
+    writeFileSync(userReviewPublisherPath(home), formatUserReviewPublisherFile({ mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY' } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(result.config.providers.review.publisher, { mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY' } });
+    assert.equal(result.publisherSource, 'user-global');
+    assert.equal(result.publisherFieldSources['githubApp.installationId'], 'user-global');
+  });
+
+  it('lets repository fields override matching global fields without flattening the source layers', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-override-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-config-override-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(userReviewPublisherPath(home), formatUserReviewPublisherFile({ mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY' } }));
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), JSON.stringify({ version: 1, providers: { review: { publisher: { mode: 'github-app', githubApp: { installationId: '999' } } } } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.providers.review.publisher.githubApp.appId, '123');
+    assert.equal(result.config.providers.review.publisher.githubApp.installationId, '999');
+    assert.equal(result.publisherFieldSources['githubApp.appId'], 'user-global');
+    assert.equal(result.publisherFieldSources['githubApp.installationId'], 'repository');
+    assert.equal(result.layers.repository.providers.review.publisher.githubApp.appId, undefined);
+  });
+
+  it('keeps the current GitHub account publisher independent from unused global App defaults', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-user-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-config-user-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(userReviewPublisherPath(home), formatUserReviewPublisherFile({ mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyEnv: 'QUBE_KEY' } }));
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), JSON.stringify({ version: 1, providers: { review: { publisher: { mode: 'user' } } } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(result.config.providers.review.publisher, { mode: 'user' });
+    assert.equal(result.publisherSource, 'repository');
+    assert.deepEqual(result.publisherFieldSources, { mode: 'repository' });
   });
 });
 
