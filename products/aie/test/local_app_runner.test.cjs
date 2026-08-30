@@ -94,7 +94,7 @@ describe('local app runner service', () => {
   it('plans start without launching and reports persisted current-process status', async () => {
     const { runStart, runStatus, runPaths } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const planned = runStart({ repoRoot: root, name: 'ui-audit', command: ['npm', 'run', 'dev'], dryRun: true });
+    const planned = await runStart({ repoRoot: root, name: 'ui-audit', command: ['npm', 'run', 'dev'], dryRun: true });
 
     assert.equal(planned.ok, true);
     assert.equal(planned.dryRun, true);
@@ -253,7 +253,7 @@ describe('local app runner service', () => {
   it('plans start against a new attempt log pair without writing files', async () => {
     const { runStart } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const planned = runStart({
+    const planned = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: ['npm', 'run', 'dev'],
@@ -428,13 +428,18 @@ describe('local app runner service', () => {
   it('isolates a live missing-command spawn error from a later successful start', async () => {
     const { runStart, runStatus, runStop } = await import('../dist/local_app_runner.js');
     const root = repo();
-    const failed = runStart({
+    const failed = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: ['aie-missing-runner-307'],
       now: new Date('2026-06-18T00:00:00.000Z'),
     });
-    const succeeded = runStart({
+    assert.equal(failed.ok, false);
+    assert.match(failed.error ?? '', /not on PATH/);
+    assert.equal(failed.status, 'missing');
+    assert.ok(existsSync(failed.paths.stderrPath) && /spawn error/.test(readFileSync(failed.paths.stderrPath, 'utf8')));
+
+    const succeeded = await runStart({
       repoRoot: root,
       name: 'ui-audit',
       command: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
@@ -442,13 +447,6 @@ describe('local app runner service', () => {
     });
 
     try {
-      const deadline = Date.now() + 2000;
-      while (Date.now() < deadline) {
-        if (existsSync(failed.paths.stderrPath) && /spawn error/.test(readFileSync(failed.paths.stderrPath, 'utf8'))) break;
-        await delay(50);
-      }
-      await delay(50);
-
       const status = runStatus({ repoRoot: root, name: 'ui-audit' });
       const historic = runStatus({ repoRoot: root, name: 'ui-audit', attemptId: failed.attemptId });
 
