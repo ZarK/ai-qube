@@ -1,4 +1,5 @@
 import type { CiProviderKind } from '../config/types.js';
+import { adapterInstallAndInitGuidance, isMissingAdapterPackage } from '../missing_adapter_package.js';
 import {
   MISSING_CI_CAPABILITIES,
   type CiCheckResult,
@@ -180,15 +181,9 @@ async function loadAdapterModule(packageName: string): Promise<Record<string, un
   try {
     return await import(packageName) as Record<string, unknown>;
   } catch (error) {
-    if (isModuleMissing(error, packageName)) return null;
+    if (isMissingAdapterPackage(error, packageName)) return null;
     throw error;
   }
-}
-
-function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
 }
 
 function adapterFor(id: CiProviderId): CiProviderAdapter {
@@ -284,7 +279,7 @@ class MissingCiProvider implements CiProvider {
     return new Error([
       `Cannot ${operation} with the ${this.id} CI provider because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --ci-provider ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--ci-provider ${this.id}`),
     ].join(' '));
   }
 }

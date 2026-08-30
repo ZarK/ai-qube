@@ -18,11 +18,12 @@ export interface InitHarnessPrompt {
 }
 
 export interface InitOutputOptions {
+  readonly scope: "global" | "repository";
   readonly mode: "plan" | "apply";
   readonly changed: boolean;
   readonly answers: readonly PublicInitAnswer[];
-  readonly primaryHarness: InitHarnessPrompt;
-  readonly postInitCommands?: readonly string[];
+  readonly primaryHarness?: InitHarnessPrompt;
+  readonly pendingNextActions?: readonly string[];
   readonly reviewPublisherReadiness?: InitPublisherReadiness;
 }
 
@@ -33,6 +34,8 @@ export const INIT_ACTION_LABELS = Object.freeze({
   aiu: "Umpire setup",
   labels: "Issue tracker labels",
   config: "Repository setup choices",
+  git: "Git initialization",
+  packages: "Package requirements",
 } as const);
 
 export type InitActionId = keyof typeof INIT_ACTION_LABELS;
@@ -57,12 +60,19 @@ export function publicInitActionLabel(actionId: string): string {
 }
 
 export function renderInitOutput(options: InitOutputOptions): string {
-  if (options.mode === "apply" && !options.changed) {
-    return "QUBE setup is already current.\n";
+  if (
+    options.mode === "apply"
+    && !options.changed
+    && (options.pendingNextActions?.length ?? 0) === 0
+    && (!options.reviewPublisherReadiness || options.reviewPublisherReadiness.state === "ready")
+  ) {
+    return `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization is already current.\n`;
   }
 
   const lines = [
-    options.mode === "plan" ? "QUBE setup plan is ready." : "QUBE setup is complete.",
+    `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization ${options.mode === "plan" ? "plan is ready" : "is complete"}.`,
+    `Mode: ${options.mode}.`,
+    `Persistent values changed: ${options.changed ? "yes" : "no"}.`,
     "",
     "Choices:",
   ];
@@ -77,23 +87,21 @@ export function renderInitOutput(options: InitOutputOptions): string {
     lines.push("", `GitHub review publisher: ${READINESS_LABELS[readiness.state]}.`);
   }
 
-  if (options.mode === "apply") {
+  if (options.mode === "apply" && options.scope === "repository" && options.primaryHarness) {
     lines.push(
       "",
       `Start a new ${options.primaryHarness.displayName} session so it loads the setup.`,
       `In the new session, run ${formatInvocation(options.primaryHarness.makeItSo)}.`,
     );
+  }
 
-    const followUps = uniqueNonEmpty([
-      ...(options.postInitCommands ?? []).map(command => `Run ${formatInvocation(command)}.`),
-      ...(readiness && readiness.state !== "ready" && readiness.nextAction
-        ? [readiness.nextAction]
-        : []),
-    ]);
-    if (followUps.length > 0) {
-      lines.push("", "Next actions:");
-      for (const followUp of followUps) lines.push(`- ${followUp}`);
-    }
+  const followUps = uniqueNonEmpty([
+    ...(options.pendingNextActions ?? []),
+    ...(readiness && readiness.state !== "ready" && readiness.nextAction ? [readiness.nextAction] : []),
+  ]);
+  if (followUps.length > 0) {
+    lines.push("", "Next actions:");
+    for (const followUp of followUps) lines.push(`- ${followUp}`);
   }
 
   return `${lines.join("\n")}\n`;

@@ -172,4 +172,6 @@ export interface InitOptions {
   agentBrowserAvailable?: boolean;
   aiqAvailable?: boolean;
   homeDirectory?: string;
+  /** Allow a dry-run plan to treat the selected directory as a prospective repository root before Git metadata exists. */
+  prospectiveRoot?: boolean;
 }

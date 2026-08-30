@@ -15,14 +15,14 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-npm install --save-exact --ignore-scripts @tjalve/qube-adapter-claude-code@0.1.1 @tjalve/qube-core@0.2.1
+npm install --save-exact --ignore-scripts @tjalve/qube-adapter-claude-code@0.1.6 @tjalve/qube-core@0.2.6
 ```
 
-Or use the guided composer:
+Or install QUBE and initialize the host:
 
 ```sh
-npm install -g --ignore-scripts @tjalve/qube@0.2.0
-qube install --scope local --host claude-code --work-provider github --yes
+npm install --save-exact --ignore-scripts @tjalve/qube@0.2.12 @tjalve/qube-adapter-claude-code@0.1.6 @tjalve/qube-adapter-github@0.1.8
+qube init --host claude-code --work-provider github --yes
 ```
 
 ## Requirements

@@ -4,6 +4,7 @@ import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { WorkItem, WorkItemKey } from '../core/work_item.js';
 import type { WorkProvider, WorkProviderCapabilities, WorkProviderId } from './work_provider.js';
+import { adapterInstallAndInitGuidance, isMissingAdapterPackage } from '../missing_adapter_package.js';
 
 export interface WorkProviderAdapterOptions {
   readonly exec?: GhExec;
@@ -127,15 +128,9 @@ async function loadOptionalAdapter(packageName: string, factoryName: string): Pr
     const factory = (imported as Record<string, unknown>)[factoryName];
     return typeof factory === 'function' ? factory as WorkProviderFactory : null;
   } catch (error) {
-    if (isModuleMissing(error, packageName)) return null;
+    if (isMissingAdapterPackage(error, packageName)) return null;
     throw error;
   }
-}
-
-function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
 }
 
 function capitalizeProviderId(id: string): string {
@@ -228,7 +223,7 @@ class MissingWorkProvider implements WorkProvider {
     return [
       `Cannot ${operation} with the ${this.id} work provider because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --work-provider ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--work-provider ${this.id}`),
     ].join(' ');
   }
 }

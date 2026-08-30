@@ -10,13 +10,14 @@ default.
 ## Install
 
 ```sh
-npm install --save-exact --ignore-scripts @tjalve/qube-adapter-grok-build@0.1.5 @tjalve/qube-core@0.2.3
+npm install --save-exact --ignore-scripts @tjalve/qube-adapter-grok-build@0.1.8 @tjalve/qube-core@0.2.6
 ```
 
-Or use the guided composer:
+Or install QUBE and initialize the host:
 
 ```sh
-qube install --scope local --host grok-build --work-provider github --yes
+npm install --save-exact --ignore-scripts @tjalve/qube@0.2.12 @tjalve/qube-adapter-grok-build@0.1.8 @tjalve/qube-adapter-github@0.1.8
+qube init --host grok-build --work-provider github --yes
 ```
 
 ## Requirements

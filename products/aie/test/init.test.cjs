@@ -58,6 +58,28 @@ function opencodeCommandPath(name) {
 }
 
 describe('init service', () => {
+  it('plans against an explicit prospective repository root without writing Git or managed files', async () => {
+    const target = join(tmpdir(), `aie-prospective-${process.pid}-${Date.now()}`);
+    mkdirSync(target, { recursive: true });
+
+    const ordinary = await buildInitPlan({
+      target: '.', tool: 'codex', dryRun: true, force: false, cwd: target,
+    });
+    assert.equal(ordinary.ok, false);
+    assert.match(ordinary.errors.join("\n"), /not inside a git repository/iu);
+
+    const prospective = await buildInitPlan({
+      target: '.', tool: 'codex', dryRun: true, force: false, prospectiveRoot: true, cwd: target,
+    });
+    assert.equal(prospective.ok, true);
+    assert.equal(prospective.repoRoot, target);
+    assert.equal(prospective.dryRun, true);
+    assert.equal(prospective.actions.every(action => action.status === 'planned'), true);
+    assert.equal(existsSync(join(target, '.git')), false);
+    assert.equal(existsSync(join(target, '.qube')), false);
+    assert.equal(existsSync(join(target, 'AGENTS.md')), false);
+  });
+
   it('builds a dry-run plan for config and managed OpenCode files without writing', async () => {
     const repo = makeGitRepo();
 

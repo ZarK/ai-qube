@@ -596,7 +596,8 @@ function publisherSummary(config: Config): string {
 
 async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
-  const repoRoot = getRepoRoot(targetPath);
+  const discoveredRepoRoot = getRepoRoot(targetPath);
+  const repoRoot = discoveredRepoRoot ?? (options.prospectiveRoot && options.dryRun ? targetPath : null);
   const selectedTools = uniqueTools(resolveInitTools(options.tool));
   const warnings: string[] = [];
   const actions: InitAction[] = [];

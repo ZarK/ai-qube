@@ -444,6 +444,12 @@ importers:
       '@tjalve/aiu':
         specifier: 0.0.10
         version: link:../aiu
+      '@tjalve/qube-adapter-codex':
+        specifier: 0.1.8
+        version: link:../../adapters/codex
+      '@tjalve/qube-adapter-github':
+        specifier: 0.1.8
+        version: link:../../adapters/github
       '@tjalve/qube-cli':
         specifier: 0.2.2
         version: link:../../packages/qube-cli

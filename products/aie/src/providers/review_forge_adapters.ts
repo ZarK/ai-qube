@@ -5,6 +5,7 @@ import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
 import type { ReviewProviderPlanOptions } from './review_provider.js';
+import { adapterInstallAndInitGuidance, isMissingAdapterPackage } from '../missing_adapter_package.js';
 
 import {
   MISSING_REVIEW_FORGE_CAPABILITIES,
@@ -137,15 +138,9 @@ async function loadOptionalAdapter(packageName: string, factoryName: string): Pr
     const factory = (imported as Record<string, unknown>)[factoryName];
     return typeof factory === 'function' ? factory as ReviewForgeProviderFactory : null;
   } catch (error) {
-    if (isModuleMissing(error, packageName)) return null;
+    if (isMissingAdapterPackage(error, packageName)) return null;
     throw error;
   }
-}
-
-function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
-  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
 }
 
 function adapterFor(id: ReviewForgeProviderId): ReviewForgeAdapter {
@@ -346,7 +341,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
     return [
       `Cannot ${operation} with the ${this.id} review forge because optional adapter ${this.packageName} is not installed.`,
       ...this.setup,
-      `Run qube install --review-forge ${this.id} --yes --dry-run to review the adapter-backed install plan.`,
+      adapterInstallAndInitGuidance(this.packageName, `--review-mode external --work-provider ${this.id}`),
     ].join(' ');
   }
 }

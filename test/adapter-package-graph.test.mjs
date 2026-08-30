@@ -21,7 +21,10 @@ const PRODUCT_ADAPTERS = new Map([
     "@tjalve/qube-adapter-opencode",
   ]],
   ["products/aib/package.json", []],
-  ["products/qube/package.json", []],
+  ["products/qube/package.json", [
+    "@tjalve/qube-adapter-codex",
+    "@tjalve/qube-adapter-github",
+  ]],
 ]);
 
 describe("product adapter package graph", () => {

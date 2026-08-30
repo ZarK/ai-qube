@@ -337,6 +337,7 @@ async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
       force: readBooleanFlag(context, 'force'),
       yes: readBooleanFlag(context, 'yes'),
       useDefaults: readBooleanFlag(context, 'defaults'),
+      prospectiveRoot: readBooleanFlag(context, 'prospective-root'),
       from: stringFlag(context, 'from'),
       guide: true,
       policy: policyFromRuntimeFlags(context),

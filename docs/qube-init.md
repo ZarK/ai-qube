@@ -1,10 +1,42 @@
 # Guided `qube init`
 
-Use `qube init` to prepare a repository for QUBE work:
+Install QUBE with npm or pnpm before initialization. Use an exact version and
+keep package lifecycle scripts disabled:
 
 ```sh
-qube init
+npm install --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
+npm install --global --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
+
+Package placement and configuration scope are independent. A project package
+can write user-global settings, and a global package can initialize a
+repository. After the `qube` command is available, use `qube init` for all
+normal setup and resume work:
+
+```sh
+qube init --global
+qube init
+qube init <target>
+qube init <target> --git-init
+```
+
+Global initialization reads and writes only user-global settings. It does not
+require Git, inspect repository files, or run repository component setup.
+Repository initialization uses the current directory when no target is given.
+It inherits user-global choices and writes repository-specific choices and
+managed assets.
+
+When a repository target is not in Git, interactive setup asks whether to
+initialize Git. Non-interactive mutation requires `--git-init`. A dry run
+reports the Git action without creating `.git` or QUBE configuration. QUBE
+does not create a commit, remote, hosted repository, account, or credential.
+
+Initialization checks required component and adapter packages before any
+write. If a package is missing, QUBE reports its exact name and version, gives
+one exact npm or pnpm command for the detected package placement, and tells you
+to rerun `qube init`.
 
 The guided flow has eight steps. Review details appear only when they apply.
 QUBE skips a step when the repository already supplies one valid answer or when
@@ -187,16 +219,11 @@ publish formal verdicts and inline comments when its installation has the
 required access. An App approval does not always satisfy branch protection.
 GitHub applies the repository rules and decides whether the approval counts.
 
-QUBE does not set up the App inside `qube init`. If you select the App, the
-completion output includes this follow-up command:
-
-```sh
-qube review setup github-app
-```
-
-QUBE checks publisher readiness with `qube review doctor` and shows one concise
-readiness line. If the check is not ready, follow its next action and run the
-check again.
+`qube init` owns QUBE Reviewer App onboarding and publisher readiness. It stores
+only safe credential references. External account creation, App installation,
+repository access, and authentication remain pending when QUBE cannot verify
+them. Complete the external action and rerun `qube init`; normal setup does not
+require a separate QUBE setup or doctor command.
 
 After successful setup, QUBE shows a compact answer summary and only the
 follow-up commands that apply. It does not list generated files or internal

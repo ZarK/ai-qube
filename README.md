@@ -30,31 +30,30 @@ pnpm run site:preview
 Use exact versions for automation and keep dependency lifecycle scripts disabled
 where your package manager supports it.
 
-Use the guided installer to select the install scope, package manager, agent
-harness, and provider configuration:
+Use npm or pnpm to install the exact QUBE version. Project installation is
+recommended for reproducible automation:
 
 ```sh
-qube install
-qube install --yes --dry-run --json
-qube install --apply --yes
-qube install --scope global --package-manager npm --yes
+npm install --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --save-dev --save-exact --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-The installer prints a plan and copyable commands by default. `--apply` executes
-the remaining pinned install delta after confirmation, or immediately with
-`--yes`. `--json` without `--yes` stays plan-only.
+Use a global installation for manual shell use:
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
-pnpm exec qube components
+npm install --global --ignore-scripts @tjalve/qube@0.2.12
+pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-Global installs are useful for manual command-line use, but project-local
-installs are easier to audit and reproduce:
+Package placement does not select the QUBE configuration scope. After the
+`qube` command is available, use `qube init` for all normal setup and resume
+work:
 
 ```sh
-npm install -g @tjalve/qube@0.1.1 --ignore-scripts
-qube components
+qube init --global
+qube init
+qube init <target>
+qube init <target> --git-init
 ```
 
 Install a single component when you intentionally only need that package:

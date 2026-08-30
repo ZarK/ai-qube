@@ -1,4 +1,5 @@
 import type { WorkItemDraft } from "./contracts.js";
+import { isMissingAdapterPackage } from "@tjalve/aie";
 
 export type GitLabIssueDraft = import("@tjalve/qube-adapter-gitlab").GitLabIssueDraft;
 export type JiraIssueDraft = import("@tjalve/qube-adapter-jira").JiraIssueDraft;
@@ -12,17 +13,19 @@ let gitlabAdapterPromise: Promise<GitLabAdapter> | undefined;
 let jiraAdapterPromise: Promise<JiraAdapter> | undefined;
 let linearAdapterPromise: Promise<LinearAdapter> | undefined;
 
-function isModuleMissing(error: unknown, packageName: string): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = "code" in error ? String((error as { code?: unknown }).code) : "";
-  return code === "ERR_MODULE_NOT_FOUND" && error.message.includes(packageName);
-}
+const ADAPTER_VERSIONS: Readonly<Record<string, string>> = Object.freeze({
+  "@tjalve/qube-adapter-gitlab": "0.1.8",
+  "@tjalve/qube-adapter-jira": "0.1.6",
+  "@tjalve/qube-adapter-linear": "0.1.6",
+});
 
 function missingAdapterError(packageName: string, provider: string): Error {
+  const version = ADAPTER_VERSIONS[packageName];
+  const spec = version ? `${packageName}@${version}` : packageName;
   return new Error([
     `Work item rendering with provider ${provider} requires optional adapter ${packageName}.`,
-    `Install ${packageName} before using --provider ${provider}.`,
-    `Run qube install --work-provider ${provider} --yes --dry-run to review the adapter-backed install plan.`,
+    `Run \`npm install --save-exact --ignore-scripts ${spec}\` or \`pnpm add --save-exact --ignore-scripts ${spec}\` for the package placement that owns QUBE.`,
+    `Then rerun \`qube init --work-provider ${provider}\`.`,
   ].join(" "));
 }
 
@@ -30,7 +33,7 @@ async function loadGitLabAdapter(): Promise<GitLabAdapter> {
   if (!gitlabAdapterPromise) {
     gitlabAdapterPromise = import("@tjalve/qube-adapter-gitlab").catch((error: unknown) => {
       gitlabAdapterPromise = undefined;
-      if (isModuleMissing(error, "@tjalve/qube-adapter-gitlab")) {
+      if (isMissingAdapterPackage(error, "@tjalve/qube-adapter-gitlab")) {
         throw missingAdapterError("@tjalve/qube-adapter-gitlab", "gitlab");
       }
       throw error;
@@ -43,7 +46,7 @@ async function loadJiraAdapter(): Promise<JiraAdapter> {
   if (!jiraAdapterPromise) {
     jiraAdapterPromise = import("@tjalve/qube-adapter-jira").catch((error: unknown) => {
       jiraAdapterPromise = undefined;
-      if (isModuleMissing(error, "@tjalve/qube-adapter-jira")) {
+      if (isMissingAdapterPackage(error, "@tjalve/qube-adapter-jira")) {
         throw missingAdapterError("@tjalve/qube-adapter-jira", "jira");
       }
       throw error;
@@ -56,7 +59,7 @@ async function loadLinearAdapter(): Promise<LinearAdapter> {
   if (!linearAdapterPromise) {
     linearAdapterPromise = import("@tjalve/qube-adapter-linear").catch((error: unknown) => {
       linearAdapterPromise = undefined;
-      if (isModuleMissing(error, "@tjalve/qube-adapter-linear")) {
+      if (isMissingAdapterPackage(error, "@tjalve/qube-adapter-linear")) {
         throw missingAdapterError("@tjalve/qube-adapter-linear", "linear");
       }
       throw error;
