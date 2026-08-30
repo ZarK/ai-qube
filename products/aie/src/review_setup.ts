@@ -132,7 +132,7 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
       'Create or choose the QUBE Reviewer GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
-      'Let QUBE discover the App installations and select the named account or organization that can publish for the required repositories.',
+      'Let QUBE discover the App installation ID and select the named account or organization that can publish for the required repositories.',
       'Upload a distinct app logo and matching badge color in the GitHub App display settings. Do not rename the app; a rename can change the slug and `[bot]` login.',
       'Apply local config with `review setup github-app --app-id <id> --installation-id <id> --private-key-env <ENV_NAME> --yes` (prefer --private-key-env over --private-key-path).',
       'Run `review doctor --json` for a read-only identity and permission probe. The probe mints only a short-lived installation token in memory.',

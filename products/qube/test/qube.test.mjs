@@ -533,7 +533,7 @@ describe("qube composer CLI", () => {
 
   it("renders concrete GitHub App publisher guidance without writing incomplete config", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-review-setup-"));
-    const githubApp = runCli(["review", "setup", "github-app"], { cwd });
+    const githubApp = runCli(["review", "setup", "github-app"], { cwd, env: initEnv(packageRoot) });
 
     assert.equal(githubApp.status, 0, githubApp.stderr);
     assert.match(githubApp.stdout, /Pull requests: Read and write/);

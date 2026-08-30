@@ -483,9 +483,13 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
 
   const requireKeyMaterial = (!values.installationId && options.discoverInstallations === undefined)
     || (options.noProbe !== true && options.resolvePublisher === undefined);
-  const validationErrors = [validateAppId(values.appId), validateLogin(values.login), await validatePrivateKeyReference(values, requireKeyMaterial)].filter((value): value is string => Boolean(value));
+  const appIdError = validateAppId(values.appId);
+  const loginError = validateLogin(values.login);
+  const privateKeyError = await validatePrivateKeyReference(values, requireKeyMaterial);
+  const validationErrors = [appIdError, loginError, privateKeyError].filter((value): value is string => Boolean(value));
   const hasKeyReference = Boolean(values.privateKeyEnv || values.privateKeyPath);
-  if (validationErrors.length > 0 && (validateAppId(values.appId) !== undefined || validateLogin(values.login) !== undefined || hasKeyReference)) {
+  const invalidProvidedValue = Boolean((values.appId && appIdError) || (values.login && loginError) || (hasKeyReference && privateKeyError));
+  if (validationErrors.length > 0 && invalidProvidedValue) {
     return failureResult({ options, scope, configPath, guidance, publisher: buildPublisher(values), errors: validationErrors, nextAction: `Correct the affected answer, then rerun \`${setupCommand(scope)}\`.` });
   }
 
@@ -565,6 +569,21 @@ export function formatReviewSetup(result: ReviewSetupResult): string {
   if (!result.ok) {
     const reason = result.validationErrors[0] ?? result.doctor?.fallbackReason ?? result.discovery.reason ?? (result.missingFields.length > 0 ? `Missing: ${result.missingFields.join(', ')}.` : 'Reviewer App setup failed.');
     return renderGuidedFailure({ action: 'Configure the QUBE Reviewer App', reason, nextAction: result.nextAction });
+  }
+  if (result.missingFields.length > 0) {
+    const lines = [
+      result.guidance.title,
+      result.guidance.summary,
+      '',
+      'Required repository permissions:',
+      ...result.guidance.requiredPermissions.map(permission => `- ${permission}`),
+      '',
+      'Setup steps:',
+      ...result.guidance.steps.map((step, index) => `${index + 1}. ${step}`),
+    ];
+    if (result.guidance.limitation) lines.push('', `Limitation: ${result.guidance.limitation}`);
+    lines.push('', `Config: ${result.configPath}`, 'Applied: no', `Missing flags: ${result.missingFields.join(', ')}`, `Setup next action: ${result.nextAction}`, result.roleBoundary);
+    return lines.join('\n');
   }
   if (!result.changed) {
     return renderGuidedSummary({
