@@ -144,6 +144,41 @@ describe('review publisher setup execution', () => {
     assert.match(multiple.nextAction, /terminal.*named installation|named installation.*terminal/i);
   });
 
+  it('keeps a cancelled installation choice distinct from a missing App installation', async () => {
+    const root = makeDirectory();
+    const candidates = [
+      { installationId: 456, accountLogin: 'one-owner', accountType: 'Organization', targetType: 'Organization', repositorySelection: 'selected', permissions: {}, label: 'one-owner · selected repositories · installation 456' },
+      { installationId: 789, accountLogin: 'two-owner', accountType: 'Organization', targetType: 'Organization', repositorySelection: 'selected', permissions: {}, label: 'two-owner · selected repositories · installation 789' },
+    ];
+    const presenter = {
+      askText: async () => { throw new Error('unexpected text prompt'); },
+      choose: async () => ({ status: 'cancelled', reason: 'operator cancelled', writeAllowed: false }),
+      confirm: async () => { throw new Error('unexpected confirmation'); },
+      progress: async (_options, operation) => operation(),
+      cancel: reason => ({ status: 'cancelled', reason, writeAllowed: false }),
+      summarize: () => {}, fail: () => {},
+    };
+
+    const previousKey = process.env.QUBE_KEY;
+    process.env.QUBE_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    let result;
+    try {
+      result = await runReviewSetup({
+        mode: 'github-app', scope: 'global', config: getDefaults(), configPath: join(root, 'config.json'), root,
+        appId: '123', privateKeyEnv: 'QUBE_KEY', isTTY: true, presenter, resolvePublisher: readyResolver,
+        discoverInstallations: async () => candidates,
+      });
+    } finally {
+      if (previousKey === undefined) delete process.env.QUBE_KEY;
+      else process.env.QUBE_KEY = previousKey;
+    }
+
+    assert.equal(result.ok, false);
+    assert.equal(result.discovery.status, 'cancelled');
+    assert.match(result.nextAction, /rerun .*review setup github-app --config-scope global.*ready/i);
+    assert.doesNotMatch(result.nextAction, /settings\/installations|install the GitHub App/i);
+  });
+
   it('filters repository discovery to installations that can access the repository', async () => {
     const root = makeDirectory();
     const candidates = [

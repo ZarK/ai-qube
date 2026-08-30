@@ -85,7 +85,7 @@ function validateNumeric(value: unknown, path: string, errors: ValidationError[]
 
 function validateReference(value: unknown, path: string, kind: 'env' | 'path', errors: ValidationError[]): void {
   if (value === undefined) return;
-  if (typeof value !== 'string' || value.trim() === '' || looksLikeSecret(value)) {
+  if (typeof value !== 'string' || value.trim() === '' || looksLikeReviewCredentialMaterial(value)) {
     errors.push({ kind: 'invalid', path, message: `${path} must be a safe ${kind === 'env' ? 'environment variable name' : 'local filesystem path'}, never credential material.` });
     return;
   }
@@ -94,11 +94,11 @@ function validateReference(value: unknown, path: string, kind: 'env' | 'path', e
 
 function validateLogin(value: unknown, errors: ValidationError[]): void {
   if (value === undefined) return;
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$/.test(value) || looksLikeSecret(value)) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$/.test(value) || looksLikeReviewCredentialMaterial(value)) {
     errors.push({ kind: 'invalid', path: 'publisher.githubApp.login', message: 'publisher.githubApp.login must be a public bot login.' });
   }
 }
 
-function looksLikeSecret(value: string): boolean {
-  return value.includes('\n') || value.includes('\r') || /BEGIN [A-Z ]*PRIVATE KEY|github_pat_|gh[pousr]_/i.test(value);
+export function looksLikeReviewCredentialMaterial(value: string): boolean {
+  return /[\r\n]|BEGIN (?:[A-Z ]*PRIVATE KEY|CERTIFICATE)|(?:^|[^A-Za-z0-9_])(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+/i.test(value);
 }

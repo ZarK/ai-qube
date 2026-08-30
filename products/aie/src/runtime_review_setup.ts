@@ -19,6 +19,7 @@ import {
   formatConfigFile,
   formatUserReviewPublisherFile,
   getDefaults,
+  looksLikeReviewCredentialMaterial,
   userReviewPublisherPath,
   validateConfig,
   type Config,
@@ -48,7 +49,7 @@ export type ReviewSetupScope = 'repo' | 'global';
 export type ReviewInstallationDiscoverer = typeof discoverGitHubAppInstallations;
 
 export interface ReviewSetupDiscovery {
-  readonly status: 'not-run' | 'selected' | 'multiple' | 'unavailable';
+  readonly status: 'not-run' | 'selected' | 'multiple' | 'unavailable' | 'cancelled';
   readonly candidates: readonly GitHubAppInstallationCandidate[];
   readonly selectedInstallationId: string | null;
   readonly reason: string | null;
@@ -124,7 +125,6 @@ type SetupValues = {
   login?: string;
 };
 
-const GITHUB_TOKEN_PREFIX = /(?:^|[^A-Za-z0-9_])(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+/;
 const APP_DOCUMENTATION = {
   label: 'GitHub App registration settings',
   url: 'https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app',
@@ -140,8 +140,7 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 function looksLikeCredentialMaterial(value: string): boolean {
-  return value.includes('\n') || value.includes('\r') || /BEGIN [A-Z ]*PRIVATE KEY|BEGIN CERTIFICATE/i.test(value)
-    || GITHUB_TOKEN_PREFIX.test(value) || /^(?:github_pat_|gh[pousr]_)/i.test(value);
+  return looksLikeReviewCredentialMaterial(value);
 }
 
 function validateAppId(value: string | undefined): string | undefined {
@@ -378,7 +377,7 @@ async function discoverInstallation(options: RunReviewSetupOptions, values: Setu
     value: `installation-${candidate.installationId}`, label: candidate.label,
     description: candidate.repositorySelection === 'all' ? 'Can access all repositories for this account.' : 'Can access selected repositories.',
   })));
-  if (isCancelled(result)) return { status: 'unavailable', candidates, selectedInstallationId: null, reason: 'Setup was cancelled before installation selection.' };
+  if (isCancelled(result)) return { status: 'cancelled', candidates, selectedInstallationId: null, reason: 'Setup was cancelled before installation selection.' };
   const selected = answerValue(result);
   const candidate = selected ? choiceValues.get(selected) : undefined;
   if (!candidate) return { status: 'multiple', candidates, selectedInstallationId: null, reason: 'Several App installations are available.' };
@@ -495,6 +494,9 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
 
   const discovery = validationErrors.length === 0 ? await discoverInstallation(options, values)
     : { status: 'not-run', candidates: [], selectedInstallationId: null, reason: 'Required App values are missing.' } as const;
+  if (discovery.status === 'cancelled') {
+    return failureResult({ options, scope, configPath, guidance, publisher: buildPublisher(values), errors: [discovery.reason ?? 'Setup was cancelled before installation selection.'], discovery, nextAction: `Rerun \`${setupCommand(scope)}\` when you are ready.` });
+  }
   if (discovery.status === 'unavailable' || discovery.status === 'multiple') {
     const nextAction = discovery.status === 'multiple'
       ? `Rerun \`${setupCommand(scope)}\` in a terminal and choose the named installation, or pass the advanced --installation-id override.`

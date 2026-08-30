@@ -3,7 +3,7 @@ const { writeFileSync, mkdtempSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
-const { configToFileShape, formatUserReviewPublisherFile, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, formatUserReviewPublisherFile, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, parseUserReviewPublisherFile, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
 
 function defaultFile() {
   return configToFileShape(getDefaults());
@@ -755,6 +755,13 @@ describe('config validation', () => {
     const pemResult = validateConfig(pemEnv);
     assert.equal(pemResult.ok, false);
     assert.ok(pemResult.errors.some((error) => error.path === 'providers.review.publisher.githubApp.privateKeyEnv'));
+
+    const certificatePath = parseUserReviewPublisherFile({
+      version: 1,
+      publisher: { mode: 'github-app', githubApp: { appId: '123', installationId: '456', privateKeyPath: '-----BEGIN CERTIFICATE-----' } },
+    });
+    assert.equal(certificatePath.ok, false);
+    assert.ok(certificatePath.errors.some((error) => error.path === 'publisher.githubApp.privateKeyPath'));
   });
 
   it('rejects invalid branch naming policy at config load time', () => {
