@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process');
 const { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { dirname, join } = require('node:path');
 const { describe, it } = require('node:test');
 
 const {
@@ -1135,6 +1135,11 @@ describe('model review runner', () => {
     const monitor = watchModelReviewCheckout(repoRoot);
     try {
       writeFileSync(join(repoRoot, '.git', 'qube', 'aie', 'model-route', 'lane.json'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.equal(monitor.violation(), null);
+      const reviewEvidence = join(repoRoot, '.qube', 'aie', 'reviews', '668', '669', 'lane.json');
+      mkdirSync(dirname(reviewEvidence), { recursive: true });
+      writeFileSync(reviewEvidence, '{}\n');
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.equal(monitor.violation(), null);
       writeFileSync(ignoredFile, 'after!\n');

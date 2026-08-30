@@ -819,7 +819,12 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
 
 function isInternalReviewPath(path: string): boolean {
   const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
-  return normalized === '.git' || normalized.startsWith('.git/');
+  return normalized === '.git'
+    || normalized.startsWith('.git/')
+    || normalized === '.qube'
+    || normalized === '.qube/aie'
+    || normalized === '.qube/aie/reviews'
+    || normalized.startsWith('.qube/aie/reviews/');
 }
 
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
