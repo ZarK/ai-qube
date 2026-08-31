@@ -184,7 +184,7 @@ function createQualityDoctorShim(root) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiq", version: "0.2.3" })}\n`, "utf8");
 }
 
-function createWorkflowDoctorShim(root, argsLog) {
+function createWorkflowDoctorShim(root, argsLog, exitCode = 0) {
   const binDir = path.join(root, "node_modules", ".bin");
   const packageDir = path.join(root, "node_modules", "@tjalve", "aie");
   mkdirSync(binDir, { recursive: true });
@@ -206,8 +206,8 @@ function createWorkflowDoctorShim(root, argsLog) {
   const commandPath = path.join(binDir, process.platform === "win32" ? "aie.cmd" : "aie");
   // Shell builtins only: the doctor tests run with an empty PATH, so external commands like cat are unavailable.
   writeFileSync(commandPath, process.platform === "win32"
-    ? `@echo off\r\n${argsLog ? `echo %* > ${JSON.stringify(argsLog)}\r\n` : ""}type \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\n`
-    : `#!/bin/sh\n${argsLog ? `printf '%s\\n' \"$@\" > ${JSON.stringify(argsLog)}\n` : ""}printf '%s\\n' '${doctorPayload}'\n`, "utf8");
+    ? `@echo off\r\n${argsLog ? `echo %* > ${JSON.stringify(argsLog)}\r\n` : ""}type \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b ${exitCode}\r\n`
+    : `#!/bin/sh\n${argsLog ? `printf '%s\\n' \"$@\" > ${JSON.stringify(argsLog)}\n` : ""}printf '%s\\n' '${doctorPayload}'\nexit ${exitCode}\n`, "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.2.2" })}\n`, "utf8");
 }
@@ -822,13 +822,7 @@ describe("qube composer CLI", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-packages-"));
     createQualityDoctorShim(packageRoot);
-    createWorkflowDoctorShim(packageRoot);
-    const failingCommand = path.join(packageRoot, "node_modules", ".bin", process.platform === "win32" ? "aie.cmd" : "aie");
-    unlinkSync(failingCommand);
-    writeFileSync(failingCommand, process.platform === "win32"
-      ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b 3\r\n"
-      : "#!/bin/sh\nprintf '%s\\n' '{\"workflowReadiness\":{\"stages\":[]}}'\nexit 3\n", "utf8");
-    if (process.platform !== "win32") chmodSync(failingCommand, 0o755);
+    createWorkflowDoctorShim(packageRoot, undefined, 3);
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
       version: 1,
