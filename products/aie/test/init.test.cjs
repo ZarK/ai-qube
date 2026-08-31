@@ -115,7 +115,8 @@ describe('init service', () => {
       target: '.', tool: 'codex', dryRun: true, force: false, cwd: target,
     });
     assert.equal(ordinary.ok, false);
-    assert.match(ordinary.errors.join("\n"), /not inside a git repository/iu);
+    assert.match(ordinary.errors.join("\n"), /not a Git repository/iu);
+    assert.equal(ordinary.prerequisites.checks.find(check => check.id === 'repository').reasonCode, 'not-a-repository');
 
     const prospective = await buildInitPlan({
       target: '.', tool: 'codex', dryRun: true, force: false, prospectiveRoot: true, cwd: target,

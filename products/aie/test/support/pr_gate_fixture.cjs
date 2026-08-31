@@ -33,6 +33,14 @@ const { stringListFlag } = require('../../dist/runtime_result.js');
 const prViewFields = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
 function makeGitRepo() {
+  return cloneGitRepo('committed', 'aie-pr-gate-');
+}
+
+function makeCommittedGitRepo() {
+  return cloneGitRepo('committed', 'aie-pr-gate-');
+}
+
+function makeConfiguredGitRepo() {
   return cloneGitRepo('configured', 'aie-pr-gate-');
 }
 
@@ -898,6 +906,8 @@ module.exports = {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  makeCommittedGitRepo,
+  makeConfiguredGitRepo,
   userReviewRepo,
   binRun,
   writeConfig,

@@ -10,6 +10,9 @@ import { renderInitFiles } from '../init_renderer.js';
 import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
 import { getRepoRoot } from '../repo/index.js';
 import { reviewModeOf } from '../review_mode.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import { evaluateGitPrerequisites, prerequisiteCheck } from '../providers/local/git_prerequisites.js';
+import type { RepositoryPrerequisites } from '../core/repo_state.js';
 import { adoptFromSource } from './from_source.js';
 import { applyFreshSetupPolicy, buildIsolatedReviewRoute, reconcileReviewModePolicy } from './fresh_setup.js';
 import {
@@ -1115,12 +1118,66 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   };
 }
 
+async function initPrerequisites(options: InitOptions): Promise<RepositoryPrerequisites> {
+  const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
+  return evaluateGitPrerequisites({
+    cwd: targetPath,
+    policy: configToExecutorPolicy(configFromPolicy(options.policy ?? {})),
+    prospective: options.prospectiveRoot === true && options.dryRun,
+    offline: options.dryRun,
+  });
+}
+
+function hardInitPrerequisite(prerequisites: RepositoryPrerequisites, options: InitOptions) {
+  const git = prerequisiteCheck(prerequisites, 'git');
+  const repository = prerequisiteCheck(prerequisites, 'repository');
+  return [git, repository].find(candidate => (
+    candidate?.reasonCode === 'git-not-found'
+    || candidate?.reasonCode === 'git-unsupported'
+    || candidate?.reasonCode === 'repository-unreadable'
+    || (candidate?.reasonCode === 'not-a-repository' && !(options.prospectiveRoot && options.dryRun))
+  ));
+}
+
+function prerequisiteInitFailure(options: InitOptions, prerequisites: RepositoryPrerequisites, blocker: NonNullable<ReturnType<typeof hardInitPrerequisite>>): InitResult {
+  const targetPath = resolve(options.cwd ?? process.cwd(), options.target);
+  const config = configFromPolicy(options.policy ?? {});
+  return {
+    ok: false,
+    command: 'init',
+    dryRun: options.dryRun,
+    forced: options.force,
+    target: options.target,
+    repoRoot: null,
+    prerequisites,
+    selectedTools: uniqueTools(resolveInitTools(options.tool)),
+    policy: policySummary(config),
+    configPath: join(targetPath, AIE_CONFIG_FILENAME),
+    actions: [],
+    plannedChanges: [],
+    completedChanges: [],
+    skippedActions: [],
+    warnings: [],
+    errors: [blocker.summary],
+    nextCommand: blocker.nextAction ?? 'Resolve the Git prerequisite, then rerun `aie init`.',
+    ...emptyGuideFields(),
+  };
+}
+
+async function prepareInitWithPrerequisites(options: InitOptions): Promise<InitPlanBuild> {
+  const prerequisites = await initPrerequisites(options);
+  const blocker = hardInitPrerequisite(prerequisites, options);
+  if (blocker) return { result: prerequisiteInitFailure(options, prerequisites, blocker), writes: [] };
+  const built = await prepareInitPlan(options);
+  return { ...built, result: { ...built.result, prerequisites } };
+}
+
 export async function buildInitPlan(options: InitOptions): Promise<InitResult> {
-  return (await prepareInitPlan(options)).result;
+  return (await prepareInitWithPrerequisites(options)).result;
 }
 
 export async function runInit(options: InitOptions): Promise<InitResult> {
-  const built = await prepareInitPlan(options);
+  const built = await prepareInitWithPrerequisites(options);
   const result = built.result;
   if (!result.ok || options.dryRun || result.awaitingAnswers) return result;
   const completedChanges: string[] = [];

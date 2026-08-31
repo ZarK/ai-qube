@@ -40,7 +40,8 @@ export function computeDoctorOk(input: DoctorOkInputs): boolean {
     baseBranchReady &&
     pullRequestReady &&
     (input.staleReviewLockCount ?? 0) === 0 &&
-    (input.instructionInstallOk ?? true);
+    (input.instructionInstallOk ?? true) &&
+    (input.repositoryPrerequisitesReady ?? true);
 }
 
 export function buildLifecycleDiagnostics(input: {

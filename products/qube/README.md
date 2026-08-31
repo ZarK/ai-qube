@@ -35,6 +35,10 @@ qube init <target>
 qube init <target> --git-init
 ```
 
+`qube init --global` never invokes Git. Repository setup reports staged Git
+readiness and can complete safe local setup before an initial commit or remote
+exists. See [Git prerequisites](../../docs/qube-init.md#git-prerequisites).
+
 ## Components
 
 | Component | Package | Direct command | Purpose |

@@ -56,6 +56,11 @@ qube init <target>
 qube init <target> --git-init
 ```
 
+User-global initialization does not use Git. Repository initialization reports
+Git executable, repository, identity, HEAD, branch, worktree, base-reference,
+remote, and transport readiness before setup choices. See the
+[guided init Git prerequisites](./docs/qube-init.md#git-prerequisites).
+
 Install a single component when you intentionally only need that package:
 
 ```sh

@@ -9,7 +9,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | Command | Description |
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
-| `qube init` | Initialize user-global QUBE choices or prepare one repository through the complete guided setup flow. |
+| `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. |
 | `qube doctor` | Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits. |
 | `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |

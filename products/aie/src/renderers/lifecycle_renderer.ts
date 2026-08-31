@@ -73,6 +73,7 @@ export function formatStartHuman(result: StartResult): string {
   lines.push(`Active issues: ${result.activeIssueState.inProgressCount}`);
   if (result.preStartPolicy) {
     lines.push(`Pre-start policy: ${result.preStartPolicy.ok ? 'passed' : 'blocked'}${result.preStartPolicy.bypassed ? ' (resume bypass)' : ''}`);
+    lines.push(`Repository prerequisites: ${result.preStartPolicy.prerequisites.status}`);
     for (const blocker of result.preStartPolicy.blockers) {
       lines.push(`  - ${blocker}`);
     }
@@ -113,6 +114,7 @@ export function formatSwitchHuman(result: SwitchResult): string {
   lines.push(`Active issues: ${result.activeIssueState.inProgressCount}`);
   if (result.preStartPolicy) {
     lines.push(`Pre-start policy: ${result.preStartPolicy.ok ? 'passed' : 'blocked'}${result.preStartPolicy.bypassed ? ' (resume bypass)' : ''}`);
+    lines.push(`Repository prerequisites: ${result.preStartPolicy.prerequisites.status}`);
     for (const blocker of result.preStartPolicy.blockers) {
       lines.push(`  - ${blocker}`);
     }
@@ -140,6 +142,10 @@ export function formatCompleteHuman(result: CompleteResult): string {
   lines.push(`aie complete${mode}: ${result.action.toUpperCase()}`);
   lines.push(`Reason: ${result.reason}`);
   lines.push(`Issue: #${result.issue.number} "${result.issue.title}" (${result.issue.state})`);
+  lines.push(`Repository prerequisites: ${result.prerequisites.status}`);
+  for (const prerequisite of result.prerequisites.checks.filter(check => check.requiredFor.includes('completion') && check.status !== 'ready')) {
+    lines.push(`  ${prerequisite.id}: ${prerequisite.status}${prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : ''} — ${prerequisite.summary}`);
+  }
   lines.push(`Checklist: ${result.checklist.checked}/${result.checklist.total} checked`);
   lines.push(`Status labels: ${formatCompleteLabels(result, result.issue.number)}`);
   lines.push(`Close: ${formatCompleteClose(result)}`);

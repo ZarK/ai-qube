@@ -2,6 +2,7 @@ import type { CiProviderKind, GateConfig, GitHubReviewPublisherConfig, Instructi
 import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_routing.js';
 import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewLanePolicy, ReviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewRoutePolicy } from '../core/policy.js';
 import type { InitTool } from '../init_content.js';
+import type { RepositoryPrerequisites } from '../core/repo_state.js';
 
 export type InitActionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';
 export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'remove' | 'unchanged' | 'blocked';
@@ -72,6 +73,7 @@ export interface InitResult {
   forced: boolean;
   target: string;
   repoRoot: string | null;
+  prerequisites?: RepositoryPrerequisites;
   selectedTools: InitTool[];
   policy: InitPolicySummary;
   configPath: string;

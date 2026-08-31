@@ -5,6 +5,9 @@ import { runCompleteService, type CompletionChecklist, type CompletionChecklistI
 import type { StartIssueSummary } from '../start/index.js';
 import type { LifecyclePlan } from '../lifecycle.js';
 import { workItemKeyNumber } from '../core/work_item.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
+import type { RepositoryPrerequisites } from '../core/repo_state.js';
 
 export type CompleteAction = 'completed' | 'checked' | 'planned' | 'blocked' | 'failed';
 export type { CompletionChecklistItem, CompletionChecklist, CompletionMilestoneContext, CompletionState };
@@ -36,6 +39,7 @@ export interface CompleteResult {
   nextCommand: string;
   warnings: string[];
   errors: string[];
+  prerequisites: RepositoryPrerequisites;
 }
 
 export interface CompleteOptions {
@@ -59,6 +63,7 @@ function dependent(result: { item: { key: { id: string }; title: string; state: 
 export async function completeIssue(options: CompleteOptions): Promise<CompleteResult> {
   const config = options.config ?? (await loadConfig(options.cwd)) ?? getDefaults();
   const context = await createLifecycleContext({ config, cwd: options.cwd, exec: options.exec, limit: 1000 });
+  const prerequisites = (await createLocalGitRepositoryProvider({ cwd: options.cwd }).inspect(configToExecutorPolicy(config))).prerequisites;
   const service = await runCompleteService({ issueNumber: options.issueNumber, dryRun: options.dryRun, checkOnly: options.checkOnly, force: options.force, context });
   const dependents = service.dependentRefresh.dependents.map(dependent);
   const unblocked = service.dependentRefresh.unblocked.map(dependent);
@@ -81,5 +86,6 @@ export async function completeIssue(options: CompleteOptions): Promise<CompleteR
     nextCommand: service.nextCommand,
     warnings: service.warnings,
     errors: service.errors.length > 0 ? service.errors : service.plan.summary.failedActions.map(action => action.failure?.cause ?? action.description),
+    prerequisites,
   };
 }

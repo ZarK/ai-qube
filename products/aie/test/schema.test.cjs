@@ -116,6 +116,8 @@ describe('schema command', () => {
     assert.equal(flag(init, 'package-age-days').type, 'integer');
     assert.match(flag(init, 'unverified-risk-approval').description, /source\/provenance/);
     assert.equal(flag(doctor, 'json').type, 'boolean');
+    assert.equal(flag(doctor, 'offline').type, 'boolean');
+    assert.match(flag(doctor, 'offline').description, /every local check/);
     assert.ok(serviceNames(doctor).includes('github'));
     assert.ok(errorKinds(doctor).includes('config-error'));
     assert.ok(errorKinds(doctor).includes('invalid'));

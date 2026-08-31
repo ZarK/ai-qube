@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promptInstallerChoice, promptInstallerChoices, type InstallerChoice } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { evaluatePromptGate, promptConfirm } from "@tjalve/qube-cli/prompts";
+import { evaluatePromptGate, promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
@@ -17,6 +17,11 @@ import {
   getAgentHostProfileSync,
   listHostModels,
   listInitExternalReviewers,
+  evaluateGitPrerequisites,
+  notRequiredGitPrerequisites,
+  prerequisiteCheck,
+  repositoryPrerequisiteStatusFor,
+  type RepositoryPrerequisites,
 } from "@tjalve/aie";
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
@@ -64,6 +69,7 @@ import {
 import {
   publicInitActionLabel,
   renderInitFailure,
+  renderInitPrerequisites,
   renderInitQuestion,
   renderInitOutput,
   type InitPublisherReadiness,
@@ -724,7 +730,7 @@ const defaultsFlag = defineFlag({
 const initCommand = defineCommand({
   kind: "command",
   name: "init",
-  description: "Initialize user-global QUBE choices or prepare one repository through the complete guided setup flow.",
+  description: "Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow.",
   arguments: [
     defineArgument({
       name: "target",
@@ -1213,29 +1219,26 @@ function createQubeCli(environment: CliEnvironment) {
 
 interface QubeDoctorWorkflowSection {
   status: "ok" | "unavailable" | "not-run";
+  ok?: boolean;
+  exitCode?: number;
   readiness?: unknown;
+  prerequisites?: unknown;
   error?: string;
 }
 
 async function collectWorkflowReadiness(offline: boolean, environment: CliEnvironment): Promise<QubeDoctorWorkflowSection> {
-  if (offline) {
-    return { status: "not-run", error: "Offline doctor mode skips workflow readiness diagnostics." };
-  }
-  const planned = planQubeDispatch("aie", ["doctor", "--json"], environment);
+  const planned = planQubeDispatch("aie", ["doctor", ...(offline ? ["--offline"] : []), "--json"], environment);
   if (!planned.dispatch) {
     return { status: "unavailable", error: planned.stderr.trim() || "Executor doctor is unavailable." };
   }
   const captured = await dispatchCommandCaptured(planned.dispatch);
-  if (captured.exitCode !== 0) {
-    return { status: "unavailable", error: captured.stderr.trim() || `Executor doctor exited with code ${captured.exitCode}.` };
-  }
   if (captured.truncated) {
     return { status: "unavailable", error: "Executor doctor output exceeded the capture limit; truncated output is never accepted as workflow readiness." };
   }
   try {
-    const parsed = JSON.parse(captured.stdout) as { workflowReadiness?: unknown };
+    const parsed = JSON.parse(captured.stdout) as { ok?: unknown; workflowReadiness?: unknown; prerequisites?: unknown };
     if (parsed && typeof parsed === "object" && parsed.workflowReadiness) {
-      return { status: "ok", readiness: parsed.workflowReadiness };
+      return { status: "ok", ok: parsed.ok === true && captured.exitCode === 0, exitCode: captured.exitCode, readiness: parsed.workflowReadiness, prerequisites: parsed.prerequisites };
     }
     return { status: "unavailable", error: "Executor doctor returned no workflow readiness section." };
   } catch {
@@ -1243,12 +1246,24 @@ async function collectWorkflowReadiness(offline: boolean, environment: CliEnviro
   }
 }
 
+function workflowExitCode(workflow: QubeDoctorWorkflowSection): number {
+  if (workflow.status !== "ok") return 1;
+  return workflow.ok === true && (workflow.exitCode ?? 0) === 0 ? 0 : 1;
+}
+
 function formatWorkflowReadiness(workflow: QubeDoctorWorkflowSection): string {
   if (workflow.status !== "ok") {
     return `Workflow readiness: ${workflow.status}${workflow.error ? ` — ${workflow.error}` : ""}\n`;
   }
   const readiness = workflow.readiness as { stages?: Array<{ stage?: string; status?: string; detail?: string; nextAction?: string | null }> };
-  const lines = ["Workflow readiness:"];
+  const lines = [`Workflow readiness: ${workflow.ok === true ? "ready" : "needs action"}`];
+  const prerequisites = workflow.prerequisites as RepositoryPrerequisites | undefined;
+  if (prerequisites) {
+    lines.push("Repository prerequisites:");
+    for (const prerequisite of prerequisites.checks) {
+      lines.push(`- ${prerequisite.id}: ${prerequisite.status}${prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : ""}; required for ${prerequisite.requiredFor.join(", ")} — ${prerequisite.summary}${prerequisite.nextAction ? ` Next: ${prerequisite.nextAction}` : ""}`);
+    }
+  }
   for (const stage of readiness.stages ?? []) {
     lines.push(`- ${stage.stage}: ${stage.status} — ${stage.detail}${stage.nextAction ? ` Next: ${stage.nextAction}` : ""}`);
   }
@@ -1316,11 +1331,13 @@ interface QubeDoctorConfigurationSection {
   readonly sources?: Readonly<Record<QubeInitField, string>>;
   readonly error?: string;
   readonly nextAction?: string;
+  readonly prerequisites?: RepositoryPrerequisites;
 }
 
-function collectComposerConfiguration(environment: CliEnvironment): QubeDoctorConfigurationSection {
-  const gitState = inspectInitGitState(environment.cwd, ".");
-  const repositoryRoot = gitState.repositoryRoot ?? environment.cwd;
+async function collectComposerConfiguration(environment: CliEnvironment): Promise<QubeDoctorConfigurationSection> {
+  const prerequisites = await evaluateGitPrerequisites({ cwd: environment.cwd, policy: QUBE_INIT_GIT_POLICY, offline: true, prospective: false });
+  const repositoryCheck = prerequisiteCheck(prerequisites, "repository");
+  const repositoryRoot = typeof repositoryCheck?.safeDetails.root === "string" ? repositoryCheck.safeDetails.root : environment.cwd;
   const userGlobalPath = userQubeConfigPath(homeDirectory(environment));
   const repositoryPath = repoQubeConfigPath(repositoryRoot);
   const userGlobal = readQubeInitConfig(userGlobalPath);
@@ -1332,6 +1349,7 @@ function collectComposerConfiguration(environment: CliEnvironment): QubeDoctorCo
       scope: "repository",
       userGlobalPath,
       repositoryPath,
+      prerequisites,
       error,
       nextAction: "Correct the invalid source configuration, then rerun `qube doctor`.",
     });
@@ -1356,6 +1374,7 @@ function collectComposerConfiguration(environment: CliEnvironment): QubeDoctorCo
     scope: "repository",
     userGlobalPath,
     repositoryPath,
+    prerequisites,
     sources: resolved.sources,
     fields: describeQubeInitFields({
       userGlobal: userGlobal.config,
@@ -1384,7 +1403,7 @@ function formatDoctorValue(value: unknown): string {
 }
 
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  const configuration = collectComposerConfiguration(environment);
+  const configuration = await collectComposerConfiguration(environment);
   const configurationExitCode = configuration.status === "invalid" ? 1 : 0;
   const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
@@ -1405,7 +1424,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     const [connections, permutation, modelRouting, workflow] = await Promise.all([connectionsPromise, permutationPromise, modelRoutingPromise, workflowPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0
-      ? Math.max(configurationExitCode, connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
+      ? Math.max(configurationExitCode, connectionExitCode, workflowExitCode(workflow), continuationExitCode(continuation), toolkitExitCode(hosts))
       : planned.exitCode || 1;
     if (json) {
       const payload = {
@@ -1439,7 +1458,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
   let exitCode = quality.exitCode === 0
-    ? Math.max(configurationExitCode, connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
+    ? Math.max(configurationExitCode, connectionExitCode, workflowExitCode(workflow), continuationExitCode(continuation), toolkitExitCode(hosts))
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
@@ -2618,37 +2637,6 @@ function resolveQubeInitInheritance(
   };
 }
 
-interface InitGitState {
-  readonly selectedTarget: string;
-  readonly repositoryRoot: string | null;
-  readonly gitAvailable: boolean;
-  readonly reason: string | null;
-}
-
-function inspectInitGitState(cwd: string, target: string): InitGitState {
-  const selectedTarget = path.resolve(cwd, target);
-  if (!existsSync(selectedTarget) || !statSync(selectedTarget).isDirectory()) {
-    return { selectedTarget, repositoryRoot: null, gitAvailable: true, reason: "The repository target must be an existing directory." };
-  }
-  const probe = spawnSync("git", ["-C", selectedTarget, "rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (probe.error && (probe.error as NodeJS.ErrnoException).code === "ENOENT") {
-    return { selectedTarget, repositoryRoot: null, gitAvailable: false, reason: "Git is not installed or is not available on PATH." };
-  }
-  if (probe.status !== 0) {
-    return { selectedTarget, repositoryRoot: null, gitAvailable: true, reason: "The selected target is not inside a Git repository." };
-  }
-  const repositoryRoot = probe.stdout.trim();
-  return {
-    selectedTarget,
-    repositoryRoot: repositoryRoot === "" ? selectedTarget : path.resolve(repositoryRoot),
-    gitAvailable: true,
-    reason: null,
-  };
-}
-
 function missingConfigRead(pathValue: string): ReturnType<typeof readQubeInitConfig> {
   return Object.freeze({ path: pathValue, status: "missing" as const, config: null, error: null });
 }
@@ -2814,16 +2802,124 @@ function initOwnedAction(action: unknown, scope: QubeInitScope, target: string |
   });
 }
 
-function repositoryHasOrigin(targetPath: string): boolean {
-  const remote = spawnSync("git", ["-C", targetPath, "remote", "get-url", "origin"], {
-    encoding: "utf8",
-    windowsHide: true,
+const QUBE_INIT_GIT_POLICY = Object.freeze({
+  branch: Object.freeze({ baseRemote: "origin", baseBranch: "main", requirePrimaryCheckout: true, requireFreshBase: true }),
+});
+
+function repositoryReadinessSummary(prerequisites: RepositoryPrerequisites) {
+  return Object.freeze({
+    localSetup: repositoryPrerequisiteStatusFor(prerequisites, "local-setup"),
+    issueWorkflow: repositoryPrerequisiteStatusFor(prerequisites, "issue-workflow"),
+    review: repositoryPrerequisiteStatusFor(prerequisites, "review"),
+    completion: repositoryPrerequisiteStatusFor(prerequisites, "completion"),
+    shipping: repositoryPrerequisiteStatusFor(prerequisites, "shipping"),
   });
-  return remote.status === 0 && remote.stdout.trim() !== "";
+}
+
+function preserveVerifiedRemoteTransport(previous: RepositoryPrerequisites, localRefresh: RepositoryPrerequisites): RepositoryPrerequisites {
+  const previousTransport = prerequisiteCheck(previous, "remote-transport");
+  const previousRemote = prerequisiteCheck(previous, "remote");
+  const refreshedRemote = prerequisiteCheck(localRefresh, "remote");
+  const sameRemote = previousRemote?.safeDetails.name === refreshedRemote?.safeDetails.name
+    && previousRemote?.safeDetails.url === refreshedRemote?.safeDetails.url;
+  if (!sameRemote || !previousTransport || previousTransport.status === "unverified") return localRefresh;
+  const checks = localRefresh.checks.map(check => check.id === "remote-transport" ? previousTransport : check);
+  const statuses = checks.map(check => check.status);
+  const status = statuses.every(value => value === "not-required")
+    ? "not-required"
+    : statuses.includes("needs-action")
+      ? "needs-action"
+      : statuses.includes("unverified")
+        ? "unverified"
+        : "ready";
+  return Object.freeze({ status, checks: Object.freeze(checks) }) as RepositoryPrerequisites;
 }
 
 function deferredProviderFailure(error: string | undefined): boolean {
   return Boolean(error && /authentication|authenticate|credential|login|remote|repository identity|not a git repository|could not resolve repository/i.test(error));
+}
+
+interface GitIdentityAction {
+  readonly key: "user.name" | "user.email";
+  readonly scope: "repository" | "user-global";
+  readonly value: string;
+}
+
+function validGitIdentityValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && !/[\u0000-\u001f\u007f]/u.test(normalized) ? normalized : undefined;
+}
+
+function readEffectiveGitIdentity(targetPath: string, key: GitIdentityAction["key"]): string | undefined {
+  const result = spawnSync("git", ["-C", targetPath, "config", "--includes", "--get", key], {
+    encoding: "utf8",
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  return result.status === 0 ? validGitIdentityValue(result.stdout) : undefined;
+}
+
+function renderEffectiveGitIdentity(targetPath: string): string {
+  const name = readEffectiveGitIdentity(targetPath, "user.name");
+  const email = readEffectiveGitIdentity(targetPath, "user.email");
+  return [
+    `Effective Git author name: ${name ? JSON.stringify(name) : "not configured"}`,
+    `Effective Git author email: ${email ? JSON.stringify(email) : "not configured"}`,
+  ].join("\n");
+}
+
+async function collectGitIdentityActions(input: {
+  prerequisites: RepositoryPrerequisites;
+  targetPath: string;
+  json: boolean;
+  useDefaults: boolean;
+}): Promise<readonly GitIdentityAction[]> {
+  const missing = ([
+    ["identity-name", "user.name", "Git author name"],
+    ["identity-email", "user.email", "Git author email"],
+  ] as const).filter(([id]) => prerequisiteCheck(input.prerequisites, id)?.status === "needs-action");
+  if (input.json || input.useDefaults || process.stdin.isTTY !== true || process.stdout.isTTY !== true) return Object.freeze([]);
+  process.stdout.write(`${renderEffectiveGitIdentity(input.targetPath)}\n`);
+  if (missing.length === 0) return Object.freeze([]);
+  process.stdout.write("Commits require an author name and email. Repository scope is recommended because it changes only this repository.\n");
+  const scope = await promptInstallerChoice({
+    command: initCommand,
+    promptName: "Git identity scope",
+    message: "Where should QUBE configure the missing Git identity values?",
+    choices: Object.freeze([
+      Object.freeze({ value: "repository" as const, label: "This repository", description: "Write only this repository's Git config.", recommended: true }),
+      Object.freeze({ value: "user-global" as const, label: "All repositories", description: "Write the current user's global Git config." }),
+    ]),
+    jsonMode: false,
+    yes: false,
+  });
+  const actions: GitIdentityAction[] = [];
+  for (const [, key, label] of missing) {
+    let value: string | undefined;
+    while (!value) {
+      const answer = await promptText({
+        command: initCommand,
+        promptName: label,
+        jsonMode: false,
+        yes: false,
+        clack: { message: `Enter ${label.toLowerCase()}:`, placeholder: key },
+      });
+      value = validGitIdentityValue(answer);
+      if (!value) process.stdout.write(`${label} must be non-empty and cannot contain control characters.\n`);
+    }
+    actions.push(Object.freeze({ key, scope, value }));
+  }
+  const confirmed = await promptConfirm({
+    command: initCommand,
+    promptName: "write Git identity",
+    jsonMode: false,
+    yes: false,
+    clack: {
+      message: `Write ${actions.map(action => action.key).join(" and ")} to ${scope === "repository" ? "this repository" : "the user-global Git configuration"}?`,
+      initialValue: true,
+    },
+  });
+  return confirmed ? Object.freeze(actions) : Object.freeze([]);
 }
 
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -2852,15 +2948,61 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
   const inheritance = inheritanceResult.inheritance;
   const configScope = scope === "global" ? "global" : "repo";
-  const gitState = scope === "repository" ? inspectInitGitState(environment.cwd, readString(args.target) ?? ".") : null;
-  if (gitState?.reason === "The repository target must be an existing directory.") {
+  const selectedTarget = path.resolve(environment.cwd, readString(args.target) ?? ".");
+  if (scope === "repository" && (!existsSync(selectedTarget) || !statSync(selectedTarget).isDirectory())) {
     const nextAction = "Create the target directory, then rerun `qube init <target>`.";
-    const payload = { ok: false, command: "init", scope, failedAction: "Repository target", error: gitState.reason, nextAction };
+    const error = "The repository target must be an existing directory.";
+    const payload = { ok: false, command: "init", scope, failedAction: "Repository target", error, nextAction };
     return json
       ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
-      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: gitState.reason, nextAction }) };
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: error, nextAction }) };
   }
-  const targetPath = gitState?.repositoryRoot ?? gitState?.selectedTarget ?? environment.cwd;
+  let prerequisites: RepositoryPrerequisites = scope === "global"
+    ? notRequiredGitPrerequisites()
+    : await evaluateGitPrerequisites({ cwd: selectedTarget, policy: QUBE_INIT_GIT_POLICY, prospective: true, offline: dryRun });
+  const gitCheck = prerequisiteCheck(prerequisites, "git");
+  const repositoryCheck = prerequisiteCheck(prerequisites, "repository");
+  const hardPrerequisite = [gitCheck, repositoryCheck].find(candidate => candidate?.reasonCode === "git-not-found" || candidate?.reasonCode === "git-unsupported" || candidate?.reasonCode === "repository-unreadable");
+  if (hardPrerequisite) {
+    const nextAction = hardPrerequisite.nextAction ?? "Resolve the Git prerequisite, then rerun `qube init`.";
+    const payload = { ok: false, command: "init", scope, mode: "preflight", changed: false, prerequisites, failedAction: "Repository prerequisites", error: hardPrerequisite.summary, nextAction };
+    return json
+      ? { exitCode: 1, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 1, stdout: "", stderr: `${renderInitPrerequisites(prerequisites)}${renderInitFailure({ actionId: "git", reason: hardPrerequisite.summary, nextAction })}` };
+  }
+  const repositoryRoot = typeof repositoryCheck?.safeDetails.root === "string" ? repositoryCheck.safeDetails.root : null;
+  const targetPath = repositoryRoot ? path.resolve(repositoryRoot) : selectedTarget;
+  const prospectivePrerequisite = scope === "repository" && repositoryCheck?.reasonCode === "not-a-repository";
+  const interactiveRepository = scope === "repository" && !json && !useDefaults && process.stdin.isTTY === true && process.stdout.isTTY === true;
+  let prerequisitesShown = false;
+  let gitInitializationApproved = flags["git-init"] === true;
+  if (prospectivePrerequisite && !dryRun && !gitInitializationApproved) {
+    if (!json && !useDefaults && process.stdin.isTTY === true && process.stdout.isTTY === true) {
+      process.stdout.write(renderInitPrerequisites(prerequisites));
+      prerequisitesShown = true;
+      gitInitializationApproved = await promptConfirm({
+        command: initCommand,
+        promptName: "initialize Git in the selected repository target",
+        jsonMode: false,
+        yes: false,
+        clack: { message: `QUBE repository setup requires Git. Initialize Git in ${targetPath}?`, initialValue: true },
+      });
+    }
+    if (!gitInitializationApproved) {
+      const error = json || useDefaults
+        ? "Repository initialization outside Git requires --git-init in non-interactive mode."
+        : "Git initialization was declined; no changes were made.";
+      const nextAction = `Rerun \`qube init ${readString(args.target) ?? "."} --git-init\` when you are ready to initialize this repository.`;
+      const payload = { ok: false, command: "init", scope, mode: "preflight", changed: false, prerequisites, failedAction: "Git initialization", error, nextAction };
+      return json
+        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
+    }
+  }
+  if (interactiveRepository && !prerequisitesShown) process.stdout.write(renderInitPrerequisites(prerequisites));
+  const gitIdentityActions = scope === "repository" && !prospectivePrerequisite
+    ? await collectGitIdentityActions({ prerequisites, targetPath, json, useDefaults })
+    : Object.freeze([]);
   const globalConfigPath = userQubeConfigPath(homeDirectory(environment));
   const repositoryConfigPath = scope === "repository" ? repoQubeConfigPath(targetPath) : "";
   const globalConfig = readQubeInitConfig(globalConfigPath);
@@ -3097,7 +3239,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   const aieTool = resolveAieInitToolTargets(setup.hosts as readonly InstallHost[])[0];
   const aiuTool = resolveAiuInitToolTargets(setup.hosts as readonly InstallHost[])[0] ?? "none";
-  const prospectiveRoot = scope === "repository" && gitState?.repositoryRoot === null;
+  const prospectiveRoot = prospectivePrerequisite;
   const childEnvironment = scope === "repository"
     ? Object.freeze({
         ...environment.env,
@@ -3200,7 +3342,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const targetArgument = readString(args.target);
   const rawPostInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
   const rawProviderActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
-  const providerPrerequisitesReady = scope === "repository" && !prospectiveRoot && repositoryHasOrigin(targetPath);
+  const providerPrerequisitesReady = scope === "repository" && !prospectiveRoot
+    && prerequisiteCheck(prerequisites, "remote")?.status === "ready";
   const postInitActions = Object.freeze(rawPostInitActions.map(action => initOwnedAction(action, scope, targetArgument, "pending")));
   const providerActions = Object.freeze(rawProviderActions.map(action => initOwnedAction(
     action,
@@ -3232,12 +3375,15 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
   const plan = {
     scope,
+    prerequisites,
+    prerequisiteReadiness: repositoryReadinessSummary(prerequisites),
     ...(scope === "repository" ? { target: targetPath } : {}),
     resolved: setup,
     sources: resolved.sources,
     deviations: resolved.deviations,
     components: planInvocations.map((invocation, index) => planRow(invocation, planResults[index]!)),
     providerActions,
+    identityActions: gitIdentityActions.map(action => Object.freeze({ key: action.key, scope: action.scope, status: "planned" })),
     postInitActions,
     diagnosticActions: scope === "repository"
       ? Object.freeze([Object.freeze({
@@ -3248,14 +3394,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       : Object.freeze([]),
     pendingExternalActions,
     packageRequirements,
-    ...(scope === "repository" ? {
-      git: {
-        operation: prospectiveRoot ? "initialize" : "skip",
-        status: prospectiveRoot ? (gitState?.gitAvailable ? "planned" : "unavailable") : "ready",
-        baseBranch: "main",
-        reason: gitState?.reason,
-      },
-    } : {}),
+    ...(scope === "repository" ? { git: { operation: prospectiveRoot ? "initialize" : "skip", status: prospectiveRoot ? "planned" : "ready", baseBranch: "main", reason: repositoryCheck?.summary ?? null } } : {}),
     config: {
       scope: configScope,
       path: selectedConfigPath,
@@ -3302,6 +3441,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         scope,
         mode: "plan",
         changed: planChanged,
+        prerequisites,
         answers,
         ...(configuration ? { configuration } : {}),
         primaryHarness: primaryHarnessPrompt,
@@ -3335,38 +3475,6 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   let gitInitialized = false;
   if (prospectiveRoot) {
-    const gitUnavailable = gitState?.gitAvailable === false;
-    if (gitUnavailable) {
-      const error = "Git is required to initialize the selected repository target but is not available on PATH.";
-      const nextAction = "Install Git, then rerun `qube init <target> --git-init`.";
-      const payload = { ok: false, command: "init", scope, mode: "apply", changed: false, answers, plan, failedAction: "Git initialization", error, nextAction };
-      return json
-        ? { exitCode: 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
-        : { exitCode: 1, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
-    }
-    let gitApproved = flags["git-init"] === true;
-    if (!gitApproved && !json && !useDefaults) {
-      gitApproved = await promptConfirm({
-        command: initCommand,
-        promptName: "initialize Git in the selected repository target",
-        jsonMode: false,
-        yes: false,
-        clack: {
-          message: `QUBE repository setup requires Git. Initialize Git in ${targetPath}?`,
-          initialValue: true,
-        },
-      });
-    }
-    if (!gitApproved) {
-      const error = json || useDefaults
-        ? "Repository initialization outside Git requires --git-init in non-interactive mode."
-        : "Git initialization was declined; no changes were made.";
-      const nextAction = `Rerun \`qube init ${readString(args.target) ?? "."} --git-init\` when you are ready to initialize this repository.`;
-      const payload = { ok: false, command: "init", scope, mode: "apply", changed: false, answers, plan, failedAction: "Git initialization", error, nextAction };
-      return json
-        ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
-        : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
-    }
     const initialized = spawnSync("git", ["-C", targetPath, "init", "--initial-branch", "main"], {
       encoding: "utf8",
       windowsHide: true,
@@ -3380,6 +3488,21 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         : { exitCode: initialized.status || 1, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
     }
     gitInitialized = true;
+  }
+
+  for (const identityAction of gitIdentityActions) {
+    const args = identityAction.scope === "repository"
+      ? ["-C", targetPath, "config", "--local", identityAction.key, identityAction.value]
+      : ["config", "--global", identityAction.key, identityAction.value];
+    const configured = spawnSync("git", args, { encoding: "utf8", windowsHide: true });
+    if (configured.status !== 0) {
+      const error = "Git identity configuration failed.";
+      const nextAction = `Configure ${identityAction.key} manually, then rerun \`${initRerunCommand(scope, targetArgument)}\`.`;
+      const payload = { ok: false, command: "init", scope, mode: "apply", changed: gitInitialized, answers, prerequisites, plan, failedAction: "Commit identity", error, nextAction };
+      return json
+        ? { exitCode: configured.status || 1, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr }
+        : { exitCode: configured.status || 1, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
+    }
   }
 
   const applyInvocations = buildInvocations(false);
@@ -3449,7 +3572,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       failedApplyAction = invocation.id;
     }
   }
-  const changed = gitInitialized || configOperation !== "skip" || applySteps.some(step => step.status === "changed");
+  const changed = gitInitialized || gitIdentityActions.length > 0 || configOperation !== "skip" || applySteps.some(step => step.status === "changed");
   let reviewPublisherReadiness: InitPublisherReadiness | undefined;
   if (!failedApply && reviewProvider === "github" && setup.review.publisher === "github-app") {
     const doctorCwd = scope === "global" ? homeDirectory(environment) : targetPath;
@@ -3516,7 +3639,11 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
 
   const readiness = pendingExternalActions.length > 0 || aggregateDiagnostics?.status === "attention" ? "pending" : "ready";
-  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, plan, ...(configuration ? { configuration } : {}), apply, readiness, pendingExternalActions };
+  if (scope === "repository") {
+    const localRefresh = await evaluateGitPrerequisites({ cwd: targetPath, policy: QUBE_INIT_GIT_POLICY, offline: true });
+    prerequisites = preserveVerifiedRemoteTransport(prerequisites, localRefresh);
+  }
+  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, prerequisites, prerequisiteReadiness: repositoryReadinessSummary(prerequisites), plan, ...(configuration ? { configuration } : {}), apply, readiness, pendingExternalActions };
   if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   return {
     exitCode: 0,
@@ -3524,6 +3651,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       scope,
       mode: "apply",
       changed,
+      prerequisites,
       answers,
       ...(configuration ? { configuration } : {}),
       primaryHarness: primaryHarnessPrompt,

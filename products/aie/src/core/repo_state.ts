@@ -15,6 +15,50 @@ export interface RepoRemote {
   url: string;
 }
 
+export type RepositoryPrerequisiteStatus = 'ready' | 'needs-action' | 'unverified' | 'not-required';
+
+export type RepositoryPrerequisiteStage =
+  | 'local-setup'
+  | 'issue-workflow'
+  | 'branch'
+  | 'review'
+  | 'completion'
+  | 'shipping';
+
+export type RepositoryPrerequisiteReasonCode =
+  | 'git-not-found'
+  | 'git-unsupported'
+  | 'not-a-repository'
+  | 'repository-unreadable'
+  | 'identity-name-missing'
+  | 'identity-email-missing'
+  | 'head-missing'
+  | 'detached-head'
+  | 'linked-worktree'
+  | 'dirty-worktree'
+  | 'base-ref-missing'
+  | 'base-ref-stale'
+  | 'remote-missing'
+  | 'remote-unreachable'
+  | 'remote-auth-failed'
+  | 'remote-unverified';
+
+export interface RepositoryPrerequisiteCheck {
+  id: 'git' | 'repository' | 'identity-name' | 'identity-email' | 'head' | 'branch' | 'worktree' | 'dirty-worktree' | 'base-ref' | 'remote' | 'remote-transport';
+  requiredFor: RepositoryPrerequisiteStage[];
+  status: RepositoryPrerequisiteStatus;
+  reasonCode: RepositoryPrerequisiteReasonCode | null;
+  summary: string;
+  nextAction: string | null;
+  docsUrl: string;
+  safeDetails: Record<string, string | boolean | number | null>;
+}
+
+export interface RepositoryPrerequisites {
+  status: RepositoryPrerequisiteStatus;
+  checks: RepositoryPrerequisiteCheck[];
+}
+
 export interface DirtyState {
   dirty: boolean;
   paths: string[];
@@ -50,6 +94,7 @@ export interface PathSignal {
 
 export interface RepoState {
   root: string | null;
+  prerequisites: RepositoryPrerequisites;
   remotes: RepoRemote[];
   baseRef: RepoRef;
   activeRef: RepoRef | null;

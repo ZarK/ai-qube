@@ -218,6 +218,19 @@ describe('pre-start lifecycle policy', () => {
     assert.equal(policy.worktree.isWorktree, true);
   });
 
+  it('blocks new issue work on a dirty checkout with the shared reason code', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'local-change.txt'), 'preserve me\n');
+    const config = { ...getDefaults(), noWorktree: false, blockOnOpenPRs: false };
+    const policy = await buildPreStartPolicy({ config, issueNumber: 93, bypassForResume: false, exec: async args => success(args, '[]'), cwd: repo });
+    const dirtyCheck = policy.checks.find(check => check.name === 'dirty-worktree');
+
+    assert.equal(policy.ok, false);
+    assert.equal(dirtyCheck.action.status, 'failed');
+    assert.equal(dirtyCheck.action.details.reasonCode, 'dirty-worktree');
+    assert.match(policy.blockers.join('\n'), /Dirty git checkout detected/);
+  });
+
   it('does not attach blocker failures when configured policies are disabled', async () => {
     const repo = makeGitRepo();
     const linkedParent = mkdtempSync(join(tmpdir(), 'aie-lifecycle-linked-'));
@@ -269,8 +282,8 @@ describe('pre-start lifecycle policy', () => {
     assert.equal(policy.ok, true);
     assert.equal(policy.bypassed, true);
     assert.equal(policy.blockingPullRequests.length, 0);
-    assert.deepEqual(policy.checks.map(check => check.skipped), [true, true, true, true]);
-    assert.deepEqual(policy.checks.map(check => check.action.failure), [undefined, undefined, undefined, undefined]);
+    assert.deepEqual(policy.checks.map(check => check.skipped), [true, true, true, true, true]);
+    assert.deepEqual(policy.checks.map(check => check.action.failure), [undefined, undefined, undefined, undefined, undefined]);
     assert.match(policy.reason, /Resuming the single active S-InProgress issue #94/);
   });
 

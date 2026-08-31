@@ -3,6 +3,7 @@ import { Queue } from './queue/index.js';
 import { BaseRefStatus, PullRequestSummary, WorktreeStatus } from './repo/index.js';
 import { isHelpToken } from './command_metadata.js';
 import type { JsonObject } from './core/json_value.js';
+import type { RepositoryPrerequisites } from './core/repo_state.js';
 
 export type LifecycleMutation = 'github' | 'git' | 'none';
 export type LifecycleActionStatus = 'planned' | 'completed' | 'failed' | 'skipped';
@@ -72,7 +73,7 @@ export interface LifecycleActionSummary {
 }
 
 export interface PreStartPolicyCheck {
-  name: 'worktree' | 'open-pull-requests' | 'base-ref' | 'review-lock';
+  name: 'worktree' | 'dirty-worktree' | 'open-pull-requests' | 'base-ref' | 'review-lock';
   ok: boolean;
   skipped: boolean;
   reason?: string;
@@ -83,6 +84,7 @@ export interface PreStartPolicyResult {
   ok: boolean;
   bypassed: boolean;
   reason?: string;
+  prerequisites: RepositoryPrerequisites;
   worktree: WorktreeStatus;
   baseRef: BaseRefStatus;
   blockingPullRequests: PullRequestSummary[];

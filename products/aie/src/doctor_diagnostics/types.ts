@@ -3,6 +3,7 @@ import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, Milestone
 import type { GateStatusResult } from '../gates/index.js';
 import type { WorkflowReadinessDiagnostics } from './workflow_readiness.js';
 import type { ReviewModelHostId } from '../core/policy.js';
+import type { RepositoryPrerequisites } from '../core/repo_state.js';
 
 export interface DoctorDiagnostics {
   ok: boolean;
@@ -12,6 +13,7 @@ export interface DoctorDiagnostics {
   nodeVersion: string;
   nodeSatisfies: boolean;
   git: boolean;
+  prerequisites: RepositoryPrerequisites;
   gh: boolean;
   ghAuthenticated: boolean;
   currentBranch: string;
@@ -373,4 +375,5 @@ export interface DoctorOkInputs {
   pullRequestError?: string;
   instructionInstallOk?: boolean;
   staleReviewLockCount?: number;
+  repositoryPrerequisitesReady?: boolean;
 }

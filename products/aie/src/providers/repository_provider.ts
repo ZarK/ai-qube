@@ -35,7 +35,7 @@ export interface BranchInspection {
 export interface RepositoryProvider {
   readonly id: 'local-git';
   capabilities(): RepositoryProviderCapabilities;
-  inspect(policy: ExecutorPolicy): Promise<RepoState>;
+  inspect(policy: ExecutorPolicy, options?: { offline?: boolean }): Promise<RepoState>;
   inspectBranch(item: WorkItem, policy: ExecutorPolicy): Promise<BranchInspection>;
   planBranchSuggestion(item: WorkItem, policy: ExecutorPolicy): Promise<ActionPlan>;
   planBranchCheck(item: WorkItem, policy: ExecutorPolicy): Promise<ActionPlan>;

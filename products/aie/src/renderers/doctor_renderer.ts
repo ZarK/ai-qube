@@ -67,6 +67,11 @@ export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   lines.push(`CWD: ${diagnostics.cwd}`);
   lines.push(`Branch: ${diagnostics.currentBranch}`);
   lines.push(`git: ${diagnostics.git ? 'available' : 'missing'}`);
+  lines.push('Repository prerequisites:');
+  for (const prerequisite of diagnostics.prerequisites.checks) {
+    const reason = prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : '';
+    lines.push(`- ${prerequisite.id}: ${prerequisite.status}${reason}; required for ${prerequisite.requiredFor.join(', ')} — ${prerequisite.summary}${prerequisite.nextAction ? ` Next: ${prerequisite.nextAction}` : ''}`);
+  }
   lines.push(`gh: ${diagnostics.gh ? (diagnostics.ghAuthenticated ? 'authenticated' : 'not authenticated') : 'missing'}`);
   lines.push(`Worktree: ${diagnostics.isWorktree ? (diagnostics.repositoryPolicy.noWorktree ? 'yes (policy violation — switch to primary checkout)' : 'yes (allowed by policy)') : 'no'}`);
   lines.push(`Config: ${diagnostics.configPresent ? (diagnostics.configValid ? 'valid' : 'invalid') : 'not found (using defaults)'}`);
