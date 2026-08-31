@@ -464,6 +464,9 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     route: parseReviewRouteProvenance(value.route, redact),
     isolation: value.isolation === 'read-only' ? 'read-only' : null,
     invocationId: readNullableString(value.invocationId),
+    resultDecodeDiagnostic: value.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
+      ? 'cursor-bounded-preface-normalized'
+      : null,
   };
 }
 

@@ -20,6 +20,8 @@ const {
   resolveModelReviewCheckoutState,
   watchModelReviewCheckout,
 } = require('../dist/app/model_review_runner.js');
+const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
+const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
 
 function reviewInput(repoRoot, host = 'grok-build') {
   const plan = {
@@ -69,6 +71,17 @@ function laneResult() {
     coverage: [{ area: 'code-quality', status: 'clear' }],
     preconditions: [],
   };
+}
+
+function cursorEnvelope(result) {
+  return JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result,
+    session_id: 'cursor-preface-session',
+    model: 'grok-4.6[effort=high,fast=true]',
+  });
 }
 
 describe('model review runner', () => {
@@ -409,14 +422,6 @@ describe('model review runner', () => {
   it('accepts one bounded Cursor ACP preface and retains only its fixed local diagnostic', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-preface-'));
     const rawPreface = 'Cursor inspected the current head; private host chatter must not persist. ';
-    const cursorEnvelope = result => JSON.stringify({
-      type: 'result',
-      subtype: 'success',
-      is_error: false,
-      result,
-      session_id: 'cursor-preface-session',
-      model: 'grok-4.6[effort=high,fast=true]',
-    });
     const accepted = await runModelReview({
       ...reviewInput(repoRoot, 'cursor'),
       transport: 'acp',
@@ -437,11 +442,48 @@ describe('model review runner', () => {
     assert.equal(accepted.evidence.runnerProvenance.resultDecodeDiagnostic, 'cursor-bounded-preface-normalized');
     assert.doesNotMatch(JSON.stringify(accepted.evidence), /private host chatter/);
 
-    const trailing = await runModelReview({
+    const evidenceDir = join(repoRoot, '.qube', 'aie', 'reviews', '309', '310', 'abc123');
+    mkdirSync(evidenceDir, { recursive: true });
+    writeFileSync(join(evidenceDir, 'code-quality.json'), `${JSON.stringify({
+      version: 1,
+      issueNumber: 309,
+      prNumber: 310,
+      headSha: 'abc123',
+      profile: 'local-focused',
+      adapter: 'local-host',
+      lane: 'code-quality',
+      ...accepted.evidence,
+    }, null, 2)}\n`);
+    const reloaded = readCurrentHeadLaneEvidence(repoRoot, 309, 310, 'abc123', 'code-quality');
+    assert.equal(reloaded.runnerProvenance.resultDecodeDiagnostic, 'cursor-bounded-preface-normalized');
+    const trustedPath = writeTrustedRoutedProvenance(repoRoot, 309, 310, 'abc123', reloaded);
+    assert.equal(JSON.parse(readFileSync(trustedPath, 'utf8')).resultDecodeDiagnostic, 'cursor-bounded-preface-normalized');
+  });
+
+  it('fails closed in a separate Cursor production-path probe for ambiguous, trailing, stale, and wrong-lane results', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-negative-probe-'));
+    const cursorInput = {
       ...reviewInput(repoRoot, 'cursor'),
       transport: 'acp',
       transportModel: 'grok-4.6[effort=high,fast=true]',
       resolveExecutable: async () => 'cursor-agent.exe',
+    };
+
+    const ambiguous = await runModelReview({
+      ...cursorInput,
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: cursorEnvelope(`${JSON.stringify(laneResult())} ${JSON.stringify(laneResult())}`),
+      }),
+    });
+    assert.equal(ambiguous.evidence, null);
+    assert.equal(ambiguous.reasonCode, 'model-route-result-decode');
+
+    const trailing = await runModelReview({
+      ...cursorInput,
       runProcess: async () => ({
         exitCode: 0,
         stderr: '',
@@ -457,10 +499,7 @@ describe('model review runner', () => {
     const wrongHead = laneResult();
     wrongHead.headSha = 'stale-head';
     const stale = await runModelReview({
-      ...reviewInput(repoRoot, 'cursor'),
-      transport: 'acp',
-      transportModel: 'grok-4.6[effort=high,fast=true]',
-      resolveExecutable: async () => 'cursor-agent.exe',
+      ...cursorInput,
       runProcess: async () => ({
         exitCode: 0,
         stderr: '',
@@ -475,10 +514,7 @@ describe('model review runner', () => {
     const wrongLane = laneResult();
     wrongLane.lane = 'security';
     const mismatched = await runModelReview({
-      ...reviewInput(repoRoot, 'cursor'),
-      transport: 'acp',
-      transportModel: 'grok-4.6[effort=high,fast=true]',
-      resolveExecutable: async () => 'cursor-agent.exe',
+      ...cursorInput,
       runProcess: async () => ({
         exitCode: 0,
         stderr: '',

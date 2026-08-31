@@ -1412,6 +1412,9 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     route: provenance.route,
     isolation: provenance.isolation,
     invocationId: provenance.invocationId,
+    resultDecodeDiagnostic: provenance.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
+      ? 'cursor-bounded-preface-normalized'
+      : null,
     recordedAt: new Date().toISOString(),
   }, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   return path;
