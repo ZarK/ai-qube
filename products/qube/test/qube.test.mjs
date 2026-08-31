@@ -2321,9 +2321,11 @@ describe("qube init orchestrator", () => {
     assert.deepEqual(readInitCalls(packageRoot), []);
   });
 
-  it("plans a real inherited-only repository without composer or product configuration copies", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-real-inherited-cwd-"));
-    const isolatedHome = mkdtempSync(path.join(tmpdir(), "qube-init-real-inherited-home-"));
+  it("plans an inherited-only repository without composer or product configuration copies", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-inherited-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-inherited-cwd-"));
+    const isolatedHome = mkdtempSync(path.join(tmpdir(), "qube-init-inherited-home-"));
+    createInitShims(packageRoot);
     initializeRepository(cwd);
     writeInitSetup(userQubeConfigPath(isolatedHome), completeInitSetup({
       review: { mode: "external", externalReviewers: ["coderabbit"], publisher: "user" },
@@ -2335,6 +2337,11 @@ describe("qube init orchestrator", () => {
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.plan.config.operation, "skip");
     assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    const planCalls = readInitCalls(packageRoot);
+    assert.equal(planCalls.length, 4);
+    assert.ok(planCalls.every(call => call.phase === "plan"));
+    for (const call of planCalls) assert.deepEqual(call.layerContext?.repository, { version: 1 });
+    assert.ok(planCalls.every(call => Object.values(call.layerContext?.sources ?? {}).every(source => source !== "repository")));
     const copiedConfigActions = payload.plan.components.flatMap(component => component.actions ?? []).filter(action => {
       if (!action || typeof action !== "object" || !["create", "update", "update-config"].includes(action.operation)) return false;
       const actionPath = action.path ?? action.relativePath ?? action.absolutePath;
@@ -2353,7 +2360,6 @@ describe("qube init orchestrator", () => {
     ]) {
       assert.equal(existsSync(configPath), false, configPath);
     }
-    assert.equal(existsSync(path.join(cwd, "AGENTS.md")), true);
   });
 
   it("keeps package placement independent from global and repository configuration scope", () => {
