@@ -520,6 +520,33 @@ describe('review publisher doctor', () => {
     assert.match(sameAuthor.nextAction, /different from the pull request author/);
   });
 
+  it('does not resolve or probe a publisher after shared GitHub readiness fails', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    let resolverCalls = 0;
+    let repositoryCalls = 0;
+    const result = await runReviewDoctor({
+      config,
+      githubReadiness: {
+        status: 'needs-action', reasonCode: 'missing-cli', summary: 'GitHub CLI is unavailable.',
+        nextAction: 'Install GitHub CLI.', docsUrl: 'https://example.test/docs', cliVersion: null,
+        host: 'github.com', repository: 'owner/repository', accountLogin: null,
+        credentialSource: { kind: 'none', name: null }, roles: ['review'], capabilities: [],
+      },
+      resolvePublisher: async () => { resolverCalls += 1; return readyResolver(config.providers.review.publisher, { mint: true }); },
+      probeRepositoryAccess: async () => { repositoryCalls += 1; return successfulRepositoryProbe(); },
+      mintProbe: true,
+    });
+    assert.equal(result.readiness, 'unavailable');
+    assert.equal(result.probe.attempted, false);
+    assert.equal(result.githubReadiness.reasonCode, 'missing-cli');
+    assert.equal(resolverCalls, 0);
+    assert.equal(repositoryCalls, 0);
+  });
+
   it('reports unavailable when the configured publisher cannot access the current repository', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {

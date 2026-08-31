@@ -158,6 +158,23 @@ Git transport access is separate from a provider connection. For example,
 prove that Git can fetch or push a remote. QUBE never describes Git as logged
 in, and a read-only Git probe never claims write permission.
 
+### GitHub connection prerequisite
+
+After repository provider choices resolve, QUBE shows a GitHub connection
+section only when work, review, CI, setup-source, or a pending provider action
+uses GitHub. The section reports the selected roles, derived host and
+repository, CLI version, safe credential source, active account, capability
+rows, stable reason code, and one next action. User-global and fully non-GitHub
+initialization do not invoke `gh`.
+
+Missing or invalid GitHub readiness does not undo safe local setup. Dependent
+provider actions remain pending, and a later `qube init` resumes them without
+rewriting unchanged files. Offline and dry-run paths do not spawn `gh`.
+
+See the [GitHub provider support guide](./qube-github-provider-support.md) for
+installation, account and host selection, environment-token precedence,
+least-privilege permissions, Enterprise support, and reason-code recovery.
+
 Run offline diagnostics when network access is unavailable:
 
 ```sh

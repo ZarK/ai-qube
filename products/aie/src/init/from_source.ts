@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { AIE_CONFIG_FILENAME, validateConfig } from '../config/index.js';
@@ -8,6 +7,7 @@ import { isReviewMode } from '../review_mode.js';
 import { isolatedReviewHostPackageName } from '../app/review_host_adapters.js';
 import { isolatedReviewHostsOnMachine, type GuideMachine } from './questions.js';
 import type { InitFromReport } from './types.js';
+import { evaluateGitHubReadiness, runGh, type GitHubReadiness } from '../providers/github_adapter_exports.js';
 
 export type FromSourceFailure = 'absolute-path' | 'parent-directory' | 'symlink-escape' | 'url' | 'missing' | 'unreadable' | 'invalid-config' | 'forged-marker' | 'repo-fetch-failed';
 
@@ -125,12 +125,8 @@ export function parseAdoptedConfig(rawText: string): { ok: true; record: Record<
 }
 
 export async function fetchGithubRepoConfig(slug: string): Promise<string> {
-  const output = execFileSync('gh', ['api', `repos/${slug}/contents/${AIE_CONFIG_FILENAME}`], {
-    encoding: 'utf8',
-    timeout: 15_000,
-    maxBuffer: 1024 * 1024,
-  });
-  const parsed = JSON.parse(output) as { content?: string; encoding?: string; message?: string };
+  const output = await runGh(['api', '--hostname', 'github.com', `repos/${slug}/contents/${AIE_CONFIG_FILENAME}`], { timeoutMs: 15_000 });
+  const parsed = JSON.parse(output.stdout) as { content?: string; encoding?: string; message?: string };
   if (typeof parsed.content !== 'string') {
     throw new Error(parsed.message ?? `GitHub did not return ${AIE_CONFIG_FILENAME} for ${slug}.`);
   }
@@ -141,6 +137,7 @@ export async function adoptFromSource(input: {
   spec: string;
   cwd: string;
   fetchRepoConfig?: (slug: string) => Promise<string>;
+  evaluateReadiness?: (options: Parameters<typeof evaluateGitHubReadiness>[0]) => Promise<GitHubReadiness>;
   machine: GuideMachine;
 }): Promise<AdoptedSource | AdoptedSourceError> {
   const kind = classifyFromSpec(input.spec);
@@ -154,6 +151,18 @@ export async function adoptFromSource(input: {
   if (kind === 'repo' && (!pathResult.ok && pathResult.failure === 'missing')) {
     const slug = input.spec.trim();
     try {
+      const githubReadiness = input.evaluateReadiness
+        ? await input.evaluateReadiness({ cwd: input.cwd, repository: slug, roles: ['setup-source'], env: process.env })
+        : input.fetchRepoConfig
+          ? ({ status: 'ready', reasonCode: 'ready', summary: 'The injected source fetcher owns readiness for this call.', nextAction: null } as const)
+          : await evaluateGitHubReadiness({ cwd: input.cwd, repository: slug, roles: ['setup-source'], env: process.env });
+      if (githubReadiness.status !== 'ready') {
+        return {
+          ok: false,
+          failure: 'repo-fetch-failed',
+          error: `GitHub setup source is ${githubReadiness.status} (${githubReadiness.reasonCode}): ${githubReadiness.summary} ${githubReadiness.nextAction ?? ''}`.trim(),
+        };
+      }
       rawText = await (input.fetchRepoConfig ?? fetchGithubRepoConfig)(slug);
       sourceLabel = slug;
       adoptedKind = 'repo';

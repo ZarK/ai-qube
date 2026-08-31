@@ -110,6 +110,8 @@ export class GhMalformedOutputError extends Error {
 export interface RunGhOptions {
   cwd?: string;
   exec?: GhExec;
+  /** Environment used by the child process. Values are never returned or logged. */
+  env?: Readonly<Record<string, string | undefined>>;
   /**
    * Optional short-lived token for this invocation only.
    * Sets GH_TOKEN in the process environment for the child call when the default
@@ -127,6 +129,7 @@ export type GhExecOptions = {
   token?: string | null;
   timeoutMs?: number;
   signal?: AbortSignal;
+  env?: Readonly<Record<string, string | undefined>>;
 };
 
 export type GhExec = (args: string[], cwd?: string, options?: GhExecOptions) => Promise<GhRunResult>;
@@ -137,7 +140,7 @@ async function defaultGhExec(args: string[], cwd = process.cwd(), options: GhExe
 
   try {
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...(options.env ?? process.env),
       GH_PAGER: '',
       CLICOLOR: '0',
       NO_COLOR: '1',
@@ -145,9 +148,22 @@ async function defaultGhExec(args: string[], cwd = process.cwd(), options: GhExe
     if (options.token === null) {
       delete env.GH_TOKEN;
       delete env.GITHUB_TOKEN;
+      delete env.GH_ENTERPRISE_TOKEN;
+      delete env.GITHUB_ENTERPRISE_TOKEN;
     } else if (typeof options.token === 'string' && options.token.trim() !== '') {
-      env.GH_TOKEN = options.token;
-      delete env.GITHUB_TOKEN;
+      const hostIndex = args.indexOf('--hostname');
+      const host = hostIndex >= 0 ? args[hostIndex + 1]?.toLowerCase() : undefined;
+      if (host && host !== 'github.com' && !host.endsWith('.ghe.com')) {
+        env.GH_ENTERPRISE_TOKEN = options.token;
+        delete env.GITHUB_ENTERPRISE_TOKEN;
+        delete env.GH_TOKEN;
+        delete env.GITHUB_TOKEN;
+      } else {
+        env.GH_TOKEN = options.token;
+        delete env.GITHUB_TOKEN;
+        delete env.GH_ENTERPRISE_TOKEN;
+        delete env.GITHUB_ENTERPRISE_TOKEN;
+      }
     }
     const execOptions: {
       cwd: string;
@@ -238,12 +254,12 @@ export async function runGh(
   args: string[],
   options: RunGhOptions = {}
 ): Promise<GhRunResult> {
-  const { cwd, exec, token, timeoutMs, signal } = options;
+  const { cwd, exec, token, timeoutMs, signal, env } = options;
   const runner = exec ?? defaultGhExec;
   const execOptions: GhExecOptions | undefined =
-    token === undefined && timeoutMs === undefined && signal === undefined
+    token === undefined && timeoutMs === undefined && signal === undefined && env === undefined
       ? undefined
-      : { token, timeoutMs, signal };
+      : { token, timeoutMs, signal, env };
   const result = await runner(args, cwd, execOptions);
   return {
     args: result.args,

@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode, ReviewPublisherConfigField, ReviewPublisherConfigSource } from './config/index.js';
 import type { GitHubReviewPublisherIdentity, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
-import { resolveGitHubReviewPublisher, runGh } from './providers/github_adapter_exports.js';
+import { resolveGitHubReviewPublisher, runGh, type GitHubReadiness } from './providers/github_adapter_exports.js';
 import { runGitLabReviewDoctor, type GitLabReviewDoctorProber } from './gitlab_review_doctor.js';
+import { evaluateConfiguredGitHubReadiness } from './github_readiness.js';
 
 export const REVIEW_PUBLISHER_ROLE_BOUNDARY = 'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.';
 
@@ -76,6 +77,7 @@ export interface ReviewDoctorResult {
   readonly probe: ReviewPublisherProbe;
   readonly nextAction: string;
   readonly roleBoundary: string;
+  readonly githubReadiness?: GitHubReadiness;
 }
 
 export type ReviewPublisherResolver = (
@@ -120,6 +122,7 @@ export interface RunReviewDoctorOptions {
   readonly probeRepositoryAccess?: ReviewRepositoryAccessProber;
   readonly probePublisherAvatar?: ReviewAvatarProber;
   readonly probeGitLabReview?: GitLabReviewDoctorProber;
+  readonly githubReadiness?: GitHubReadiness;
 }
 
 export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
@@ -573,10 +576,18 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   const avatarProber = options.probePublisherAvatar ?? probePublisherAvatar;
   const probeTimeoutMs = options.probeTimeoutMs ?? REVIEW_DOCTOR_PROBE_TIMEOUT_MS;
   const repositoryRequired = options.repositoryRequired !== false;
+  const usesInjectedProbe = Boolean(options.resolvePublisher || options.probeRepositoryAccess || options.probePublisherAvatar);
+  const githubReadiness = options.githubReadiness ?? (usesInjectedProbe
+    ? injectedGitHubReadiness()
+    : options.config
+      ? await evaluateConfiguredGitHubReadiness(options.config, { cwd: options.cwd, scope: repositoryRequired ? 'repository' : 'global' })
+      : await (await import('./providers/github_adapter_exports.js')).evaluateGitHubReadiness({ cwd: options.cwd, roles: ['review'], publisher }));
   let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
   try {
-    if (!configured) {
+    if (githubReadiness.status === 'needs-action') {
+      identity = unavailableIdentity(mode, `GitHub readiness is blocked (${githubReadiness.reasonCode}): ${githubReadiness.summary}`);
+    } else if (!configured) {
       // Default user publisher is unconfigured for distinct review publishing.
       // Do not mint or call live identity endpoints for this no-op readiness path.
       identity = {
@@ -609,7 +620,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     identity = unavailableIdentity(mode, sanitizeReason(error instanceof Error ? error.message : String(error)) ?? 'Publisher resolution failed.');
   }
   identity = { ...identity, fallbackReason: sanitizeReason(identity.fallbackReason) };
-  const attempted = configured && missingFields.length === 0 && options.mintProbe === true;
+  const attempted = githubReadiness.status !== 'needs-action' && configured && missingFields.length === 0 && options.mintProbe === true;
   let repository = notRunRepositoryProbe();
   // Skip repository probing when identity resolution failed or no access token is available
   // (missing credential env/key must not be reported as a repository-access problem).
@@ -656,7 +667,12 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
       avatar = avatarProbeFrom({ botAvatarUrl: null, ownerAvatarUrl: repository.ownerAvatarUrl ?? null });
     }
   }
-  const readiness = readinessFor(identity, missingFields, configured, repository, repositoryRequired);
+  const publisherReadiness = readinessFor(identity, missingFields, configured, repository, repositoryRequired);
+  const readiness: ReviewPublisherReadiness = githubReadiness.status === 'needs-action'
+    ? 'unavailable'
+    : githubReadiness.status === 'unverified' && publisherReadiness === 'ready'
+      ? 'degraded'
+      : publisherReadiness;
   // Do not coerce unobservable fine-grained-token PR permission (unknown) into missing.
   const effectivePermissionStatus = identity.permissionStatus === 'same-author'
     ? 'same-author'
@@ -699,14 +715,39 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     publisherSource: options.publisherSource ?? 'default',
     publisherFieldSources: options.publisherFieldSources ?? {},
     probe,
-    nextAction: nextActionFor(readiness, mode, missingFields, probe),
+    nextAction: githubReadiness.status === 'needs-action'
+      ? githubReadiness.nextAction ?? 'Repair GitHub readiness, then rerun `aie review doctor --json`.'
+      : nextActionFor(readiness, mode, missingFields, probe),
     roleBoundary: REVIEW_PUBLISHER_ROLE_BOUNDARY,
+    githubReadiness,
   };
+}
+
+function injectedGitHubReadiness(): GitHubReadiness {
+  return Object.freeze({
+    status: 'ready',
+    reasonCode: 'ready',
+    summary: 'The injected publisher probe owns readiness for this call.',
+    nextAction: null,
+    docsUrl: 'https://github.com/ZarK/ai-qube/blob/main/docs/qube-github-provider-support.md',
+    cliVersion: null,
+    host: 'github.com',
+    repository: null,
+    accountLogin: null,
+    credentialSource: Object.freeze({ kind: 'none', name: null }),
+    roles: Object.freeze(['review'] as const),
+    capabilities: Object.freeze([]),
+  });
 }
 
 export function formatReviewDoctor(result: ReviewDoctorResult): string {
   const references = Object.entries(result.secretReferences).map(([name, value]) => `${name}=${value}`).join(', ') || 'none';
   return [
+    ...(result.githubReadiness ? [
+      `GitHub connection: ${result.githubReadiness.status} (${result.githubReadiness.reasonCode})`,
+      `GitHub target: ${result.githubReadiness.host ?? 'not resolved'}/${result.githubReadiness.repository ?? 'not resolved'}`,
+      `GitHub credential: ${result.githubReadiness.credentialSource.kind}${result.githubReadiness.credentialSource.name ? ` (${result.githubReadiness.credentialSource.name})` : ''}`,
+    ] : []),
     `Review publisher readiness: ${result.readiness}`,
     `Mode: ${result.mode}`,
     `Identity: ${result.identityClass}${result.login ? ` (${result.login})` : ''}`,

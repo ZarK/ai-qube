@@ -43,6 +43,9 @@ export {
   redactRemoteUrl,
   repositoryPrerequisiteStatusFor,
 } from './providers/local/git_prerequisites.js';
+export { evaluateConfiguredGitHubReadiness, selectedGitHubRoles } from './github_readiness.js';
+export type { ConfiguredGitHubReadinessOptions } from './github_readiness.js';
+export type { GitHubReadiness } from './providers/github_adapter_exports.js';
 export type {
   EvaluateGitPrerequisitesOptions,
 } from './providers/local/git_prerequisites.js';

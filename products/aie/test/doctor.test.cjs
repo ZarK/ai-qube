@@ -23,6 +23,17 @@ function binRun(args, cwd = process.cwd()) {
   return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
 }
 
+const readyGitHubReadiness = Object.freeze({
+  status: 'ready', reasonCode: 'ready', summary: 'GitHub review publication is ready.', nextAction: null,
+  docsUrl: 'docs/qube-github-provider-support.md', cliVersion: '2.99.0', host: 'github.com', repository: 'acme/widgets', accountLogin: 'octocat',
+  credentialSource: Object.freeze({ kind: 'stored', name: 'gh credential store' }), roles: Object.freeze(['review']), capabilities: Object.freeze([]),
+});
+const unverifiedGitHubReadiness = Object.freeze({
+  ...readyGitHubReadiness,
+  status: 'unverified', reasonCode: 'unverified', summary: 'Pull request review write permission is unverified.',
+  nextAction: 'Confirm permission to publish pull request reviews, then rerun doctor.',
+});
+
 describe('doctor diagnostics', () => {
   it('reports managed instruction health and configured instruction policy', async () => {
     const repo = makeGitRepo();
@@ -287,7 +298,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 42\nsize: 128\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo, read:org\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.enabled, true);
@@ -310,7 +321,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'missing');
@@ -332,7 +343,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bavail: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
@@ -351,7 +362,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 50000\nsize: 100000\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
@@ -371,13 +382,13 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: read:org\n',
+      githubReadiness: unverifiedGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
     assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'needs-action');
     assert.equal(diagnostics.checks.githubReviewAuth.authenticated, true);
-    assert.deepEqual(diagnostics.checks.githubReviewAuth.scopes, ['read:org']);
+    assert.equal(diagnostics.checks.githubReviewAuth.scopes, null);
     assert.match(diagnostics.checks.githubReviewAuth.nextAction, /pull request reviews/);
   });
 
@@ -397,7 +408,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => {
         probed.push(`${host}:${model}`);
         return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok-build' ? true : null, diagnostic: null };
@@ -416,7 +427,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => (host === 'grok-build'
         ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog. Update the trusted review model configuration to a listed model.` }
         : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null }),
@@ -436,7 +447,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` }),
     });
 
@@ -461,7 +472,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: () => { probeCalls += 1; throw new Error('must not probe'); },
     });
 
@@ -493,7 +504,7 @@ describe('doctor diagnostics', () => {
       requiredLanes: ['issue-compliance'],
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => host === 'codex'
         ? { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: true, diagnostic: null }
         : { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` },
@@ -517,7 +528,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'unexpected output\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');
@@ -537,7 +548,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => { throw new Error('git timed out'); },
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');
@@ -832,7 +843,7 @@ describe('doctor diagnostics', () => {
     const result = binRun(['doctor', '--help'], repo);
 
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Check runtime environment/);
+    assert.match(result.stdout, /conditional role-aware provider readiness/);
     assert.match(result.stdout, /--json/);
     assert.match(result.stdout, /--offline/);
   });

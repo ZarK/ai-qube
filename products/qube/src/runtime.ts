@@ -25,6 +25,7 @@ import {
 } from "@tjalve/aie";
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
+import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
 import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
 import {
   AGENT_HOST_IDS,
@@ -702,7 +703,7 @@ interface DirectQubeCommand {
 const doctorCommand = defineCommand({
   kind: "command",
   name: "doctor",
-  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics.",
+  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics.",
   flags: [jsonFlag, offlineFlag],
   examples: [
     { description: "Run all diagnostics and live read-only provider probes.", command: "qube doctor" },
@@ -1414,8 +1415,14 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   const modelRoutingPromise = runModelRoutingDoctor(environment.cwd);
   const workflowPromise = collectWorkflowReadiness(offline, environment);
   const continuationPromise = collectContinuationHealth(offline, environment);
+  const hostToolkitPromise = connectionsPromise.then(connections => probeHostToolkits({
+    cwd: environment.cwd,
+    env: environment.env,
+    offline,
+    ...(connections.githubReadiness ? { githubReadiness: connections.githubReadiness } : {}),
+  }));
   const [baseHosts, continuation] = await Promise.all([
-    probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline }),
+    hostToolkitPromise,
     continuationPromise,
   ]);
   const hosts = applyUmpireHostProbes(baseHosts, continuation.report);
@@ -1728,7 +1735,7 @@ function explicitGuidedReviewError(flags: Readonly<Record<string, unknown>>, inh
   const workProvider = singleGuidedFlag(readOptionList<string>(flags, "work-provider"))
     ?? inherited.workProviders?.[0]
     ?? "github";
-  const reviewProvider = workProvider === "gitlab" ? "gitlab" : "github";
+  const reviewProvider = workProvider === "github" ? "github" : "gitlab";
   if (publisher && reviewProvider !== "github") {
     return "Review publisher selection applies only when GitHub publishes reviews.";
   }
@@ -2922,6 +2929,36 @@ async function collectGitIdentityActions(input: {
   return confirmed ? Object.freeze(actions) : Object.freeze([]);
 }
 
+async function recoverGitHubCredential(readiness: GitHubReadiness, environment: CliEnvironment, cwd: string): Promise<boolean> {
+  if (readiness.status !== "needs-action" || readiness.credentialSource.kind !== "stored" || !readiness.host) return false;
+
+  let recoveryArgs: readonly string[] | null = null;
+  if (readiness.reasonCode === "unauthenticated" || readiness.reasonCode === "credential-invalid") {
+    recoveryArgs = ["auth", "login", "--hostname", readiness.host];
+  } else if (readiness.reasonCode === "wrong-account") {
+    const expectedLogin = readiness.nextAction?.match(/--user\s+([A-Za-z0-9-]+)/)?.[1];
+    if (expectedLogin) recoveryArgs = ["auth", "switch", "--hostname", readiness.host, "--user", expectedLogin];
+  }
+  if (!recoveryArgs) return false;
+
+  const displayCommand = `gh ${recoveryArgs.join(" ")}`;
+  const approved = await promptConfirm({
+    command: "qube init",
+    promptName: "repair the selected GitHub CLI credential",
+    jsonMode: false,
+    yes: false,
+    clack: { message: `Run ${displayCommand}?`, initialValue: false },
+  });
+  if (!approved) return false;
+  const recovery = spawnSync("gh", recoveryArgs, {
+    cwd,
+    env: environment.env,
+    stdio: "inherit",
+    windowsHide: true,
+  });
+  return recovery.status === 0;
+}
+
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const json = flags.json === true;
   const dryRun = flags["dry-run"] === true;
@@ -3160,7 +3197,80 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     });
   }
   const setup = resolved.config;
-  const reviewProvider = setup.workProviders[0] === "gitlab" ? "gitlab" : "github";
+  const reviewProvider = setup.workProviders[0] === "github" ? "github" : "gitlab";
+  const githubRoles: GitHubRole[] = [
+    ...(setup.workProviders[0] === "github" ? ["work" as const] : []),
+    ...(setup.ciProviders[0] === "github" ? ["ci" as const] : []),
+    ...(reviewProvider === "github" ? ["review" as const] : []),
+  ];
+  const githubPublisher = reviewProvider === "github"
+    ? setup.review.publisher === "github-app" ? { mode: "github-app" as const } : { mode: "user" as const }
+    : null;
+  const remoteCheck = prerequisiteCheck(prerequisites, "remote");
+  const remoteUrl = typeof remoteCheck?.safeDetails.url === "string" ? remoteCheck.safeDetails.url : undefined;
+  const githubProbeOptions = {
+    scope,
+    offline: dryRun,
+    cwd: targetPath,
+    remoteUrl,
+    roles: githubRoles,
+    publisher: githubPublisher,
+    env: environment.env,
+  } as const;
+  let githubReadiness = await evaluateGitHubReadiness(githubProbeOptions);
+  if (interactiveRepository) {
+    const recovered = await recoverGitHubCredential(githubReadiness, environment, targetPath);
+    if (recovered) githubReadiness = await evaluateGitHubReadiness(githubProbeOptions);
+  }
+  const workRoles = githubRoles.filter(role => role === "work" || role === "ci");
+  let githubWorkReadiness = setup.review.publisher === "github-app" && workRoles.length > 0
+    ? await evaluateGitHubReadiness({
+      scope,
+      offline: dryRun,
+      cwd: targetPath,
+      remoteUrl,
+      roles: workRoles,
+      publisher: null,
+      env: environment.env,
+    })
+    : githubReadiness;
+  if (interactiveRepository && githubWorkReadiness !== githubReadiness) {
+    const recovered = await recoverGitHubCredential(githubWorkReadiness, environment, targetPath);
+    if (recovered) githubWorkReadiness = await evaluateGitHubReadiness({
+      scope,
+      offline: dryRun,
+      cwd: targetPath,
+      remoteUrl,
+      roles: workRoles,
+      publisher: null,
+      env: environment.env,
+    });
+  }
+  const transportCheck = prerequisiteCheck(prerequisites, "remote-transport");
+  if (
+    interactiveRepository
+    && githubWorkReadiness.status !== "needs-action"
+    && transportCheck?.reasonCode === "remote-auth-failed"
+    && transportCheck.safeDetails.transport === "https"
+    && githubWorkReadiness.host
+  ) {
+    const approved = await promptConfirm({
+      command: initCommand,
+      promptName: "configure GitHub CLI as the HTTPS Git credential helper",
+      jsonMode: false,
+      yes: false,
+      clack: { message: `Run gh auth setup-git for ${githubWorkReadiness.host}?`, initialValue: false },
+    });
+    if (approved) {
+      const setupGit = spawnSync("gh", ["auth", "setup-git", "--hostname", githubWorkReadiness.host], {
+        cwd: targetPath,
+        env: environment.env,
+        stdio: "inherit",
+        windowsHide: true,
+      });
+      if (setupGit.status === 0) prerequisites = await evaluateGitPrerequisites({ cwd: targetPath, policy: QUBE_INIT_GIT_POLICY });
+    }
+  }
   const primaryHarness = setup.hosts[0]!;
   const primaryProfile = getAgentHostProfileSync(primaryHarness as AgentHostId);
   const primaryHarnessPrompt = Object.freeze({
@@ -3342,8 +3452,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const targetArgument = readString(args.target);
   const rawPostInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
   const rawProviderActions = Object.freeze(planResults.flatMap(result => childProviderActions(result.json)));
+  const githubWorkUsable = githubWorkReadiness.status === "ready"
+    || githubWorkReadiness.status === "unverified"
+    || githubWorkReadiness.status === "not-required";
   const providerPrerequisitesReady = scope === "repository" && !prospectiveRoot
-    && prerequisiteCheck(prerequisites, "remote")?.status === "ready";
+    && prerequisiteCheck(prerequisites, "remote")?.status === "ready"
+    && githubWorkUsable;
   const postInitActions = Object.freeze(rawPostInitActions.map(action => initOwnedAction(action, scope, targetArgument, "pending")));
   const providerActions = Object.freeze(rawProviderActions.map(action => initOwnedAction(
     action,
@@ -3355,6 +3469,15 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     ...postInitActions,
     ...(!providerPrerequisitesReady ? providerActions : []),
   ];
+  if (scope === "repository" && githubReadiness.status !== "ready" && githubReadiness.status !== "not-required") {
+    pendingExternalActions.push(Object.freeze({
+      id: "github-connection",
+      status: "pending",
+      handledBy: "qube init",
+      reason: `${githubReadiness.summary} (${githubReadiness.reasonCode})`,
+      nextAction: githubReadiness.nextAction ?? `Rerun \`${initRerunCommand(scope, targetArgument)}\` when GitHub can be verified.`,
+    }));
+  }
   if (scope === "repository" && setup.workProviders[0] === "github" && !providerPrerequisitesReady) {
     pendingExternalActions.push(Object.freeze({
       id: "labels-setup",
@@ -3376,6 +3499,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const plan = {
     scope,
     prerequisites,
+    githubReadiness,
     prerequisiteReadiness: repositoryReadinessSummary(prerequisites),
     ...(scope === "repository" ? { target: targetPath } : {}),
     resolved: setup,
@@ -3442,6 +3566,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         mode: "plan",
         changed: planChanged,
         prerequisites,
+        githubReadiness,
         answers,
         ...(configuration ? { configuration } : {}),
         primaryHarness: primaryHarnessPrompt,
@@ -3574,9 +3699,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
   const changed = gitInitialized || gitIdentityActions.length > 0 || configOperation !== "skip" || applySteps.some(step => step.status === "changed");
   let reviewPublisherReadiness: InitPublisherReadiness | undefined;
-  if (!failedApply && reviewProvider === "github" && setup.review.publisher === "github-app") {
-    const doctorCwd = scope === "global" ? homeDirectory(environment) : targetPath;
-    const doctor = await dispatchInitChild("aie", ["review", "doctor", "--json"], environment, doctorCwd);
+  if (!failedApply && scope === "repository" && reviewProvider === "github" && setup.review.publisher === "github-app" && githubReadiness.reasonCode !== "missing-cli") {
+    const doctor = await dispatchInitChild("aie", ["review", "doctor", "--json"], environment, targetPath);
     if (doctor.stderr) applyStderr.push(doctor.stderr);
     const observedReadiness = publisherReadinessFromChild(doctor);
     reviewPublisherReadiness = observedReadiness.state === "ready"
@@ -3643,7 +3767,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     const localRefresh = await evaluateGitPrerequisites({ cwd: targetPath, policy: QUBE_INIT_GIT_POLICY, offline: true });
     prerequisites = preserveVerifiedRemoteTransport(prerequisites, localRefresh);
   }
-  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, prerequisites, prerequisiteReadiness: repositoryReadinessSummary(prerequisites), plan, ...(configuration ? { configuration } : {}), apply, readiness, pendingExternalActions };
+  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, prerequisites, githubReadiness, prerequisiteReadiness: repositoryReadinessSummary(prerequisites), plan, ...(configuration ? { configuration } : {}), apply, readiness, pendingExternalActions };
   if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   return {
     exitCode: 0,
@@ -3652,6 +3776,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       mode: "apply",
       changed,
       prerequisites,
+      githubReadiness,
       answers,
       ...(configuration ? { configuration } : {}),
       primaryHarness: primaryHarnessPrompt,

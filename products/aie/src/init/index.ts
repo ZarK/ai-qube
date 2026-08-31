@@ -789,7 +789,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
 
   const baseValidation = validateConfig(baseRecord);
   const reviewProvider = policy.reviewProvider
-    ?? (policy.workProvider === 'gitlab' ? 'gitlab' : undefined)
+    ?? (policy.workProvider && policy.workProvider !== 'github' ? 'gitlab' : undefined)
     ?? ((existingConfigIsBase || options.from) ? baseValidation.config?.providers.review.kind : undefined)
     ?? 'github';
   const machine = {

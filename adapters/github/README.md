@@ -32,6 +32,10 @@ qube init --work-provider github --yes
 - `@tjalve/qube-core` at a compatible version
 - `gh` CLI authenticated for GitHub.com or GitHub Enterprise when using live APIs
 
+See the canonical [GitHub provider support guide](../../docs/qube-github-provider-support.md)
+for conditional CLI requirements, credential precedence, capability probes,
+Enterprise limitations, and stable recovery reasons.
+
 ## Source
 
 Monorepo path: https://github.com/ZarK/ai-qube/tree/main/adapters/github

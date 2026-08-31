@@ -40,6 +40,9 @@ aie --help
 - Node.js 24 or newer
 - `git`
 - GitHub CLI `gh` for GitHub-backed issues, pull requests, and checks
+- GitHub CLI is not required for fully non-GitHub configurations. See the
+  [GitHub provider support guide](../../docs/qube-github-provider-support.md)
+  for host, account, token, permission, offline, and recovery behavior.
 - Git 2.28.0 or newer for repository workflows. `aie doctor --offline` runs
   local checks without probing remote transport. See the
   [QUBE Git prerequisite guide](../../docs/qube-init.md#git-prerequisites).

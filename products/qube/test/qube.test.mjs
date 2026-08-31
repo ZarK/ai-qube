@@ -410,7 +410,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
     assert.match(help.stdout, /init\s+Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow\./);
-    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics\./);
+    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
 
@@ -2490,8 +2490,9 @@ describe("qube init orchestrator", () => {
     const resumed = runCli([...baseArgs, "--json"], { cwd, env });
     assert.equal(resumed.status, 0, resumed.stderr);
     const resumedPayload = JSON.parse(resumed.stdout);
-    assert.equal(resumedPayload.pendingExternalActions.some(action => action.id === "labels-setup"), false);
-    assert.equal(readInitCalls(packageRoot).some(call => call.phase === "labels"), true);
+    assert.equal(resumedPayload.pendingExternalActions.some(action => action.id === "labels-setup"), true);
+    assert.equal(resumedPayload.githubReadiness.reasonCode, "host-unresolved");
+    assert.equal(readInitCalls(packageRoot).some(call => call.phase === "labels"), false);
   });
 
   it("returns public answers and keeps first-run human output free of component details", () => {
@@ -2766,6 +2767,32 @@ describe("qube init orchestrator", () => {
     assert.equal(saved.review.mode, "host");
     assert.equal(saved.review.publisher, "user");
     assert.equal(saved.review.externalReviewers, undefined);
+  });
+
+  it("keeps Linear and Jenkins setup fully non-GitHub", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-non-github-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-non-github-repo-"));
+    initializeRepository(cwd);
+    createInitShims(packageRoot);
+    writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup());
+
+    const result = runCli([
+      "init", ".",
+      "--work-provider", "linear",
+      "--ci-provider", "jenkins",
+      "--yes",
+      "--json",
+    ], { cwd, env: initEnv(packageRoot) });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.githubReadiness.status, "not-required");
+    assert.equal(parsed.githubReadiness.reasonCode, "not-required");
+    assert.deepEqual(parsed.githubReadiness.roles, []);
+    assert.equal(parsed.pendingExternalActions.some(action => action.id === "github-connection"), false);
+    const aieArgs = componentRows(parsed.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-provider"), "gitlab");
+    assert.equal(optionValue(aieArgs, "--publisher"), undefined);
   });
 
   it("applies sole dependent choices without prompting when a complete setup changes to GitLab", () => {
@@ -3529,7 +3556,8 @@ describe("qube init orchestrator", () => {
     assert.equal(firstPayload.mode, "apply");
     assert.equal(firstPayload.plan.config.operation, "create");
     assert.equal(firstPayload.apply.changed, true);
-    assert.deepEqual(firstPayload.apply.steps.map(step => step.id), ["aie", "aib", "aiq", "aiu", "labels"]);
+    assert.deepEqual(firstPayload.apply.steps.map(step => step.id), ["aie", "aib", "aiq", "aiu"]);
+    assert.equal(firstPayload.githubReadiness.reasonCode, "host-unresolved");
     const firstModelAnswer = firstPayload.answers.find(answer => answer.id === "review-model");
     const firstModelArgument = optionValue(componentRows(firstPayload.plan).get("aie").args, "--review-model");
     assert.ok(firstModelAnswer);
@@ -4032,7 +4060,7 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
-    const probed = await probeHostToolkits({ cwd, env: { PATH: "" }, offline: false });
+    const probed = await probeHostToolkits({ cwd, env: { PATH: "", Path: "" }, offline: false });
     assert.equal(probed.status, "partial");
     assert.equal(probed.cliDependencies[0].status, "missing");
 
