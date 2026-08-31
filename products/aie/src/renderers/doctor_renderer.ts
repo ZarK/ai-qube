@@ -72,7 +72,12 @@ export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
     const reason = prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : '';
     lines.push(`- ${prerequisite.id}: ${prerequisite.status}${reason}; required for ${prerequisite.requiredFor.join(', ')} — ${prerequisite.summary}${prerequisite.nextAction ? ` Next: ${prerequisite.nextAction}` : ''}`);
   }
-  lines.push(`gh: ${diagnostics.gh ? (diagnostics.ghAuthenticated ? 'authenticated' : 'not authenticated') : 'missing'}`);
+  lines.push(`GitHub connection: ${diagnostics.githubReadiness.status} (${diagnostics.githubReadiness.reasonCode})`);
+  lines.push(`- Roles: ${diagnostics.githubReadiness.roles.length > 0 ? diagnostics.githubReadiness.roles.join(', ') : 'none'}`);
+  lines.push(`- Host: ${diagnostics.githubReadiness.host ?? 'not resolved'}; repository: ${diagnostics.githubReadiness.repository ?? 'not resolved'}; account: ${diagnostics.githubReadiness.accountLogin ?? 'none'}`);
+  lines.push(`- Credential: ${diagnostics.githubReadiness.credentialSource.kind}${diagnostics.githubReadiness.credentialSource.name ? ` (${diagnostics.githubReadiness.credentialSource.name})` : ''}`);
+  lines.push(`- ${diagnostics.githubReadiness.summary}${diagnostics.githubReadiness.nextAction ? ` Next: ${diagnostics.githubReadiness.nextAction}` : ''}`);
+  for (const capability of diagnostics.githubReadiness.capabilities) lines.push(`  - ${capability.capability}: ${capability.status} (${capability.reasonCode}) — ${capability.summary}`);
   lines.push(`Worktree: ${diagnostics.isWorktree ? (diagnostics.repositoryPolicy.noWorktree ? 'yes (policy violation — switch to primary checkout)' : 'yes (allowed by policy)') : 'no'}`);
   lines.push(`Config: ${diagnostics.configPresent ? (diagnostics.configValid ? 'valid' : 'invalid') : 'not found (using defaults)'}`);
   if (diagnostics.baseBranch) lines.push(`Base: ${diagnostics.baseRemote || 'origin'}/${diagnostics.baseBranch}`);

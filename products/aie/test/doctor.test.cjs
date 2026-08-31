@@ -14,16 +14,39 @@ const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
 const { resolveFailoverReviewPlan } = require('../dist/app/local_review_runner.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
+const { hasUsableGitHubConnection } = require('../dist/github_readiness.js');
 
 function makeGitRepo() {
   return cloneGitRepo('configured', 'aie-doctor-');
 }
 
-function binRun(args, cwd = process.cwd()) {
-  return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
+function binRun(args, cwd = process.cwd(), env = process.env) {
+  return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8', env });
 }
 
+const readyGitHubReadiness = Object.freeze({
+  status: 'ready', reasonCode: 'ready', summary: 'GitHub review publication is ready.', nextAction: null,
+  docsUrl: 'docs/qube-github-provider-support.md', cliVersion: '2.99.0', host: 'github.com', repository: 'acme/widgets', accountLogin: 'octocat',
+  credentialSource: Object.freeze({ kind: 'stored', name: 'gh credential store' }), roles: Object.freeze(['review']), capabilities: Object.freeze([]),
+});
+const unverifiedGitHubReadiness = Object.freeze({
+  ...readyGitHubReadiness,
+  status: 'unverified', reasonCode: 'unverified', summary: 'Pull request review write permission is unverified.',
+  nextAction: 'Confirm permission to publish pull request reviews, then rerun doctor.',
+});
+
 describe('doctor diagnostics', () => {
+  it('requires observed connection details before treating unverified GitHub access as usable', () => {
+    assert.equal(hasUsableGitHubConnection(readyGitHubReadiness), true);
+    assert.equal(hasUsableGitHubConnection(unverifiedGitHubReadiness), true);
+    assert.equal(hasUsableGitHubConnection(Object.freeze({
+      ...unverifiedGitHubReadiness,
+      cliVersion: null,
+      host: null,
+      repository: null,
+    })), false);
+  });
+
   it('reports managed instruction health and configured instruction policy', async () => {
     const repo = makeGitRepo();
     const config = getDefaults();
@@ -287,7 +310,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 42\nsize: 128\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo, read:org\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.enabled, true);
@@ -310,7 +333,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'missing');
@@ -332,7 +355,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bavail: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
@@ -351,7 +374,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 50000\nsize: 100000\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
@@ -360,7 +383,7 @@ describe('doctor diagnostics', () => {
     assert.match(diagnostics.checks.gitObjects.nextAction, /git gc --prune=now/);
   });
 
-  it('reports GitHub pull request review auth scope issues in review preflight', () => {
+  it('keeps authenticated GitHub review preflight ready when write permission is unverified', () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
     writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
@@ -371,13 +394,40 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: read:org\n',
+      githubReadiness: unverifiedGitHubReadiness,
     });
 
-    assert.equal(diagnostics.readiness, 'needs-action');
-    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'needs-action');
+    assert.equal(diagnostics.readiness, 'ready');
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'ready');
     assert.equal(diagnostics.checks.githubReviewAuth.authenticated, true);
-    assert.deepEqual(diagnostics.checks.githubReviewAuth.scopes, ['read:org']);
+    assert.equal(diagnostics.checks.githubReviewAuth.scopes, null);
+    assert.equal(diagnostics.checks.githubReviewAuth.nextAction, null);
+  });
+
+  it('keeps offline GitHub review authentication explicitly unavailable', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      githubReadiness: Object.freeze({
+        ...unverifiedGitHubReadiness,
+        summary: 'Offline mode skipped every GitHub CLI and provider probe.',
+        cliVersion: null,
+        host: null,
+        repository: null,
+        accountLogin: null,
+      }),
+    });
+
+    assert.equal(diagnostics.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.githubReviewAuth.authenticated, false);
     assert.match(diagnostics.checks.githubReviewAuth.nextAction, /pull request reviews/);
   });
 
@@ -397,7 +447,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => {
         probed.push(`${host}:${model}`);
         return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok-build' ? true : null, diagnostic: null };
@@ -416,7 +466,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => (host === 'grok-build'
         ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog. Update the trusted review model configuration to a listed model.` }
         : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null }),
@@ -436,7 +486,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` }),
     });
 
@@ -461,7 +511,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: () => { probeCalls += 1; throw new Error('must not probe'); },
     });
 
@@ -493,7 +543,7 @@ describe('doctor diagnostics', () => {
       requiredLanes: ['issue-compliance'],
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
       probeRoute: (host, model) => host === 'codex'
         ? { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: true, diagnostic: null }
         : { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `${host} is unavailable.` },
@@ -517,7 +567,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'unexpected output\n',
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');
@@ -537,7 +587,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => { throw new Error('git timed out'); },
-      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      githubReadiness: readyGitHubReadiness,
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');
@@ -832,17 +882,41 @@ describe('doctor diagnostics', () => {
     const result = binRun(['doctor', '--help'], repo);
 
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Check runtime environment/);
+    assert.match(result.stdout, /conditional role-aware provider readiness/);
     assert.match(result.stdout, /--json/);
     assert.match(result.stdout, /--offline/);
   });
 
   it('keeps local prerequisite failures in offline diagnostics and skips only transport', () => {
     const repo = makeGitRepo();
-    const result = binRun(['doctor', '--offline', '--json'], repo);
+    const fixtureBin = mkdtempSync(join(tmpdir(), 'aie-offline-gh-'));
+    const ghMarker = join(fixtureBin, 'gh-called.txt');
+    const windows = process.platform === 'win32';
+    const ghPath = join(fixtureBin, windows ? 'gh.cmd' : 'gh');
+    writeFileSync(
+      ghPath,
+      windows
+        ? '@echo off\r\n>>"%AIE_TEST_GH_MARKER%" echo called\r\nexit /b 99\r\n'
+        : '#!/bin/sh\nprintf "called\\n" >> "$AIE_TEST_GH_MARKER"\nexit 99\n',
+    );
+    if (!windows) chmodSync(ghPath, 0o755);
+    const pathValue = [fixtureBin, process.env.PATH ?? ''].join(delimiter);
+    const env = {
+      ...process.env,
+      PATH: pathValue,
+      AIE_TEST_GH_MARKER: ghMarker,
+    };
+    if (windows) env.Path = pathValue;
+    const result = binRun(['doctor', '--offline', '--json'], repo, env);
+    assert.notEqual(result.stdout.trim(), '', result.stderr);
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(result.status, 1);
+    assert.equal(existsSync(ghMarker), false);
+    assert.equal(parsed.githubReadiness.status, 'unverified');
+    assert.equal(parsed.githubReadiness.cliVersion, null);
+    assert.equal(parsed.labelsError, 'Offline mode skipped every GitHub CLI and provider probe.');
+    assert.equal(parsed.queueError, 'Offline mode skipped every GitHub CLI and provider probe.');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'head').reasonCode, 'head-missing');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote').reasonCode, 'remote-missing');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote-transport').status, 'unverified');

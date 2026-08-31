@@ -2,6 +2,22 @@ import { githubAdapterContract } from "@tjalve/qube-core";
 
 export { probeGitHubConnection } from "./connection.js";
 
+export {
+  GITHUB_PROVIDER_GUIDE_URL,
+  evaluateGitHubReadiness,
+  githubCapabilitiesFor,
+  parseGitHubRemote,
+  type EvaluateGitHubReadinessOptions,
+  type GitHubCapability,
+  type GitHubCapabilityReadiness,
+  type GitHubCredentialKind,
+  type GitHubCredentialSource,
+  type GitHubReadiness,
+  type GitHubReadinessReason,
+  type GitHubReadinessStatus,
+  type GitHubRole,
+} from "./github_readiness.js";
+
 export type GitHubOperation =
   | "map-work-item"
   | "work-item-queue"

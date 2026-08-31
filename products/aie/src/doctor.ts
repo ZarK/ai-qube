@@ -25,6 +25,8 @@ import type { WorkflowDirtyState } from './doctor_diagnostics/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
 import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider.js';
 import { prerequisiteCheck } from './providers/local/git_prerequisites.js';
+import { evaluateConfiguredGitHubReadiness, hasUsableGitHubConnection } from './github_readiness.js';
+import type { GitHubReadiness } from './providers/github_adapter_exports.js';
 
 export {
   buildGateReadinessDiagnostics,
@@ -57,11 +59,24 @@ class DoctorDiagnosticsBuilder {
     const isRepo = !!repoRoot;
     const gitCheck = prerequisiteCheck(prerequisites, 'git');
     const gitAvailable = gitCheck?.reasonCode !== 'git-not-found';
-    const ghStatus = this.checkGhAuth();
+    const origin = repository.remotes.find(remote => remote.name === effectiveConfig.baseRemote)
+      ?? repository.remotes.find(remote => remote.name === 'origin')
+      ?? repository.remotes[0];
+    const githubReadiness = await evaluateConfiguredGitHubReadiness(effectiveConfig, {
+      cwd: repoRoot ?? undefined,
+      remoteUrl: origin?.url,
+      offline: this.options.offline,
+    });
+    const ghStatus = this.legacyGhStatus(githubReadiness);
     const nodeStatus = this.checkNodeVersion();
     const branch = repository.activeRef?.name ?? 'unknown';
     const isWorktree = repository.worktree.linked;
-    const labelStatus = await this.checkLabels(effectiveConfig);
+    const githubUsable = hasUsableGitHubConnection(githubReadiness);
+    const labelStatus = effectiveConfig.providers.work.kind !== 'github'
+      ? this.notRequiredLabels()
+      : githubUsable
+        ? await this.checkLabels(effectiveConfig)
+        : this.blockedLabels(githubReadiness);
     const baseRef = {
       remote: effectiveConfig.baseRemote,
       branch: effectiveConfig.baseBranch,
@@ -76,18 +91,24 @@ class DoctorDiagnosticsBuilder {
     const providerHealth = buildProviderHealthDiagnostics(effectiveConfig);
     const instructionPolicy = buildInstructionPolicyDiagnostics(effectiveConfig, repoRoot);
     const repositoryPolicy = buildRepositoryPolicyDiagnostics(effectiveConfig);
-    const gateReadiness = buildGateReadinessDiagnostics(effectiveConfig, { ghAuthenticated: ghStatus.authenticated, evidenceRoot: repoRoot ?? undefined });
+    const gateReadiness = buildGateReadinessDiagnostics(effectiveConfig, { ghAuthenticated: ghStatus.authenticated, githubReadiness, evidenceRoot: repoRoot ?? undefined });
     const unmanagedTargets = repoRoot ? instructions.targets.filter(target => target.present && !target.managed) : [];
     const unhealthyTargets = repoRoot ? instructions.targets.filter(target => target.managed && !target.healthy) : [];
     const installedHarnesses = instructions.harnesses.filter(harness => harness.installed);
     const missingInstructionChecks = missingConfiguredInstructionChecks(instructionPolicy);
-    const recommendations = this.buildEarlyRecommendations({ nodeStatus, gitAvailable, ghStatus, isRepo, isWorktree, configStatus, effectiveConfig, repoRoot, instructions, providerHealth, instructionPolicy, gateReadiness });
+    const recommendations = this.buildEarlyRecommendations({ nodeStatus, gitAvailable, githubReadiness, isRepo, isWorktree, configStatus, effectiveConfig, repoRoot, instructions, providerHealth, instructionPolicy, gateReadiness });
     for (const prerequisite of prerequisites.checks.filter(candidate => candidate.status === 'needs-action' || candidate.status === 'unverified')) {
       if (prerequisite.nextAction && !recommendations.includes(prerequisite.nextAction)) recommendations.push(prerequisite.nextAction);
     }
     this.addLabelRecommendations(labelStatus, recommendations);
-    const queueState = await this.readQueue(recommendations);
-    const pullRequestState = await this.readPullRequests(effectiveConfig, recommendations);
+    const queueState = effectiveConfig.providers.work.kind === 'github' && !githubUsable
+      ? this.blockedQueue(githubReadiness)
+      : await this.readQueue(recommendations);
+    const pullRequestState = effectiveConfig.providers.review.kind !== 'github'
+      ? { openPullRequests: [], blockingPullRequests: [] }
+      : githubUsable
+        ? await this.readPullRequests(effectiveConfig, recommendations)
+        : { openPullRequests: [], blockingPullRequests: [], pullRequestError: githubReadiness.summary };
     this.addBaseRefRecommendation(baseRef, effectiveConfig, recommendations);
     const lifecycle = buildLifecycleDiagnostics({
       config: effectiveConfig,
@@ -122,7 +143,9 @@ class DoctorDiagnosticsBuilder {
     for (const lock of reviewSessionLocks.filter(lock => lock.stale)) {
       recommendations.push(`Stale review session lock detected at ${lock.path}: ${lock.reason} ${lock.cleanupCommand}`);
     }
-    const milestoneState = await this.readMilestones(effectiveConfig, queueState.openIssuesForMilestones, recommendations);
+    const milestoneState = effectiveConfig.providers.work.kind === 'github' && githubUsable
+      ? await this.readMilestones(effectiveConfig, queueState.openIssuesForMilestones, recommendations)
+      : { milestones: [], milestoneWarnings: [], ...(effectiveConfig.providers.work.kind === 'github' ? { milestoneError: githubReadiness.summary } : {}) };
     this.addMilestoneRecommendations(milestoneState.milestoneWarnings, recommendations);
     const prerequisiteBlockers = prerequisites.checks.filter(candidate => candidate.status === 'needs-action' && !(queueState.activeIssue && (candidate.id === 'dirty-worktree' || candidate.id === 'worktree')));
     const overallOk = computeDoctorOk({
@@ -157,6 +180,7 @@ class DoctorDiagnosticsBuilder {
       prerequisites,
       gh: ghStatus.available,
       ghAuthenticated: ghStatus.authenticated,
+      githubReadiness,
       currentBranch: branch,
       isWorktree,
       configPresent: configStatus.present,
@@ -198,7 +222,7 @@ class DoctorDiagnosticsBuilder {
   private buildEarlyRecommendations(input: {
     nodeStatus: { version: string; satisfies: boolean; required: string };
     gitAvailable: boolean;
-    ghStatus: { available: boolean; authenticated: boolean };
+    githubReadiness: GitHubReadiness;
     isRepo: boolean;
     isWorktree: boolean;
     configStatus: Awaited<ReturnType<DoctorDiagnosticsBuilder['checkConfig']>>;
@@ -212,8 +236,7 @@ class DoctorDiagnosticsBuilder {
     const recommendations: string[] = [];
     if (!input.nodeStatus.satisfies) recommendations.push(`Update to Node.js 24 LTS or newer (package requires ${input.nodeStatus.required}).`);
     if (!input.gitAvailable) recommendations.push('Install git and ensure it is on PATH.');
-    if (!input.ghStatus.available) recommendations.push('Install GitHub CLI (gh) and ensure it is on PATH.');
-    else if (!input.ghStatus.authenticated) recommendations.push('Run `gh auth login` to authenticate with GitHub.');
+    if (input.githubReadiness.nextAction) recommendations.push(input.githubReadiness.nextAction);
     if (input.gitAvailable && !input.isRepo) recommendations.push('Not inside a git repository. Run `aie doctor` from within a git repository.');
     if (input.effectiveConfig.noWorktree && input.isWorktree) recommendations.push('Linked git worktree detected. Executor policy disables worktrees (use primary checkout).');
     this.addConfigRecommendations(input.configStatus, recommendations);
@@ -406,18 +429,36 @@ class DoctorDiagnosticsBuilder {
     return { head: headSha, lanes: [...lanes].sort() };
   }
 
-  private checkGhAuth(): { available: boolean; authenticated: boolean } {
-    try {
-      execSync('gh --version', { stdio: 'ignore' });
-    } catch {
-      return { available: false, authenticated: false };
-    }
-    try {
-      const out = execSync('gh auth status', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      return { available: true, authenticated: out.includes('Logged in to github.com') || out.includes('github.com') };
-    } catch {
-      return { available: true, authenticated: false };
-    }
+  private legacyGhStatus(readiness: GitHubReadiness): { available: boolean; authenticated: boolean } {
+    if (readiness.status === 'not-required') return { available: true, authenticated: true };
+    return {
+      available: readiness.reasonCode !== 'missing-cli',
+      authenticated: hasUsableGitHubConnection(readiness),
+    };
+  }
+
+  private notRequiredLabels(): { ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError?: string } {
+    return { ok: true, missing: [], drifted: [], duplicates: [], labelsError: undefined };
+  }
+
+  private blockedLabels(readiness: GitHubReadiness): { ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError: string } {
+    return { ok: false, missing: [], drifted: [], duplicates: [], labelsError: readiness.summary };
+  }
+
+  private blockedQueue(readiness: GitHubReadiness): {
+    queueDriftCount: number;
+    queueMultipleInProgress: boolean;
+    queueError: string;
+    activeIssue: null;
+    openIssuesForMilestones: GitHubIssue[];
+  } {
+    return {
+      queueDriftCount: 0,
+      queueMultipleInProgress: false,
+      queueError: readiness.summary,
+      activeIssue: null,
+      openIssuesForMilestones: [],
+    };
   }
 
   private checkNodeVersion(): { version: string; satisfies: boolean; required: string } {

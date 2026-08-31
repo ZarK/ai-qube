@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { getAgentHostProfileSync, getAgentHostProfiles } from "@tjalve/aie";
+import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
 import {
   AGENT_HOST_IDS,
   defineAgentHostProfile,
@@ -44,7 +45,7 @@ export const PROVIDER_MCP_CONFIG_PATHS = Object.freeze([
 export type ToolkitHostId = AgentHostId;
 export type ToolkitAssetKind = "instruction" | "subagent" | "command" | "skill" | "hook" | "cli-dependency";
 export type ToolkitHostStatus = "complete" | "missing" | "partial" | "unknown";
-export type ToolkitCliStatus = "pass" | "missing" | "unauthenticated" | "unverified" | "not-required";
+export type ToolkitCliStatus = "pass" | "missing" | "unauthenticated" | "needs-action" | "unverified" | "not-required";
 
 export function defaultReviewSelection(hosts: readonly string[]): {
   readonly mode: QubeReviewMode;
@@ -179,6 +180,7 @@ export interface HostToolkitReport {
   readonly cliDependencies: readonly ToolkitCliDependency[];
   readonly mcp: ToolkitMcpState;
   readonly recommendations: readonly string[];
+  readonly githubReadiness: GitHubReadiness;
 }
 
 export interface ComposeHostToolkitOptions {
@@ -192,6 +194,7 @@ export interface ProbeHostToolkitOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly offline?: boolean;
   readonly record?: QubeInitRecord | null;
+  readonly githubReadiness?: GitHubReadiness;
 }
 
 const KNOWN_HOSTS: readonly ToolkitHostId[] = AGENT_HOST_IDS;
@@ -316,8 +319,14 @@ function isToolkitHostId(value: string): value is ToolkitHostId {
   return (KNOWN_HOSTS as readonly string[]).includes(value);
 }
 
-function usesGithub(workProviders: readonly string[], ciProviders: readonly string[]): boolean {
-  return workProviders.includes("github") || ciProviders.includes("github");
+function selectedToolkitGitHubRoles(
+  workProviders: readonly string[],
+  ciProviders: readonly string[],
+): readonly GitHubRole[] {
+  const roles: GitHubRole[] = [];
+  if (workProviders.includes("github")) roles.push("work", "review");
+  if (ciProviders.includes("github")) roles.push("ci");
+  return Object.freeze(roles);
 }
 
 export async function composeHostToolkitManifests(
@@ -497,60 +506,25 @@ function filePresent(cwd: string, relativePath: string): boolean {
   }
 }
 
-function probeGh(env: NodeJS.ProcessEnv | undefined, offline: boolean, required: boolean): ToolkitCliDependency {
-  if (!required) {
-    return Object.freeze({
-      id: "gh",
-      required: false,
-      present: false,
-      authenticated: false,
-      status: "not-required",
-      nextAction: "GitHub CLI is not required for the selected providers.",
-    });
-  }
-  if (offline) {
-    return Object.freeze({
-      id: "gh",
-      required: true,
-      present: false,
-      authenticated: false,
-      status: "unverified",
-      nextAction: "Offline doctor mode skips GitHub CLI presence and login checks.",
-    });
-  }
-  const result = spawnSync("gh", ["auth", "status"], {
-    env,
-    encoding: "utf8",
-    timeout: 8_000,
-    windowsHide: true,
-  });
-  if (result.error || result.status === null) {
-    return Object.freeze({
-      id: "gh",
-      required: true,
-      present: false,
-      authenticated: false,
-      status: "missing",
-      nextAction: "Install GitHub CLI (gh) and run `gh auth login`.",
-    });
-  }
-  if (result.status !== 0) {
-    return Object.freeze({
-      id: "gh",
-      required: true,
-      present: true,
-      authenticated: false,
-      status: "unauthenticated",
-      nextAction: "Run `gh auth login` to authenticate GitHub CLI.",
-    });
-  }
+function ghDependency(readiness: GitHubReadiness): ToolkitCliDependency {
+  const required = readiness.status !== "not-required";
+  const status: ToolkitCliStatus = readiness.status === "not-required"
+    ? "not-required"
+    : readiness.reasonCode === "missing-cli"
+      ? "missing"
+      : readiness.status === "unverified"
+        ? "unverified"
+        : readiness.status === "needs-action"
+          ? readiness.reasonCode === "unauthenticated" || readiness.reasonCode === "credential-invalid" ? "unauthenticated" : "needs-action"
+          : "pass";
   return Object.freeze({
     id: "gh",
-    required: true,
-    present: true,
-    authenticated: true,
-    status: "pass",
-    nextAction: "GitHub CLI is present and authenticated.",
+    required,
+    present: readiness.reasonCode !== "missing-cli" && readiness.status !== "not-required",
+    authenticated: readiness.status === "ready"
+      || (readiness.status === "unverified" && Boolean(readiness.cliVersion && readiness.host && readiness.repository)),
+    status,
+    nextAction: readiness.nextAction ?? readiness.summary,
   });
 }
 
@@ -599,7 +573,7 @@ function probeManifest(cwd: string, manifest: HostToolkitManifest): HostToolkitP
 function rollupStatus(hosts: readonly HostToolkitProbe[], cli: readonly ToolkitCliDependency[], hasRecord: boolean): ToolkitHostStatus {
   if (!hasRecord) return "unknown";
   if (hosts.length === 0 || hosts.some((host) => host.status === "missing")) return "missing";
-  if (cli.some((item) => item.required && (item.status === "missing" || item.status === "unauthenticated"))) return "partial";
+  if (cli.some((item) => item.required && (item.status === "missing" || item.status === "unauthenticated" || item.status === "needs-action"))) return "partial";
   if (hosts.every((host) => host.status === "complete")) return "complete";
   return "partial";
 }
@@ -620,6 +594,7 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
   const record = options.record === undefined ? readInitRecord(repoRoot, options.env) : options.record;
   const mcpConfigured = providerMcpConfigPresent(repoRoot);
   if (!record) {
+    const githubReadiness = options.githubReadiness ?? await evaluateGitHubReadiness({ roles: [], cwd: repoRoot, env: options.env, offline: options.offline });
     return Object.freeze({
       status: "unknown",
       selected: Object.freeze([]),
@@ -631,6 +606,7 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
         caveat: MCP_BYPASS_CAVEAT,
       }),
       recommendations: Object.freeze(["No host toolkit record was found. Run `qube init` to select hosts and compose toolkit files."]),
+      githubReadiness,
     });
   }
 
@@ -645,9 +621,14 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
     const manifest = manifestsByHost.get(host);
     return manifest ? probeManifest(repoRoot, manifest) : probeUnknownHost(host);
   }));
-  const githubSelected = usesGithub(record.workProviders, record.ciProviders);
+  const githubReadiness = options.githubReadiness ?? await evaluateGitHubReadiness({
+    roles: selectedToolkitGitHubRoles(record.workProviders, record.ciProviders),
+    cwd: repoRoot,
+    env: options.env,
+    offline: options.offline,
+  });
   const cliDependencies = Object.freeze([
-    probeGh(options.env, options.offline === true, githubSelected),
+    ghDependency(githubReadiness),
   ]);
   const status = rollupStatus(hosts, cliDependencies, true);
   const recommendations: string[] = [];
@@ -675,6 +656,7 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
       caveat: MCP_BYPASS_CAVEAT,
     }),
     recommendations: Object.freeze(recommendations),
+    githubReadiness,
   });
 }
 
@@ -704,6 +686,12 @@ export function formatHostToolkits(report: HostToolkitReport): string {
   for (const cli of report.cliDependencies) {
     lines.push(`- cli ${cli.id}: ${cli.status}`);
   }
+  const github = report.githubReadiness;
+  lines.push(`GitHub connection: ${github.status} (${github.reasonCode}); roles=${github.roles.join(", ") || "none"}`);
+  lines.push(`- Host: ${github.host ?? "not resolved"}; repository: ${github.repository ?? "not resolved"}; account: ${github.accountLogin ?? "none"}`);
+  lines.push(`- Credential: ${github.credentialSource.kind}${github.credentialSource.name ? ` (${github.credentialSource.name})` : ""}`);
+  for (const capability of github.capabilities) lines.push(`  - ${capability.capability}: ${capability.status} (${capability.reasonCode})`);
+  if (github.nextAction) lines.push(`- Next: ${github.nextAction}`);
   lines.push(`Provider MCP: ${report.mcp.optIn ? "opt-in recorded" : "off"}; configured=${report.mcp.configured ? "yes" : "no"}`);
   lines.push(report.mcp.caveat);
   for (const recommendation of report.recommendations) {

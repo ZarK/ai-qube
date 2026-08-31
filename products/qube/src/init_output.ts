@@ -1,5 +1,6 @@
 import type { QubeInitFieldPlan } from "./init_config.js";
 import { repositoryPrerequisiteStatusFor, type RepositoryPrerequisites } from "@tjalve/aie";
+import type { GitHubReadiness } from "@tjalve/qube-adapter-github";
 
 export interface PublicInitAnswer {
   readonly id: string;
@@ -39,6 +40,7 @@ export interface InitOutputOptions {
   readonly changed: boolean;
   readonly answers: readonly PublicInitAnswer[];
   readonly prerequisites?: RepositoryPrerequisites;
+  readonly githubReadiness?: GitHubReadiness;
   readonly configuration?: {
     readonly scope: "repository";
     readonly action: "edit" | "inherit" | "inherit-all";
@@ -87,6 +89,7 @@ export function renderInitOutput(options: InitOutputOptions): string {
     && !options.changed
     && (options.pendingNextActions?.length ?? 0) === 0
     && (!options.reviewPublisherReadiness || options.reviewPublisherReadiness.state === "ready")
+    && (!options.githubReadiness || options.githubReadiness.status === "ready" || options.githubReadiness.status === "not-required")
     && !options.configuration
   ) {
     return `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization is already current.\n${options.prerequisites ? `\n${renderInitPrerequisites(options.prerequisites)}` : ""}`;
@@ -99,6 +102,22 @@ export function renderInitOutput(options: InitOutputOptions): string {
   ];
 
   if (options.prerequisites) lines.push("", renderInitPrerequisites(options.prerequisites).trimEnd());
+
+  if (options.githubReadiness) {
+    const github = options.githubReadiness;
+    lines.push(
+      "",
+      `GitHub connection: ${github.status} (${github.reasonCode})`,
+      `Required for: ${github.roles.length > 0 ? github.roles.join(", ") : "none"}`,
+      `Host: ${github.host ?? "not resolved"}; repository: ${github.repository ?? "not resolved"}; account: ${github.accountLogin ?? "none"}`,
+      `Credential: ${github.credentialSource.kind}${github.credentialSource.name ? ` (${github.credentialSource.name})` : ""}`,
+      github.summary,
+    );
+    for (const capability of github.capabilities) {
+      lines.push(`- ${capability.capability}: ${capability.status} (${capability.reasonCode}) — ${capability.summary}`);
+    }
+    if (github.nextAction) lines.push(`Next: ${github.nextAction}`);
+  }
 
   if (options.configuration) {
     const userGlobalFound = options.configuration.fields.some(field => field.userGlobal.present);

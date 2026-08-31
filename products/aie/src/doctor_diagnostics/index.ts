@@ -225,7 +225,7 @@ function reviewerExternalService(name: string): string | null {
   return `custom-pr-reviewer:${redact(id)}`;
 }
 
-export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthenticated: boolean; evidenceRoot?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; pathDelimiter?: string; probeRoute?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck } = { ghAuthenticated: false }): GateReadinessDiagnostics {
+export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthenticated: boolean; githubReadiness?: import('../providers/github_adapter_exports.js').GitHubReadiness; evidenceRoot?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; pathDelimiter?: string; probeRoute?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck } = { ghAuthenticated: false }): GateReadinessDiagnostics {
   const gates = configuredGates(config);
   const gatePlan = buildGatePlan(config);
   const gateStatus = buildGateStatus(config, { evidenceRoot: options.evidenceRoot });
@@ -270,6 +270,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     repoRoot: options.evidenceRoot ?? process.cwd(),
     probeRoute: options.probeRoute,
     requiredLanes: requiredLocalReviewLanes(effectiveReviewProfile),
+    githubReadiness: options.githubReadiness,
   });
   const lookup = { env: options.env, platform: options.platform, pathDelimiter: options.pathDelimiter };
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit, lookup);

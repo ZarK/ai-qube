@@ -389,7 +389,7 @@ export function applyQuestionAnswersToPolicy(policy: InitPolicyOptions, question
       const mapped = reviewModelsFromAnswers(item.value);
       if (Object.keys(mapped.review).length > 0) next.reviewModels = mapped;
     }
-    const usesGitHubReview = next.reviewProvider === 'github' || (next.reviewProvider === undefined && next.workProvider !== 'gitlab');
+    const usesGitHubReview = next.reviewProvider === 'github' || (next.reviewProvider === undefined && (next.workProvider === undefined || next.workProvider === 'github'));
     if (item.id === 'publisher' && usesGitHubReview && (item.value === 'user' || item.value === 'github-app' || item.value === 'token') && next.publisher === undefined) {
       if (item.value === 'user') next.publisher = { mode: 'user' };
       if (item.value === 'github-app') next.publisherIntent = 'github-app';

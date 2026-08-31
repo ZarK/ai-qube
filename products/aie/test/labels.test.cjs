@@ -107,6 +107,7 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
         { args: {}, flags: { json: true, 'dry-run': true } },
         {
           loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({ status: 'ready', reasonCode: 'ready', summary: 'ready', nextAction: null }),
           runGh: async () => { throw new Error('GitHub API returned 403'); },
         },
       );
@@ -115,6 +116,90 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
       assert.equal(parsed.command, 'labels setup');
       assert.match(parsed.error, /403/);
       assert.equal(parsed.nextAction, 'Verify GitHub authentication and label permissions, then rerun `aie labels setup --dry-run --json`.');
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('blocks label reads and writes when shared GitHub readiness needs action', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      let ghCalls = 0;
+      let applyCalls = 0;
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true } },
+        {
+          loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({
+            status: 'needs-action', reasonCode: 'wrong-account', summary: 'The wrong account is active.',
+            nextAction: 'Switch accounts explicitly.', roles: ['labels'], capabilities: [], credentialSource: { kind: 'stored', name: 'gh credential store' },
+          }),
+          runGh: async () => { ghCalls += 1; throw new Error('must not run'); },
+          applyLabelPlan: async () => { applyCalls += 1; },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reasonCode, 'wrong-account');
+      assert.equal(ghCalls, 0);
+      assert.equal(applyCalls, 0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('allows label operations when only the online write capability remains unverified', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      let ghCalls = 0;
+      let applyCalls = 0;
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true } },
+        {
+          loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({
+            status: 'unverified', reasonCode: 'unverified', summary: 'GitHub label write permission is unverified.',
+            nextAction: 'Confirm label write permission.', cliVersion: '2.99.0', host: 'github.com', repository: 'acme/widgets',
+            roles: ['labels'], capabilities: [], credentialSource: { kind: 'stored', name: 'gh credential store' },
+          }),
+          runGh: async () => { ghCalls += 1; return { stdout: '[]', stderr: '', exitCode: 0, args: [] }; },
+          applyLabelPlan: async () => { applyCalls += 1; },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, true);
+      assert.equal(parsed.githubReadiness.status, 'unverified');
+      assert.equal(parsed.applied, true);
+      assert.equal(ghCalls, 1);
+      assert.equal(applyCalls, 1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('blocks label reads and writes when offline readiness is unverified', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      let ghCalls = 0;
+      let applyCalls = 0;
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true, 'dry-run': true } },
+        {
+          loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({
+            status: 'unverified', reasonCode: 'unverified', summary: 'GitHub label write permission is unverified.',
+            nextAction: 'Confirm label write permission.', roles: ['labels'], capabilities: [], credentialSource: { kind: 'stored', name: 'gh credential store' },
+          }),
+          runGh: async () => { ghCalls += 1; throw new Error('must not run'); },
+          applyLabelPlan: async () => { applyCalls += 1; },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reasonCode, 'unverified');
+      assert.equal(parsed.nextAction, 'Confirm label write permission.');
+      assert.equal(ghCalls, 0);
+      assert.equal(applyCalls, 0);
     } finally {
       process.exitCode = previousExitCode;
     }

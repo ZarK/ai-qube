@@ -84,6 +84,7 @@ export interface ResolvedGitHubReviewPublisher {
 export interface ResolvePublisherOptions {
   readonly cwd?: string;
   readonly exec?: GhExec;
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly prAuthorLogin?: string | null;
   readonly nowSeconds?: number;
   /**
@@ -159,9 +160,9 @@ export function createGitHubAppJwt(appId: string, privateKeyPem: string, nowSeco
   return `${signingInput}.${base64Url(signature)}`;
 }
 
-function readPrivateKeyPem(config: GitHubAppPublisherConfig): { pem: string | null; error: string | null } {
+function readPrivateKeyPem(config: GitHubAppPublisherConfig, env: Readonly<Record<string, string | undefined>> = process.env): { pem: string | null; error: string | null } {
   if (config.privateKeyEnv) {
-    const value = process.env[config.privateKeyEnv];
+    const value = env[config.privateKeyEnv];
     if (typeof value === 'string' && value.trim() !== '') {
       return { pem: value.includes('\\n') ? value.replace(/\\n/g, '\n') : value, error: null };
     }
@@ -502,7 +503,7 @@ async function resolveAppBotIdentity(
   token: string,
   app: GitHubAppPublisherConfig,
   options: ResolvePublisherOptions,
-  limits: { signal?: AbortSignal; timeoutMs?: number },
+  limits: { signal?: AbortSignal; timeoutMs?: number; env?: Readonly<Record<string, string | undefined>> },
 ): Promise<{ login: string | null; type: string | null }> {
   const fromApp = options.fetchAppIdentity
     ? await options.fetchAppIdentity({
@@ -521,7 +522,7 @@ async function fetchInstallationIdentity(
   token: string,
   cwd?: string,
   exec?: GhExec,
-  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+  limits: { signal?: AbortSignal; timeoutMs?: number; env?: Readonly<Record<string, string | undefined>> } = {},
 ): Promise<{ login: string | null; type: string | null }> {
   // Fallback only: GET /installation is 404 for current installation tokens.
   try {
@@ -529,6 +530,7 @@ async function fetchInstallationIdentity(
       cwd,
       exec,
       token,
+      env: limits.env,
       signal: limits.signal,
       timeoutMs: limits.timeoutMs,
     });
@@ -550,7 +552,7 @@ async function defaultFetchTokenIdentity(
   token: string,
   cwd?: string,
   exec?: GhExec,
-  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+  limits: { signal?: AbortSignal; timeoutMs?: number; env?: Readonly<Record<string, string | undefined>> } = {},
 ): Promise<{ login: string | null; type: string | null }> {
   // Production runGh throws on HTTP failures instead of returning exitCode != 0.
   // Catch expected /user failures so installation-token minting can fall back cleanly.
@@ -559,6 +561,7 @@ async function defaultFetchTokenIdentity(
       cwd,
       exec,
       token,
+      env: limits.env,
       signal: limits.signal,
       timeoutMs: limits.timeoutMs,
     });
@@ -583,11 +586,12 @@ async function defaultFetchTokenIdentity(
 async function currentGhLogin(
   cwd?: string,
   exec?: GhExec,
-  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+  limits: { signal?: AbortSignal; timeoutMs?: number; env?: Readonly<Record<string, string | undefined>> } = {},
 ): Promise<string | null> {
   const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
     cwd,
     exec,
+    env: limits.env,
     signal: limits.signal,
     timeoutMs: limits.timeoutMs,
   });
@@ -685,7 +689,7 @@ export async function resolveGitHubReviewPublisher(
 
   if (mode === 'user') {
     const login = mint
-      ? await currentGhLogin(options.cwd, options.exec, { signal: options.signal, timeoutMs: options.timeoutMs })
+      ? await currentGhLogin(options.cwd, options.exec, { signal: options.signal, timeoutMs: options.timeoutMs, env: options.env })
       : null;
     return {
       accessToken: null,
@@ -742,7 +746,7 @@ export async function resolveGitHubReviewPublisher(
       };
     }
 
-    const key = readPrivateKeyPem(app);
+    const key = readPrivateKeyPem(app, options.env ?? process.env);
     if (!key.pem) {
       return {
         accessToken: null,
@@ -763,7 +767,7 @@ export async function resolveGitHubReviewPublisher(
     try {
       const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
       const jwt = createGitHubAppJwt(app.appId, key.pem, nowSeconds);
-      const probeLimits = { signal: options.signal, timeoutMs: options.timeoutMs };
+      const probeLimits = { signal: options.signal, timeoutMs: options.timeoutMs, env: options.env };
       const minted = options.fetchInstallationToken
         ? await options.fetchInstallationToken({
           appId: app.appId,
@@ -886,7 +890,7 @@ export async function resolveGitHubReviewPublisher(
     };
   }
 
-  const tokenValue = process.env[tokenEnv];
+  const tokenValue = (options.env ?? process.env)[tokenEnv];
   if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
     return {
       accessToken: null,
@@ -910,6 +914,7 @@ export async function resolveGitHubReviewPublisher(
       : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec, {
         signal: options.signal,
         timeoutMs: options.timeoutMs,
+        env: options.env,
       });
     const login = normalizeLogin(identityLookup.login);
     return {

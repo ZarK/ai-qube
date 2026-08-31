@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { validateConfig } from "@tjalve/aie";
+import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
 
 import {
   gitLabConnectionContract,
@@ -34,6 +35,7 @@ export interface ConnectionDoctorResult {
   readonly configPath: string | null;
   readonly summary: string;
   readonly connections: readonly ConnectionDoctorProbeResult[];
+  readonly githubReadiness: GitHubReadiness | null;
 }
 
 export interface ConnectionDoctorProbeResult extends ConnectionProbeResult {
@@ -55,6 +57,7 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
       configPath: null,
       summary: "No Executor config was found; no provider connection was verified.",
       connections: Object.freeze([]),
+      githubReadiness: null,
     });
   }
 
@@ -67,6 +70,7 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
       configPath,
       summary: "Executor config is malformed JSON; provider connections cannot be verified.",
       connections: Object.freeze([]),
+      githubReadiness: null,
     });
   }
 
@@ -78,9 +82,20 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
       configPath,
       summary: `Executor config is invalid${firstError ? ` at ${firstError.path}: ${firstError.message}` : "."}`,
       connections: Object.freeze([]),
+      githubReadiness: null,
     });
   }
   config = validated.config;
+
+  const githubReadiness = options.probe
+    ? null
+    : await evaluateGitHubReadiness({
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      offline: options.mode === "offline",
+      roles: selectedGitHubRoles(validated.config),
+      publisher: validated.config.providers.review.kind === "github" ? validated.config.providers.review.publisher : null,
+    });
 
   const configured = configuredConnections(config);
   if (configured.length === 0) {
@@ -89,20 +104,23 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
       configPath,
       summary: "Executor config has no supported provider connections to probe.",
       connections: Object.freeze([]),
+      githubReadiness,
     });
   }
 
   const probe = options.probe ?? runConnectionProbe;
-  const results = await Promise.all(configured.map(async ({ contract, config: connectionConfig, connectionId }) => Object.freeze({
-    ...await probe(contract, {
-    mode: options.mode ?? "live",
-    env: options.env ?? process.env,
-    config: connectionConfig,
-    exec: executeCommand,
-    fetch: fetchConnection,
-    }),
-    connectionId,
-  })));
+  const results = await Promise.all(configured.map(async ({ contract, config: connectionConfig, connectionId }) => {
+    const result = contract.adapterId === "github" && githubReadiness
+      ? githubConnectionResult(githubReadiness)
+      : await probe(contract, {
+        mode: options.mode ?? "live",
+        env: options.env ?? process.env,
+        config: connectionConfig,
+        exec: executeCommand,
+        fetch: fetchConnection,
+      });
+    return Object.freeze({ ...result, connectionId });
+  }));
   const status = rollupStatus(results);
   return Object.freeze({
     status,
@@ -113,6 +131,33 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
         ? "One or more configured provider connections failed their read-only probes."
         : "Configured provider connections remain explicitly unverified.",
     connections: Object.freeze(results),
+    githubReadiness,
+  });
+}
+
+function selectedGitHubRoles(config: ReturnType<typeof validateConfig> extends { config?: infer C } ? NonNullable<C> : never): readonly GitHubRole[] {
+  const roles: GitHubRole[] = [];
+  if (config.providers.work.kind === "github") roles.push("work");
+  if (config.providers.review.kind === "github") roles.push("review");
+  if (config.providers.ci.kind === "github") roles.push("ci");
+  if (roles.length === 0 && config.providers.connections.github) roles.push("repository-priming");
+  return Object.freeze(roles);
+}
+
+function githubConnectionResult(readiness: GitHubReadiness): ConnectionProbeResult {
+  const status: ConnectionProbeStatus = readiness.status === "needs-action"
+    ? "fail"
+    : readiness.status === "ready"
+      ? "pass"
+      : "unverified";
+  return Object.freeze({
+    adapterId: "github",
+    probeId: "github-readiness",
+    status,
+    authMethod: "cli-delegated",
+    summary: readiness.summary,
+    verifyCommand: readiness.host ? `gh auth status --active --hostname ${readiness.host} --json hosts` : "gh auth status --json hosts",
+    readOnly: true,
   });
 }
 
@@ -122,6 +167,17 @@ export function formatConnectionDoctor(result: ConnectionDoctorResult): string {
   for (const connection of result.connections) {
     lines.push(`- ${connection.connectionId}: ${connection.status} — ${connection.summary}`);
     lines.push(`  Verify: ${connection.verifyCommand}`);
+  }
+  if (result.githubReadiness) {
+    const github = result.githubReadiness;
+    lines.push(`- GitHub readiness: ${github.status} (${github.reasonCode}); roles=${github.roles.join(", ") || "none"}`);
+    lines.push(`  Host: ${github.host ?? "not resolved"}; repository: ${github.repository ?? "not resolved"}; account: ${github.accountLogin ?? "none"}`);
+    lines.push(`  Credential: ${github.credentialSource.kind}${github.credentialSource.name ? ` (${github.credentialSource.name})` : ""}`);
+    lines.push(`  ${github.summary}`);
+    for (const capability of github.capabilities) {
+      lines.push(`  - ${capability.capability}: ${capability.status} (${capability.reasonCode}) — ${capability.summary}`);
+    }
+    if (github.nextAction) lines.push(`  Next: ${github.nextAction}`);
   }
   return `${lines.join("\n")}\n`;
 }

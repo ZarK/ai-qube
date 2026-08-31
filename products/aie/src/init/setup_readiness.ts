@@ -9,8 +9,10 @@ import {
 import { readManagedToolVersion } from '../managed_file.js';
 import { getInstructionStatus } from '../repo/index.js';
 import { readAiePackageVersion } from '../review_mode.js';
+import { hasUsableGitHubConnection } from '../github_readiness.js';
+import type { GitHubReadiness } from '../providers/github_adapter_exports.js';
 
-export function collectSetupDoctorRecommendations(repoRoot: string, config: Config): string[] {
+export function collectSetupDoctorRecommendations(repoRoot: string, config: Config, githubReadiness?: GitHubReadiness): string[] {
   const instructions = getInstructionStatus(repoRoot);
   const instructionPolicy = buildInstructionPolicyDiagnostics(config, repoRoot);
   const recommendations = buildInstructionRecommendations({
@@ -29,7 +31,11 @@ export function collectSetupDoctorRecommendations(repoRoot: string, config: Conf
   if (versions.length === 0 || versions.some(version => version !== running)) {
     recommendations.push(`Managed instructions are older than the running tool (${versions.find(version => version !== null) ?? 'missing'} vs ${running}). Run \`aie init . --force\` to refresh them.`);
   }
-  const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true, evidenceRoot: repoRoot });
+  const gateReadiness = buildGateReadinessDiagnostics(config, {
+    ghAuthenticated: githubReadiness ? hasUsableGitHubConnection(githubReadiness) : false,
+    githubReadiness,
+    evidenceRoot: repoRoot,
+  });
   if (gateReadiness.gates.invalidCommands.length > 0) {
     recommendations.push(`Configured gates have invalid commands: ${gateReadiness.gates.invalidCommands.join(', ')}.`);
   }

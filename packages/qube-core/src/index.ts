@@ -380,17 +380,21 @@ export const githubConnectionContract = Object.freeze({
   configPath: "providers.connections.github",
   authMethod: "cli-delegated",
   envVars: Object.freeze([]),
-  configFields: Object.freeze([]),
+  configFields: Object.freeze([
+    Object.freeze({ name: "host", valueType: "string", required: false, purpose: "Select the GitHub.com, ghe.com, or GitHub Enterprise host." }),
+    Object.freeze({ name: "repository", valueType: "string", required: false, purpose: "Select the owner/repository identity when it cannot be derived from origin." }),
+    Object.freeze({ name: "login", valueType: "string", required: false, purpose: "Require one public active account login without changing accounts." }),
+  ]),
   credentialUrl: "https://cli.github.com/manual/gh_auth_login",
   scopes: Object.freeze(["repo read access", "read:org when organization membership is required"]),
   probe: Object.freeze({
     id: "github-auth-status",
     name: "GitHub gh authentication",
-    summary: "Ask the official GitHub CLI to verify its delegated authentication state.",
+    summary: "Ask the official GitHub CLI for structured active-account state; repository and role checks are evaluated by the GitHub adapter.",
     readOnly: true,
     timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
-    verifyCommand: "gh auth status",
-    transport: Object.freeze({ kind: "command", command: "gh", args: Object.freeze(["auth", "status"]) }),
+    verifyCommand: "gh auth status --active --hostname <host> --json hosts",
+    transport: Object.freeze({ kind: "command", command: "gh", args: Object.freeze(["auth", "status", "--json", "hosts"]) }),
   }),
 } as const satisfies ConnectionContract);
 

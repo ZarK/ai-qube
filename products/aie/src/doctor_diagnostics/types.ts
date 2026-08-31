@@ -4,6 +4,7 @@ import type { GateStatusResult } from '../gates/index.js';
 import type { WorkflowReadinessDiagnostics } from './workflow_readiness.js';
 import type { ReviewModelHostId } from '../core/policy.js';
 import type { RepositoryPrerequisites } from '../core/repo_state.js';
+import type { GitHubReadiness } from '../providers/github_adapter_exports.js';
 
 export interface DoctorDiagnostics {
   ok: boolean;
@@ -16,6 +17,7 @@ export interface DoctorDiagnostics {
   prerequisites: RepositoryPrerequisites;
   gh: boolean;
   ghAuthenticated: boolean;
+  githubReadiness: GitHubReadiness;
   currentBranch: string;
   isWorktree: boolean;
   configPresent: boolean;

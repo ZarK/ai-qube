@@ -35,7 +35,7 @@ const INIT_FLAGS = INIT_FLAG_DETAILS.map(flag => flag.name);
 const COMMAND_DEFINITIONS = [
   {
     name: 'doctor',
-    description: 'Check runtime environment, git, GitHub CLI, repository state, worktree policy, and config health for Executor.',
+    description: 'Check runtime, repository, config, and conditional role-aware provider readiness for Executor.',
     args: [],
     flags: ['--json', '--offline', '--help'],
     flagDetails: DOCTOR_FLAG_DETAILS,

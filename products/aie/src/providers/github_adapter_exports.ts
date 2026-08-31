@@ -1,7 +1,7 @@
-import type { DiscoverGitHubAppInstallationsOptions, GitHubAppInstallationCandidate, GitHubAppInstallationDiscoveryConfig, GitHubIssue, GitHubMilestone, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
+import type { DiscoverGitHubAppInstallationsOptions, EvaluateGitHubReadinessOptions, GitHubAppInstallationCandidate, GitHubAppInstallationDiscoveryConfig, GitHubIssue, GitHubMilestone, GitHubReadiness, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 import { adapterInstallAndInitGuidance, isMissingAdapterPackage } from '../missing_adapter_package.js';
 
-export type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult };
+export type { EvaluateGitHubReadinessOptions, GitHubIssue, GitHubMilestone, GitHubReadiness, GhExec, GhRunResult };
 
 type GitHubAdapterExports = typeof import('@tjalve/qube-adapter-github');
 
@@ -26,9 +26,15 @@ export async function runGh(args: string[], options: {
   token?: string | null;
   timeoutMs?: number;
   signal?: AbortSignal;
+  env?: Readonly<Record<string, string | undefined>>;
 } = {}): Promise<GhRunResult> {
   const adapter = await loadGitHubAdapter();
   return adapter.runGh(args, options);
+}
+
+export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOptions = {}): Promise<GitHubReadiness> {
+  const adapter = await loadGitHubAdapter();
+  return adapter.evaluateGitHubReadiness(options);
 }
 
 export async function loadPullRequestBody(prNumber: number, options: { cwd?: string; exec?: GhExec } = {}): Promise<string | undefined> {
