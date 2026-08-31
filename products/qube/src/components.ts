@@ -99,11 +99,6 @@ function adapterOption(
   });
 }
 
-function normalizeCapabilitySupport(support: string): QubeDiscoveryCapabilitySupport {
-  if (support === "unsupported" || support === "experimental" || support === "standalone" || support === "host-provided") return support;
-  return "supported";
-}
-
 function profileCapability(id: string, capability: AgentHostCapability, owner: string): QubeDiscoveryCapability {
   return Object.freeze({
     id,
