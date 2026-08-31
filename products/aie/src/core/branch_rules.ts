@@ -234,7 +234,7 @@ function baseRefDetails(repoState: RepoState, policy: BranchPolicy): JsonObject 
     remote: policy.baseRemote,
     branch: policy.baseBranch,
     resolved: repoState.baseRef.revision !== null,
-    upToDate: repoState.baseRef.upToDate === true,
+    upToDate: repoState.baseRef.upToDate ?? null,
     localRevision: repoState.baseRef.revision,
     remoteRevision: repoState.baseRef.remoteRevision ?? null,
     error: repoState.baseRef.error ?? null,

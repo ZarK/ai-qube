@@ -104,7 +104,7 @@ function repoStateToBaseRefStatus(repoState: RepoState, policy: BranchPolicy): B
     resolved: repoState.baseRef.revision !== null,
     localRevision: repoState.baseRef.revision ?? undefined,
     remoteRevision: repoState.baseRef.remoteRevision ?? undefined,
-    upToDate: repoState.baseRef.upToDate ?? false,
+    upToDate: repoState.baseRef.upToDate ?? null,
     error: repoState.baseRef.error ?? undefined,
   };
 }

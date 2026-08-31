@@ -35,7 +35,7 @@ export interface BaseRefStatus {
   resolved: boolean;
   localRevision?: string;
   remoteRevision?: string;
-  upToDate: boolean;
+  upToDate: boolean | null;
   error?: string;
 }
 
@@ -203,7 +203,7 @@ export function getBaseRefStatus(config: Config, repoRoot: string | null): BaseR
     resolved: baseRef.revision !== null,
     localRevision: baseRef.revision ?? undefined,
     remoteRevision: baseRef.remoteRevision,
-    upToDate: baseRef.upToDate ?? false,
+    upToDate: baseRef.upToDate ?? null,
     error: baseRef.error,
   };
 }
@@ -424,7 +424,7 @@ export async function buildRepoPrimePlan(options: { config: Config; dryRun: bool
   if (options.config.noWorktree && worktree.isWorktree) {
     warnings.push('Linked git worktree detected. Use the primary checkout before starting issue work.');
   }
-  if (!baseRef.resolved || !baseRef.upToDate) {
+  if (options.config.requireBaseBranchFreshness && (!baseRef.resolved || !baseRef.upToDate)) {
     warnings.push(`Base branch ${baseRef.remote}/${baseRef.branch} is ${baseRef.resolved ? 'not current locally' : 'not resolved'}. Update the local base branch from the configured remote before starting issue work.`);
   }
   if (options.config.blockOnOpenPRs && blockingPullRequests.length > 0) {

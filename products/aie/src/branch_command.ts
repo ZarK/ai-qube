@@ -26,7 +26,12 @@ export function formatBranchResult(result: BranchResult): string {
     lines.push(`Repository: ${result.branch.repoRoot ?? 'not found'}`);
     lines.push(`Worktree: ${result.branch.worktree.isWorktree ? 'linked worktree' : 'primary checkout'}`);
     lines.push(`Dirty checkout: ${result.branch.dirty.dirty ? 'yes' : 'no'}`);
-    lines.push(`Base ref: ${result.branch.baseRef.remote}/${result.branch.baseRef.branch} ${result.branch.baseRef.resolved && result.branch.baseRef.upToDate ? 'current' : 'not current'}`);
+    const baseRefState = result.branch.baseRef.upToDate === null
+      ? 'freshness not required'
+      : result.branch.baseRef.resolved && result.branch.baseRef.upToDate
+        ? 'current'
+        : 'not current';
+    lines.push(`Base ref: ${result.branch.baseRef.remote}/${result.branch.baseRef.branch} ${baseRefState}`);
     const remoteBranch = result.branch.remoteBranch;
     lines.push(`Remote branch: ${remoteBranch.remote}/${result.branch.suggested} ${remoteBranch.exists === null ? `lookup unavailable (${remoteBranch.unavailableReason ?? 'remote query failed'})` : remoteBranch.exists ? `${remoteBranch.relation} at ${remoteBranch.revision}` : 'absent'}`);
   }

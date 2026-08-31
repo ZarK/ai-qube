@@ -99,6 +99,8 @@ describe('branch service', () => {
     execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: repo, stdio: 'ignore' });
     const { createLocalGitRepositoryProvider } = require('../dist/providers/local/local_git_provider.js');
     const { configToExecutorPolicy } = require('../dist/config_policy.js');
+    const { formatBranchResult } = require('../dist/branch_command.js');
+    const { getBaseRefStatus } = require('../dist/repo/index.js');
     const config = getDefaults();
     config.requireBaseBranchFreshness = false;
 
@@ -110,6 +112,13 @@ describe('branch service', () => {
     assert.equal(state.baseRef.upToDate, undefined);
     assert.equal(state.baseRef.error, null);
     assert.equal(state.warnings.some(warning => /base branch|base ref/i.test(warning)), false);
+
+    const baseRef = getBaseRefStatus(config, repo);
+    assert.equal(baseRef.upToDate, null);
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: true, exec: makeExec(93), cwd: repo, config });
+    assert.equal(result.branch.baseRef.upToDate, null);
+    assert.match(formatBranchResult(result), /Base ref: origin\/main freshness not required/);
   });
 
   it('reports staged, modified, and deleted paths in typed repository state', async () => {

@@ -25,7 +25,7 @@ export { buildWorkflowReadiness, buildReviewReadiness, selectedAgentHosts } from
 export type { WorkflowReadinessDiagnostics, WorkflowReadinessInput, WorkflowReviewReadiness, WorkflowReviewSourceReadiness, WorkflowReviewState, WorkflowStage, WorkflowStageId, WorkflowStageStatus, WorkflowEvidenceState, WorkflowDirtyState, WorkflowShippingReadiness } from './workflow_readiness.js';
 
 export function computeDoctorOk(input: DoctorOkInputs): boolean {
-  const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate);
+  const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate === true);
   const pullRequestReady = !(input.blockOnOpenPRs ?? true) || (input.blockingPullRequestCount === 0 && !input.pullRequestError);
   return input.isRepo &&
     input.configValid &&
@@ -62,7 +62,7 @@ export function buildLifecycleDiagnostics(input: {
   const activeIssueBranch = activeIssue ? suggestBranchName(activeIssue, input.config) : null;
   const currentBranchMatchesActiveIssue = activeIssue && activeIssueBranch ? input.currentBranch === activeIssueBranch : null;
   const linkedWorktreeBlocked = input.config.noWorktree && input.isWorktree;
-  const baseBranchReady = !input.config.requireBaseBranchFreshness || (input.baseRef.resolved && input.baseRef.upToDate);
+  const baseBranchReady = !input.config.requireBaseBranchFreshness || (input.baseRef.resolved && input.baseRef.upToDate === true);
   const pullRequestReady = !input.config.blockOnOpenPRs || (input.blockingPullRequestCount === 0 && !input.pullRequestError);
   const lifecycleCommandsReady = branchNamingValid &&
     !linkedWorktreeBlocked &&
@@ -79,7 +79,7 @@ export function buildLifecycleDiagnostics(input: {
     currentBranchMatchesActiveIssue,
     linkedWorktreeBlocked,
     openPullRequestCheckEnabled: input.config.blockOnOpenPRs,
-    baseBranchFresh: input.baseRef.resolved && input.baseRef.upToDate,
+    baseBranchFresh: input.baseRef.resolved && input.baseRef.upToDate === true,
     queueError: input.queueError,
     lifecycleCommandsReady,
   };

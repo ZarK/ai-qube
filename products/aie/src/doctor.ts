@@ -68,7 +68,7 @@ class DoctorDiagnosticsBuilder {
       resolved: repository.baseRef.revision !== null,
       localRevision: repository.baseRef.revision ?? undefined,
       remoteRevision: repository.baseRef.remoteRevision ?? undefined,
-      upToDate: repository.baseRef.upToDate ?? false,
+      upToDate: repository.baseRef.upToDate ?? null,
       error: repository.baseRef.error ?? undefined,
     };
     const instructions = getInstructionStatus(repoRoot);
