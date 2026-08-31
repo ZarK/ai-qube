@@ -164,6 +164,37 @@ export {
   defineAgentHostProfile,
 } from "./agent_host.js";
 export type {
+  ContinuationAdapter,
+  ContinuationAssetMerge,
+  ContinuationAssetValidation,
+  ContinuationDecodeResult,
+  ContinuationDecodedEvent,
+  ContinuationDeclaration,
+  ContinuationDeliveryMethod,
+  ContinuationEncodeResult,
+  ContinuationManagedAssetDeclaration,
+  ContinuationManagedAssetState,
+  ContinuationMode,
+  ContinuationNativeSurface,
+  ContinuationProbeInput,
+  ContinuationProbeResult,
+  ContinuationRenderedAsset,
+  ContinuationRenderContext,
+  ContinuationResponseInput,
+  ContinuationSessionScope,
+} from "./continuation_adapter.js";
+export {
+  CONTINUATION_ADAPTER_VERSION,
+  CONTINUATION_DECLARATION_VERSION,
+  createContinuationAdapterRegistry,
+  defineContinuationAdapter,
+  defineContinuationDeclaration,
+  mergeDedicatedContinuationAsset,
+  probeContinuationSurface,
+  validateDedicatedContinuationAsset,
+  validateManagedAssetPath,
+} from "./continuation_adapter.js";
+export type {
   AgentHostCapabilityDescriptor,
   AgentHostCapabilityId,
   AgentHostCapabilityProfile,

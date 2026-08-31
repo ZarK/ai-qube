@@ -122,4 +122,12 @@ describe("grok-build adapter", () => {
     assert.equal(adapter.grokBuildStopHookFile.relativePath.replaceAll("\\", "/"), ".grok/hooks/ai-umpire.json");
     assert.match(adapter.grokBuildStopHookFile.content, /hook-stop --tool grok-build/);
   });
+
+  it("owns the executable Grok continuation contract", () => {
+    const decoded = adapter.grokBuildContinuationAdapter.decodeEvent({ cwd: "/repo", hookEventName: "stop", sessionId: "g1", stopHookActive: false, reason: "channel_closed" });
+    assert.equal(decoded.ok, true);
+    assert.equal(decoded.event.sessionEnd, true);
+    assert.deepEqual(adapter.grokBuildContinuationAdapter.encodeResponse({ decision: "block", prompt: "Continue." }).response, { decision: "block", reason: "Continue." });
+    assert.equal(adapter.grokBuildContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
+  });
 });

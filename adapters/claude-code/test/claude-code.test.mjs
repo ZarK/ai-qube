@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { claudeCodeHostProfile } from "../dist/index.js";
+import { claudeCodeContinuationAdapter, claudeCodeHostProfile } from "../dist/index.js";
 
 describe("claude-code adapter", () => {
+  it("owns a Claude Code Stop codec independent of Codex", () => {
+    const payload = { cwd: "/repo", hook_event_name: "Stop", session_id: "claude-1", turn_id: "t1", permission_mode: "default", model: "claude", stop_hook_active: false };
+    const decoded = claudeCodeContinuationAdapter.decodeEvent(payload);
+    assert.equal(decoded.ok, true);
+    assert.equal(decoded.event.sessionId, "claude-1");
+    assert.deepEqual(claudeCodeContinuationAdapter.encodeResponse({ decision: "allow" }).response, {});
+    assert.equal(claudeCodeContinuationAdapter.decodeEvent({ ...payload, hook_event_name: "PreToolUse" }).ok, false);
+    assert.equal(claudeCodeContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
+  });
   it("exposes one canonical Claude Code host profile", () => {
     assert.equal(claudeCodeHostProfile.id, "claude-code");
     assert.deepEqual(claudeCodeHostProfile.executables, { names: ["claude"], windowsNames: ["claude.exe"] });

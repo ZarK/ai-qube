@@ -5,18 +5,19 @@ import path from "node:path";
 import type { LayeredConfigSource } from "@tjalve/qube-core";
 
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
+import { AIU_CONTINUATION_HOSTS, type AiuContinuationHost } from "./continuation_adapters.js";
 
 export const AIU_CONFIG_FILENAME = ".qube/aiu/config.json";
 export const AIU_MACHINE_CONFIG_FILENAME = ".qube/aiu/config.local.json";
 export const AIU_USER_CONFIG_FILENAME = ".qube/aiu/config.json";
 export const AIU_CONFIG_SCHEMA_VERSION = 1;
-export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as const;
+export const AIU_HOSTS = AIU_CONTINUATION_HOSTS;
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
 export const AIU_CONTINUATION_MODES = ["continue", "repair", "wait", "stop"] as const;
 export const AIU_PROMPT_SECTION_KINDS = ["work", "planning", "quality", "whip"] as const;
 export const AIU_POST_ISSUE_SCOPES = ["ready", "standard", "custom"] as const;
 
-export type AiuHost = (typeof AIU_HOSTS)[number];
+export type AiuHost = AiuContinuationHost;
 export type AiuHostCapabilityName = (typeof AIU_HOST_CAPABILITY_NAMES)[number];
 export type AiuContinuationMode = (typeof AIU_CONTINUATION_MODES)[number];
 export type AiuPromptSectionKind = (typeof AIU_PROMPT_SECTION_KINDS)[number];

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-grok-build",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Grok Build host adapter for QUBE isolated review, host profile, and capability reporting.",
   "keywords": [
     "cli",

@@ -3,11 +3,21 @@ import { describe, it } from "node:test";
 
 import {
   codexHostProfile,
+  codexContinuationAdapter,
   isolatedReviewHostAdapter,
   parseCodexModelCatalog,
 } from "../dist/index.js";
 
 describe("codex adapter", () => {
+  it("owns a dedicated Codex Stop codec", () => {
+    const payload = { cwd: "/repo", hook_event_name: "Stop", session_id: "codex-1", turn_id: "t1", permission_mode: "default", model: "gpt", stop_hook_active: false };
+    const decoded = codexContinuationAdapter.decodeEvent(payload);
+    assert.equal(decoded.ok, true);
+    assert.equal(decoded.event.sessionId, "codex-1");
+    assert.deepEqual(codexContinuationAdapter.encodeResponse({ decision: "block", prompt: "Continue." }).response, { decision: "block", reason: "Continue." });
+    assert.equal(codexContinuationAdapter.decodeEvent({ ...payload, hookEventName: "stop", hook_event_name: undefined }).ok, false);
+    assert.equal(codexContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
+  });
   it("exposes the codex host profile", () => {
     assert.equal(codexHostProfile.id, "codex");
     assert.deepEqual(codexHostProfile.executables, { names: ["codex"], windowsNames: ["codex.exe"] });

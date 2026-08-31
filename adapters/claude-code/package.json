@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-claude-code",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Claude Code host capability adapter for QUBE instruction and workspace integrations.",
   "keywords": [
     "cli",
