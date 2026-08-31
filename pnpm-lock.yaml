@@ -206,7 +206,7 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-gitlab':
@@ -228,16 +228,16 @@ importers:
   products/aie:
     dependencies:
       '@tjalve/qube-adapter-claude-code':
-        specifier: 0.1.7
+        specifier: 0.1.8
         version: link:../../adapters/claude-code
       '@tjalve/qube-adapter-codex':
-        specifier: 0.1.9
+        specifier: 0.1.10
         version: link:../../adapters/codex
       '@tjalve/qube-adapter-cursor':
         specifier: 0.1.2
         version: link:../../adapters/cursor
       '@tjalve/qube-adapter-grok-build':
-        specifier: 0.1.9
+        specifier: 0.1.10
         version: link:../../adapters/grok-build
       '@tjalve/qube-adapter-opencode':
         specifier: 0.1.7
@@ -246,7 +246,7 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-github':
@@ -405,13 +405,13 @@ importers:
   products/aiu:
     dependencies:
       '@tjalve/qube-adapter-claude-code':
-        specifier: 0.1.7
+        specifier: 0.1.8
         version: link:../../adapters/claude-code
       '@tjalve/qube-adapter-codex':
-        specifier: 0.1.9
+        specifier: 0.1.10
         version: link:../../adapters/codex
       '@tjalve/qube-adapter-grok-build':
-        specifier: 0.1.9
+        specifier: 0.1.10
         version: link:../../adapters/grok-build
       '@tjalve/qube-adapter-opencode':
         specifier: 0.1.7
@@ -420,7 +420,7 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -433,19 +433,19 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.10
+        specifier: 0.2.11
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.10
+        specifier: 0.2.11
         version: link:../aie
       '@tjalve/aiq':
         specifier: 0.2.6
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
-        specifier: 0.0.11
+        specifier: 0.0.12
         version: link:../aiu
       '@tjalve/qube-adapter-codex':
-        specifier: 0.1.9
+        specifier: 0.1.10
         version: link:../../adapters/codex
       '@tjalve/qube-adapter-github':
         specifier: 0.1.8
@@ -454,7 +454,7 @@ importers:
         specifier: 0.2.2
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.7
+        specifier: 0.2.8
         version: link:../../packages/qube-core
     devDependencies:
       '@tjalve/qube-adapter-claude-code':

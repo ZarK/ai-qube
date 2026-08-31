@@ -299,6 +299,7 @@ describe("OpenCode continuation runtime", () => {
 
       assert.equal(first.delivery?.delivered, true);
       assert.equal(state?.ownerSessionId, "ses_owner");
+      assert.equal(state?.deliveryState, "emitted");
       assert.equal(state?.lastPromptFingerprint, first.prompt?.fingerprint);
       assert.equal(state?.selectedItem?.id, "67");
 
@@ -318,6 +319,7 @@ describe("OpenCode continuation runtime", () => {
       assert.equal(duplicate.delivery, undefined);
       assert.ok(duplicate.metadata?.suppressions?.includes("duplicate-prompt-target"));
       assert.notEqual(duplicate.metadata?.promptFingerprint, undefined);
+      assert.equal(readAiuContinuationState(paths)?.deliveryState, "consumed");
     } finally {
       await rm(target, { recursive: true, force: true });
     }
@@ -528,7 +530,7 @@ describe("OpenCode continuation runtime", () => {
     }
   });
 
-  it("keeps delivered prompts successful when persistence or logging fails", async () => {
+  it("fails safe before delivery when persistence state cannot be established", async () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-persistence-fail-"));
     try {
       const stateFile = path.join(target, "state-file");
@@ -555,9 +557,8 @@ describe("OpenCode continuation runtime", () => {
         },
       );
 
-      assert.equal(result.delivery?.delivered, true);
-      assert.ok(result.metadata?.suppressions?.includes("continuation-state-write-failed"));
-      assert.ok(result.metadata?.suppressions?.includes("continuation-log-write-failed"));
+      assert.equal(result.delivery, undefined);
+      assert.ok(result.metadata?.suppressions?.some((reason) => ["continuation-state-invalid", "continuation-state-write-failed", "continuation-state-unavailable"].includes(reason)));
     } finally {
       await rm(target, { recursive: true, force: true });
     }

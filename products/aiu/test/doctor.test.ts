@@ -144,7 +144,7 @@ describe("doctor diagnostics", () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, { version: 1, hosts: { enabled: ["codex"], modes: { codex: ["stop"] } } });
     await writeManagedHostFiles(repoRoot, "codex");
-    const manifest = getAiuHostCapabilityProfile("codex").managedFiles.find((file) => file.relativePath.endsWith(path.join(".codex-plugin", "plugin.json")));
+    const manifest = getAiuHostCapabilityProfile("codex", repoRoot).managedFiles.find((file) => file.relativePath.endsWith(path.join(".codex-plugin", "plugin.json")));
     assert.ok(manifest);
     const target = path.join(repoRoot, manifest.relativePath);
     await writeFile(target, JSON.stringify(JSON.parse(manifest.content)), "utf8");
@@ -769,7 +769,7 @@ async function createTempRoot(prefix: string): Promise<string> {
 }
 
 async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex" | "claude-code" | "grok-build"): Promise<void> {
-  for (const file of getAiuHostCapabilityProfile(host).managedFiles) {
+  for (const file of getAiuHostCapabilityProfile(host, repoRoot).managedFiles) {
     const target = path.join(repoRoot, file.relativePath);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, file.content, "utf8");

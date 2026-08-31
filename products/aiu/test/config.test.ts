@@ -34,6 +34,8 @@ describe("config foundation", () => {
     assert.equal(result.config.continuation.stopOnSupplyChainApprovalBlock, true);
     assert.equal(result.config.continuation.allowBackgroundScheduling, false);
     assert.equal(result.config.continuation.trustUnstructuredProse, false);
+    assert.equal(result.config.continuation.nativeLoopLimit, 3);
+    assert.equal(result.config.timeouts.hookMs, 4_000);
     assert.equal(result.config.supplyChain.stopOnApprovalRequired, true);
     assert.deepEqual(result.config.prompts.sections, {});
     assert.equal(result.config.planning.enabled, false);
@@ -50,7 +52,7 @@ describe("config foundation", () => {
     tempRoots.push(userHome);
     await writeJson(path.join(userHome, ".qube", "aiu", "config.json"), {
       version: 1,
-      timeouts: { commandMs: 11_000, hostMs: 4_000 },
+      timeouts: { commandMs: 11_000, hostMs: 4_000, hookMs: 3_000 },
       cooldowns: { promptMs: 200_000 },
     });
     await writeConfig(repoRoot, { version: 1, timeouts: { hostMs: 7_000 } });
@@ -64,6 +66,7 @@ describe("config foundation", () => {
     assert.equal(result.ok, true);
     assert.equal(result.config.timeouts.commandMs, 13_000);
     assert.equal(result.config.timeouts.hostMs, 7_000);
+    assert.equal(result.config.timeouts.hookMs, 3_000);
     assert.equal(result.config.cooldowns.promptMs, 200_000);
     assert.equal(result.sources?.["timeouts.commandMs"], "machine-local");
     assert.equal(result.sources?.["timeouts.hostMs"], "repository");

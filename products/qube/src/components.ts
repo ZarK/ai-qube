@@ -37,6 +37,12 @@ export interface QubeDiscoveryOption {
   readonly connection: ConnectionContract | null;
   readonly declaredProfile?: AgentHostCapabilityProfile;
   readonly readiness?: AgentHostReadinessReport;
+  readonly continuationSafety?: {
+    readonly applicable: boolean;
+    readonly state: "shared-persistent" | "not-applicable";
+    readonly deliveryStates: readonly ("reserved" | "emitted" | "consumed")[];
+    readonly guards: readonly string[];
+  };
 }
 
 export interface QubeDiscoveryCapability {
@@ -138,6 +144,14 @@ function agentHostOption(profile: AgentHostProfile): QubeDiscoveryOption {
     ]),
     connection: null,
     declaredProfile,
+    continuationSafety: profile.umpire.continuation.delivery === "none"
+      ? Object.freeze({ applicable: false, state: "not-applicable" as const, deliveryStates: Object.freeze([]), guards: Object.freeze([]) })
+      : Object.freeze({
+          applicable: true,
+          state: "shared-persistent" as const,
+          deliveryStates: Object.freeze(["reserved", "emitted", "consumed"] as const),
+          guards: Object.freeze(["lock", "ownership", "fingerprint", "target", "cooldown", "recursion", "native-loop-limit"]),
+        }),
   });
 }
 

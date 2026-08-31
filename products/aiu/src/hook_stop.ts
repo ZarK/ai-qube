@@ -4,6 +4,16 @@ import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
 import type { AiuConfig, AiuHost } from "./config.js";
 import { loadAiuConfig } from "./config.js";
 import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "./continuation_store.js";
+import {
+  appendAiuContinuationSafetyLog,
+  continuationSafetyCooldownActive,
+  continuationSafetyImmediateSuppressions,
+  markAiuContinuationDeliveryEmitted,
+  releaseAiuContinuationSafety,
+  reserveAiuContinuation,
+  startAiuContinuationSafety,
+  type AiuContinuationSafetyTransaction,
+} from "./continuation_safety.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
 import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./prompt.js";
 import { createAiuTrustedStateEnvelope, type AiuHostSessionState, type AiuTrustedStateEnvelope } from "./state.js";
@@ -41,8 +51,10 @@ export interface AiuHookStopDiagnostic {
 
 const MAX_DIAGNOSTIC_LENGTH = 240;
 const MAX_DIAGNOSTIC_LINES = 8;
+const HOOK_SERIALIZATION_HEADROOM_MS = 250;
 
 export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHookStopResult> {
+  const startedAt = Date.now();
   const stdin = options.stdin ?? "";
   const inputBytes = Buffer.byteLength(stdin, "utf8");
   const observedAt = options.observedAt ?? new Date().toISOString();
@@ -56,12 +68,6 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   if (parsed.payload.sessionEnd === true) {
     return allow(options, inputBytes, "session-end-stop", [
       diagnostic("info", "session-end-stop", `${options.tool} reported a session-end Stop; continuation is not applied.`),
-    ]);
-  }
-
-  if (parsed.payload.stopHookActive === true) {
-    return allow(options, inputBytes, "stop-hook-already-active", [
-      diagnostic("info", "stop-hook-already-active", "Host reported that a stop hook continuation is already active."),
     ]);
   }
 
@@ -87,87 +93,219 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  const adapterResults = await Promise.all(Object.entries(configLoad.config.trustedStateCommands).map(([sourceId, descriptor]) => runAiuTrustedStateAdapter(sourceId, descriptor, {
-      cwd: configLoad.repoRoot,
-      timeoutMs: configLoad.config.timeouts.commandMs,
-      observedAt,
-    })));
-  const warningDiagnostics = [
-    ...configDiagnostics.filter((item) => item.severity !== "error"),
-    ...adapterResults.flatMap(adapterDiagnostics),
-  ];
-  if (adapterResults.length === 0) {
-    return allow(options, inputBytes, "trusted-state-unavailable", [
-      ...warningDiagnostics,
-      diagnostic("warning", "trusted-state-unavailable", "No trusted state commands are configured for stop-hook decisions."),
+  const hookWindowMs = Math.min(
+    configLoad.config.timeouts.hookMs,
+    Math.max(1, configLoad.config.timeouts.hostMs - HOOK_SERIALIZATION_HEADROOM_MS),
+  );
+  const deadlineAt = startedAt + hookWindowMs;
+  const safety = startAiuContinuationSafety({
+    repoRoot: configLoad.repoRoot,
+    config: configLoad.config,
+    hostId: options.tool,
+    eventType: parsed.payload.event,
+    observedAt,
+    ...(parsed.payload.sessionId ? { sessionId: parsed.payload.sessionId, targetSessionId: parsed.payload.sessionId } : {}),
+    nativeDelivery: true,
+    recursionActive: parsed.payload.stopHookActive === true,
+    consumeEvidence: parsed.payload.stopHookActive !== true,
+  });
+  if (!safety.ok) {
+    return allow(options, inputBytes, safety.reason, [
+      ...configDiagnostics,
+      diagnostic("warning", safety.reason, "Continuation safety state could not be established; the native Stop is allowed."),
     ]);
   }
 
-  const adapterFailures = adapterResults.filter((result): result is Extract<AiuTrustedStateAdapterResult, { readonly ok: false }> => !result.ok);
-  if (adapterFailures.length > 0) {
-    return allow(
-      options,
-      inputBytes,
-      "trusted-state-load-failed",
-      [
+  const transaction = safety.transaction;
+  try {
+    const immediateSuppressions = continuationSafetyImmediateSuppressions(transaction);
+    if (immediateSuppressions.length > 0) {
+      const reason = immediateSuppressions[0]!;
+      appendHookDecisionLog(transaction, reason, immediateSuppressions);
+      return allow(options, inputBytes, reason, [
+        ...configDiagnostics,
+        diagnostic("info", reason, immediateSuppressionMessage(reason)),
+      ]);
+    }
+
+    const commandBudget = remainingHookBudget(deadlineAt);
+    if (commandBudget <= 0) {
+      appendHookDecisionLog(transaction, "hook-deadline-exhausted", ["hook-deadline-exhausted"]);
+      return allow(options, inputBytes, "hook-deadline-exhausted", [
+        ...configDiagnostics,
+        diagnostic("warning", "hook-deadline-exhausted", "The dedicated hook deadline expired before trusted state could be evaluated."),
+      ]);
+    }
+
+    const adapterResults = await Promise.all(Object.entries(configLoad.config.trustedStateCommands).map(([sourceId, descriptor]) => runAiuTrustedStateAdapter(sourceId, descriptor, {
+        cwd: configLoad.repoRoot,
+        timeoutMs: Math.min(descriptor.timeoutMs ?? configLoad.config.timeouts.commandMs, configLoad.config.timeouts.commandMs, commandBudget),
+        killGraceMs: Math.min(100, commandBudget),
+        observedAt,
+    })));
+    if (remainingHookBudget(deadlineAt) <= 0) {
+      appendHookDecisionLog(transaction, "hook-deadline-exhausted", ["hook-deadline-exhausted"]);
+      return allow(options, inputBytes, "hook-deadline-exhausted", [
+        ...configDiagnostics,
+        diagnostic("warning", "hook-deadline-exhausted", "The dedicated hook deadline expired while trusted state was evaluated."),
+      ]);
+    }
+    const warningDiagnostics = [
+      ...configDiagnostics.filter((item) => item.severity !== "error"),
+      ...adapterResults.flatMap(adapterDiagnostics),
+    ];
+    if (adapterResults.length === 0) {
+      appendHookDecisionLog(transaction, "trusted-state-unavailable", ["trusted-state-unavailable"]);
+      return allow(options, inputBytes, "trusted-state-unavailable", [
         ...warningDiagnostics,
-        ...adapterFailures.map((result) => diagnostic("error", result.error.code, `Trusted command ${result.record.sourceId} failed: ${result.error.message}`)),
-      ],
-    );
-  }
+        diagnostic("warning", "trusted-state-unavailable", "No trusted state commands are configured for stop-hook decisions."),
+      ]);
+    }
 
-  const states = [
-    ...adapterResults.flatMap((result) => result.ok ? result.states : []),
-    hostSessionEnvelope(options.tool, parsed.payload, observedAt),
-  ];
-  const diagnostics = [
-    ...warningDiagnostics,
-    ...states.flatMap(stateDiagnostics),
-  ];
-  const whipRead = readAiuWhipState(configLoad.repoRoot, configLoad.config);
-  const whipDecision = decideAiuWhipContinuation({
-    config: configLoad.config,
-    state: whipRead.state,
-  });
-  const decision = decideAiuContinuation({
-    states,
-    policy: {
-      modes: configLoad.config.hosts.modes[options.tool] ?? configLoad.config.continuation.modes,
-      stopOnUnknownState: configLoad.config.continuation.stopOnUnknownState,
-      stopOnUnsafeState: configLoad.config.continuation.stopOnUnsafeState,
-      stopOnSupplyChainApprovalBlock: configLoad.config.continuation.stopOnSupplyChainApprovalBlock,
-      planningEnabled: configLoad.config.planning.enabled,
-      qualityEnabled: configLoad.config.quality.enabled,
-      supplyChainApprovalRequired: configLoad.config.supplyChain.stopOnApprovalRequired === true && hasSupplyChainApprovalBlock(states),
-    },
-    ...(whipDecision.enqueuesPrompt && whipDecision.task ? { whipTask: whipDecision.task } : {}),
-    ...(configLoad.config.whip.enabled && whipRead.errors.length > 0 ? { whipStateError: { kind: "whip", sourceId: whipRead.path, status: "malformed" } } : {}),
-  });
-  const prompt = renderAiuContinuationPrompt({ decision, config: configLoad.config });
-  if (!isBlockingDecision(decision, prompt)) {
-    return allow(options, inputBytes, decision.reasonCodes[0] ?? decision.kind, diagnostics, decision, prompt);
-  }
+    const adapterFailures = adapterResults.filter((result): result is Extract<AiuTrustedStateAdapterResult, { readonly ok: false }> => !result.ok);
+    if (adapterFailures.length > 0) {
+      appendHookDecisionLog(transaction, "trusted-state-load-failed", ["trusted-state-load-failed"]);
+      return allow(
+        options,
+        inputBytes,
+        "trusted-state-load-failed",
+        [
+          ...warningDiagnostics,
+          ...adapterFailures.map((result) => diagnostic("error", result.error.code, `Trusted command ${result.record.sourceId} failed with ${result.error.code}.`)),
+        ],
+      );
+    }
 
-  const encoded = getAiuContinuationAdapter(options.tool).encodeResponse({ decision: "block", prompt: prompt.body, sessionId: parsed.payload.sessionId, cwd });
-  if (!encoded.ok || !isHookStopStdoutJson(encoded.response)) {
-    return allow(options, inputBytes, "invalid-host-response", [
-      ...diagnostics,
-      diagnostic("error", "invalid-host-response", encoded.ok ? "Continuation adapter produced an invalid Stop-hook response." : encoded.error),
-    ], decision, prompt);
-  }
-  const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
-  if (activationDiagnostic) diagnostics.push(activationDiagnostic);
+    if (remainingHookBudget(deadlineAt) <= 0) {
+      appendHookDecisionLog(transaction, "hook-deadline-exhausted", ["hook-deadline-exhausted"]);
+      return allow(options, inputBytes, "hook-deadline-exhausted", [
+        ...warningDiagnostics,
+        diagnostic("warning", "hook-deadline-exhausted", "The dedicated hook deadline expired before delivery could be reserved."),
+      ]);
+    }
 
-  return Object.freeze({
-    tool: options.tool,
-    decision: "block" as const,
-    reason: decision.reasonCodes[0] ?? decision.kind,
-    inputBytes,
-    stdoutJson: Object.freeze(encoded.response),
-    stderr: formatDiagnostics(diagnostics),
-    diagnostics: Object.freeze(diagnostics),
-    continuationDecision: decision,
-    prompt,
+    const states = [
+      ...adapterResults.flatMap((result) => result.ok ? result.states : []),
+      hostSessionEnvelope(options.tool, parsed.payload, observedAt),
+    ];
+    const diagnostics = [
+      ...warningDiagnostics,
+      ...states.flatMap(stateDiagnostics),
+    ];
+    const whipRead = readAiuWhipState(configLoad.repoRoot, configLoad.config);
+    const whipDecision = decideAiuWhipContinuation({
+      config: configLoad.config,
+      state: whipRead.state,
+    });
+    const decision = decideAiuContinuation({
+      states,
+      policy: {
+        modes: configLoad.config.hosts.modes[options.tool] ?? configLoad.config.continuation.modes,
+        stopOnUnknownState: configLoad.config.continuation.stopOnUnknownState,
+        stopOnUnsafeState: configLoad.config.continuation.stopOnUnsafeState,
+        stopOnSupplyChainApprovalBlock: configLoad.config.continuation.stopOnSupplyChainApprovalBlock,
+        planningEnabled: configLoad.config.planning.enabled,
+        qualityEnabled: configLoad.config.quality.enabled,
+        supplyChainApprovalRequired: configLoad.config.supplyChain.stopOnApprovalRequired === true && hasSupplyChainApprovalBlock(states),
+        cooldownActive: continuationSafetyCooldownActive(transaction),
+      },
+      ...(whipDecision.enqueuesPrompt && whipDecision.task ? { whipTask: whipDecision.task } : {}),
+      ...(configLoad.config.whip.enabled && whipRead.errors.length > 0 ? { whipStateError: { kind: "whip", sourceId: whipRead.path, status: "malformed" } } : {}),
+    });
+    const prompt = renderAiuContinuationPrompt({ decision, config: configLoad.config });
+    if (!isBlockingDecision(decision, prompt)) {
+      appendHookDecisionLog(transaction, decision.reasonCodes[0] ?? decision.kind, decision.reasonCodes, decision, prompt);
+      return allow(options, inputBytes, decision.reasonCodes[0] ?? decision.kind, diagnostics, decision, prompt);
+    }
+
+    const encoded = getAiuContinuationAdapter(options.tool).encodeResponse({ decision: "block", prompt: prompt.body, sessionId: parsed.payload.sessionId, cwd });
+    if (!encoded.ok || !isHookStopStdoutJson(encoded.response)) {
+      appendHookDecisionLog(transaction, "invalid-host-response", ["invalid-host-response"], decision, prompt);
+      return allow(options, inputBytes, "invalid-host-response", [
+        ...diagnostics,
+        diagnostic("error", "invalid-host-response", encoded.ok ? "Continuation adapter produced an invalid Stop-hook response." : encoded.error),
+      ], decision, prompt);
+    }
+    if (remainingHookBudget(deadlineAt) <= 0) {
+      appendHookDecisionLog(transaction, "hook-deadline-exhausted", ["hook-deadline-exhausted"], decision, prompt);
+      return allow(options, inputBytes, "hook-deadline-exhausted", [
+        ...diagnostics,
+        diagnostic("warning", "hook-deadline-exhausted", "The dedicated hook deadline expired before delivery could be reserved."),
+      ], decision, prompt);
+    }
+    const reservation = reserveAiuContinuation(transaction, decision, prompt);
+    if (!reservation.ok) {
+      return allow(options, inputBytes, reservation.reason, [
+        ...diagnostics,
+        diagnostic("info", reservation.reason, "Continuation delivery was suppressed by shared safety state."),
+      ], decision, prompt);
+    }
+    const emitted = markAiuContinuationDeliveryEmitted(transaction);
+    if (!emitted.ok) {
+      return allow(options, inputBytes, emitted.reason, [
+        ...diagnostics,
+        diagnostic("warning", emitted.reason, "Continuation delivery state could not be recorded; the native Stop is allowed."),
+      ], decision, prompt);
+    }
+    appendHookDecisionLog(transaction, decision.reasonCodes[0] ?? decision.kind, [], decision, prompt);
+    const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
+    if (activationDiagnostic) diagnostics.push(activationDiagnostic);
+
+    return Object.freeze({
+      tool: options.tool,
+      decision: "block" as const,
+      reason: decision.reasonCodes[0] ?? decision.kind,
+      inputBytes,
+      stdoutJson: Object.freeze(encoded.response),
+      stderr: formatDiagnostics(diagnostics),
+      diagnostics: Object.freeze(diagnostics),
+      continuationDecision: decision,
+      prompt,
+    });
+  } finally {
+    releaseAiuContinuationSafety(transaction);
+  }
+}
+
+function remainingHookBudget(deadlineAt: number): number {
+  return Math.max(0, deadlineAt - Date.now() - HOOK_SERIALIZATION_HEADROOM_MS);
+}
+
+function immediateSuppressionMessage(reason: string): string {
+  if (reason === "stop-hook-already-active") return "Host reported that a native continuation hook is already active.";
+  if (reason === "prompt-owned-by-other-session") return "Another session owns the pending continuation delivery.";
+  if (reason === "wait-cooldown-active") return "The configured continuation cooldown is still active.";
+  return "Shared continuation safety state suppressed delivery.";
+}
+
+function appendHookDecisionLog(
+  transaction: AiuContinuationSafetyTransaction,
+  reason: string,
+  suppressions: readonly string[],
+  decision?: AiuContinuationDecision,
+  prompt?: AiuContinuationPrompt,
+): void {
+  appendAiuContinuationSafetyLog(transaction, {
+    event: "decision",
+    observedAt: transaction.input.observedAt,
+    eventType: transaction.input.eventType,
+    hostId: transaction.input.hostId,
+    ...(transaction.input.sessionId ? { sessionId: transaction.input.sessionId } : {}),
+    ...(transaction.input.targetSessionId ? { targetSessionId: transaction.input.targetSessionId } : {}),
+    ...(transaction.state ? {
+      deliveryState: transaction.state.deliveryState,
+      nativeLoopCount: transaction.state.nativeLoopCount,
+    } : {}),
+    ...(decision ? {
+      decisionKind: decision.kind,
+      mode: decision.selectedMode,
+      promptKind: decision.promptKind,
+      reasonCodes: decision.reasonCodes,
+      sourceSummaries: decision.sourceSummaries,
+      ...(decision.selectedItem ? { selectedItem: decision.selectedItem } : {}),
+    } : { reasonCodes: [reason] }),
+    ...(prompt ? { promptFingerprint: prompt.fingerprint } : {}),
+    ...(suppressions.length > 0 ? { suppressions } : {}),
   });
 }
 
@@ -430,11 +568,11 @@ function hasSupplyChainApprovalBlock(states: readonly AiuTrustedStateEnvelope[])
 
 function adapterDiagnostics(result: AiuTrustedStateAdapterResult): readonly AiuHookStopDiagnostic[] {
   const stderr = result.record.stderrSummary.trim();
-  return stderr.length > 0 ? [diagnostic("warning", "trusted-command-stderr", `Trusted command ${result.record.sourceId} wrote stderr: ${stderr}`)] : [];
+  return stderr.length > 0 ? [diagnostic("warning", "trusted-command-stderr", `Trusted command ${result.record.sourceId} wrote stderr; output was omitted.`)] : [];
 }
 
 function stateDiagnostics(state: AiuTrustedStateEnvelope): readonly AiuHookStopDiagnostic[] {
-  return state.diagnostics.map((item) => diagnostic(item.severity, `trusted-state-${item.kind}`, `${state.sourceId}: ${item.message}`));
+  return state.diagnostics.map((item) => diagnostic(item.severity, `trusted-state-${item.kind}`, `Trusted state ${state.sourceId} reported ${item.kind}; detail was omitted.`));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

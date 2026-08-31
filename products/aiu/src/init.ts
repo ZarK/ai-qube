@@ -90,6 +90,7 @@ export interface AiuInitFileAction {
   readonly operation: AiuInitFileOperation;
   readonly reason: string;
   readonly content: string;
+  readonly command?: string;
 }
 
 export interface AiuInitConfigAction {
@@ -120,7 +121,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
   const postIssueScope = options.postIssueScope ?? configLoad.config.postIssueScope;
   const dryRun = options.dryRun === true;
   const force = options.force === true;
-  const hostProfiles = getAiuHostCapabilityProfiles(tools);
+  const hostProfiles = getAiuHostCapabilityProfiles(tools, repoRoot);
   const files = hostProfiles.flatMap((profile) => profile.managedFiles.map((file) => planFile(repoRoot, file, force)));
   const config = planConfig(repoRoot, configLoad, tools, postIssueScope);
   const configError = !configLoad.ok
@@ -450,6 +451,7 @@ function planFile(repoRoot: string, file: AiuManagedHostFile, force: boolean): A
     operation: planned.operation,
     reason: planned.reason,
     content: planned.content,
+    ...(file.command ? { command: file.command } : {}),
   });
 }
 

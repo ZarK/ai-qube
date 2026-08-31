@@ -30,7 +30,10 @@ export const grokBuildContinuationDeclaration = defineContinuationDeclaration({
 export const grokBuildContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: grokBuildContinuationDeclaration,
-  renderManagedAssets() { return Object.freeze([Object.freeze({ ...hookAsset, content: grokBuildStopHookFile.content })]); },
+  renderManagedAssets(context) {
+    const command = `${context.commandPrefix ?? "aiu"} hook-stop --tool grok-build`;
+    return Object.freeze([Object.freeze({ ...hookAsset, command, content: grokBuildStopHookFile.content.replace("aiu hook-stop --tool grok-build", command) })]);
+  },
   validateManagedAsset(assetId, existing, desired) { return assetId === hookAsset.id ? validateDedicatedContinuationAsset(existing, desired) : unknownAsset(assetId); },
   mergeManagedAsset(assetId, existing, desired) { return assetId === hookAsset.id ? mergeDedicatedContinuationAsset(existing, desired) : failedUnknownAsset(assetId); },
   decodeEvent(input) {
