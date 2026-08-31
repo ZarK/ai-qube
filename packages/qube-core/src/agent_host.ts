@@ -54,6 +54,8 @@ export interface IsolatedReviewHostParsedEnvelope {
 export interface IsolatedReviewHostInvocationContext {
   readonly repoRoot: string;
   readonly model: string | null;
+  /** Exact adapter transport value bound by the current readiness probe. */
+  readonly transportModel?: string | null;
   readonly effort: string | null;
   readonly maxTurns: number;
   readonly prompt: string;
@@ -87,6 +89,10 @@ export interface IsolatedReviewHostProbeResult {
   readonly status: "ready" | "blocked";
   readonly modelListed: boolean | null;
   readonly diagnostic: string | null;
+  readonly reasonCode?: string | null;
+  readonly transport?: string | null;
+  readonly resolvedModel?: string | null;
+  readonly availableModels?: readonly string[];
 }
 
 export interface IsolatedReviewHostAdapter {

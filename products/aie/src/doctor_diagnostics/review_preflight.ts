@@ -154,6 +154,10 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
           executable: check.executable,
           version: check.version,
           modelListed: check.modelListed,
+          reasonCode: check.reasonCode ?? null,
+          transport: check.transport ?? null,
+          resolvedModel: check.resolvedModel ?? null,
+          availableModels: [...(check.availableModels ?? [])],
           nextAction: check.diagnostic,
         };
       } catch (error: unknown) {
@@ -164,6 +168,10 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
           executable: null,
           version: null,
           modelListed: null,
+          reasonCode: 'model-route-probe-blocked',
+          transport: null,
+          resolvedModel: null,
+          availableModels: [],
           nextAction: `Route probe for ${target.host} failed unexpectedly: ${(error instanceof Error ? error.message : String(error)).split(/\r?\n/)[0]}`,
         };
       }
@@ -180,6 +188,7 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
         chain.fallbackRoute,
         preferredCheck?.status === 'ready',
         fallbackCheck?.status === 'ready',
+        preferredCheck?.reasonCode ?? undefined,
       );
       const selectedRoute = selection.route
         ? { host: selection.route.host, model: selection.route.model }

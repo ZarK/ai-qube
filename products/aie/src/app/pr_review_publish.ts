@@ -296,7 +296,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   if (typeof parsed.evidenceSha256 !== 'string' || parsed.evidenceSha256 !== localReviewEvidenceSha256(evidence)) {
     throw laneEvidenceFailure(evidencePath, 'trusted local-host provenance evidence digest does not match lane evidence.');
   }
-  for (const field of ['host', 'model', 'effort', 'isolation', 'invocationId'] as const) {
+  for (const field of ['host', 'model', 'transport', 'transportModel', 'effort', 'isolation', 'invocationId', 'routeSource', 'fallbackReason'] as const) {
     if ((parsed[field] ?? null) !== (provenance[field] ?? null)) throw laneEvidenceFailure(evidencePath, `trusted local-host provenance ${field} does not match lane evidence.`);
   }
 }

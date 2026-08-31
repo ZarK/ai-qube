@@ -1,5 +1,15 @@
 import type { DoctorDiagnostics } from '../doctor_diagnostics/index.js';
 
+type ReviewRouteProbe = DoctorDiagnostics['gateReadiness']['reviewPreflight']['checks']['routeProbes']['routes'][number];
+
+export function formatReviewRouteProbe(route: ReviewRouteProbe): string {
+  const transport = route.transport ? `, transport=${route.transport}` : '';
+  const resolvedModel = route.resolvedModel ? `, transport-model=${route.resolvedModel}` : '';
+  const reason = route.reasonCode ? `, reason=${route.reasonCode}` : '';
+  const choices = route.availableModels.length > 0 ? `, compatible=${route.availableModels.join(',')}` : '';
+  return `Review route probe: host=${route.host}, model=${route.model ?? 'host-default'}, status=${route.status}${reason}${transport}${resolvedModel}${choices}${route.version ? `, version=${route.version}` : ''}${route.status === 'blocked' && route.nextAction ? `; ${route.nextAction}` : ''}`;
+}
+
 function pushConfigAndQueue(lines: string[], diagnostics: DoctorDiagnostics): void {
   if (diagnostics.configErrors && diagnostics.configErrors.length > 0) lines.push(`Config errors: ${diagnostics.configErrors.length} (see recommendations)`);
   lines.push(`Labels: ${diagnostics.labelsOk ? 'ok' : 'issues'}${diagnostics.labelsError ? ' — ' + diagnostics.labelsError : ''}`);
@@ -30,7 +40,7 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   lines.push(`PR review gate: ${readiness.prReview.readiness}; reviewers=${readiness.prReview.reviewers.length}; wait=${readiness.prReview.reviewWaitMinutes} minutes; gh=${readiness.prReview.ghAuthenticated ? 'authenticated' : 'not authenticated'}`);
   lines.push(`Review preflight: ${readiness.reviewPreflight.readiness}; disk=${readiness.reviewPreflight.checks.disk.readiness}; dist=${readiness.reviewPreflight.checks.dist.readiness}; loose-objects=${readiness.reviewPreflight.checks.gitObjects.readiness}; gh-review-auth=${readiness.reviewPreflight.checks.githubReviewAuth.readiness}; route-probes=${readiness.reviewPreflight.checks.routeProbes.readiness}`);
   for (const route of readiness.reviewPreflight.checks.routeProbes.routes) {
-    lines.push(`Review route probe: host=${route.host}, model=${route.model ?? 'host-default'}, status=${route.status}${route.version ? `, version=${route.version}` : ''}${route.status === 'blocked' && route.nextAction ? `; ${route.nextAction}` : ''}`);
+    lines.push(formatReviewRouteProbe(route));
   }
   for (const chain of readiness.reviewPreflight.checks.routeProbes.chains) {
     const selected = chain.selectedRoute ? `${chain.selectedRoute.host}/${chain.selectedRoute.model ?? 'host-default'}` : 'none';

@@ -22,7 +22,9 @@ export interface ConfiguredHostModelStatus {
   absent: string[];
 }
 
-const PROBE_TIMEOUT_MS = 5000;
+// Cursor's prompt-free ACP discovery performs three bounded four-second
+// requests. Keep the outer catalog process bound above that complete handshake.
+const PROBE_TIMEOUT_MS = 15_000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
 
 function defaultRunCommand(executable: string, args: readonly string[]): string {

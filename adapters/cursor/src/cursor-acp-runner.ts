@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import { cursorAcpModelOptions, resolveCursorAcpModel } from "./model_resolution.js";
+
 type JsonObject = Record<string, unknown>;
 
 interface RunnerOptions {
@@ -49,36 +51,13 @@ export function parseRunnerOptions(args: string[]): RunnerOptions {
   return { cursorExecutable, cursorPrefix: parsedPrefix, forwarded: args.slice(separator + 1) };
 }
 
-function normalizeModel(value: string): string {
-  return value.toLowerCase().replace(/\[[^\]]*\]$/u, "").replace(/[^a-z0-9]+/gu, "");
-}
-
 function configOptions(value: unknown): JsonObject[] {
   if (!isRecord(value) || !Array.isArray(value.configOptions)) return [];
   return value.configOptions.filter(isRecord);
 }
 
-function catalogModelParts(requested: string): { base: string; effort: string | null } {
-  const stripped = requested.replace(/^cursor-/iu, "").replace(/-fast$/iu, "");
-  const effort = /-(low|medium|high|xhigh)$/iu.exec(stripped)?.[1]?.toLowerCase() ?? null;
-  const base = normalizeModel(stripped.replace(/-(?:low|medium|high|xhigh)$/iu, ""));
-  return { base, effort };
-}
-
 export function selectCursorAcpModel(session: unknown, requested: string): string | null {
-  const model = configOptions(session).find(option => option.id === "model");
-  if (!model || !Array.isArray(model.options)) return null;
-  const options = model.options.filter(isRecord);
-  const exact = options.find(option => option.value === requested);
-  if (typeof exact?.value === "string") return exact.value;
-  const { base, effort } = catalogModelParts(requested);
-  const matches = options.filter(option => {
-    if (typeof option.value !== "string") return false;
-    const label = `${option.value} ${typeof option.name === "string" ? option.name : ""}`;
-    if (!normalizeModel(label).includes(base)) return false;
-    return effort === null || new RegExp(`(?:reasoning|effort)[= _-]?${effort}|\\b${effort}\\b`, "iu").test(label);
-  });
-  return matches.length === 1 && typeof matches[0].value === "string" ? matches[0].value : null;
+  return resolveCursorAcpModel(cursorAcpModelOptions(session), requested)?.transportValue ?? null;
 }
 
 function currentConfigValue(value: unknown, configId: string): unknown {
@@ -86,10 +65,7 @@ function currentConfigValue(value: unknown, configId: string): unknown {
 }
 
 function configuredModelValues(value: unknown): string[] {
-  const model = configOptions(value).find(option => option.id === "model");
-  return model && Array.isArray(model.options)
-    ? model.options.filter(isRecord).map(option => option.value).filter((option): option is string => typeof option === "string")
-    : [];
+  return cursorAcpModelOptions(value).map(option => option.value);
 }
 
 function strictConfig(): string {
@@ -144,11 +120,96 @@ function proxy(options: RunnerOptions): never {
   process.exit(result.status ?? 1);
 }
 
+async function probeAcpModels(options: RunnerOptions): Promise<void> {
+  const configDirectory = mkdtempSync(join(tmpdir(), "qube-cursor-models-"));
+  writeFileSync(join(configDirectory, "cli-config.json"), strictConfig(), { encoding: "utf8", mode: 0o600 });
+  const child = spawn(options.cursorExecutable, [...options.cursorPrefix, "acp"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      CURSOR_CONFIG_DIR: configDirectory,
+      CURSOR_AGENT_DISABLE_DEBUG_LOG: "1",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    shell: false,
+  });
+  const childExit = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  child.stderr.resume();
+  const pending = new Map<number, PendingRequest>();
+  let nextId = 1;
+  const send = (message: JsonObject): void => { child.stdin.write(`${JSON.stringify(message)}\n`, "utf8"); };
+  const rejectPending = (error: Error): void => {
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  };
+  const request = (method: string, params: JsonObject): Promise<JsonObject> => {
+    const id = nextId++;
+    send({ jsonrpc: "2.0", id, method, params });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`Cursor ACP ${method} timed out during model compatibility inspection.`));
+      }, 4_000);
+      pending.set(id, {
+        resolve(value) { clearTimeout(timer); resolve(value); },
+        reject(error) { clearTimeout(timer); reject(error); },
+      });
+    });
+  };
+  child.once("error", error => rejectPending(new Error(`Cursor ACP model inspection failed to start: ${error.message}`, { cause: error })));
+  child.once("exit", (code, signal) => {
+    if (pending.size === 0) return;
+    const outcome = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+    rejectPending(new Error(`Cursor ACP model inspection ended early (${outcome}).`));
+  });
+  createInterface({ input: child.stdout }).on("line", line => {
+    let message: unknown;
+    try { message = JSON.parse(line); }
+    catch { rejectPending(new Error("Cursor ACP model inspection returned malformed JSON-RPC output.")); return; }
+    if (!isRecord(message)) { rejectPending(new Error("Cursor ACP model inspection returned a non-object message.")); return; }
+    if (typeof message.id === "number" && ("result" in message || "error" in message)) {
+      const waiter = pending.get(message.id);
+      if (!waiter) return;
+      pending.delete(message.id);
+      if (isRecord(message.error)) waiter.reject(new Error(typeof message.error.message === "string" ? message.error.message : "Cursor ACP model inspection failed."));
+      else waiter.resolve(isRecord(message.result) ? message.result : {});
+      return;
+    }
+    if (message.method === "session/request_permission" && "id" in message) {
+      send({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
+      return;
+    }
+    if (typeof message.method === "string" && "id" in message) {
+      send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "QUBE model inspection exposes no client capabilities." } });
+    }
+  });
+  try {
+    await request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      clientInfo: { name: "qube-model-inspection", version: "1" },
+    });
+    await request("authenticate", { methodId: "cursor_login" });
+    const session = await request("session/new", { cwd: process.cwd(), mcpServers: [] });
+    const modelOptions = cursorAcpModelOptions(session);
+    if (modelOptions.length === 0) throw new Error("Cursor ACP did not advertise model options.");
+    process.stdout.write(`${JSON.stringify({ version: 1, transport: "acp", options: modelOptions })}\n`);
+  } finally {
+    rejectPending(new Error("Cursor ACP model inspection closed."));
+    child.stdin.end();
+    if (child.exitCode === null) child.kill();
+    await Promise.race([childExit, new Promise<void>(resolve => setTimeout(resolve, 1_000))]);
+    rmSync(configDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
 async function runAcp(options: RunnerOptions): Promise<void> {
   const forwarded = [...options.forwarded];
   if (forwarded.shift() !== "--acp-review") throw new Error("Missing --acp-review marker.");
   const workspace = requiredValue(forwarded, "--workspace");
-  const requestedModel = optionalValue(forwarded, "--model");
+  const transportModel = optionalValue(forwarded, "--model");
+  const requestedModel = optionalValue(forwarded, "--requested-model") ?? transportModel;
   const prompt = await readStdin();
   if (prompt.trim() === "") throw new Error("Cursor ACP review requires a prompt on stdin.");
 
@@ -237,15 +298,18 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     if (typeof session.sessionId !== "string" || session.sessionId === "") throw new Error("Cursor ACP did not create a session.");
     const modeResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "mode", value: "ask" });
     if (currentConfigValue(modeResult, "mode") !== "ask") throw new Error("Cursor ACP did not enter Ask mode.");
-    if (requestedModel) {
-      const modelValue = selectCursorAcpModel(session, requestedModel) ?? requestedModel;
+    if (transportModel) {
+      const availableModels = configuredModelValues(session);
+      if (!availableModels.includes(transportModel)) {
+        throw new Error(`Cursor model compatibility failed: requested ${requestedModel}; transport acp; probed value ${transportModel} is unavailable. Available ACP values: ${availableModels.join(", ") || "none"}. Rerun init or doctor and select a compatible Cursor model.`);
+      }
       let modelResult: JsonObject;
       try {
-        modelResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "model", value: modelValue });
+        modelResult = await request("session/set_config_option", { sessionId: session.sessionId, configId: "model", value: transportModel });
       } catch (error) {
-        throw new Error(`Cursor ACP rejected model ${requestedModel}. Available ACP values: ${configuredModelValues(session).join(", ") || "none"}.`, { cause: error });
+        throw new Error(`Cursor model compatibility failed: requested ${requestedModel}; transport acp rejected probed value ${transportModel}. Available ACP values: ${availableModels.join(", ") || "none"}. Rerun init or doctor and select a compatible Cursor model.`, { cause: error });
       }
-      if (currentConfigValue(modelResult, "model") !== modelValue) throw new Error("Cursor ACP did not confirm the requested model.");
+      if (currentConfigValue(modelResult, "model") !== transportModel) throw new Error("Cursor ACP did not confirm the probed transport model.");
     }
     await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] });
     if (protocolFault) throw protocolFault;
@@ -271,6 +335,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const options = parseRunnerOptions(args);
+  if (options.forwarded[0] === "--acp-models") return probeAcpModels(options);
   if (options.forwarded[0] !== "--acp-review") proxy(options);
   await runAcp(options);
 }

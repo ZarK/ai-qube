@@ -81,6 +81,45 @@ describe('model route probe', () => {
     assert.ok(commands.every(args => args[0] === '-File' && args[1] === 'cursor-agent.ps1'));
   });
 
+  it('binds a compatible Windows Cursor display model to its exact ACP value', () => {
+    const commands = [];
+    const check = probeModelRoute('cursor', 'cursor-grok-4.6-high-fast', (_executable, args) => {
+      commands.push(args);
+      if (args.at(-1) === '--version') return '2026.08.11-build';
+      if (args.at(-2) === 'acp' && args.at(-1) === '--help') return 'Usage: agent acp\nAgent Client Protocol';
+      if (args.at(-1) === '--help') return 'ask';
+      if (args.includes('status')) return JSON.stringify({ status: 'authenticated', isAuthenticated: true });
+      if (args.at(-1) === 'models') return 'Available models\ncursor-grok-4.6-high - Grok High\ncursor-grok-4.6-high-fast - Grok High Fast';
+      if (args.at(-1) === '--acp-models') return JSON.stringify({ version: 1, transport: 'acp', options: [{ value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' }] });
+      throw new Error(`unexpected probe command: ${args.join(' ')}`);
+    }, () => ({ executable: 'node.exe', prefixArgs: ['cursor-acp-runner.js', '--'] }), 'win32');
+
+    assert.equal(check.status, 'ready');
+    assert.equal(check.reasonCode, null);
+    assert.equal(check.transport, 'acp');
+    assert.equal(check.resolvedModel, 'grok-4.6[effort=high,fast=true]');
+    assert.deepEqual(check.availableModels, ['cursor-grok-4.6-high-fast']);
+    assert.ok(commands.some(args => args.at(-1) === '--acp-models'));
+  });
+
+  it('blocks the observed Cursor display and ACP semantic mismatch', () => {
+    const check = probeModelRoute('cursor', 'cursor-grok-4.6-medium-fast', (_executable, args) => {
+      if (args.at(-1) === '--version') return '2026.08.11-build';
+      if (args.at(-2) === 'acp' && args.at(-1) === '--help') return 'Usage: agent acp\nAgent Client Protocol';
+      if (args.at(-1) === '--help') return 'ask';
+      if (args.includes('status')) return JSON.stringify({ status: 'authenticated', isAuthenticated: true });
+      if (args.at(-1) === 'models') return 'Available models\ncursor-grok-4.6-medium-fast - Grok Medium Fast\ncursor-grok-4.6-high-fast - Grok High Fast';
+      if (args.at(-1) === '--acp-models') return JSON.stringify({ version: 1, transport: 'acp', options: [{ value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' }] });
+      throw new Error(`unexpected probe command: ${args.join(' ')}`);
+    }, () => 'cursor-agent', 'win32');
+
+    assert.equal(check.status, 'blocked');
+    assert.equal(check.reasonCode, 'model-route-model-unsupported');
+    assert.equal(check.transport, 'acp');
+    assert.equal(check.resolvedModel, null);
+    assert.deepEqual(check.availableModels, ['cursor-grok-4.6-high-fast']);
+  });
+
   it('blocks Cursor before a lane when browser login is missing', () => {
     const check = probeModelRoute('cursor', 'gpt-5.6-luna-high', (_executable, args) => {
       if (args.at(-1) === '--version') return '2026.08.11-build';

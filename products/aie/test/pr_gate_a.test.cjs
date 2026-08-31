@@ -1868,7 +1868,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     let probeCalls = 0;
     const routeProbe = (host, model) => {
       probeCalls += 1;
-      return { host, model, status: 'blocked', executable: `${host}-probe`, version: 'probe-test', modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog (grok-4.5). Update the trusted review model configuration to a listed model.` };
+      return { host, model, status: 'blocked', executable: `${host}-probe`, version: 'probe-test', modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog (grok-4.5). Update the trusted review model configuration to a listed model.`, reasonCode: 'model-route-model-unsupported', transport: 'acp', resolvedModel: null, availableModels: ['grok-4.5'] };
     };
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, routeProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
@@ -1880,7 +1880,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(routedLanes.length >= 3);
     for (const lane of routedLanes) {
       assert.equal(lane.status, 'unavailable');
-      assert.equal(lane.blocker, 'model-route-probe-blocked');
+      assert.equal(lane.blocker, 'model-route-model-unsupported');
       assert.match(lane.summary, /grok-9-missing.*not in the grok catalog/);
       assert.match(lane.summary, /Update the trusted review model configuration/);
     }

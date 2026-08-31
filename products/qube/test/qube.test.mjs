@@ -3,7 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -238,6 +238,29 @@ function createExecutableStub(root, name, stdout = "") {
     ? `@echo off\r\nrem %dp0%\\${scriptName}\r\n"${process.execPath}" "%~dp0${scriptName}" %*\r\n`
     : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} "$@"\n`, "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  return binDir;
+}
+
+function createWindowsCursorTransportStub(root) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const versionDir = path.join(binDir, "versions", "2026.08.11-e8db854");
+  mkdirSync(versionDir, { recursive: true });
+  copyFileSync(process.execPath, path.join(versionDir, "node.exe"));
+  writeFileSync(path.join(binDir, "cursor-agent.cmd"), "@echo off\r\nexit /b 0\r\n", "utf8");
+  writeFileSync(path.join(versionDir, "index.js"), [
+    "const args = process.argv.slice(2);",
+    "if (args[0] === 'models') { process.stdout.write('Available models\\ncursor-grok-4.6-medium-fast - Grok Medium Fast\\ncursor-grok-4.6-high-fast - Grok High Fast\\n'); process.exit(0); }",
+    "if (args[0] !== 'acp') process.exit(2);",
+    "const { createInterface } = require('node:readline');",
+    "const send = value => process.stdout.write(JSON.stringify(value) + '\\n');",
+    "createInterface({ input: process.stdin }).on('line', line => {",
+    "  const message = JSON.parse(line);",
+    "  if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });",
+    "  else if (message.method === 'authenticate') send({ jsonrpc: '2.0', id: message.id, result: {} });",
+    "  else if (message.method === 'session/new') send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'catalog-only', configOptions: [{ id: 'model', currentValue: 'auto', options: [{ value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' }] }] } });",
+    "  else if (message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'No review capabilities.' } });",
+    "});",
+  ].join("\n"), "utf8");
   return binDir;
 }
 
@@ -3355,6 +3378,36 @@ describe("qube init orchestrator", () => {
     const isolatedPlan = JSON.parse(isolated.stdout).plan;
     assert.equal(isolatedPlan.resolved.review.harness, "grok-build");
     assert.equal(optionValue(componentRows(isolatedPlan).get("aie").args, "--isolated-review-agent"), "grok-build");
+  });
+
+  it("offers and defaults only to Cursor models compatible with the packaged Windows ACP transport", { skip: process.platform !== "win32" }, () => {
+    for (const automaticFlag of ["--yes", "--defaults"]) {
+      const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-transport-root-"));
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-transport-repo-"));
+      createInitShims(packageRoot);
+      const cursorBin = createWindowsCursorTransportStub(packageRoot);
+      createExecutableStub(packageRoot, "grok", "Available models:\n- grok-4.6\n");
+      const env = addExecutablePath(initEnv(packageRoot), cursorBin);
+
+      const result = runCli([
+        "init", ".",
+        "--host", "grok-build,cursor",
+        "--ci-provider", "github",
+        "--review-mode", "isolated",
+        "--review-harness", "cursor",
+        automaticFlag,
+        "--dry-run",
+        "--json",
+      ], { cwd, env });
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const payload = JSON.parse(result.stdout);
+      const modelAnswer = payload.answers.find(answer => answer.id === "review-model");
+      assert.equal(modelAnswer.value, "cursor-grok-4.6-high-fast");
+      assert.deepEqual(payload.plan.resolved.review.models, ["cursor:cursor-grok-4.6-high-fast"]);
+      assert.equal(optionValue(componentRows(payload.plan).get("aie").args, "--review-model"), "cursor:cursor-grok-4.6-high-fast");
+      assert.doesNotMatch(JSON.stringify(payload), /cursor-grok-4\.6-medium-fast/);
+    }
   });
 
   it("fails before child planning when a supported Review host catalog is unavailable", () => {

@@ -10,7 +10,7 @@ const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
 const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
-const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
+const { formatDoctorHuman, formatReviewRouteProbe } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
 const { resolveFailoverReviewPlan } = require('../dist/app/local_review_runner.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
@@ -497,6 +497,49 @@ describe('doctor diagnostics', () => {
     assert.match(allBlocked.checks.routeProbes.nextAction, /blocked required review route chain/);
     assert.ok(allBlocked.nextActions.some(action => /grok-build is unavailable/.test(action)));
     assert.ok(allBlocked.nextActions.some(action => /codex is unavailable/.test(action)));
+  });
+
+  it('reports Cursor display, transport, compatible choices, and stable reason in JSON and human diagnostics', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewMode = 'isolated';
+    config.reviewRoute = { host: 'cursor', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.cursor = { model: 'cursor-grok-4.6-medium-fast', effort: null };
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      githubReadiness: readyGitHubReadiness,
+      probeRoute: (host, model) => ({
+        host,
+        model,
+        status: 'blocked',
+        executable: 'cursor-runner',
+        version: '2026.08.11-build',
+        modelListed: false,
+        diagnostic: 'Cursor model compatibility failed for the active ACP transport.',
+        reasonCode: 'model-route-model-unsupported',
+        transport: 'acp',
+        resolvedModel: null,
+        availableModels: ['cursor-grok-4.6-high-fast'],
+      }),
+    });
+
+    const route = diagnostics.checks.routeProbes.routes[0];
+    assert.equal(route.model, 'cursor-grok-4.6-medium-fast');
+    assert.equal(route.reasonCode, 'model-route-model-unsupported');
+    assert.equal(route.transport, 'acp');
+    assert.equal(route.resolvedModel, null);
+    assert.deepEqual(route.availableModels, ['cursor-grok-4.6-high-fast']);
+    const rendered = formatReviewRouteProbe(route);
+    assert.match(rendered, /model=cursor-grok-4\.6-medium-fast/);
+    assert.match(rendered, /reason=model-route-model-unsupported/);
+    assert.match(rendered, /transport=acp/);
+    assert.match(rendered, /compatible=cursor-grok-4\.6-high-fast/);
   });
 
   it('keeps route probes disabled when no routed review lanes are configured', () => {

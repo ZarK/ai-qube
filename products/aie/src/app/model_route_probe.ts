@@ -11,7 +11,9 @@ import {
 
 export { sanitizeProbeText } from './review_host_adapters.js';
 
-const PROBE_TIMEOUT_MS = 5000;
+// Cursor's prompt-free ACP compatibility check performs three bounded
+// four-second requests. The route probe must allow the complete handshake.
+const PROBE_TIMEOUT_MS = 15_000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
 
 export type RoutedProbeHost = RoutedReviewHostId;
@@ -24,6 +26,10 @@ export interface RouteProbeCheck {
   version: string | null;
   modelListed: boolean | null;
   diagnostic: string | null;
+  reasonCode?: string | null;
+  transport?: string | null;
+  resolvedModel?: string | null;
+  availableModels?: readonly string[];
   /** The probe-time resolution, reused by execution so the spawned process is the probed one. */
   resolved: ModelHostExecutable | null;
 }
@@ -150,7 +156,33 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
   }
   const probeResult = adapter.probeAfterVersion({ model, executable, prefixArgs, runCommand, version, platform });
   if (probeResult.status === 'blocked') {
-    return { host, model, status: 'blocked', executable, version, modelListed: probeResult.modelListed, resolved: null, diagnostic: probeResult.diagnostic };
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable,
+      version,
+      modelListed: probeResult.modelListed,
+      resolved: null,
+      diagnostic: probeResult.diagnostic,
+      reasonCode: probeResult.reasonCode ?? 'model-route-probe-blocked',
+      transport: probeResult.transport ?? null,
+      resolvedModel: probeResult.resolvedModel ?? null,
+      availableModels: probeResult.availableModels ?? Object.freeze([]),
+    };
   }
-  return { host, model, status: 'ready', executable, version, modelListed: probeResult.modelListed, diagnostic: null, resolved };
+  return {
+    host,
+    model,
+    status: 'ready',
+    executable,
+    version,
+    modelListed: probeResult.modelListed,
+    diagnostic: null,
+    resolved,
+    reasonCode: null,
+    transport: probeResult.transport ?? 'cli',
+    resolvedModel: probeResult.resolvedModel === undefined ? model : probeResult.resolvedModel,
+    availableModels: probeResult.availableModels ?? Object.freeze([]),
+  };
 }

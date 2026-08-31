@@ -47,11 +47,14 @@ describe("Cursor isolated review adapter", () => {
       prefixArgs: ["cursor-script.js"],
       runCommand(executable, args) {
         calls.push([executable, args]);
+        if (args.at(-1) === "--acp-models") return JSON.stringify({ version: 1, transport: "acp", options: [{ value: "model-a", name: "Model A" }, { value: "model-b", name: "Model B" }] });
         return "Available models\nmodel-a - Model A\nmodel-b - Model B\n";
       },
     });
     assert.deepEqual(models, ["model-a", "model-b"]);
-    assert.deepEqual(calls, [["node", ["cursor-script.js", "models"]]]);
+    assert.deepEqual(calls, process.platform === "win32"
+      ? [["node", ["cursor-script.js", "models"]], ["node", ["cursor-script.js", "--acp-models"]]]
+      : [["node", ["cursor-script.js", "models"]]]);
   });
 
   it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
@@ -94,8 +97,8 @@ describe("Cursor isolated review adapter", () => {
   });
 
   it("routes Windows review through the permission-denying ACP client", () => {
-    const built = cursor.buildCursorInvocation(context, "win32");
-    assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
+    const built = cursor.buildCursorInvocation({ ...context, transportModel: "gpt-5.6-luna[reasoning=high]" }, "win32");
+    assert.deepEqual(built.args, ["--acp-review", "--model", "gpt-5.6-luna[reasoning=high]", "--requested-model", "gpt-5.6-luna-high", "--workspace", "/repo"]);
     assert.match(built.stdin, /^inspect\n\nCursor ACP review capability boundary:/);
     assert.match(built.stdin, /Do not request shell or terminal commands/);
     assert.match(built.stdin, /\{\}$/);
@@ -141,12 +144,29 @@ describe("Cursor isolated review adapter", () => {
     assert.deepEqual(cursor.parseCursorModelCatalog("Available models\n\nauto - Auto\ngpt-5.6-luna-high - GPT\nTip: use --model"), ["auto", "gpt-5.6-luna-high"]);
   });
 
+  it("lists only display models that preserve Windows ACP effort and speed", () => {
+    const outputs = new Map([
+      ["models", "Available models\ncursor-grok-4.6-high - Grok High\ncursor-grok-4.6-high-fast - Grok High Fast\ncursor-grok-4.6-medium-fast - Grok Medium Fast"],
+      ["--acp-models", JSON.stringify({ version: 1, transport: "acp", options: [
+        { value: "grok-4.6[effort=high,fast=true]", name: "Grok High Fast" },
+        { value: "grok-4.6[effort=medium,fast=false]", name: "Grok Medium" },
+      ] })],
+    ]);
+    const models = cursor.listCursorModels({
+      executable: "node",
+      prefixArgs: ["cursor-script.js"],
+      runCommand: (_executable, args) => outputs.get(args.at(-1)) ?? "",
+    }, "win32");
+    assert.deepEqual(models, ["cursor-grok-4.6-high-fast"]);
+  });
+
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {
     const output = (args) => {
       if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nStart the Cursor Agent as an ACP (Agent Client Protocol) server";
       if (args.at(-1) === "--help") return "acp --print --output-format --mode ask --model --workspace --sandbox";
       if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
       if (args.at(-1) === "models") return "Available models\nmodel-a - Model A";
+      if (args.at(-1) === "--acp-models") return JSON.stringify({ version: 1, transport: "acp", options: [{ value: "model-a", name: "Model A" }] });
       return "";
     };
     const base = { model: "model-a", executable: "cursor-agent", prefixArgs: [], runCommand: (_exe, args) => output(args), version: "2026.08.11-build" };
@@ -159,5 +179,35 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.includes("status") ? JSON.stringify({ status: "unauthenticated", isAuthenticated: false }) : output(args) }, "linux").status, "blocked");
     assert.equal(cursor.probeCursor({ ...base, model: "missing" }, "linux").modelListed, false);
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "--print" : output(args) }, "linux").status, "blocked");
+
+    const missingAcpCatalog = cursor.probeCursor({
+      ...base,
+      runCommand: (_exe, args) => args.at(-1) === "--acp-models" ? "not-json" : output(args),
+    }, "win32");
+    assert.equal(missingAcpCatalog.status, "blocked");
+    assert.equal(missingAcpCatalog.reasonCode, "model-route-probe-blocked");
+
+    const unlisted = cursor.probeCursor({ ...base, model: "missing" }, "win32");
+    assert.equal(unlisted.status, "blocked");
+    assert.equal(unlisted.reasonCode, "model-route-model-unsupported");
+    assert.match(unlisted.diagnostic, /not in the Cursor CLI catalog/);
+    assert.deepEqual(unlisted.availableModels, ["model-a"]);
+
+    const incompatible = cursor.probeCursor({
+      ...base,
+      model: "cursor-grok-4.6-medium-fast",
+      runCommand: (_exe, args) => {
+        if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nAgent Client Protocol";
+        if (args.at(-1) === "--help") return "ask";
+        if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
+        if (args.at(-1) === "models") return "Available models\ncursor-grok-4.6-medium-fast - Grok Medium Fast\ncursor-grok-4.6-high-fast - Grok High Fast";
+        if (args.at(-1) === "--acp-models") return JSON.stringify({ version: 1, transport: "acp", options: [{ value: "grok-4.6[effort=high,fast=true]", name: "Grok High Fast" }] });
+        return "";
+      },
+    }, "win32");
+    assert.equal(incompatible.status, "blocked");
+    assert.equal(incompatible.reasonCode, "model-route-model-unsupported");
+    assert.equal(incompatible.resolvedModel, null);
+    assert.deepEqual(incompatible.availableModels, ["cursor-grok-4.6-high-fast"]);
   });
 });

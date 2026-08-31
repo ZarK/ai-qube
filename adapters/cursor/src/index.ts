@@ -16,6 +16,23 @@ import type {
   IsolatedReviewHostProbeResult,
   MakeItSoSurface,
 } from "@tjalve/qube-core";
+import {
+  compatibleCursorAcpModels,
+  directCursorModel,
+  parseCursorAcpCatalog,
+  resolveCursorAcpModel,
+  type CursorAcpCatalog,
+  type CursorModelDescriptor,
+} from "./model_resolution.js";
+
+export {
+  compatibleCursorAcpModels,
+  cursorAcpModelOptions,
+  directCursorModel,
+  parseCursorAcpCatalog,
+  resolveCursorAcpModel,
+} from "./model_resolution.js";
+export type { CursorAcpCatalog, CursorAcpModelOption, CursorModelDescriptor, CursorModelTransport } from "./model_resolution.js";
 
 export const CURSOR_HOST_ID = "cursor" as const;
 export const CURSOR_MINIMUM_DATE_VERSION = "2026.08.11";
@@ -72,9 +89,9 @@ export const cursorHostProfile = defineAgentHostProfile({
   }),
   modelDiscovery: Object.freeze({
     support: "supported",
-    description: "Cursor lists the models available to the signed-in user through its live CLI catalog.",
-    listModels({ executable, prefixArgs, runCommand }: AgentHostModelDiscoveryContext) {
-      return parseCursorModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
+    description: "Cursor lists only models that the active review transport can execute with the selected semantics.",
+    listModels(context: AgentHostModelDiscoveryContext) {
+      return listCursorModels(context);
     },
   }),
   umpire: Object.freeze({
@@ -135,6 +152,18 @@ export function parseCursorModelCatalog(output: string): string[] | null {
     if (match) models.push(match[1]);
   }
   return models.length > 0 ? models : null;
+}
+
+export function listCursorModels(
+  { executable, prefixArgs, runCommand }: AgentHostModelDiscoveryContext,
+  platform: string = process.platform,
+): string[] | null {
+  const displayIds = parseCursorModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
+  if (!displayIds) return null;
+  if (platform !== "win32") return displayIds;
+  const acpCatalog = parseCursorAcpCatalog(runCommand(executable, [...prefixArgs, "--acp-models"]));
+  if (!acpCatalog) return null;
+  return compatibleCursorAcpModels(displayIds, acpCatalog.options).map(model => model.displayId);
 }
 
 function extractJsonObject(text: string): string | null {
@@ -218,7 +247,11 @@ export function buildCursorInvocation(
   }
   if (platform === "win32") {
     const args = ["--acp-review"];
-    if (context.model) args.push("--model", context.model);
+    if (context.model && context.transportModel === undefined) {
+      throw new Error("Cursor Windows review requires the ACP model value recorded by the current route probe. Rerun review preflight before starting the lane.");
+    }
+    if (context.transportModel) args.push("--model", context.transportModel);
+    if (context.model) args.push("--requested-model", context.model);
     args.push("--workspace", context.repoRoot);
     return {
       args,
@@ -321,10 +354,82 @@ export function probeCursor(
   if (!catalog) {
     return { status: "blocked", modelListed: null, diagnostic: "The Cursor CLI model catalog could not be read. Verify account access with `cursor-agent models` before running routed review lanes." };
   }
-  if (model && !catalog.includes(model)) {
-    return { status: "blocked", modelListed: false, diagnostic: `Configured review model "${model}" is not in the Cursor catalog (${sanitize(catalog.join(", "))}). Select a listed model.` };
+  if (model && !catalog.includes(model) && !windowsAcp) {
+    return {
+      status: "blocked",
+      modelListed: false,
+      diagnostic: `Cursor model compatibility failed: requested ${model}; transport ${windowsAcp ? "acp" : "cli"}. The model is not in the Cursor catalog (${sanitize(catalog.join(", "))}). Select a listed model.`,
+      reasonCode: "model-route-model-unsupported",
+      transport: windowsAcp ? "acp" : "cli",
+      resolvedModel: null,
+      availableModels: Object.freeze([...catalog]),
+    };
   }
-  return { status: "ready", modelListed: model ? true : null, diagnostic: null };
+  if (!windowsAcp) {
+    const resolved = model ? directCursorModel(model) : null;
+    return {
+      status: "ready",
+      modelListed: model ? true : null,
+      diagnostic: null,
+      reasonCode: null,
+      transport: "cli",
+      resolvedModel: resolved?.transportValue ?? null,
+      availableModels: Object.freeze([...catalog]),
+    };
+  }
+  let acpCatalog: CursorAcpCatalog | null;
+  try {
+    acpCatalog = parseCursorAcpCatalog(runCommand(executable, [...prefixArgs, "--acp-models"]));
+  } catch {
+    acpCatalog = null;
+  }
+  if (!acpCatalog) {
+    return {
+      status: "blocked",
+      modelListed: null,
+      diagnostic: "Cursor ACP model compatibility could not be inspected without a prompt. Authenticate the current Cursor CLI, then rerun init or doctor.",
+      reasonCode: "model-route-probe-blocked",
+      transport: "acp",
+      resolvedModel: null,
+      availableModels: Object.freeze([]),
+    };
+  }
+  const compatible = compatibleCursorAcpModels(catalog, acpCatalog.options);
+  const choices = compatible.map(candidate => candidate.displayId);
+  if (model && !catalog.includes(model)) {
+    return {
+      status: "blocked",
+      modelListed: false,
+      diagnostic: `Cursor model compatibility failed: requested ${model}; transport acp. The model is not in the Cursor CLI catalog. Compatible Cursor choices: ${sanitize(choices.join(", ")) || "none"}. Select a compatible model, then rerun.`,
+      reasonCode: "model-route-model-unsupported",
+      transport: "acp",
+      resolvedModel: null,
+      availableModels: Object.freeze(choices),
+    };
+  }
+  const descriptor: CursorModelDescriptor | null = model
+    ? resolveCursorAcpModel(acpCatalog.options, model)
+    : null;
+  if (model && !descriptor) {
+    return {
+      status: "blocked",
+      modelListed: false,
+      diagnostic: `Cursor model compatibility failed: requested ${model}; transport acp. ACP cannot preserve the selected effort and speed. Compatible Cursor choices: ${sanitize(choices.join(", ")) || "none"}. Select a compatible model, then rerun.`,
+      reasonCode: "model-route-model-unsupported",
+      transport: "acp",
+      resolvedModel: null,
+      availableModels: Object.freeze(choices),
+    };
+  }
+  return {
+    status: "ready",
+    modelListed: model ? true : null,
+    diagnostic: null,
+    reasonCode: null,
+    transport: "acp",
+    resolvedModel: descriptor?.transportValue ?? null,
+    availableModels: Object.freeze(choices),
+  };
 }
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
@@ -347,7 +452,7 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
     return probeCursor(context, context.platform ?? process.platform);
   },
   listCatalog({ executable, prefixArgs, runCommand }: Pick<IsolatedReviewHostProbeContext, "executable" | "prefixArgs" | "runCommand">): string[] | null {
-    return parseCursorModelCatalog(runCommand(executable, [...prefixArgs, "models"]));
+    return listCursorModels({ executable, prefixArgs, runCommand });
   },
 });
 

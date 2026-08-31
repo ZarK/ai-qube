@@ -319,6 +319,10 @@ export interface GateReadinessDiagnostics {
           executable: string | null;
           version: string | null;
           modelListed: boolean | null;
+          reasonCode: string | null;
+          transport: string | null;
+          resolvedModel: string | null;
+          availableModels: string[];
           nextAction: string | null;
         }>;
         chains: Array<{

@@ -48,6 +48,13 @@ export interface LocalReviewLaneRun {
   spawnContract: LocalReviewSpawnContract | null;
   reviewScope: ReviewScopeSelection | null;
   route: ModelReviewRoutePlan | null;
+  routeProbe?: {
+    status: 'ready' | 'blocked';
+    reasonCode: string | null;
+    transport: string | null;
+    resolvedModel: string | null;
+    availableModels: string[];
+  };
   resolvedExecutable: ModelHostExecutable | null;
   modelTier: 'review' | 'economy' | 'synthesis';
   summary: string;
@@ -235,6 +242,9 @@ export function hostFailoverSubstitution(primaryHost: string, reasonCode: string
   if (reasonCode === 'model-route-probe-blocked') {
     return `The configured ${primaryHost} route failed its readiness probe; the lane uses the configured second host.`;
   }
+  if (reasonCode === 'model-route-model-unsupported') {
+    return `The configured ${primaryHost} model is incompatible with its active execution transport (model-route-model-unsupported); the lane uses the configured second host.`;
+  }
   return 'This lane reached the configured host-fault threshold and executes through the fallback route.';
 }
 
@@ -259,11 +269,12 @@ export function selectProbedReviewRoute(
   fallbackRoute: ModelReviewRoutePlan | null,
   preferredReady: boolean,
   fallbackReady: boolean,
+  preferredReasonCode?: string,
 ): ProbedReviewRouteSelection {
   if (preferredReady) return { route: preferredRoute, source: 'configured' };
   if (fallbackRoute && fallbackReady) {
     return {
-      route: withHostFailoverSubstitution(fallbackRoute, preferredRoute.host, 'model-route-probe-blocked'),
+      route: withHostFailoverSubstitution(fallbackRoute, preferredRoute.host, preferredReasonCode ?? 'model-route-probe-blocked'),
       source: 'fallback',
     };
   }
@@ -344,6 +355,10 @@ interface RoutedLaneJob {
   primaryRoute: ModelReviewRoutePlan | null;
   /** Probe-time resolution reused at spawn so the executed CLI is the probed one. */
   probedExecutable: ModelHostExecutable | null;
+  /** Probe-bound transport selection reused without re-resolution at spawn. */
+  probedModel: string | null | undefined;
+  transport: string | null;
+  fallbackReason: string | null;
   path: string;
   runner: ReviewLanePolicy['runner'];
   reviewScope: ReviewScopeSelection;
@@ -401,7 +416,14 @@ function localAieCliPrefix(config: Config, _repoRoot: string): string {
   return renderAieCliPrefix(config);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, _cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane), configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection, resolvedExecutable: ModelHostExecutable | null = null): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, _cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane), configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection, resolvedExecutable: ModelHostExecutable | null = null, routeProbe?: RouteProbeCheck): LocalReviewLaneRun {
+  const routeProbeSummary = routeProbe ? {
+    status: routeProbe.status,
+    reasonCode: routeProbe.reasonCode ?? null,
+    transport: routeProbe.transport ?? null,
+    resolvedModel: routeProbe.resolvedModel ?? null,
+    availableModels: [...(routeProbe.availableModels ?? [])],
+  } : undefined;
   if (!renderPrompts) {
     // Trusted-provider reuse spawns nothing and validates no local evidence, so prompt
     // rendering and hashing would be dead work for the reused lane.
@@ -422,6 +444,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
       spawnContract: null,
       reviewScope: reviewScope ?? null,
       route,
+      ...(routeProbeSummary ? { routeProbe: routeProbeSummary } : {}),
       resolvedExecutable,
       modelTier: plannedTier,
       summary,
@@ -465,6 +488,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     spawnContract,
     reviewScope: reviewScope ?? null,
     route,
+    ...(routeProbeSummary ? { routeProbe: routeProbeSummary } : {}),
     resolvedExecutable,
     summary,
     blocker,
@@ -703,6 +727,30 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const unavailable: string[] = [];
   const routedJobs: RoutedLaneJob[] = [];
   const dryRunExecutables = new Map<RoutedReviewHostId, ModelHostExecutable | null>();
+  const dryRunProbeChecks = new Map<string, RouteProbeCheck>();
+  const dryRunProbeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck => {
+    const key = `${plan.host}::${plan.model ?? ''}`;
+    const existing = dryRunProbeChecks.get(key);
+    if (existing) return existing;
+    let check: RouteProbeCheck;
+    try {
+      check = (input.routeProbe ?? probeModelRoute)(plan.host, plan.model);
+    } catch {
+      check = {
+        host: plan.host,
+        model: plan.model,
+        status: 'blocked',
+        executable: null,
+        version: null,
+        modelListed: null,
+        diagnostic: `The ${plan.host} route probe returned no result; the route is blocked before model execution.`,
+        reasonCode: 'model-route-probe-blocked',
+        resolved: null,
+      };
+    }
+    dryRunProbeChecks.set(key, check);
+    return check;
+  };
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane) && !resolveModelReviewPlan(config, lane)));
@@ -752,6 +800,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const configuredRoute = resolveModelReviewPlan(config, lane);
       let route = configuredRoute;
       let routeSource: 'configured' | 'fallback' = 'configured';
+      let fallbackReason: string | null = null;
       if (configuredRoute && config.reviewFailover) {
         // A tally only applies while the lane's primary route identity is
         // unchanged; a route config change restarts the count and retests the
@@ -762,26 +811,52 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         if (fallbackPlan) {
           route = withHostFailoverSubstitution(fallbackPlan, configuredRoute.host, faultRecord?.lastReasonCode);
           routeSource = 'fallback';
+          fallbackReason = faultRecord?.lastReasonCode ?? 'model-route-process-failed';
         }
       }
-      const plannedSummary = route
-        ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ' This lane reached the configured host-fault threshold and executes through the fallback route.' : ''}`
-        : runner === 'local-host' ? `${reviewerDisplayName(reviewHost)} local-host lane would return candidate JSON for main-session validation, evidence writing, and publishing.` : 'Local-command lane would run and write current-head evidence.';
       const plannedScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
       let resolvedExecutable: ModelHostExecutable | null = null;
+      let dryRunRouteProbe: RouteProbeCheck | null = null;
+      let dryRunProbeFailure: string | null = null;
+      let dryRunProbeReason: string | null = null;
       if (input.dryRun && route) {
-        if (!dryRunExecutables.has(route.host)) {
-          try {
-            dryRunExecutables.set(route.host, await (input.resolveModelHost ?? resolveModelHostExecutable)(route.host));
-          } catch {
-            // A dry run reports null when the executable cannot be resolved. The
-            // live preflight still performs the full fail-closed route probe.
-            dryRunExecutables.set(route.host, null);
+        if (route.host === 'cursor') {
+          const check = dryRunProbeFor(route);
+          dryRunRouteProbe = check;
+          if (check.status === 'ready') {
+            resolvedExecutable = check.resolved ?? null;
+          } else {
+            const fallbackPlan = routeSource === 'configured' ? resolveFailoverReviewPlan(config) : null;
+            const fallbackCheck = fallbackPlan ? dryRunProbeFor(fallbackPlan) : null;
+            const selection = selectProbedReviewRoute(route, fallbackPlan, false, fallbackCheck?.status === 'ready', check.reasonCode ?? 'model-route-probe-blocked');
+            if (selection.route && selection.source === 'fallback') {
+              route = selection.route;
+              routeSource = selection.source;
+              fallbackReason = check.reasonCode ?? 'model-route-probe-blocked';
+              resolvedExecutable = fallbackCheck?.resolved ?? null;
+              dryRunRouteProbe = fallbackCheck;
+            } else {
+              dryRunProbeFailure = check.diagnostic ?? 'The Cursor route failed its model compatibility probe.';
+              dryRunProbeReason = check.reasonCode ?? 'model-route-probe-blocked';
+            }
           }
+        } else {
+          if (!dryRunExecutables.has(route.host)) {
+            try {
+              dryRunExecutables.set(route.host, await (input.resolveModelHost ?? resolveModelHostExecutable)(route.host));
+            } catch {
+              // A dry run reports null when the executable cannot be resolved. The
+              // live preflight still performs the full fail-closed route probe.
+              dryRunExecutables.set(route.host, null);
+            }
+          }
+          resolvedExecutable = dryRunExecutables.get(route.host) ?? null;
         }
-        resolvedExecutable = dryRunExecutables.get(route.host) ?? null;
       }
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope, resolvedExecutable);
+      const plannedSummary = dryRunProbeFailure ?? (route
+        ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ` The preferred route failed with ${fallbackReason}; this lane would use the configured second host.` : ''}`
+        : runner === 'local-host' ? `${reviewerDisplayName(reviewHost)} local-host lane would return candidate JSON for main-session validation, evidence writing, and publishing.` : 'Local-command lane would run and write current-head evidence.');
+      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, dryRunProbeFailure ? 'unavailable' : 'planned', path, plannedSummary, dryRunProbeReason, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope, resolvedExecutable, dryRunRouteProbe ?? undefined);
       if (!input.dryRun && command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';
@@ -835,11 +910,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             routeSource,
             primaryRoute: configuredRoute,
             probedExecutable: null,
+            probedModel: undefined,
+            transport: null,
+            fallbackReason,
             path,
             runner,
             reviewScope: plannedScope,
             run: () => runModelReview({
               plan: job.route,
+              transportModel: job.probedModel,
+              transport: job.transport,
+              fallbackReason: job.fallbackReason,
               repoRoot: input.repoRoot,
               lane: jobLane,
               issueNumber: jobIssueNumber,
@@ -939,6 +1020,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const check = probeFor(job.route);
       if (check?.status === 'ready') {
         job.probedExecutable = check.resolved ?? null;
+        job.probedModel = check.resolvedModel === undefined ? job.route.model : check.resolvedModel;
+        job.transport = check.transport ?? null;
         runnableJobs.push(job);
         continue;
       }
@@ -951,6 +1034,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           job.routeSource = 'configured';
           job.host = job.primaryRoute.host;
           job.probedExecutable = primaryCheck.resolved ?? null;
+          job.probedModel = primaryCheck.resolvedModel === undefined ? job.primaryRoute.model : primaryCheck.resolvedModel;
+          job.transport = primaryCheck.transport ?? null;
+          job.fallbackReason = null;
           runnableJobs.push(job);
           continue;
         }
@@ -967,20 +1053,24 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           fallbackPlan,
           false,
           fallbackCheck?.status === 'ready',
+          check?.reasonCode ?? 'model-route-probe-blocked',
         );
         if (selection.route && selection.source === 'fallback') {
           job.route = selection.route;
           job.routeSource = selection.source;
           job.host = selection.route.host;
           job.probedExecutable = fallbackCheck?.resolved ?? null;
+          job.probedModel = fallbackCheck?.resolvedModel === undefined ? selection.route.model : fallbackCheck.resolvedModel;
+          job.transport = fallbackCheck?.transport ?? null;
+          job.fallbackReason = check?.reasonCode ?? 'model-route-probe-blocked';
           runnableJobs.push(job);
           continue;
         }
-        recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, 'model-route-probe-blocked', reviewRouteKey(job.primaryRoute ?? job.route));
+        recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, check?.reasonCode ?? 'model-route-probe-blocked', reviewRouteKey(job.primaryRoute ?? job.route));
       }
       const summary = check?.diagnostic ?? `${job.route.host} route probe returned no result; the route is blocked before model execution.`;
       unavailable.push(`${job.lane}: ${summary}`);
-      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
+      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, check?.reasonCode ?? 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
     }
   }
   if (runnableJobs.length > 0) {
@@ -1005,6 +1095,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             job.routeSource = 'fallback';
             job.host = fallbackPlan.host;
             job.probedExecutable = fallbackCheck.resolved ?? null;
+            job.probedModel = fallbackCheck.resolvedModel === undefined ? fallbackPlan.model : fallbackCheck.resolvedModel;
+            job.transport = fallbackCheck.transport ?? null;
+            job.fallbackReason = 'model-route-policy-blocked';
             routed = await job.run();
           }
         }

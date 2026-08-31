@@ -257,7 +257,7 @@
             "effort": "medium"
           },
           "cursor": {
-            "model": "cursor-grok-4.6-high",
+            "model": "cursor-grok-4.6-high-fast",
             "effort": null
           }
         },
@@ -407,8 +407,8 @@
     },
     "audit": {
       "manualUiAudit": true,
-      "appLaunch": "",
-      "target": "",
+      "appLaunch": "pnpm run site:preview",
+      "target": "http://127.0.0.1:4173/",
       "evidenceRoot": ""
     },
     "instructions": {
