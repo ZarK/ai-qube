@@ -406,6 +406,7 @@ async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInp
     expectedFragmentDigest: expectedLaneFragmentDigest(configuredReviewModelHost(config), lane),
     expectedAdapter: 'local-host',
     requiredCommand: null,
+    expectedSelectedRoute: resolveModelReviewPlan(config, lane),
   });
   return selectReviewScope({
     forceFull: input.forceFullReview === true,
@@ -553,6 +554,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     requiredCommand: command,
     expectedModelTier: plannedLaneModelTier(config, lane),
     expectedHost: runner === 'local-host' ? (resolveModelReviewPlan(config, lane)?.host ?? configuredReviewModelHost(config)) : null,
+    expectedSelectedRoute: runner === 'local-host' ? resolveModelReviewPlan(config, lane) : null,
   });
   if (decision.source) {
     deltaTriage.push({

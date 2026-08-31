@@ -14,6 +14,7 @@ import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { loadReviewLearningsFragment } from '../review_learnings.js';
+import { sameReviewRouteIdentity, type ReviewRoutePlanIdentity } from '../review_route_provenance.js';
 import { reviewerDisplayName } from '../agent_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeKind, type ReviewScopeSelection } from './review_delta_scope.js';
 
@@ -401,6 +402,7 @@ export async function evaluateCarryForwardDecision(input: {
   requiredCommand: string | null;
   expectedModelTier?: ReviewModelTierId;
   expectedHost?: string | null;
+  expectedSelectedRoute?: ReviewRoutePlanIdentity | null;
 }): Promise<{ source: CarryForwardSource | null; priorApproved: boolean; deltaComputed: boolean; deltaPaths: readonly string[] | null }> {
   const source = await findCarryForwardSource(input);
   if (source) return { source, priorApproved: true, deltaComputed: true, deltaPaths: [] };
@@ -460,6 +462,7 @@ export async function findCarryForwardSource(input: {
   requiredCommand: string | null;
   expectedModelTier?: ReviewModelTierId;
   expectedHost?: string | null;
+  expectedSelectedRoute?: ReviewRoutePlanIdentity | null;
 }): Promise<CarryForwardSource | null> {
   const expectedCommandIdentity = input.expectedCommandSuppliedIdentity ?? riskCardCommandIdentity([]);
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
@@ -489,6 +492,10 @@ export async function findCarryForwardSource(input: {
       if (!isRecord(parsed.runnerProvenance)) continue;
       if (input.expectedModelTier && parsed.modelTier !== input.expectedModelTier) continue;
       if (input.expectedHost && parsed.runnerProvenance.host !== input.expectedHost) continue;
+      if (input.expectedSelectedRoute) {
+        const priorRoute = parseReviewRouteProvenance(parsed.runnerProvenance.route);
+        if (!priorRoute || !sameReviewRouteIdentity(input.expectedSelectedRoute, priorRoute.selected)) continue;
+      }
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
       if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
       const provenance = parsed.runnerProvenance;

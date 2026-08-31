@@ -1090,6 +1090,73 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.doesNotMatch(lane.summary, /Carried forward/);
   });
 
+  it('does not carry forward when the selected Review route changes', async () => {
+    const repo = makeConfiguredGitRepo();
+    applyRoutedReviewFixture(repo);
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial review target'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: priorHead,
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+    const first = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: priorHead })] }).exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => priorHead,
+    });
+    assert.ok(first.localReviewRunner.lanes.every(lane => lane.status === 'completed' && lane.evidenceSource === 'fresh-run'));
+
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.6', effort: null };
+
+    const rerouted = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] }).exec });
+
+    const lane = rerouted.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'planned');
+    assert.equal(lane.evidenceSource, 'fresh-run');
+    assert.equal(lane.route.model, 'grok-4.6');
+    assert.doesNotMatch(lane.summary, /Carried forward/);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
   it('plans default and explicit per-lane model tiers in pr gate json', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
