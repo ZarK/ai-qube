@@ -25,7 +25,7 @@ import type { WorkflowDirtyState } from './doctor_diagnostics/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
 import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider.js';
 import { prerequisiteCheck } from './providers/local/git_prerequisites.js';
-import { evaluateConfiguredGitHubReadiness } from './github_readiness.js';
+import { evaluateConfiguredGitHubReadiness, hasUsableGitHubConnection } from './github_readiness.js';
 import type { GitHubReadiness } from './providers/github_adapter_exports.js';
 
 export {
@@ -71,7 +71,7 @@ class DoctorDiagnosticsBuilder {
     const nodeStatus = this.checkNodeVersion();
     const branch = repository.activeRef?.name ?? 'unknown';
     const isWorktree = repository.worktree.linked;
-    const githubUsable = this.hasUsableGitHubConnection(githubReadiness);
+    const githubUsable = hasUsableGitHubConnection(githubReadiness);
     const labelStatus = effectiveConfig.providers.work.kind !== 'github'
       ? this.notRequiredLabels()
       : githubUsable
@@ -433,13 +433,8 @@ class DoctorDiagnosticsBuilder {
     if (readiness.status === 'not-required') return { available: true, authenticated: true };
     return {
       available: readiness.reasonCode !== 'missing-cli',
-      authenticated: this.hasUsableGitHubConnection(readiness),
+      authenticated: hasUsableGitHubConnection(readiness),
     };
-  }
-
-  private hasUsableGitHubConnection(readiness: GitHubReadiness): boolean {
-    return readiness.status === 'ready'
-      || (readiness.status === 'unverified' && Boolean(readiness.cliVersion && readiness.host && readiness.repository));
   }
 
   private notRequiredLabels(): { ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError?: string } {

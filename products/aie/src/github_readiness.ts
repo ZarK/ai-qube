@@ -19,6 +19,11 @@ export function selectedGitHubRoles(config: Config, additionalRoles: readonly Gi
   return Object.freeze([...new Set(roles)]);
 }
 
+export function hasUsableGitHubConnection(readiness: GitHubReadiness): boolean {
+  return readiness.status === 'ready'
+    || (readiness.status === 'unverified' && Boolean(readiness.cliVersion && readiness.host && readiness.repository));
+}
+
 export async function evaluateConfiguredGitHubReadiness(
   config: Config,
   options: ConfiguredGitHubReadinessOptions = {},

@@ -9,6 +9,7 @@ import {
 import { readManagedToolVersion } from '../managed_file.js';
 import { getInstructionStatus } from '../repo/index.js';
 import { readAiePackageVersion } from '../review_mode.js';
+import { hasUsableGitHubConnection } from '../github_readiness.js';
 import type { GitHubReadiness } from '../providers/github_adapter_exports.js';
 
 export function collectSetupDoctorRecommendations(repoRoot: string, config: Config, githubReadiness?: GitHubReadiness): string[] {
@@ -31,7 +32,7 @@ export function collectSetupDoctorRecommendations(repoRoot: string, config: Conf
     recommendations.push(`Managed instructions are older than the running tool (${versions.find(version => version !== null) ?? 'missing'} vs ${running}). Run \`aie init . --force\` to refresh them.`);
   }
   const gateReadiness = buildGateReadinessDiagnostics(config, {
-    ghAuthenticated: githubReadiness?.status === 'ready' || githubReadiness?.status === 'unverified',
+    ghAuthenticated: githubReadiness ? hasUsableGitHubConnection(githubReadiness) : false,
     githubReadiness,
     evidenceRoot: repoRoot,
   });

@@ -14,6 +14,7 @@ const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
 const { resolveFailoverReviewPlan } = require('../dist/app/local_review_runner.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
+const { hasUsableGitHubConnection } = require('../dist/github_readiness.js');
 
 function makeGitRepo() {
   return cloneGitRepo('configured', 'aie-doctor-');
@@ -35,6 +36,17 @@ const unverifiedGitHubReadiness = Object.freeze({
 });
 
 describe('doctor diagnostics', () => {
+  it('requires observed connection details before treating unverified GitHub access as usable', () => {
+    assert.equal(hasUsableGitHubConnection(readyGitHubReadiness), true);
+    assert.equal(hasUsableGitHubConnection(unverifiedGitHubReadiness), true);
+    assert.equal(hasUsableGitHubConnection(Object.freeze({
+      ...unverifiedGitHubReadiness,
+      cliVersion: null,
+      host: null,
+      repository: null,
+    })), false);
+  });
+
   it('reports managed instruction health and configured instruction policy', async () => {
     const repo = makeGitRepo();
     const config = getDefaults();
