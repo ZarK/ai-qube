@@ -136,6 +136,22 @@ export const doctorCommand = defineCommand({
       description: "A configured host integration file is not installed.",
     },
     {
+      kind: "host-file-managed-entry-missing",
+      description: "A shared host file is present but its QUBE-owned entry is missing.",
+    },
+    {
+      kind: "host-file-managed-entry-duplicate",
+      description: "A shared host file contains duplicate QUBE-owned entries.",
+    },
+    {
+      kind: "host-file-managed-entry-malformed",
+      description: "A shared host file has an invalid JSON or managed-container shape.",
+    },
+    {
+      kind: "host-file-managed-entry-conflicting",
+      description: "A shared host file contains one QUBE-owned entry that differs from canonical content.",
+    },
+    {
       kind: "host-runtime-disabled",
       description: "No host integration is enabled for runtime policy checks.",
     },

@@ -79,6 +79,84 @@ describe("doctor diagnostics", () => {
     assert.ok(report.checks.some((check) => check.kind === "host-file-missing" && check.path?.endsWith(path.join("plugins", "ai-umpire", "hooks", "hooks.json"))));
   });
 
+  it("validates only QUBE-owned entries in shared Codex and Claude Code files without writing", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["codex", "claude-code"],
+        modes: { codex: ["stop"], "claude-code": ["stop"] },
+      },
+    });
+    await writeManagedHostFiles(repoRoot, "codex");
+    await writeManagedHostFiles(repoRoot, "claude-code");
+    await addUnrelatedSharedEntries(repoRoot);
+    const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+    const settingsPath = path.join(repoRoot, ".claude", "settings.json");
+    const before = [await readFile(marketplacePath, "utf8"), await readFile(settingsPath, "utf8")];
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+
+    assert.ok(report.checks.some((check) => check.kind === "host-file-managed" && check.path === marketplacePath));
+    assert.ok(report.checks.some((check) => check.kind === "host-file-managed" && check.path === settingsPath));
+    assert.equal(getAiuHostCapabilityProfile("codex").supportLevel, "experimental");
+    assert.equal(getAiuHostCapabilityProfile("claude-code").supportLevel, "experimental");
+    assert.deepEqual([await readFile(marketplacePath, "utf8"), await readFile(settingsPath, "utf8")], before);
+  });
+
+  it("reports distinct shared managed-entry states and leaves every invalid file unchanged", async () => {
+    const codexPlugin = {
+      category: "Coding",
+      name: "ai-umpire",
+      policy: { authentication: "ON_INSTALL", installation: "AVAILABLE" },
+      source: { path: "./plugins/ai-umpire", source: "local" },
+    };
+    const claudeHook = { command: "pnpm exec aiu hook-stop --tool claude-code", type: "command" };
+    const cases = [
+      { host: "codex", relativePath: path.join(".agents", "plugins", "marketplace.json"), kind: "host-file-managed-entry-missing", content: JSON.stringify({ plugins: [{ name: "lint", source: { path: "./plugins/lint" } }] }) },
+      { host: "codex", relativePath: path.join(".agents", "plugins", "marketplace.json"), kind: "host-file-managed-entry-duplicate", content: JSON.stringify({ plugins: [codexPlugin, codexPlugin] }) },
+      { host: "codex", relativePath: path.join(".agents", "plugins", "marketplace.json"), kind: "host-file-managed-entry-malformed", content: JSON.stringify({ plugins: {} }) },
+      { host: "codex", relativePath: path.join(".agents", "plugins", "marketplace.json"), kind: "host-file-managed-entry-conflicting", content: JSON.stringify({ plugins: [{ ...codexPlugin, source: { path: "./plugins/changed", source: "local" } }] }) },
+      { host: "claude-code", relativePath: path.join(".claude", "settings.json"), kind: "host-file-managed-entry-missing", content: JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: "echo unrelated", type: "command" }] }] } }) },
+      { host: "claude-code", relativePath: path.join(".claude", "settings.json"), kind: "host-file-managed-entry-duplicate", content: JSON.stringify({ hooks: { Stop: [{ hooks: [claudeHook, claudeHook] }] } }) },
+      { host: "claude-code", relativePath: path.join(".claude", "settings.json"), kind: "host-file-managed-entry-malformed", content: JSON.stringify({ hooks: { Stop: [{ hooks: {} }] } }) },
+      { host: "claude-code", relativePath: path.join(".claude", "settings.json"), kind: "host-file-managed-entry-conflicting", content: JSON.stringify({ hooks: { Stop: [{ hooks: [{ ...claudeHook, command: "pnpm exec aiu hook-stop --tool codex" }] }] } }) },
+    ] as const;
+
+    for (const testCase of cases) {
+      const repoRoot = await createRepoRoot();
+      await writeConfig(repoRoot, {
+        version: 1,
+        hosts: { enabled: [testCase.host], modes: { [testCase.host]: ["stop"] } },
+      });
+      await writeManagedHostFiles(repoRoot, testCase.host);
+      const target = path.join(repoRoot, testCase.relativePath);
+      await writeFile(target, testCase.content, "utf8");
+
+      const report = runAiuDoctor({ cwd: repoRoot });
+
+      assert.ok(report.checks.some((check) => check.kind === testCase.kind && check.path === target), `${testCase.host}: ${testCase.kind}`);
+      assert.equal(await readFile(target, "utf8"), testCase.content, `${testCase.host}: doctor changed the shared file`);
+    }
+  });
+
+  it("keeps normalized full-content equality for dedicated managed files", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, { version: 1, hosts: { enabled: ["codex"], modes: { codex: ["stop"] } } });
+    await writeManagedHostFiles(repoRoot, "codex");
+    const manifest = getAiuHostCapabilityProfile("codex").managedFiles.find((file) => file.relativePath.endsWith(path.join(".codex-plugin", "plugin.json")));
+    assert.ok(manifest);
+    const target = path.join(repoRoot, manifest.relativePath);
+    await writeFile(target, JSON.stringify(JSON.parse(manifest.content)), "utf8");
+
+    const drifted = runAiuDoctor({ cwd: repoRoot });
+    assert.ok(drifted.checks.some((check) => check.kind === "host-file-unmanaged" && check.path === target));
+
+    await writeFile(target, manifest.content.replaceAll("\n", "\r\n"), "utf8");
+    const normalized = runAiuDoctor({ cwd: repoRoot });
+    assert.ok(normalized.checks.some((check) => check.kind === "host-file-managed" && check.path === target));
+  });
+
   it("reports package-backed host entrypoints for installed managed files", async () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
@@ -268,6 +346,7 @@ describe("doctor diagnostics", () => {
     for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
+    await addUnrelatedSharedEntries(repoRoot);
     await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
     const previousHome = process.env.GROK_HOME;
     process.env.GROK_HOME = grokHome;
@@ -676,4 +755,21 @@ async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, file.content, "utf8");
   }
+}
+
+async function addUnrelatedSharedEntries(repoRoot: string): Promise<void> {
+  const marketplacePath = path.join(repoRoot, ".agents", "plugins", "marketplace.json");
+  const marketplace = JSON.parse(await readFile(marketplacePath, "utf8")) as { plugins: unknown[] } & Record<string, unknown>;
+  marketplace.teamSetting = { keep: true };
+  marketplace.plugins.unshift({ name: "lint", source: { path: "./plugins/lint", source: "local" } });
+  await writeFile(marketplacePath, JSON.stringify(marketplace), "utf8");
+
+  const settingsPath = path.join(repoRoot, ".claude", "settings.json");
+  const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+    hooks: { Stop: unknown[] } & Record<string, unknown>;
+  } & Record<string, unknown>;
+  settings.env = { KEEP: "yes" };
+  settings.hooks.PreToolUse = [{ hooks: [{ command: "echo inspect", type: "command" }] }];
+  settings.hooks.Stop.push({ hooks: [{ command: "echo unrelated", type: "command" }] });
+  await writeFile(settingsPath, JSON.stringify(settings), "utf8");
 }

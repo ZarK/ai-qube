@@ -21,6 +21,7 @@ import {
   type AiuHostCapabilityProfile,
   type AiuManagedHostFile,
 } from "./host_policy.js";
+import { mergeManagedHostFile, type SharedManagedHostFile } from "./managed_host_file.js";
 
 export const AIU_INIT_TOOLS = [
   "none",
@@ -586,8 +587,6 @@ interface PlannedFileWrite {
   readonly content: string;
 }
 
-type SharedHostFile = Extract<AiuManagedHostFile, { readonly ownership: "shared" }>;
-
 function readExistingText(absolutePath: string): ExistingText {
   if (!existsSync(absolutePath)) {
     return { exists: false };
@@ -602,7 +601,7 @@ function readExistingText(absolutePath: string): ExistingText {
   }
 }
 
-function planSharedJsonWrite(existing: ExistingText, file: SharedHostFile): PlannedFileWrite {
+function planSharedJsonWrite(existing: ExistingText, file: SharedManagedHostFile): PlannedFileWrite {
   if (!existing.exists) {
     return { operation: "create", reason: reasonForOperation("create"), content: file.content };
   }
@@ -610,182 +609,23 @@ function planSharedJsonWrite(existing: ExistingText, file: SharedHostFile): Plan
     return { operation: "conflict", reason: `Existing shared file could not be read: ${existing.error}`, content: file.content };
   }
 
-  const existingJson = parseJsonObject(existing.content ?? "");
-  if (!existingJson.ok) {
-    return {
-      operation: "conflict",
-      reason: "Existing shared file is not a JSON object. QUBE will not replace it.",
-      content: file.content,
-    };
-  }
-
-  const desiredJson = parseJsonObject(file.content);
-  if (!desiredJson.ok) {
-    throw new Error(`Managed shared-file content is not a JSON object: ${file.relativePath}`);
-  }
-
-  const merged = mergeSharedJson(file.managedEntry, existingJson.value, desiredJson.value);
+  const merged = mergeManagedHostFile(existing.content ?? "", file);
   if (!merged.ok) {
     return { operation: "conflict", reason: merged.reason, content: file.content };
   }
 
-  const content = stableJson(merged.value);
-  if (stableJson(existingJson.value) === content) {
+  if (!merged.changed) {
     return {
       operation: "skip",
       reason: "QUBE-owned entries already match; unrelated JSON entries are unchanged.",
-      content,
+      content: merged.content,
     };
   }
   return {
     operation: "update",
     reason: "QUBE-owned entries will be updated; unrelated JSON entries will be preserved.",
-    content,
+    content: merged.content,
   };
-}
-
-function mergeSharedJson(
-  managedEntry: SharedHostFile["managedEntry"],
-  existing: Record<string, unknown>,
-  desired: Record<string, unknown>,
-): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
-  if (managedEntry === "opencode-package-dependency") {
-    return mergeOpenCodePackage(existing, desired);
-  }
-  if (managedEntry === "codex-marketplace-plugin") {
-    return mergeCodexMarketplace(existing, desired);
-  }
-  return mergeClaudeSettings(existing, desired);
-}
-
-function mergeOpenCodePackage(
-  existing: Record<string, unknown>,
-  desired: Record<string, unknown>,
-): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
-  if (existing.dependencies !== undefined && !isRecord(existing.dependencies)) {
-    return { ok: false, reason: "Existing OpenCode dependencies value is not a JSON object. QUBE will not replace the shared file." };
-  }
-  const desiredDependencies = isRecord(desired.dependencies) ? desired.dependencies : undefined;
-  const desiredVersion = desiredDependencies?.["@tjalve/aiu"];
-  if (typeof desiredVersion !== "string" || desiredVersion.length === 0) {
-    throw new Error("Managed OpenCode package content does not contain an exact @tjalve/aiu dependency.");
-  }
-  return {
-    ok: true,
-    value: {
-      ...desired,
-      ...existing,
-      dependencies: {
-        ...(isRecord(existing.dependencies) ? existing.dependencies : {}),
-        "@tjalve/aiu": desiredVersion,
-      },
-    },
-  };
-}
-
-function mergeCodexMarketplace(
-  existing: Record<string, unknown>,
-  desired: Record<string, unknown>,
-): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
-  if (existing.plugins !== undefined && !Array.isArray(existing.plugins)) {
-    return { ok: false, reason: "Existing Codex marketplace plugins value is not an array. QUBE will not replace the shared file." };
-  }
-  if (!Array.isArray(desired.plugins)) {
-    throw new Error("Managed Codex marketplace content does not contain a plugins array.");
-  }
-
-  const managedPlugin = desired.plugins.find(isAiuMarketplacePlugin);
-  if (managedPlugin === undefined) {
-    throw new Error("Managed Codex marketplace content does not contain the AI Umpire plugin entry.");
-  }
-
-  const existingPlugins = existing.plugins ?? [];
-  const plugins: unknown[] = [];
-  let managedIndex: number | undefined;
-  for (const plugin of existingPlugins) {
-    if (isAiuMarketplacePlugin(plugin)) {
-      managedIndex ??= plugins.length;
-      continue;
-    }
-    plugins.push(plugin);
-  }
-  plugins.splice(managedIndex ?? plugins.length, 0, managedPlugin);
-
-  return {
-    ok: true,
-    value: {
-      ...desired,
-      ...existing,
-      plugins,
-    },
-  };
-}
-
-function mergeClaudeSettings(
-  existing: Record<string, unknown>,
-  desired: Record<string, unknown>,
-): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
-  if (existing.hooks !== undefined && !isRecord(existing.hooks)) {
-    return { ok: false, reason: "Existing Claude Code hooks value is not a JSON object. QUBE will not replace the shared file." };
-  }
-  const desiredHooks = isRecord(desired.hooks) ? desired.hooks : undefined;
-  const desiredStop = desiredHooks?.Stop;
-  if (!Array.isArray(desiredStop)) {
-    throw new Error("Managed Claude Code settings do not contain a Stop hook array.");
-  }
-  const managedGroup = desiredStop.find(hasAiuClaudeStopHook);
-  if (managedGroup === undefined) {
-    throw new Error("Managed Claude Code settings do not contain the AI Umpire Stop hook.");
-  }
-
-  const existingHooks = isRecord(existing.hooks) ? existing.hooks : {};
-  if (existingHooks.Stop !== undefined && !Array.isArray(existingHooks.Stop)) {
-    return { ok: false, reason: "Existing Claude Code Stop hooks value is not an array. QUBE will not replace the shared file." };
-  }
-
-  const stopGroups: unknown[] = [];
-  let managedIndex: number | undefined;
-  for (const group of existingHooks.Stop ?? []) {
-    if (!isRecord(group) || !Array.isArray(group.hooks)) {
-      stopGroups.push(group);
-      continue;
-    }
-    const hooks = group.hooks.filter((hook) => !isAiuClaudeStopHook(hook));
-    if (hooks.length === group.hooks.length) {
-      stopGroups.push(group);
-      continue;
-    }
-    managedIndex ??= stopGroups.length;
-    if (hooks.length > 0) {
-      stopGroups.push({ ...group, hooks });
-    }
-  }
-  stopGroups.splice(managedIndex ?? stopGroups.length, 0, managedGroup);
-
-  return {
-    ok: true,
-    value: {
-      ...existing,
-      hooks: {
-        ...existingHooks,
-        Stop: stopGroups,
-      },
-    },
-  };
-}
-
-function isAiuMarketplacePlugin(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.name === "ai-umpire") return true;
-  return isRecord(value.source) && value.source.path === "./plugins/ai-umpire";
-}
-
-function hasAiuClaudeStopHook(value: unknown): boolean {
-  return isRecord(value) && Array.isArray(value.hooks) && value.hooks.some(isAiuClaudeStopHook);
-}
-
-function isAiuClaudeStopHook(value: unknown): boolean {
-  return isRecord(value) && value.command === "pnpm exec aiu hook-stop --tool claude-code";
 }
 
 function classifyTextWrite(existing: ExistingText, desired: string, force: boolean): { readonly operation: AiuInitFileOperation; readonly reason: string } {

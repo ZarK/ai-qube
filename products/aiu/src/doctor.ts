@@ -32,6 +32,7 @@ import {
   type AiuHostSupportLevel,
   type AiuManagedHostFile,
 } from "./host_policy.js";
+import { validateManagedHostFile, type ManagedHostFileValidation } from "./managed_host_file.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
 
 export type AiuHealthStatus = "ok" | "warning" | "error";
@@ -476,8 +477,15 @@ function checkHostFiles(configLoad: AiuConfigLoadResult): readonly AiuDoctorChec
       }
       try {
         const existing = readFileSync(absolutePath, "utf8");
-        if (managedHostFileIsCurrent(existing, file)) {
-          return check(`host-${profile.tool}-${file.relativePath}`, "host", "ok", "host-file-managed", `${profile.tool} managed host file matches package content.`, absolutePath, "Continue using the managed host file.");
+        const validation = validateManagedHostFile(existing, file);
+        if (validation.state === "current") {
+          const message = file.ownership === "shared"
+            ? `${profile.tool} shared host file contains the canonical QUBE-owned entry.`
+            : `${profile.tool} managed host file matches package content.`;
+          return check(`host-${profile.tool}-${file.relativePath}`, "host", "ok", "host-file-managed", message, absolutePath, "Continue using the managed host file.");
+        }
+        if (file.ownership === "shared") {
+          return sharedHostFileCheck(profile.tool, file.relativePath, absolutePath, validation);
         }
         return check(`host-${profile.tool}-${file.relativePath}`, "host", "warning", "host-file-unmanaged", `${profile.tool} host file exists but differs from package-managed content.`, absolutePath, "Review the file and rerun aiu init --force only if replacement is intentional.");
       } catch (error) {
@@ -666,7 +674,7 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
       return hostProbe(base, "unavailable", "none", false, policyError.message, policyError.suggestedNextAction);
     }
     if (!managedHostFilesAreCurrent(configLoad.repoRoot, profile.managedFiles)) {
-      return hostProbe(base, "unavailable", "none", false, `${host} managed integration files are missing or differ from the package content.`, `Review the file diagnostics, then run aiu init --tool ${host}.`);
+      return hostProbe(base, "unavailable", "none", false, `${host} managed integration files are missing or contain an invalid QUBE-owned entry.`, `Review the file diagnostics, then run aiu init --tool ${host}.`);
     }
     if (host === "grok-build" && !inspectGrokFolderTrust(configLoad.repoRoot).trusted) {
       return hostProbe(base, "unverified", "none", false, "Grok Build has not trusted the managed project Stop hook.", "Run /hooks-trust in Grok Build, trigger one Stop event, then rerun aiu doctor --json.");
@@ -717,19 +725,31 @@ function managedHostFilesAreCurrent(repoRoot: string, files: readonly AiuManaged
 }
 
 function managedHostFileIsCurrent(existing: string, file: AiuManagedHostFile): boolean {
-  if (file.relativePath.replaceAll("\\", "/") !== AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH) {
-    return normalizeText(existing) === normalizeText(file.content);
-  }
-  try {
-    const existingManifest = JSON.parse(existing) as unknown;
-    const expectedManifest = JSON.parse(file.content) as unknown;
-    if (!isRecord(existingManifest) || !isRecord(expectedManifest)) return false;
-    const existingDependencies = isRecord(existingManifest.dependencies) ? existingManifest.dependencies : undefined;
-    const expectedDependencies = isRecord(expectedManifest.dependencies) ? expectedManifest.dependencies : undefined;
-    return existingDependencies?.["@tjalve/aiu"] === expectedDependencies?.["@tjalve/aiu"];
-  } catch {
-    return false;
-  }
+  return validateManagedHostFile(existing, file).state === "current";
+}
+
+function sharedHostFileCheck(
+  host: AiuHost,
+  relativePath: string,
+  absolutePath: string,
+  validation: ManagedHostFileValidation,
+): AiuDoctorCheck {
+  const kind = validation.state === "missing"
+    ? "host-file-managed-entry-missing"
+    : validation.state === "duplicate"
+      ? "host-file-managed-entry-duplicate"
+      : validation.state === "malformed"
+        ? "host-file-managed-entry-malformed"
+        : "host-file-managed-entry-conflicting";
+  return check(
+    `host-${host}-${relativePath}`,
+    "host",
+    "warning",
+    kind,
+    `${host} shared host file is not current: ${validation.reason}`,
+    absolutePath,
+    `Review the shared file, then run aiu init --tool ${host} to repair only the QUBE-owned entry.`,
+  );
 }
 
 function hostProbe(
@@ -943,10 +963,6 @@ function displayConfigPath(repoRoot: string, selectedPath: string): string {
     return portablePath(selectedPath);
   }
   return portablePath(relativePath);
-}
-
-function normalizeText(value: string): string {
-  return value.replace(/\r\n/g, "\n");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
