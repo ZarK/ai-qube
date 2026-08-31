@@ -141,12 +141,10 @@ export type AiuOpenCodeServerPlugin = (
 
 const AIU_OPENCODE_RELEVANT_EVENTS = new Set([
   "idle",
+  "session.idle",
+  "session.status",
   "session-idle",
   "session-status",
-  "todo-update",
-  "message-update",
-  "tui-prompt-activity",
-  "selected-session",
 ]);
 
 export function createAiuOpenCodePlugin(options: AiuOpenCodePluginOptions = {}): AiuOpenCodePlugin {
@@ -207,6 +205,12 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
   const host = buildAiuOpenCodeHostSession(event);
   const paths = resolveAiuContinuationPaths(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
   const activationSuppressions: string[] = normalizedContext.deliverPrompt === undefined ? ["host-delivery-unavailable"] : [];
+  if (host.suppressions.length > 0) {
+    return Object.freeze({
+      handled: true,
+      metadata: resultMetadata(event, host, 0, [], [...host.suppressions, ...activationSuppressions], paths),
+    });
+  }
   let lock;
   try {
     lock = acquireAiuContinuationLock({
@@ -417,14 +421,7 @@ function withDefaultContext(context: AiuOpenCodeContext): AiuOpenCodeResolvedCon
 }
 
 function isRelevantOpenCodeEvent(type: string): boolean {
-  const normalized = normalizeEventToken(type);
-  return AIU_OPENCODE_RELEVANT_EVENTS.has(normalized)
-    || normalized.includes("idle")
-    || normalized.includes("todo")
-    || normalized.includes("message")
-    || normalized.includes("status")
-    || normalized.includes("selected")
-    || normalized.includes("tui");
+  return AIU_OPENCODE_RELEVANT_EVENTS.has(normalizeEventToken(type));
 }
 
 function buildAiuOpenCodeHostSession(event: AiuOpenCodeEvent): AiuOpenCodeHostSessionSnapshot {

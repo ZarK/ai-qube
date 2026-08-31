@@ -93,6 +93,45 @@ describe("OpenCode continuation runtime", () => {
     assert.deepEqual(requests, [{ sessionID: "ses_status", command: "make-it-so" }]);
   });
 
+  it("does not let a slow busy status hold the idle continuation lock", async () => {
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-status-race-"));
+    tempContinuationRoots.add(target);
+    await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+    const config = {
+      ...opencodeConfig(),
+      paths: {
+        stateDir: ".qube/aiu/state",
+        lockDir: ".qube/aiu/locks",
+        logDir: ".qube/aiu/logs",
+      },
+    } satisfies AiuConfig;
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
+    const requests: Array<{ readonly sessionID: string; readonly command: string }> = [];
+    let releaseTrustedState!: () => void;
+    const trustedStateGate = new Promise<void>((resolve) => { releaseTrustedState = resolve; });
+    let trustedStateLoads = 0;
+    const serverPlugin = createAiuOpenCodeServerPlugin({
+      loadTrustedStates: async () => {
+        trustedStateLoads += 1;
+        await trustedStateGate;
+        return [workQueueEnvelope({ readyItems: [workItem("664", "OpenCode continuation")] })];
+      },
+    });
+    const hooks = await serverPlugin({
+      directory: target,
+      client: { session: { command: async (request) => { requests.push(request); } } },
+    });
+
+    const busyStatus = hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_race", status: { type: "busy" } } } });
+    await Promise.resolve();
+    const idleStatus = hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_race", status: { type: "idle" } } } });
+    releaseTrustedState();
+    await Promise.all([busyStatus, idleStatus]);
+
+    assert.equal(trustedStateLoads, 1);
+    assert.deepEqual(requests, [{ sessionID: "ses_race", command: "make-it-so" }]);
+  });
+
   it("does not run a command when an idle event has no session id", async () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-missing-session-"));
     tempContinuationRoots.add(target);
@@ -279,13 +318,13 @@ describe("OpenCode continuation runtime", () => {
         },
       );
 
-      assert.equal(result.decision?.kind, "wait", reason);
+      assert.equal(result.decision, undefined, reason);
       assert.equal(result.prompt, undefined, reason);
       assert.ok(result.metadata?.suppressions?.includes(reason), reason);
     }
   });
 
-  it("treats todo activity as advisory interruption state only", async () => {
+  it("ignores todo activity as a continuation trigger", async () => {
     const result = await runAiuOpenCodeContinuation(
       { type: "todo.update", payload: { todoActive: true } },
       {
@@ -299,8 +338,9 @@ describe("OpenCode continuation runtime", () => {
       },
     );
 
-    assert.equal(result.decision?.kind, "wait");
-    assert.ok(result.metadata?.suppressions?.includes("todo-active"));
+    assert.equal(result.handled, false);
+    assert.equal(result.decision, undefined);
+    assert.ok(result.metadata?.suppressions?.includes("unsupported-event"));
   });
 
   it("suppresses prompt delivery on trusted adapter errors", async () => {
