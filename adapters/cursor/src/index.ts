@@ -397,7 +397,11 @@ export function probeCursor(
   }
   const compatible = compatibleCursorAcpModels(catalog, acpCatalog.options);
   const choices = compatible.map(candidate => candidate.displayId);
-  if (model && !catalog.includes(model)) {
+  const descriptor: CursorModelDescriptor | null = model
+    ? resolveCursorAcpModel(acpCatalog.options, model)
+    : null;
+  const exactTransportModel = descriptor?.transportValue === model;
+  if (model && !catalog.includes(model) && !exactTransportModel) {
     return {
       status: "blocked",
       modelListed: false,
@@ -408,9 +412,6 @@ export function probeCursor(
       availableModels: Object.freeze(choices),
     };
   }
-  const descriptor: CursorModelDescriptor | null = model
-    ? resolveCursorAcpModel(acpCatalog.options, model)
-    : null;
   if (model && !descriptor) {
     return {
       status: "blocked",

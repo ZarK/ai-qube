@@ -162,6 +162,29 @@ describe("Cursor isolated review adapter", () => {
     assert.deepEqual(models, ["cursor-grok-4.6-high-fast"]);
   });
 
+  it("accepts an exact Windows ACP model value without recording an alias substitution", () => {
+    const model = "grok-4.6[effort=high,fast=true]";
+    const result = cursor.probeCursor({
+      model,
+      executable: "cursor-agent",
+      prefixArgs: [],
+      version: "2026.08.11-build",
+      runCommand: (_executable, args) => {
+        if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nAgent Client Protocol";
+        if (args.at(-1) === "--help") return "ask";
+        if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
+        if (args.at(-1) === "models") return "Available models\ncursor-grok-4.6-high-fast - Grok High Fast";
+        if (args.at(-1) === "--acp-models") return JSON.stringify({ version: 1, transport: "acp", options: [{ value: model, name: "Grok High Fast" }] });
+        return "";
+      },
+    }, "win32");
+
+    assert.equal(result.status, "ready");
+    assert.equal(result.modelListed, true);
+    assert.equal(result.resolvedModel, model);
+    assert.deepEqual(result.availableModels, ["cursor-grok-4.6-high-fast"]);
+  });
+
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {
     const output = (args) => {
       if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nStart the Cursor Agent as an ACP (Agent Client Protocol) server";
