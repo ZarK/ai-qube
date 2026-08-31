@@ -1,8 +1,7 @@
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-import { getAgentHostProfileSync } from "@tjalve/aie";
-import { AGENT_HOST_IDS, type AgentHostProfile } from "@tjalve/qube-core";
+import { AGENT_HOST_CAPABILITY_PROFILES, AGENT_HOST_IDS, type AgentHostCapabilityProfile } from "@tjalve/qube-core";
 
 import type { AgentHostKind } from "./contracts.js";
 
@@ -35,12 +34,12 @@ export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKi
   const selectedIds = new Set(selected);
   const profiles = AGENT_HOST_IDS
     .filter((host) => selectedIds.has(host))
-    .map((host) => getAgentHostProfileSync(host));
-  const profilesByPath = new Map<string, AgentHostProfile[]>();
+    .map((host) => AGENT_HOST_CAPABILITY_PROFILES[host]);
+  const profilesByPath = new Map<string, AgentHostCapabilityProfile[]>();
   for (const profile of profiles) {
-    const grouped = profilesByPath.get(profile.instructionTarget.path) ?? [];
+    const grouped = profilesByPath.get(profile.instructionPath) ?? [];
     grouped.push(profile);
-    profilesByPath.set(profile.instructionTarget.path, grouped);
+    profilesByPath.set(profile.instructionPath, grouped);
   }
   const files = [...profilesByPath.entries()]
     .sort(([left], [right]) => left.localeCompare(right))

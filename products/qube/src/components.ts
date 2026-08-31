@@ -1,13 +1,17 @@
 import {
   AGENT_HOST_IDS,
+  AGENT_HOST_CAPABILITY_PROFILES,
   AGENT_HOST_REGISTRATIONS,
+  observeAgentHostReadiness,
   gitLabAdapterContract,
   githubAdapterContract,
   jenkinsAdapterContract,
   jiraAdapterContract,
   linearAdapterContract,
   type AgentHostCapability,
+  type AgentHostCapabilityProfile,
   type AgentHostProfile,
+  type AgentHostReadinessReport,
   type QubeAdapterCapability,
   type QubeAdapterContract,
   type QubeIntegrationSurface,
@@ -31,6 +35,8 @@ export interface QubeDiscoveryOption {
   readonly summary: string;
   readonly capabilities: readonly QubeDiscoveryCapability[];
   readonly connection: ConnectionContract | null;
+  readonly declaredProfile?: AgentHostCapabilityProfile;
+  readonly readiness?: AgentHostReadinessReport;
 }
 
 export interface QubeDiscoveryCapability {
@@ -93,11 +99,6 @@ function adapterOption(
   });
 }
 
-function normalizeCapabilitySupport(support: string): QubeDiscoveryCapabilitySupport {
-  if (support === "unsupported" || support === "experimental" || support === "standalone" || support === "host-provided") return support;
-  return "supported";
-}
-
 function profileCapability(id: string, capability: AgentHostCapability, owner: string): QubeDiscoveryCapability {
   return Object.freeze({
     id,
@@ -109,6 +110,7 @@ function profileCapability(id: string, capability: AgentHostCapability, owner: s
 
 function agentHostOption(profile: AgentHostProfile): QubeDiscoveryOption {
   const registration = AGENT_HOST_REGISTRATIONS[profile.id];
+  const declaredProfile = AGENT_HOST_CAPABILITY_PROFILES[profile.id];
   const trustActions = profile.trust.actions.map(action => action.description).join(" ");
   return Object.freeze({
     id: profile.id,
@@ -135,7 +137,23 @@ function agentHostOption(profile: AgentHostProfile): QubeDiscoveryOption {
       }),
     ]),
     connection: null,
+    declaredProfile,
   });
+}
+
+export function componentsWithHostReadiness(observedAt = new Date().toISOString()): readonly QubeComponent[] {
+  return Object.freeze(qubeComponents.map((component) => component.id !== "executor"
+    ? component
+    : Object.freeze({
+      ...component,
+      capabilities: Object.freeze({
+        ...component.capabilities,
+        hostSurfaces: Object.freeze(executorHostSurfaces.map((surface) => Object.freeze({
+          ...surface,
+          readiness: observeAgentHostReadiness(surface.declaredProfile!, observedAt),
+        }))),
+      }),
+    })));
 }
 
 export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freeze(

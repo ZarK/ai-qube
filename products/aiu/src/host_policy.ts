@@ -4,7 +4,7 @@ import { claudeCodeHostProfile } from "@tjalve/qube-adapter-claude-code";
 import { codexHostProfile } from "@tjalve/qube-adapter-codex";
 import { grokBuildHostProfile, grokBuildStopHookFile } from "@tjalve/qube-adapter-grok-build";
 import { opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
-import { AGENT_HOST_CAPABILITY_SUPPORT, type AgentHostCapabilitySupport, type AgentHostProfile } from "@tjalve/qube-core";
+import { AGENT_HOST_CAPABILITY_PROFILES, AGENT_HOST_CAPABILITY_SUPPORT, type AgentHostCapabilityProfile, type AgentHostCapabilitySupport, type AgentHostProfile } from "@tjalve/qube-core";
 
 import type { AiuContinuationMode, AiuHost, AiuHostCapabilityName, AiuHostsConfig } from "./config.js";
 import { getAiuPackageVersion } from "./package_metadata.js";
@@ -213,36 +213,35 @@ const HOST_MANAGED_FILES = Object.freeze({
   ]),
 } satisfies Readonly<Record<AiuHost, readonly AiuManagedHostFile[]>>);
 
-const HOST_PROFILES = Object.freeze(Object.fromEntries(
-  (Object.keys(SHARED_HOST_PROFILES) as AiuHost[]).map((tool) => [tool, buildHostProfile(tool, SHARED_HOST_PROFILES[tool])]),
-)) as Readonly<Record<AiuHost, AiuHostCapabilityProfile>>;
-
-function buildHostProfile(tool: AiuHost, shared: AgentHostProfile): AiuHostCapabilityProfile {
-  const continuation = shared.umpire.continuation;
-  const delivery = continuation.delivery;
-  const continuationSupport = continuation.support;
+function buildHostProfile(tool: AiuHost, declared: AgentHostCapabilityProfile, runtime: AgentHostProfile): AiuHostCapabilityProfile {
+  const stopHook = declared.capabilities["continuation-stop-hook"];
+  const idleEvent = declared.capabilities["continuation-idle-event"];
+  const selectedSession = declared.capabilities["continuation-selected-session-delivery"];
+  const wait = declared.capabilities["continuation-wait"];
+  const delivery: AiuHostPromptDelivery = selectedSession.support !== "unsupported" ? "host" : stopHook.support !== "unsupported" ? "stdout" : "none";
+  const continuationSupport = selectedSession.support !== "unsupported" ? selectedSession.support : stopHook.support;
   const usesHostDelivery = delivery === "host";
   const usesStopHook = delivery === "stdout";
-  const stopHookSupport = usesStopHook ? continuationSupport : "unsupported";
-  const trustSupport = shared.trust.required ? continuationSupport : "supported";
+  const stopHookSupport = stopHook.support;
+  const trustSupport = declared.capabilities["repository-trust"].support;
   const capabilities: Record<AiuHostCapabilityName, AiuHostCapabilityDescriptor> = {
-    idleEvents: capability("idleEvents", usesHostDelivery ? continuationSupport : "unsupported", [], usesHostDelivery ? shared.umpire.continuation.description : `${shared.displayName} does not expose idle-event delivery for Umpire.`),
-    stopHook: capability("stopHook", stopHookSupport, [], usesStopHook ? continuation.description : `${shared.displayName} Umpire continuation does not use a Stop hook.`),
-    todoRead: capability("todoRead", usesHostDelivery ? shared.taskList.support : "unknown", [], usesHostDelivery ? "Host task-list state is advisory input to Umpire." : "Host task-list state is not a trusted Umpire input."),
-    sessionState: capability("sessionState", continuation.currentIssueRecovery ? continuationSupport : "unsupported", ["wait"], continuation.description),
-    promptDelivery: capability("promptDelivery", continuationSupport, ["continue", "repair"], continuation.description, delivery),
-    selectedSession: capability("selectedSession", usesHostDelivery ? continuationSupport : "unsupported", [], usesHostDelivery ? "The host plugin identifies the target session." : `${shared.displayName} Stop-hook delivery does not select another session.`),
+    idleEvents: capability("idleEvents", idleEvent.support, [], idleEvent.description),
+    stopHook: capability("stopHook", stopHookSupport, [], stopHook.description),
+    todoRead: capability("todoRead", declared.capabilities["task-read"].support, [], declared.capabilities["task-read"].description),
+    sessionState: capability("sessionState", wait.support, ["wait"], wait.description),
+    promptDelivery: capability("promptDelivery", continuationSupport, ["continue", "repair"], selectedSession.support !== "unsupported" ? selectedSession.description : stopHook.description, delivery),
+    selectedSession: capability("selectedSession", selectedSession.support, [], selectedSession.description),
     modelTargeting: capability("modelTargeting", "unknown", [], "Model targeting is outside the Umpire continuation contract."),
-    userActivity: capability("userActivity", usesHostDelivery ? continuationSupport : "unsupported", ["wait"], usesHostDelivery ? "The host plugin reports whether the target session can receive a prompt." : `${shared.displayName} Stop-hook delivery does not expose live user activity.`),
-    projectTrust: capability("projectTrust", trustSupport, [], shared.trust.description),
+    userActivity: capability("userActivity", wait.support, ["wait"], wait.description),
+    projectTrust: capability("projectTrust", trustSupport, [], declared.capabilities["repository-trust"].description),
   };
-  const probe = shared.umpire.probe;
+  const probe = runtime.umpire.probe;
   return Object.freeze({
     tool,
     supportLevel: continuationSupport,
-    description: continuation.description,
+    description: selectedSession.support !== "unsupported" ? selectedSession.description : stopHook.description,
     capabilities: Object.freeze(capabilities),
-    currentIssueRecovery: continuation.currentIssueRecovery,
+    currentIssueRecovery: continuationSupport !== "unsupported",
     probe: Object.freeze({
       support: probe.support,
       description: probe.description,
@@ -250,18 +249,18 @@ function buildHostProfile(tool: AiuHost, shared: AgentHostProfile): AiuHostCapab
     }),
     stopHook: Object.freeze({
       support: stopHookSupport,
-      blocksByDefault: usesStopHook && continuation.currentIssueRecovery && continuationSupport !== "unsupported",
+      blocksByDefault: usesStopHook && continuationSupport !== "unsupported",
       description: usesStopHook
-        ? `AI Umpire init enables ${shared.displayName} Stop-hook blocking. An explicit false value disables blocking.`
-        : `${shared.displayName} continuation uses host delivery rather than a blocking Stop hook.`,
+        ? `AI Umpire init enables ${declared.displayName} Stop-hook blocking. An explicit false value disables blocking.`
+        : `${declared.displayName} continuation uses host delivery rather than a blocking Stop hook.`,
     }),
     managedFiles: HOST_MANAGED_FILES[tool],
-    trustSteps: Object.freeze(shared.trust.actions.map((action) => action.description)),
+    trustSteps: Object.freeze(runtime.trust.actions.map((action) => action.description)),
   });
 }
 
 export function getAiuHostCapabilityProfile(tool: AiuHost): AiuHostCapabilityProfile {
-  return HOST_PROFILES[tool];
+  return buildHostProfile(tool, AGENT_HOST_CAPABILITY_PROFILES[tool], SHARED_HOST_PROFILES[tool]);
 }
 
 export function getAiuHostCapabilityProfiles(tools: readonly AiuHost[]): readonly AiuHostCapabilityProfile[] {
@@ -269,7 +268,7 @@ export function getAiuHostCapabilityProfiles(tools: readonly AiuHost[]): readonl
 }
 
 export function getAllAiuHostCapabilityProfiles(): readonly AiuHostCapabilityProfile[] {
-  return Object.freeze(Object.values(HOST_PROFILES));
+  return Object.freeze((Object.keys(SHARED_HOST_PROFILES) as AiuHost[]).map((tool) => getAiuHostCapabilityProfile(tool)));
 }
 
 export function getDefaultHostCapabilityOverrides(tool: AiuHost): Readonly<Partial<Record<AiuHostCapabilityName, boolean | "none" | "stdout" | "host">>> {

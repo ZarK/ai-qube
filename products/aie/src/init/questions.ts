@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { getAgentHostCapabilityProfile } from '@tjalve/qube-core';
 import { getAgentHostProfileSync } from '../agent_host_adapters.js';
 import { listHostModels, type HostModelListing } from '../app/model_catalog.js';
 import { isRegisteredReviewHost } from '../app/review_host_adapters.js';
@@ -290,7 +291,7 @@ function reviewerQuestionFor(machine: GuideMachine, mode: ReviewMode): Pick<Init
     };
   }
   if (mode === 'host') {
-    const hosts = machine.installedHosts.filter(host => getAgentHostProfileSync(host).review.local.support !== 'unsupported');
+    const hosts = machine.installedHosts.filter(host => getAgentHostCapabilityProfile(host).capabilities['review-host-guided'].support !== 'unsupported');
     return {
       prompt: 'Which installed agent harnesses should run native review subagents?',
       options: hosts.map(host => ({ value: host, label: `${getAgentHostProfileSync(host).displayName} subscription`, available: true })),
@@ -309,7 +310,7 @@ function reviewerQuestionFor(machine: GuideMachine, mode: ReviewMode): Pick<Init
 function reviewModelHostsForMode(machine: GuideMachine, mode: ReviewMode): readonly ReviewModelHostId[] {
   if (mode === 'isolated') return isolatedReviewHostsOnMachine(machine);
   if (mode === 'host') {
-    return machine.installedHosts.filter(host => getAgentHostProfileSync(host).review.local.support !== 'unsupported');
+    return machine.installedHosts.filter(host => getAgentHostCapabilityProfile(host).capabilities['review-host-guided'].support !== 'unsupported');
   }
   return [];
 }

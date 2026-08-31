@@ -2,7 +2,7 @@
 
 QUBE configures an agent harness. You can still run every QUBE command in a terminal, but the terminal is not an agent harness and has no instruction, task, review, or continuation surface.
 
-The five harness profiles below are the current source of truth for `qube init`, Executor instructions, Make It So, review routing, model discovery, and Umpire continuation.
+The version 1 profiles for the five harnesses below are the source of truth for `qube init`, Executor instructions, Make It So, review routing, model discovery, and Umpire continuation. The profiles contain declarations only. Executable parsers, invocations, and probes remain in the adapter packages and are not serialized.
 
 ## Harness setup
 
@@ -30,7 +30,15 @@ QUBE uses a command asset where the harness supports project commands. Codex use
 
 Host-local review uses fresh subagents inside the selected harness and can use the same subscription as the main agent. Isolated review starts a separate supported CLI harness in a read-only review session. External review services are configured through Executor and are not agent harness capabilities.
 
+The serialized profile keeps the following dimensions separate: task read and write; subagent invocation; host-guided and isolated review; model catalog and model-bound invocation; Stop hooks, idle events, selected-session delivery, and wait behavior; session targeting and resume; process restart; authentication; repository trust; read-only sandboxing; and permission approval. A direct prompt or Stop hook does not imply wait, selected-session, resume, or restart support.
+
 OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Umpire reports these integrations as unverified until it observes a valid event. Cursor has no Umpire continuation asset, so Umpire setup records no continuation delivery for Cursor and does not claim support.
+
+## Runtime readiness
+
+Declared support and observed readiness are different. `qube components --json` reports the version 1 declared profile and a separate version 1 readiness report for each harness. Each report contains adapter, executable identity, observed version, supported-version status, authentication, repository trust, managed assets, and feature activation facts. Every fact is `ready`, `blocked`, `unknown`, or `not-required` and includes a stable reason code, an observation time, a bounded explanation, and a safe next action.
+
+Component discovery performs only a local executable lookup. A name on `PATH` remains `unknown` until the selected command runs the bounded adapter probe that verifies identity, version, authentication, and any other facts that command requires. Help, version, queue, issue view, and status do not request harness authentication, model, or trust probes. A missing optional harness capability therefore does not block those commands.
 
 ## Current init flow
 
@@ -67,4 +75,4 @@ instructions and Make It So entry point.
 
 QUBE resolves component CLIs from its own install or from the current repository install. It does not load a QUBE component from an unrelated executable on the ambient `PATH`.
 
-The harness owns the agent session, model access, task tools, subagents, and hooks that it exposes. QUBE writes instructions and configuration, invokes QUBE commands, records evidence, and reports capability state. QUBE cannot force a harness or model to obey those instructions.
+The harness owns the agent session, model access, task tools, subagents, and hooks that it exposes. QUBE writes instructions and configuration, invokes QUBE commands, records evidence, and reports capability state. QUBE does not install, update, authenticate, trust, restart, or wrap an agent harness. An external launcher remains outside QUBE; correct operation through that launcher depends on it preserving the harness workspace, process, and session behavior declared by the selected QUBE capability.

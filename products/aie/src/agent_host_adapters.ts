@@ -5,10 +5,12 @@ import { grokBuildHostProfile } from '@tjalve/qube-adapter-grok-build';
 import { opencodeHostProfile } from '@tjalve/qube-adapter-opencode';
 import {
   AGENT_HOST_IDS,
+  AGENT_HOST_CAPABILITY_PROFILES,
   AGENT_HOST_REGISTRATIONS,
   defineAgentHostProfile,
   type AgentHostId,
   type AgentHostProfile,
+  type AgentHostCapabilityProfile,
   type AgentHostReviewAgentRenderer,
   type AgentHostReviewAgentTarget,
   type InstructionTarget,
@@ -42,11 +44,15 @@ const profilesById = Object.freeze({
 const adapters: readonly AgentHostAdapterMetadata[] = Object.freeze(
   AGENT_HOST_IDS.map((id) => Object.freeze({
     id,
-    displayName: profilesById[id].displayName,
+    displayName: AGENT_HOST_CAPABILITY_PROFILES[id].displayName,
     packageName: AGENT_HOST_REGISTRATIONS[id].packageName,
-    instructionPaths: Object.freeze([profilesById[id].instructionTarget.path]),
+    instructionPaths: Object.freeze([AGENT_HOST_CAPABILITY_PROFILES[id].instructionPath]),
   })),
 );
+
+export function getCanonicalAgentHostProfile(id: AgentHostId): AgentHostCapabilityProfile {
+  return AGENT_HOST_CAPABILITY_PROFILES[id];
+}
 
 export function reviewerDisplayName(hostId: string | null | undefined): string {
   const raw = typeof hostId === 'string' ? hostId.trim() : '';
@@ -99,7 +105,7 @@ export function uniqueAgentHostIds(ids: AgentHostId[]): AgentHostId[] {
 }
 
 export async function hostIdsForInstructionPath(path: string): Promise<AgentHostId[] | null> {
-  const hosts = AGENT_HOST_IDS.filter((id) => profilesById[id].instructionTarget.path === path);
+  const hosts = AGENT_HOST_IDS.filter((id) => AGENT_HOST_CAPABILITY_PROFILES[id].instructionPath === path);
   return hosts.length === 0 ? null : hosts;
 }
 
@@ -108,12 +114,12 @@ export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<st
   return [...new Set(
     AGENT_HOST_IDS
       .filter((id) => selected === null || selected.has(id))
-      .map((id) => profilesById[id].instructionTarget.path),
+      .map((id) => AGENT_HOST_CAPABILITY_PROFILES[id].instructionPath),
   )];
 }
 
 export function registeredInstructionPaths(): string[] {
-  return [...new Set(AGENT_HOST_IDS.map((id) => profilesById[id].instructionTarget.path))];
+  return [...new Set(AGENT_HOST_IDS.map((id) => AGENT_HOST_CAPABILITY_PROFILES[id].instructionPath))];
 }
 
 export function defaultInstructionContextSources(): string[] {

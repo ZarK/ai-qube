@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { probeExecutable, type ResolveExecutableOptions } from '@tjalve/qube-core';
+import { getAgentHostCapabilityProfile, observeAgentHostReadiness, probeExecutable, resolveExecutable, type ResolveExecutableOptions } from '@tjalve/qube-core';
 import { suggestBranchName, validateBranchPattern } from '../branch.js';
 import type { Config, GateKind, GateStage } from '../config/index.js';
 import { getInstructionStatus, type BaseRefStatus, type InstructionStatus } from '../repo/index.js';
@@ -339,7 +339,14 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
           : 'missing';
   const hostDiagnostics = Object.fromEntries(REVIEW_MODEL_HOST_IDS.map(host => {
     const capability = hostReviewCapabilities[host];
+    const declaredProfile = getAgentHostCapabilityProfile(host);
     return [host, {
+      declaredProfile,
+      readiness: observeAgentHostReadiness(
+        declaredProfile,
+        new Date().toISOString(),
+        (command) => resolveExecutable(command, lookup),
+      ),
       independentReviewer: capability.independentReviewer,
       freshContext: capability.freshContext,
       promptOnly: capability.promptOnly,

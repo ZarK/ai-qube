@@ -1103,6 +1103,9 @@ describe("qube composer CLI", () => {
     assert.deepEqual(executor.capabilities.hostSurfaces.map(surface => surface.id), [...AGENT_HOST_IDS]);
     assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.support === "installed"), true);
     assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.source === "agent-host-profile"), true);
+    assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.declaredProfile.version === 1), true);
+    assert.equal(executor.capabilities.hostSurfaces.every(surface => surface.readiness.version === 1), true);
+    assert.equal(executor.capabilities.hostSurfaces.every(surface => Object.values(surface.readiness.facts).every(fact => fact.reason && fact.observedAt && fact.nextAction)), true);
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed" && provider.default === true));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
@@ -3037,6 +3040,10 @@ describe("qube init orchestrator", () => {
     assert.equal(parsed.apply, undefined);
     assert.equal(parsed.plan.target, path.resolve(target));
     assert.deepEqual(parsed.plan.resolved.hosts, ["cursor", "grok-build", "codex"]);
+    assert.deepEqual(parsed.plan.harnessReadiness.map(report => report.host), ["cursor", "grok-build", "codex"]);
+    assert.equal(parsed.plan.harnessReadiness.every(report => report.version === 1), true);
+    assert.equal(parsed.plan.harnessReadiness.every(report => report.facts.adapter.state === "ready"), true);
+    assert.equal(parsed.plan.harnessReadiness.every(report => report.facts.authentication.state === "unknown"), true);
     assert.deepEqual(parsed.plan.components.map(component => component.id), ["aie", "aib", "aiq", "aiu"]);
     assert.ok(parsed.plan.components.every(component => component.cwd === path.resolve(target)));
     assert.ok(parsed.plan.components.every(component => component.args.includes("--dry-run")));

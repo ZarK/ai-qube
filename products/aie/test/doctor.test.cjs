@@ -876,6 +876,11 @@ describe('doctor diagnostics', () => {
     assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, []);
     assert.match(diagnostics.reviewAgent.localRunner.nextAction, /fresh read-only OpenCode review subagent/);
     assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.evidenceWriting, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.declaredProfile.version, 1);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.readiness.version, 1);
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.readiness.facts.authentication.state, 'unknown');
+    assert.equal(diagnostics.reviewAgent.localRunner.hosts.opencode.readiness.facts.authentication.reasonCode, 'authentication-unknown');
+    assert.deepEqual(diagnostics.reviewPreflight.hostReadiness.map(report => report.host), ['opencode']);
   });
 
   it('redacts token-like values from gate readiness diagnostics', () => {
