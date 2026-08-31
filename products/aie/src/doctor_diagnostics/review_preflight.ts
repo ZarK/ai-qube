@@ -132,7 +132,9 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
     : github.status === 'not-required'
       ? { readiness: 'disabled', authenticated: false, scopes: null, nextAction: null }
       : github.status === 'unverified'
-        ? { readiness: 'needs-action', authenticated: true, scopes: null, nextAction: githubNextAction }
+        ? github.cliVersion && github.host && github.repository
+          ? { readiness: 'ready', authenticated: true, scopes: null, nextAction: null }
+          : { readiness: 'unavailable', authenticated: false, scopes: null, nextAction: githubNextAction }
         : { readiness: 'ready', authenticated: true, scopes: null, nextAction: null };
   if (githubReviewAuth.nextAction) nextActions.push(githubReviewAuth.nextAction);
 

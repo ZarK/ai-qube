@@ -371,7 +371,7 @@ describe('doctor diagnostics', () => {
     assert.match(diagnostics.checks.gitObjects.nextAction, /git gc --prune=now/);
   });
 
-  it('reports GitHub pull request review auth scope issues in review preflight', () => {
+  it('keeps authenticated GitHub review preflight ready when write permission is unverified', () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
     writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
@@ -385,10 +385,37 @@ describe('doctor diagnostics', () => {
       githubReadiness: unverifiedGitHubReadiness,
     });
 
-    assert.equal(diagnostics.readiness, 'needs-action');
-    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'needs-action');
+    assert.equal(diagnostics.readiness, 'ready');
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'ready');
     assert.equal(diagnostics.checks.githubReviewAuth.authenticated, true);
     assert.equal(diagnostics.checks.githubReviewAuth.scopes, null);
+    assert.equal(diagnostics.checks.githubReviewAuth.nextAction, null);
+  });
+
+  it('keeps offline GitHub review authentication explicitly unavailable', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      githubReadiness: Object.freeze({
+        ...unverifiedGitHubReadiness,
+        summary: 'Offline mode skipped every GitHub CLI and provider probe.',
+        cliVersion: null,
+        host: null,
+        repository: null,
+        accountLogin: null,
+      }),
+    });
+
+    assert.equal(diagnostics.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.githubReviewAuth.authenticated, false);
     assert.match(diagnostics.checks.githubReviewAuth.nextAction, /pull request reviews/);
   });
 

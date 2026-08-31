@@ -319,8 +319,14 @@ function isToolkitHostId(value: string): value is ToolkitHostId {
   return (KNOWN_HOSTS as readonly string[]).includes(value);
 }
 
-function usesGithub(workProviders: readonly string[], ciProviders: readonly string[]): boolean {
-  return workProviders.includes("github") || ciProviders.includes("github");
+function selectedToolkitGitHubRoles(
+  workProviders: readonly string[],
+  ciProviders: readonly string[],
+): readonly GitHubRole[] {
+  const roles: GitHubRole[] = [];
+  if (workProviders.includes("github")) roles.push("work", "review");
+  if (ciProviders.includes("github")) roles.push("ci");
+  return Object.freeze(roles);
 }
 
 export async function composeHostToolkitManifests(
@@ -614,12 +620,8 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
     const manifest = manifestsByHost.get(host);
     return manifest ? probeManifest(repoRoot, manifest) : probeUnknownHost(host);
   }));
-  const fallbackRoles: GitHubRole[] = [
-    ...(record.workProviders.includes("github") ? ["work" as const] : []),
-    ...(record.ciProviders.includes("github") ? ["ci" as const] : []),
-  ];
   const githubReadiness = options.githubReadiness ?? await evaluateGitHubReadiness({
-    roles: fallbackRoles,
+    roles: selectedToolkitGitHubRoles(record.workProviders, record.ciProviders),
     cwd: repoRoot,
     env: options.env,
     offline: options.offline,

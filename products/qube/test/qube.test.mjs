@@ -2775,6 +2775,12 @@ describe("qube init orchestrator", () => {
     initializeRepository(cwd);
     createInitShims(packageRoot);
     writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup());
+    const codexBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "shared-review" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), codexBin);
 
     const result = runCli([
       "init", ".",
@@ -2782,9 +2788,9 @@ describe("qube init orchestrator", () => {
       "--ci-provider", "jenkins",
       "--yes",
       "--json",
-    ], { cwd, env: initEnv(packageRoot) });
+    ], { cwd, env });
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.githubReadiness.status, "not-required");
     assert.equal(parsed.githubReadiness.reasonCode, "not-required");
@@ -4060,6 +4066,9 @@ describe("host toolkit manifests", () => {
       ciProviders: ["github"],
       mcpOptIn: false,
     }));
+    const offline = await probeHostToolkits({ cwd, env: { PATH: "", Path: "" }, offline: true });
+    assert.deepEqual(offline.githubReadiness.roles, ["work", "review", "ci"]);
+
     const probed = await probeHostToolkits({ cwd, env: { PATH: "", Path: "" }, offline: false });
     assert.equal(probed.status, "partial");
     assert.equal(probed.cliDependencies[0].status, "missing");
