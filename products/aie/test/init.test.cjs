@@ -1029,9 +1029,10 @@ describe('init service', () => {
     assert.match(agents, /qube aie run wait --name ui-audit --url <url> --timeout 30/);
     assert.match(agents, /qube aie audit ui set-run --command "<command>" --url <url>/);
     assert.match(agents, /agent-browser first and Playwright\/browser automation as fallback/);
-    assert.match(agents, /capture screenshots/);
+    assert.match(agents, /capture and inspect PNG screenshots/);
+    assert.match(agents, /typed outcome, observations, screenshot hashes, findings, and blockers in audit\.json/);
     assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
-    assert.match(agents, /Do not claim UI audit success from CLI JSON, API health, notes, or status checks/);
+    assert.match(agents, /Do not claim UI audit success from CLI JSON, HTTP\/API responses, DOM text, passing tests, notes, filenames, hashes, or status checks/);
     assert.match(agents, /run `qube aie review gate <issue> --prompt` for review-agent QA when configured or needed/);
     assert.match(agents, /review: use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
     assert.match(agents, /test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`/);
@@ -1078,8 +1079,9 @@ describe('init service', () => {
     assert.match(command, /QUBEReview publishes lane feedback as `qube-review\[bot\]`/);
     assert.match(command, /prefer repository package scripts/);
     assert.match(command, /Use agent-browser first for visual UI inspection/);
-    assert.match(command, /capture screenshots/);
-    assert.match(command, /never claim UI audit success from CLI JSON, API health, notes, or status checks/);
+    assert.match(command, /capture and inspect PNG screenshots/);
+    assert.match(command, /typed outcome, observations, screenshot hashes, findings, and blockers in audit\.json/);
+    assert.match(command, /never claim UI audit success from CLI JSON, HTTP\/API responses, DOM text, passing tests, notes, filenames, hashes, or status checks/);
     assert.match(command, /collect `qube aie run status --name ui-audit` logs once/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);

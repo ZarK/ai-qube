@@ -181,7 +181,7 @@ function reviewState(result: ReviewGateResult): 'passed' | 'failed' | 'needs-wor
 
 function uiAuditState(result: UiAuditResult): string {
   if (!result.required) return 'disabled';
-  return result.evidence.state;
+  return result.evidence.outcome;
 }
 
 function reviewEvidencePending(evidence: ReviewGateResult['evidence']): boolean {
@@ -203,6 +203,17 @@ function readinessItem(reasonCode: PrBodyReadinessReasonCode, message: string, s
   return { reasonCode, message, source, trust };
 }
 
+export function manualUiAuditReadiness(audit: UiAuditResult, applies: boolean): { pending: PrBodyReadinessItem[]; blockers: PrBodyReadinessItem[] } {
+  if (!applies || audit.evidence.outcome === 'passed') return { pending: [], blockers: [] };
+  if (audit.evidence.outcome === 'incomplete') {
+    const detail = audit.evidence.reasons.map(item => `${item.code}: ${item.message}`).join(' ');
+    return { pending: [readinessItem(audit.evidence.reasonCode, `Complete the current-head browser-observed UI audit. ${detail}`, audit.evidence.source, audit.evidence.trust)], blockers: [] };
+  }
+  const detail = audit.evidence.reasons.map(item => `${item.code}: ${item.message}`).join(' ');
+  if (audit.evidence.outcome === 'failed') return { pending: [], blockers: [readinessItem(audit.evidence.reasonCode, `Manual UI audit failed with browser-observed visible findings. ${detail}`, audit.evidence.source, audit.evidence.trust)] };
+  return { pending: [], blockers: [readinessItem(audit.evidence.reasonCode, `Manual UI audit is blocked by the recorded browser or application failure. ${detail}`, audit.evidence.source, audit.evidence.trust)] };
+}
+
 function ciReasonCode(diagnostic: PrGateCheckDiagnostic): PrBodyReadinessReasonCode {
   if (diagnostic.reasonCode === 'missing-current-head-ci-run') return 'missing-current-head-ci-run';
   if (diagnostic.reasonCode === 'stale-old-head-ci-run') return 'stale-old-head-ci-run';
@@ -219,7 +230,7 @@ function githubReviewDecisionBlocks(pr: PrBodyPullRequest | null): boolean {
 function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyReadinessItem[] {
   const pending: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
-  if (uiAuditAppliesToPr(audit, prReview) && audit.evidence.state !== 'visual-analysis-recorded') pending.push(readinessItem(audit.evidence.reasonCode, 'Record browser-observation evidence, capture screenshots, and add visual analysis notes for the real running app.', audit.evidence.source, audit.evidence.trust));
+  pending.push(...manualUiAuditReadiness(audit, uiAuditAppliesToPr(audit, prReview)).pending);
   if (!prLocalReviewSupersedesIssueReview(prReview) && !review.reviewAvailable) pending.push(readinessItem('review-not-recorded', review.nextAction, 'review-agent', 'unverified'));
   else if (!prLocalReviewSupersedesIssueReview(prReview) && reviewEvidencePending(review.evidence) && !(review.localReview.required && review.localReview.status === 'passed')) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
   if (!pr) pending.push(readinessItem('missing-pr', 'Create a non-draft, ready-for-review pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
@@ -259,7 +270,7 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (githubReviewDecisionBlocks(pr)) blockers.push(readinessItem('pr-review-blocked', 'GitHub review state is CHANGES_REQUESTED; address requested changes before merge.', 'github-pr', 'trusted-provider'));
   if (pr?.mergeable === 'CONFLICTING') blockers.push(readinessItem('merge-conflict', 'Pull request has merge conflicts.', 'github-pr', 'trusted-provider'));
   if (pr?.mergeStateStatus === 'DIRTY') blockers.push(readinessItem('merge-conflict', 'Pull request branch is dirty and cannot merge cleanly.', 'github-pr', 'trusted-provider'));
-  if (uiAuditAppliesToPr(audit, prReview) && (audit.evidence.state === 'metadata-only' || audit.evidence.state === 'browser-visited' || audit.evidence.state === 'screenshots-captured')) blockers.push(readinessItem(audit.evidence.reasonCode, 'Manual UI audit evidence directory exists but visual evidence is incomplete.', audit.evidence.source, audit.evidence.trust));
+  blockers.push(...manualUiAuditReadiness(audit, uiAuditAppliesToPr(audit, prReview)).blockers);
   if (prReview?.status === 'failed') blockers.push(readinessItem('review-feedback-blocker', 'PR review gate reports feedback that must be addressed.', 'pr-review-gate', 'trusted-provider'));
   if (prReview?.localReview.required && (prReview.localReview.status === 'failed' || prReview.localReview.status === 'needs-work')) blockers.push(readinessItem('local-review-failed', prReview.localReview.nextAction, 'review-agent', 'unverified'));
   if (prReview?.localReview.required && prReview.localReview.status === 'malformed') blockers.push(readinessItem('local-review-malformed', prReview.localReview.nextAction, 'review-agent', 'unverified'));

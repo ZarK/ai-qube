@@ -136,7 +136,7 @@ export const AUDIT_UI_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable manual UI audit guidance', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show the audit plan without writing local evidence directories', default: false },
   { name: '--prepare', type: 'boolean', description: 'Create the local evidence directory and screenshots directory if missing', default: false },
-  { name: '--check', type: 'boolean', description: 'Check whether local audit evidence files or notes exist without claiming pass/fail', default: false },
+  { name: '--check', type: 'boolean', description: 'Validate the current-head structured browser-observed audit and return passed, failed, blocked, or incomplete', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

@@ -1,19 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { basename, isAbsolute, join, normalize } from 'path';
 import { homedir } from 'os';
 import { Config } from './config/index.js';
 import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
 import { redact } from './redact.js';
-
-export type UiAuditEvidenceState =
-  | 'disabled'
-  | 'missing'
-  | 'metadata-only'
-  | 'browser-visited'
-  | 'screenshots-captured'
-  | 'visual-analysis-recorded';
+import { evaluateUiAuditRecord, UI_AUDIT_RECORD_NAME, uiAuditRecordTemplate, type UiAuditOutcome, type UiAuditReason, type UiAuditScreenshot, type UiAuditRecord } from './audit_record.js';
 
 export interface UiAuditCheck {
   id: string;
@@ -28,10 +20,16 @@ export interface UiAuditEvidence {
   notesPath: string;
   browserObservationPath: string;
   directoryExists: boolean;
+  recordPath: string;
+  recordFound: boolean;
   notesFound: boolean;
   browserObservationFound: boolean;
   screenshotCount: number;
-  state: UiAuditEvidenceState;
+  screenshots: UiAuditScreenshot[];
+  outcome: UiAuditOutcome;
+  reportedOutcome: 'passed' | 'failed' | 'blocked' | null;
+  reasons: UiAuditReason[];
+  stale: boolean;
   missing: string[];
   source: EvidenceSource;
   trust: EvidenceTrust;
@@ -55,6 +53,7 @@ export interface UiAuditResult {
   appLaunch: string | null;
   auditTarget: string | null;
   evidence: UiAuditEvidence;
+  recordTemplate: UiAuditRecord;
   createdDirectories: string[];
   checklist: UiAuditCheck[];
   warnings: string[];
@@ -71,7 +70,6 @@ export interface UiAuditOptions {
   headSha?: string | null;
 }
 
-export const AUDIT_HEAD_STAMP_NAME = 'head-stamp.json';
 export const DEFAULT_UI_AUDIT_EVIDENCE_ROOT = '~/.qube/verification';
 
 export function uiAuditEvidenceDirectory(
@@ -86,24 +84,18 @@ export function uiAuditEvidenceDirectory(
   return join(resolved.root, safeSegment(repoRoot ? basename(repoRoot) : 'repository'), String(issueNumber));
 }
 
-export function hashAuditEvidencePayload(notes: string, observation: string, screenshots: readonly { name: string; bytes: number; sha256: string }[]): string {
-  return createHash('sha256').update(JSON.stringify({ notes, observation, screenshots })).digest('hex');
-}
-
-const SCREENSHOT_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
-
 const CHECKLIST: UiAuditCheck[] = [
   {
     id: 'running-app',
     title: 'Open the real running application',
     why: 'Manual UI audit evidence must come from the application users will actually see, not from generated instructions or static guesses.',
-    action: 'Start the app with the repository command, open the target page, and record the URL, commit, browser, and viewport in browser-observation.md.',
+    action: `Start the app with the repository command, navigate to the target page in a real browser, and record the head, URL, browser session, and viewport in ${UI_AUDIT_RECORD_NAME}.`,
   },
   {
     id: 'visible-outcomes',
     title: 'Verify visible outcomes and core interactions',
     why: 'Executor cannot infer pass/fail from screenshots alone; the agent must inspect the rendered behavior and user-facing state changes.',
-    action: 'Use agent-browser first. Click, type, navigate, and describe the visible outcome for the changed UI paths in notes.md.',
+    action: `Use agent-browser first. Click, type, navigate, visually inspect the result, and record actions, visible outcomes, findings, and blockers in ${UI_AUDIT_RECORD_NAME}.`,
   },
   {
     id: 'accessibility-keyboard',
@@ -115,7 +107,7 @@ const CHECKLIST: UiAuditCheck[] = [
     id: 'responsive-visual',
     title: 'Inspect responsive and visual quality',
     why: 'UI changes must remain usable across practical viewport sizes and should not introduce obvious clipping, overlap, or unreadable states.',
-    action: 'Check at narrow, medium, and desktop widths. Capture local screenshots for the important states and keep them in screenshots/.',
+    action: `Check applicable narrow and desktop widths. Capture and inspect PNG screenshots for important states, keep them in screenshots/, and reference every screenshot with its SHA-256 from ${UI_AUDIT_RECORD_NAME}.`,
   },
 ];
 
@@ -169,50 +161,38 @@ function hasNonEmptyFile(path: string): boolean {
   return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0;
 }
 
-function countScreenshots(path: string): number {
-  if (!existsSync(path) || !statSync(path).isDirectory()) return 0;
-  return readdirSync(path).filter(name => {
-    const screenshotPath = join(path, name);
-    const lower = name.toLowerCase();
-    try {
-      return statSync(screenshotPath).isFile() && SCREENSHOT_EXTENSIONS.some(extension => lower.endsWith(extension));
-    } catch {
-      return false;
-    }
-  }).length;
+function auditSummary(outcome: UiAuditOutcome, reasons: readonly UiAuditReason[], required = true): string {
+  if (!required) return 'Manual UI audit is disabled by repository config.';
+  if (outcome === 'passed') return 'The structured browser-observed audit reports passed for the current head, and all referenced PNG screenshots validated.';
+  if (outcome === 'failed') return 'The structured browser-observed audit records visible findings and reports failed.';
+  if (outcome === 'blocked') return 'The structured audit records an exact browser or application blocker.';
+  return reasons[0]?.message ?? 'The manual UI audit is incomplete.';
 }
 
-function auditSummary(state: UiAuditEvidenceState): string {
-  if (state === 'disabled') return 'Manual UI audit is disabled by repository config.';
-  if (state === 'visual-analysis-recorded') return 'Browser observation, local screenshots, and visual analysis notes were found. Executor reports evidence presence only and cannot certify audit pass/fail.';
-  if (state === 'screenshots-captured') return 'Local screenshots were found, but browser observation and/or visual analysis notes are still missing.';
-  if (state === 'browser-visited') return 'A browser observation note was found, but screenshots or visual analysis notes are still missing.';
-  if (state === 'metadata-only') return 'Manual UI audit evidence directory exists, but browser/screenshot evidence and visual analysis are missing.';
-  return 'No manual UI audit evidence is recorded for this issue.';
+function auditReasonCode(outcome: UiAuditOutcome, required: boolean, stale: boolean, recordFound: boolean): GateEvidenceReasonCode {
+  if (!required) return 'manual-audit-disabled';
+  if (stale) return 'stale-evidence';
+  if (outcome === 'passed' || outcome === 'failed' || outcome === 'blocked') return 'local-evidence-found';
+  return recordFound ? 'manual-audit-incomplete' : 'missing-evidence';
 }
 
-function auditReasonCode(state: UiAuditEvidenceState): GateEvidenceReasonCode {
-  if (state === 'disabled') return 'manual-audit-disabled';
-  if (state === 'visual-analysis-recorded') return 'local-evidence-found';
-  if (state === 'metadata-only' || state === 'browser-visited' || state === 'screenshots-captured') return 'manual-audit-incomplete';
-  return 'missing-evidence';
-}
-
-function auditResult(state: UiAuditEvidenceState): GateResult {
-  if (state === 'missing') return 'missing';
+function auditResult(outcome: UiAuditOutcome, stale: boolean): GateResult {
+  if (stale) return 'stale';
+  if (outcome === 'passed') return 'passed';
+  if (outcome === 'failed') return 'failed';
   return 'unknown';
 }
 
-function auditTrust(state: UiAuditEvidenceState): EvidenceTrust {
-  return state === 'visual-analysis-recorded' ? 'local-evidence' : 'unverified';
+function auditTrust(outcome: UiAuditOutcome): EvidenceTrust {
+  return outcome === 'incomplete' ? 'unverified' : 'agent-reported';
 }
 
-function buildAuditGateEvidence(issueNumber: number, directory: string, state: UiAuditEvidenceState, summary: string, trust: EvidenceTrust, reasonCode: GateEvidenceReasonCode): GateEvidence {
+function buildAuditGateEvidence(issueNumber: number, directory: string, evidence: Pick<UiAuditEvidence, 'outcome' | 'reportedOutcome' | 'stale'>, summary: string, trust: EvidenceTrust, reasonCode: GateEvidenceReasonCode): GateEvidence {
   return normalizeGateEvidence({
     key: `manual-ui-audit:${issueNumber}`,
     name: `Manual UI audit for issue #${issueNumber}`,
     stage: 'pre-pr',
-    result: auditResult(state),
+    result: auditResult(evidence.outcome, evidence.stale),
     source: 'manual-audit',
     trust,
     command: null,
@@ -221,16 +201,16 @@ function buildAuditGateEvidence(issueNumber: number, directory: string, state: U
     summary,
     recordedAt: null,
     reasonCode,
-    stale: false,
-    metadata: { issue: issueNumber, state },
+    stale: evidence.stale,
+    metadata: { issue: issueNumber, outcome: evidence.outcome, reportedOutcome: evidence.reportedOutcome },
   });
 }
 
 function withAuditEvidence(issueNumber: number, evidence: Omit<UiAuditEvidence, 'source' | 'trust' | 'reasonCode' | 'summary' | 'verified' | 'gateEvidence'>): UiAuditEvidence {
   const source: EvidenceSource = 'manual-audit';
-  const trust = auditTrust(evidence.state);
-  const reasonCode = auditReasonCode(evidence.state);
-  const summary = auditSummary(evidence.state);
+  const trust = auditTrust(evidence.outcome);
+  const reasonCode = auditReasonCode(evidence.outcome, true, evidence.stale, evidence.recordFound);
+  const summary = auditSummary(evidence.outcome, evidence.reasons);
   return {
     ...evidence,
     source,
@@ -238,48 +218,54 @@ function withAuditEvidence(issueNumber: number, evidence: Omit<UiAuditEvidence, 
     reasonCode,
     summary,
     verified: false,
-    gateEvidence: buildAuditGateEvidence(issueNumber, evidence.directory, evidence.state, summary, trust, reasonCode),
+    gateEvidence: buildAuditGateEvidence(issueNumber, evidence.directory, evidence, summary, trust, reasonCode),
   };
 }
 
-function readEvidence(directory: string, issueNumber: number): UiAuditEvidence {
+function readEvidence(directory: string, issueNumber: number, headSha: string | null): UiAuditEvidence {
   const screenshotsDirectory = join(directory, 'screenshots');
   const notesPath = join(directory, 'notes.md');
   const browserObservationPath = join(directory, 'browser-observation.md');
   const directoryExists = existsSync(directory) && statSync(directory).isDirectory();
   const notesFound = hasNonEmptyFile(notesPath);
   const browserObservationFound = hasNonEmptyFile(browserObservationPath);
-  const screenshotCount = countScreenshots(screenshotsDirectory);
-  const missing: string[] = [];
-  if (!directoryExists) missing.push('local evidence directory');
-  if (directoryExists && !browserObservationFound) missing.push('browser-observation.md');
-  if (directoryExists && screenshotCount === 0) missing.push('local screenshots');
-  if (directoryExists && !notesFound) missing.push('notes.md visual analysis');
-  const state: UiAuditEvidenceState = !directoryExists
-    ? 'missing'
-    : notesFound && browserObservationFound && screenshotCount > 0
-      ? 'visual-analysis-recorded'
-      : screenshotCount > 0
-        ? 'screenshots-captured'
-        : browserObservationFound
-          ? 'browser-visited'
-          : 'metadata-only';
+  const evaluation = evaluateUiAuditRecord(directory, headSha);
   return withAuditEvidence(issueNumber, {
     directory: redact(directory),
     screenshotsDirectory: redact(screenshotsDirectory),
     notesPath: redact(notesPath),
     browserObservationPath: redact(browserObservationPath),
     directoryExists,
+    recordPath: redact(evaluation.recordPath),
+    recordFound: existsSync(evaluation.recordPath),
     notesFound,
     browserObservationFound,
-    screenshotCount,
-    state,
-    missing,
+    screenshotCount: evaluation.screenshots.length,
+    screenshots: evaluation.screenshots,
+    outcome: evaluation.outcome,
+    reportedOutcome: evaluation.reportedOutcome,
+    reasons: evaluation.reasons,
+    stale: evaluation.stale,
+    missing: evaluation.reasons.map(item => item.message),
   });
 }
 
-function disabledEvidence(directory: string, issueNumber: number): UiAuditEvidence {
-  return withAuditEvidence(issueNumber, { ...readEvidence(directory, issueNumber), state: 'disabled', missing: [] });
+function disabledEvidence(directory: string, issueNumber: number, headSha: string | null): UiAuditEvidence {
+  const evidence = readEvidence(directory, issueNumber, headSha);
+  const summary = auditSummary('incomplete', [], false);
+  const trust: EvidenceTrust = 'unverified';
+  const reasonCode: GateEvidenceReasonCode = 'manual-audit-disabled';
+  return {
+    ...evidence,
+    outcome: 'incomplete',
+    reasons: [],
+    stale: false,
+    missing: [],
+    trust,
+    reasonCode,
+    summary,
+    gateEvidence: buildAuditGateEvidence(issueNumber, evidence.directory, { outcome: 'incomplete', reportedOutcome: evidence.reportedOutcome, stale: false }, summary, trust, reasonCode),
+  };
 }
 
 function resolveAuditHeadSha(repoRoot: string | undefined, explicit: string | null | undefined): string | null {
@@ -298,35 +284,6 @@ function resolveAuditHeadSha(repoRoot: string | undefined, explicit: string | nu
   }
 }
 
-function writeCompleteAuditStamp(directory: string, headSha: string): void {
-  const notesPath = join(directory, 'notes.md');
-  const observationPath = join(directory, 'browser-observation.md');
-  const screenshotsDirectory = join(directory, 'screenshots');
-  const notes = hasNonEmptyFile(notesPath) ? readFileSync(notesPath, 'utf8') : '';
-  const observation = hasNonEmptyFile(observationPath) ? readFileSync(observationPath, 'utf8') : '';
-  const screenshots = countScreenshots(screenshotsDirectory) === 0
-    ? []
-    : readdirSync(screenshotsDirectory)
-      .filter(name => SCREENSHOT_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension)))
-      .sort()
-      .flatMap(name => {
-        const path = join(screenshotsDirectory, name);
-        try {
-          const info = statSync(path);
-          if (!info.isFile()) return [];
-          return [{ name, bytes: info.size, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') }];
-        } catch {
-          return [];
-        }
-      });
-  const digest = hashAuditEvidencePayload(notes, observation, screenshots);
-  const path = join(directory, AUDIT_HEAD_STAMP_NAME);
-  const body = `${JSON.stringify({ version: 1, headSha: headSha.trim().toLowerCase(), digest }, null, 2)}\n`;
-  const tempPath = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tempPath, body, { encoding: 'utf8', flag: 'wx' });
-  renameSync(tempPath, path);
-}
-
 function createDirectory(path: string, dryRun: boolean, created: string[]): void {
   if (existsSync(path)) return;
   if (!dryRun) mkdirSync(path, { recursive: true });
@@ -336,7 +293,7 @@ function createDirectory(path: string, dryRun: boolean, created: string[]): void
 function buildWarnings(config: Config): string[] {
   const warnings = [
     'Screenshot upload is out of scope and disabled by default; keep evidence local unless a future opt-in integration is configured.',
-    'Executor never claims a UI audit passed from generated instructions, screenshots, browser observations, or local notes alone.',
+    `Executor derives the typed audit outcome from ${UI_AUDIT_RECORD_NAME}; screenshots, hashes, browser observations, and local notes alone never produce a pass.`,
   ];
   if (!config.uiAuditAppLaunch || !config.uiAuditTarget) {
     warnings.push('No app launch command or audit target URL is configured yet. Discover a repository start command, start it with `qube aie run start --name ui-audit -- <command>`, wait with `qube aie run wait --name ui-audit --url <url> --timeout 30`, then record them with `qube aie audit ui set-run --command "<command>" --url <url>`.');
@@ -347,10 +304,13 @@ function buildWarnings(config: Config): string[] {
 
 function nextAction(result: Pick<UiAuditResult, 'required' | 'prepare' | 'check' | 'dryRun' | 'evidence' | 'appLaunch' | 'auditTarget'>): string {
   if (!result.required) return 'No manual UI audit is required by config; record why the UI audit does not apply before shipping UI work.';
-  if (result.prepare && !result.dryRun) return 'Run the real application, audit it with agent-browser first, capture screenshots for important states, and write browser-observation.md plus notes.md visual analysis.';
-  if (result.check) return result.evidence.state === 'visual-analysis-recorded'
-    ? 'Inspect the local evidence yourself; Executor reports browser/screenshot evidence plus visual-analysis presence only and cannot certify that the audit passed.'
-    : 'Create browser-observation.md, capture local screenshots, add notes.md visual analysis, then rerun `aie audit ui <issue> --check`.';
+  if (result.prepare && !result.dryRun) return `Run the real application, navigate and interact with changed flows, visually inspect each applicable state, inspect captured PNG screenshots, and record the browser-observed outcome in ${UI_AUDIT_RECORD_NAME}.`;
+  if (result.check) {
+    if (result.evidence.outcome === 'passed') return 'The current-head structured audit reports passed. Review the browser-observed states and validated screenshots before shipping.';
+    if (result.evidence.outcome === 'failed') return 'Fix the recorded visible findings, rerun the affected browser states, and record a new current-head audit.';
+    if (result.evidence.outcome === 'blocked') return 'Resolve the recorded browser or application blocker, then rerun the manual UI audit. Do not ship it as passed.';
+    return `Address the focused audit reasons, update ${UI_AUDIT_RECORD_NAME}, and rerun \`aie audit ui <issue> --check\`.`;
+  }
   if (result.appLaunch && result.auditTarget) {
     return `Reuse \`qube aie run start --name ui-audit -- ${result.appLaunch}\` and \`qube aie run wait --name ui-audit --url ${result.auditTarget} --timeout 30\`. Pass an explicit start command to override. Then run \`aie audit ui <issue> --prepare\` and inspect the real running app.`;
   }
@@ -369,11 +329,8 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
     createDirectory(directory, dryRun, createdDirectories);
     createDirectory(screenshotsDirectory, dryRun, createdDirectories);
   }
-  const evidence = config.manualUiAudit ? readEvidence(directory, options.issueNumber) : disabledEvidence(directory, options.issueNumber);
   const headSha = resolveAuditHeadSha(options.repoRoot, options.headSha);
-  if (check && !dryRun && config.manualUiAudit && evidence.state === 'visual-analysis-recorded' && headSha) {
-    writeCompleteAuditStamp(directory, headSha);
-  }
+  const evidence = config.manualUiAudit ? readEvidence(directory, options.issueNumber, headSha) : disabledEvidence(directory, options.issueNumber, headSha);
   const warnings = buildWarnings(config);
   const result: UiAuditResult = {
     ok: true,
@@ -389,6 +346,7 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
     appLaunch: config.uiAuditAppLaunch === '' ? null : redact(config.uiAuditAppLaunch),
     auditTarget: config.uiAuditTarget === '' ? null : redact(config.uiAuditTarget),
     evidence,
+    recordTemplate: uiAuditRecordTemplate(headSha, config.uiAuditTarget === '' ? null : config.uiAuditTarget),
     createdDirectories,
     checklist: CHECKLIST.map(item => ({ ...item })),
     warnings,
@@ -402,25 +360,30 @@ export function formatUiAudit(result: UiAuditResult): string {
   lines.push(`Evidence directory: ${result.evidence.directory}`);
   lines.push(`Browser observation: ${result.evidence.browserObservationPath}`);
   lines.push(`Visual analysis notes: ${result.evidence.notesPath}`);
+  lines.push(`Structured audit record: ${result.evidence.recordPath}`);
+  lines.push(`Record template: rerun with --json and use recordTemplate as the ${UI_AUDIT_RECORD_NAME} shape; replace every placeholder with browser-observed values.`);
   lines.push(`Screenshots directory: ${result.evidence.screenshotsDirectory}`);
   if (result.prepare) lines.push(result.dryRun ? 'Dry-run: would create local evidence directories if missing.' : 'Prepared local evidence directories if they were missing.');
-  if (result.check) lines.push(`Evidence check: ${result.evidence.state}.`);
+  if (result.check) lines.push(`Audit outcome: ${result.evidence.outcome}${result.evidence.reportedOutcome ? ` (reported ${result.evidence.reportedOutcome})` : ''}.`);
   lines.push(`Evidence source: ${result.evidence.source}/${result.evidence.trust}; reason=${result.evidence.reasonCode}.`);
   lines.push('Preferred browser: agent-browser.');
   lines.push(`Fallback: ${result.fallbackBrowserAutomation}`);
   lines.push(result.appLaunch
     ? `App launch: ${result.appLaunch}`
-    : 'App launch: not configured; start the real application with the repository-specific command and record it in browser-observation.md.');
+    : `App launch: not configured; start the real application with the repository-specific command and record the browser-observed run in ${UI_AUDIT_RECORD_NAME}.`);
   lines.push(result.auditTarget
     ? `Audit target: ${result.auditTarget}`
-    : 'Audit target: not configured; open the changed UI route in the real running app and record the URL in browser-observation.md.');
+    : `Audit target: not configured; open the changed UI route in the real running app and record the URL in ${UI_AUDIT_RECORD_NAME}.`);
   lines.push('Checklist:');
   for (const item of result.checklist) {
     lines.push(`- ${item.title}: ${item.action}`);
   }
-  if (result.evidence.missing.length > 0) lines.push(`Missing evidence: ${result.evidence.missing.join(', ')}.`);
+  if (result.evidence.reasons.length > 0) {
+    lines.push('Audit reasons:');
+    for (const reason of result.evidence.reasons) lines.push(`- ${reason.code}: ${reason.message}`);
+  }
   lines.push('Screenshot upload: disabled and out of scope; keep screenshots local by default.');
-  lines.push('Executor reports audit guidance and local evidence state only; it never claims UI audit pass/fail from generated instructions, metadata, screenshots, browser observations, or local notes alone.');
+  lines.push(`Executor reports the observer's typed audit outcome only after validating ${UI_AUDIT_RECORD_NAME}, current-head binding, and referenced PNG evidence. It never infers visual correctness from files or hashes alone.`);
   lines.push(`Next action: ${result.nextAction}`);
   return lines.join('\n');
 }
