@@ -5,6 +5,7 @@ import {
   INIT_ACTION_LABELS,
   publicInitActionLabel,
   renderInitFailure,
+  renderInitQuestion,
   renderInitOutput,
 } from "../dist/init_output.js";
 
@@ -29,6 +30,29 @@ const primaryHarness = Object.freeze({
 });
 
 describe("public QUBE init output", () => {
+  it("shows every layer fact with a separate recommendation reason before an edited question", () => {
+    const output = renderInitQuestion({
+      step: 6,
+      label: "Quality checks",
+      explanation: "Choose the checks for this repository.",
+      userGlobal: "—",
+      repository: "—",
+      effective: "Unit tests",
+      source: "QUBE default",
+      recommendation: "Unit tests",
+      reason: "Use the cumulative baseline.",
+      docsUrl: "https://example.test/qube-init#quality",
+    });
+
+    assert.match(output, /User-global: —/);
+    assert.match(output, /Repository: —/);
+    assert.match(output, /Effective: Unit tests/);
+    assert.match(output, /Source: QUBE default/);
+    assert.match(output, /Recommended: Unit tests/);
+    assert.match(output, /Reason: Use the cumulative baseline\./);
+    assert.match(output, /Documentation: https:\/\/example\.test\/qube-init#quality/);
+  });
+
   it("confirms a plan with public answers and no apply instructions", () => {
     const output = renderInitOutput({
       scope: "repository",

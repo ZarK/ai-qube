@@ -337,7 +337,7 @@ export function resolveQubeInitConfig(input: {
     ...(reviewModels.source === "derived" ? { "review.models": Object.freeze(["review.mode"] as const) } : {}),
   }) satisfies Readonly<Partial<Record<QubeInitField, readonly QubeInitField[]>>>;
   const deviations = Object.freeze((Object.keys(sources) as QubeInitField[]).filter(field => {
-    return JSON.stringify(readField(config, field)) !== JSON.stringify(readField(input.defaults, field));
+    return !sameQubeInitFieldValue(field, readField(config, field), readField(input.defaults, field));
   }));
   return Object.freeze({ config, sources, derivedFrom, deviations });
 }

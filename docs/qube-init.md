@@ -71,8 +71,10 @@ to rerun `qube init`.
 The guided flow has eight steps. Review details appear only when they apply.
 QUBE keeps a valid effective answer unless you choose to review that setting.
 The repository summary always gives an edit path, including when all values are
-inherited. Before each edited question, QUBE explains the choice, gives a
-recommendation, and links to the applicable section in this guide.
+inherited. Before each edited question, QUBE shows the user-global, repository,
+and effective values and names the effective source. It then explains the
+choice, gives the recommendation and reason, and links to the applicable
+section in this guide.
 
 QUBE initializes the complete system. Bootstrap prepares planning. Executor
 prepares issue work and review. Quality Control prepares checks. Umpire prepares

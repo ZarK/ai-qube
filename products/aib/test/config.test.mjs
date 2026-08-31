@@ -69,7 +69,7 @@ test("AIB validates each partial layer before merge and reports its exact scope"
     () => loadAibConfig(undefined, { startDir: repo, homeDirectory: home }),
     (error) => error instanceof AibConfigLayerError
       && error.scope === "user-global"
-      && error.path.endsWith(".qube\\aib\\config.json")
+      && error.path.replaceAll("\\", "/").endsWith(".qube/aib/config.json")
       && error.field === "safety.allowNetwork"
       && error.reason.includes("must be a boolean")
       && error.nextAction.includes("rerun"),

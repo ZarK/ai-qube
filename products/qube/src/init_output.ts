@@ -19,6 +19,19 @@ export interface InitHarnessPrompt {
   readonly makeItSo: string;
 }
 
+export interface InitQuestionOutputOptions {
+  readonly step: number;
+  readonly label: string;
+  readonly explanation: string;
+  readonly userGlobal: string;
+  readonly repository: string;
+  readonly effective: string;
+  readonly source: string;
+  readonly recommendation: string;
+  readonly reason: string;
+  readonly docsUrl: string;
+}
+
 export interface InitOutputOptions {
   readonly scope: "global" | "repository";
   readonly mode: "plan" | "apply";
@@ -159,6 +172,22 @@ export function renderInitOutput(options: InitOutputOptions): string {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+export function renderInitQuestion(options: InitQuestionOutputOptions): string {
+  return [
+    "",
+    `${options.step}. ${options.label}`,
+    options.explanation,
+    `User-global: ${options.userGlobal}`,
+    `Repository: ${options.repository}`,
+    `Effective: ${options.effective}`,
+    `Source: ${options.source}`,
+    `Recommended: ${options.recommendation}`,
+    `Reason: ${options.reason}`,
+    `Documentation: ${options.docsUrl}`,
+    "",
+  ].join("\n");
 }
 
 function formatInitValue(value: unknown): string {

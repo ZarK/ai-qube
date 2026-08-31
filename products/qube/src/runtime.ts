@@ -64,6 +64,7 @@ import {
 import {
   publicInitActionLabel,
   renderInitFailure,
+  renderInitQuestion,
   renderInitOutput,
   type InitPublisherReadiness,
   type PublicInitAnswer,
@@ -2060,19 +2061,82 @@ function guidedQuestionChoices(question: GuidedInitQuestion): {
   return { choices: Object.freeze(choices), values };
 }
 
-function showGuidedQuestion(question: GuidedInitQuestion): void {
-  process.stdout.write([
-    "",
-    `${question.step}. ${question.label}`,
-    question.explanation,
-    `Recommended: ${question.recommendation}. ${question.recommendationReason}`,
-    `Documentation: ${question.docsUrl}`,
-    "",
-  ].join("\n"));
+interface GuidedInitQuestionLayers {
+  readonly userGlobal: GuidedInitAnswers;
+  readonly repository: GuidedInitAnswers;
+  readonly detected: GuidedInitAnswers;
 }
 
-async function promptGuidedQuestion(question: GuidedInitQuestion, jsonMode: boolean): Promise<GuidedInitQuestion["selectedValue"]> {
-  if (!jsonMode) showGuidedQuestion(question);
+function guidedQuestionLayerValue(
+  questionId: GuidedInitQuestionId,
+  answers: GuidedInitAnswers,
+): { readonly present: boolean; readonly value: GuidedInitQuestion["currentValue"] } {
+  switch (questionId) {
+    case "agent-harnesses": return { present: Object.hasOwn(answers, "agentHarnesses"), value: answers.agentHarnesses ?? null };
+    case "issue-tracker": return { present: Object.hasOwn(answers, "issueTracker"), value: answers.issueTracker ?? null };
+    case "automated-checks": return { present: Object.hasOwn(answers, "automatedChecks"), value: answers.automatedChecks ?? null };
+    case "continuous-shipping": return {
+      present: Object.hasOwn(answers, "continuousShipping"),
+      value: answers.continuousShipping === undefined ? null : answers.continuousShipping ? "on" : "off",
+    };
+    case "umpire-scope": return { present: Object.hasOwn(answers, "umpireScope"), value: answers.umpireScope ?? null };
+    case "quality-checks": return { present: Object.hasOwn(answers, "qualityStages"), value: answers.qualityStages ?? null };
+    case "review-source": return { present: Object.hasOwn(answers, "reviewSource"), value: answers.reviewSource ?? null };
+    case "external-reviewer": return { present: Object.hasOwn(answers, "externalReviewers"), value: answers.externalReviewers ?? null };
+    case "review-harness": return { present: Object.hasOwn(answers, "reviewHarness"), value: answers.reviewHarness ?? null };
+    case "review-model": return {
+      present: Object.hasOwn(answers, "reviewModel"),
+      value: answers.reviewModel === undefined ? null : answers.reviewModel ?? GUIDED_INIT_UNPINNED_MODEL,
+    };
+    case "review-publisher": return { present: Object.hasOwn(answers, "reviewPublisher"), value: answers.reviewPublisher ?? null };
+  }
+}
+
+function guidedQuestionValueLabel(question: GuidedInitQuestion, value: GuidedInitQuestion["currentValue"]): string {
+  if (value === null) return "not set";
+  const label = (entry: string): string => question.options.find(option => option.value === entry)?.label ?? entry;
+  if (typeof value === "string") return label(value);
+  return value.length === 0 ? "none" : value.map(label).join(", ");
+}
+
+function showGuidedQuestion(question: GuidedInitQuestion, layers: GuidedInitQuestionLayers): void {
+  const userGlobal = guidedQuestionLayerValue(question.id, layers.userGlobal);
+  const repository = guidedQuestionLayerValue(question.id, layers.repository);
+  const detected = guidedQuestionLayerValue(question.id, layers.detected);
+  const source = repository.present
+    ? "repository"
+    : userGlobal.present
+      ? "user-global"
+      : detected.present
+        ? "detected"
+        : "QUBE default";
+  const effective = repository.present
+    ? repository.value
+    : userGlobal.present
+      ? userGlobal.value
+      : detected.present
+        ? detected.value
+        : question.recommendedValue;
+  process.stdout.write(renderInitQuestion({
+    step: question.step,
+    label: question.label,
+    explanation: question.explanation,
+    userGlobal: userGlobal.present ? guidedQuestionValueLabel(question, userGlobal.value) : "—",
+    repository: repository.present ? guidedQuestionValueLabel(question, repository.value) : "—",
+    effective: guidedQuestionValueLabel(question, effective),
+    source,
+    recommendation: question.recommendation,
+    reason: question.recommendationReason,
+    docsUrl: question.docsUrl,
+  }));
+}
+
+async function promptGuidedQuestion(
+  question: GuidedInitQuestion,
+  jsonMode: boolean,
+  layers: GuidedInitQuestionLayers,
+): Promise<GuidedInitQuestion["selectedValue"]> {
+  if (!jsonMode) showGuidedQuestion(question, layers);
   const mapped = guidedQuestionChoices(question);
   if (question.selection === "multiple") {
     const selected = await promptInstallerChoices({
@@ -2156,6 +2220,7 @@ async function collectGuidedInitAnswers(input: {
   readonly answers: GuidedInitAnswers;
   readonly current: GuidedInitAnswers;
   readonly defaults: GuidedInitAnswers;
+  readonly layers: GuidedInitQuestionLayers;
   readonly resolveDefaults: boolean;
   readonly jsonMode: boolean;
 }): Promise<{ readonly explicitAnswers: GuidedInitAnswers; readonly normalization: GuidedInitNormalization }> {
@@ -2209,7 +2274,7 @@ async function collectGuidedInitAnswers(input: {
     if (!question || !question.applicable || !question.promptNeeded || question.validationError) continue;
     const promptGate = evaluatePromptGate({ command: initCommand, jsonMode: input.jsonMode });
     if (!promptGate.allowed) continue;
-    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode));
+    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode, input.layers));
   }
 
   const finalQuestions = questions();
@@ -2836,6 +2901,11 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     answers: guidedFlagAnswers,
     current: guidedCurrent,
     defaults: guidedDefaults,
+    layers: Object.freeze({
+      userGlobal: guidedAnswersFromConfig(globalConfig.config),
+      repository: guidedAnswersFromConfig(repositoryLayer),
+      detected: guidedAnswersFromConfig(null, detectedCi),
+    }),
     resolveDefaults: useDefaults,
     jsonMode: json,
   });
