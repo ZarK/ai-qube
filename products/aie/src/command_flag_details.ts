@@ -24,6 +24,12 @@ export const REVIEW_DOCTOR_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const DOCTOR_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable diagnostics with the same prerequisite statuses and next actions', default: false },
+  { name: '--offline', type: 'boolean', description: 'Run every local check without probing remote transport; only the network check becomes unverified', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable init plan or result', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show planned local file changes without writing', default: false },

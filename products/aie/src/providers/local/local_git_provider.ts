@@ -8,6 +8,7 @@ import type { ExecutorPolicy } from '../../core/policy.js';
 import { normalizeRepoState, type CiSignal, type PackageManagerSignal, type RepoRef, type RepoState } from '../../core/repo_state.js';
 import type { WorkItem } from '../../core/work_item.js';
 import type { BranchInspection, BranchRemoteState, RepositoryProvider, RepositoryProviderCapabilities } from '../repository_provider.js';
+import { evaluateGitPrerequisites, prerequisiteCheck, redactGitError, redactRemoteUrl, safeGitTransportOptions } from './git_prerequisites.js';
 
 export interface GitRunResult {
   args: string[];
@@ -16,7 +17,13 @@ export interface GitRunResult {
   stderr: string;
 }
 
-export type GitExec = (args: string[], options: { cwd: string }) => GitRunResult | Promise<GitRunResult>;
+export interface GitRunOptions {
+  cwd: string;
+  timeoutMs?: number;
+  env?: Record<string, string>;
+}
+
+export type GitExec = (args: string[], options: GitRunOptions) => GitRunResult | Promise<GitRunResult>;
 
 interface LocalGitProviderOptions {
   cwd?: string;
@@ -30,18 +37,30 @@ interface SyncGitResult {
 }
 
 function runGitSync(args: string[], cwd: string): SyncGitResult {
+  const result = runGitSyncWithOptions(args, { cwd });
+  return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+}
+
+function runGitSyncWithOptions(args: string[], options: GitRunOptions): GitRunResult {
   try {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    return { exitCode: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    const result = spawnSync('git', args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      timeout: options.timeoutMs,
+      windowsHide: true,
+    });
+    const error = result.error as (Error & { code?: string }) | undefined;
+    return { args, exitCode: result.status ?? (error?.code === 'ENOENT' ? 127 : 1), stdout: result.stdout ?? '', stderr: error?.message ?? result.stderr ?? '' };
   } catch (error: unknown) {
-    return { exitCode: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) };
+    return { args, exitCode: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) };
   }
 }
 
-async function runGit(args: string[], cwd: string, git?: GitExec): Promise<GitRunResult> {
-  if (git) return git(args, { cwd });
-  const result = runGitSync(args, cwd);
-  return { args, ...result };
+async function runGit(args: string[], cwd: string, git?: GitExec, options: Omit<GitRunOptions, 'cwd'> = {}): Promise<GitRunResult> {
+  const runOptions = { cwd, ...options };
+  if (git) return git(args, runOptions);
+  return runGitSyncWithOptions(args, runOptions);
 }
 
 function trimOutput(result: Pick<GitRunResult, 'stdout'> | SyncGitResult): string {
@@ -69,15 +88,15 @@ export function inspectBaseRef(policy: ExecutorPolicy, root: string | null): Rep
   if (!root) return { name: baseRef.baseBranch, kind: 'branch', revision: null, remoteRevision: undefined, upToDate: false, error: 'Not inside a git repository' };
   const local = runGitSync(['rev-parse', '--verify', baseRef.baseBranch], root);
   const remote = runGitSync(['rev-parse', '--verify', `${baseRef.baseRemote}/${baseRef.baseBranch}`], root);
-  if (local.exitCode !== 0 || remote.exitCode !== 0) {
+  if (local.exitCode !== 0 || policy.branch.requireFreshBase && remote.exitCode !== 0) {
     return { name: baseRef.baseBranch, kind: 'branch', revision: null, remoteRevision: undefined, upToDate: false, error: local.stderr.trim() || remote.stderr.trim() || 'Base ref is not resolved.' };
   }
   const localRevision = trimOutput(local);
-  const remoteRevision = trimOutput(remote);
-  return { name: baseRef.baseBranch, kind: 'branch', revision: localRevision, remoteRevision, upToDate: localRevision === remoteRevision };
+  const remoteRevision = remote.exitCode === 0 ? trimOutput(remote) : undefined;
+  return { name: baseRef.baseBranch, kind: 'branch', revision: localRevision, remoteRevision, upToDate: policy.branch.requireFreshBase ? localRevision === remoteRevision : undefined, error: undefined };
 }
 
-async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null, git?: GitExec): Promise<RepoState['baseRef']> {
+async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null, git?: GitExec, observed?: (args: string[]) => GitRunResult | undefined): Promise<RepoState['baseRef']> {
   const baseRef = policy.branch;
   if (!root) {
     return {
@@ -90,10 +109,12 @@ async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null
       error: 'Failed to inspect base branch. Likely cause: this command was not run from inside a git repository. Next action: rerun from the repository checkout.',
     };
   }
-  const local = await runGit(['rev-parse', '--verify', baseRef.baseBranch], root, git);
-  const remote = await runGit(['rev-parse', '--verify', `${baseRef.baseRemote}/${baseRef.baseBranch}`], root, git);
-  if (local.exitCode !== 0 || remote.exitCode !== 0) {
-    const cause = local.stderr.trim() || remote.stderr.trim() || 'The configured local or remote base branch ref could not be resolved.';
+  const localArgs = ['rev-parse', '--verify', baseRef.baseBranch];
+  const remoteArgs = ['rev-parse', '--verify', `${baseRef.baseRemote}/${baseRef.baseBranch}`];
+  const local = observed?.(localArgs) ?? await runGit(localArgs, root, git);
+  const remote = observed?.(remoteArgs) ?? await runGit(remoteArgs, root, git);
+  if (local.exitCode !== 0 || policy.branch.requireFreshBase && remote.exitCode !== 0) {
+    const cause = redactGitError(local.stderr.trim() || remote.stderr.trim() || 'The configured local or remote base branch ref could not be resolved.');
     return {
       name: baseRef.baseBranch,
       kind: 'branch',
@@ -105,14 +126,14 @@ async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null
     };
   }
   const localRevision = trimOutput(local);
-  const remoteRevision = trimOutput(remote);
+  const remoteRevision = remote.exitCode === 0 ? trimOutput(remote) : null;
   return {
     name: baseRef.baseBranch,
     kind: 'branch',
     revision: localRevision,
     remoteName: baseRef.baseRemote,
     remoteRevision,
-    upToDate: localRevision === remoteRevision,
+    upToDate: policy.branch.requireFreshBase ? localRevision === remoteRevision : undefined,
     error: null,
   };
 }
@@ -121,7 +142,7 @@ function parseRemoteLines(stdout: string): RepoState['remotes'] {
   const remotes = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
     const match = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
-    if (match) remotes.set(match[1], match[2]);
+    if (match) remotes.set(match[1], redactRemoteUrl(match[2]).url);
   }
   return [...remotes].map(([name, url]) => ({ name, url }));
 }
@@ -166,28 +187,44 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
     return { inspectRepository: true, inspectBranch: true, planBranchActions: true, applyBranchActions: true };
   }
 
-  async inspect(policy: ExecutorPolicy): Promise<RepoState> {
-    const root = inspectRepoRoot(this.options.cwd);
+  async inspect(policy: ExecutorPolicy, options: { offline?: boolean } = {}): Promise<RepoState> {
+    const observations = new Map<string, GitRunResult>();
+    const observationKey = (args: string[]) => args.join('\0');
+    const prerequisiteGit: GitExec = async (args, runOptions) => {
+      const result = this.options.git ? await this.options.git(args, runOptions) : runGitSyncWithOptions(args, runOptions);
+      observations.set(observationKey(args), result);
+      return result;
+    };
+    const prerequisites = await evaluateGitPrerequisites({ cwd: this.options.cwd, policy, git: prerequisiteGit, offline: options.offline });
+    const repositoryCheck = prerequisiteCheck(prerequisites, 'repository');
+    const root = typeof repositoryCheck?.safeDetails.root === 'string' ? repositoryCheck.safeDetails.root : null;
     const cwd = root ?? this.options.cwd ?? process.cwd();
     const remotes = await runGit(['remote', '-v'], cwd, this.options.git);
-    const current = root ? await runGit(['branch', '--show-current'], root, this.options.git) : null;
-    const revision = root ? await runGit(['rev-parse', '--verify', 'HEAD'], root, this.options.git) : null;
-    const status = root ? await runGit(['status', '--porcelain'], root, this.options.git) : null;
-    const baseRef = await inspectBaseRefWithGit(policy, root, this.options.git);
+    const observed = (args: string[]) => observations.get(observationKey(args));
+    const current = root ? observed(['branch', '--show-current']) ?? await runGit(['branch', '--show-current'], root, this.options.git) : null;
+    const revision = root ? observed(['rev-parse', '--verify', 'HEAD']) ?? await runGit(['rev-parse', '--verify', 'HEAD'], root, this.options.git) : null;
+    const status = root ? observed(['status', '--porcelain']) ?? await runGit(['status', '--porcelain'], root, this.options.git) : null;
+    const baseRef = await inspectBaseRefWithGit(policy, root, this.options.git, observed);
+    const worktreeCheck = prerequisiteCheck(prerequisites, 'worktree');
     const dirtyPaths = status && status.exitCode === 0 ? status.stdout.split(/\r?\n/).filter(Boolean) : [];
     const warnings: string[] = [];
     if (!root) warnings.push('Not inside a git repository.');
-    if (remotes.exitCode !== 0) warnings.push(remotes.stderr.trim() || 'Failed to inspect git remotes.');
-    if (status && status.exitCode !== 0) warnings.push(status.stderr.trim() || 'Failed to inspect git working tree.');
+    if (remotes.exitCode !== 0) warnings.push(redactGitError(remotes.stderr.trim()) || 'Failed to inspect git remotes.');
+    if (status && status.exitCode !== 0) warnings.push(redactGitError(status.stderr.trim()) || 'Failed to inspect git working tree.');
     if (baseRef.error) warnings.push(baseRef.error);
     if (baseRef.revision && baseRef.upToDate === false) warnings.push(`Base branch ${policy.branch.baseRemote}/${policy.branch.baseBranch} is not current locally.`);
     return normalizeRepoState({
       root,
+      prerequisites,
       remotes: remotes.exitCode === 0 ? parseRemoteLines(remotes.stdout) : [],
       baseRef,
       activeRef: current && current.exitCode === 0 ? activeRefFromBranch(trimOutput(current), revision && revision.exitCode === 0 ? trimOutput(revision) : null) : null,
-      dirty: { dirty: dirtyPaths.length > 0, paths: dirtyPaths, error: status && status.exitCode !== 0 ? status.stderr.trim() || 'Failed to inspect git working tree.' : null },
-      worktree: inspectWorktree(root),
+      dirty: { dirty: dirtyPaths.length > 0, paths: dirtyPaths, error: status && status.exitCode !== 0 ? redactGitError(status.stderr.trim()) || 'Failed to inspect git working tree.' : null },
+      worktree: {
+        linked: worktreeCheck?.safeDetails.linked === true,
+        gitDir: typeof worktreeCheck?.safeDetails.gitDir === 'string' ? worktreeCheck.safeDetails.gitDir : null,
+        error: !root ? 'Not inside a git repository' : worktreeCheck?.safeDetails.inspectionError === true ? 'Failed to inspect git worktree metadata.' : null,
+      },
       projectRoots: root ? [{ path: '.', kind: existsSync(join(root, 'package.json')) ? 'package' : 'unknown' }] : [],
       packageManagers: packageSignals(root),
       ciSignals: ciSignals(root),
@@ -221,9 +258,13 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
     if (!trackingRefPresent) {
       // Bounded read-only lookup so a missing tracking ref never masks an
       // existing remote implementation branch.
-      const lookup = await runGit(['ls-remote', '--heads', remote, branchName], root, this.options.git);
+      const safeTransport = safeGitTransportOptions(root);
+      const lookup = await runGit(['ls-remote', '--heads', remote, branchName], root, this.options.git, {
+        timeoutMs: safeTransport.timeoutMs,
+        env: safeTransport.env,
+      });
       if (lookup.exitCode !== 0) {
-        unavailableReason = lookup.stderr.trim() || `Remote ${remote} could not be queried for ${branchName}.`;
+        unavailableReason = redactGitError(lookup.stderr.trim()) || `Remote ${remote} could not be queried for ${branchName}.`;
         return { remote, exists: null, revision: null, trackingRefPresent, relation: 'unknown', localRevision, unavailableReason };
       }
       const line = trimOutput(lookup).split(/\r?\n/).find(entry => entry.endsWith(`refs/heads/${branchName}`));
@@ -279,7 +320,7 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
     if (branchName.includes('<')) return 'Branch name still contains an unresolved placeholder.';
     const result = await runGit(['check-ref-format', '--branch', branchName], cwd, this.options.git);
     if (result.exitCode === 0) return null;
-    return result.stderr.trim() || `Branch name "${branchName}" is not valid for git.`;
+    return redactGitError(result.stderr.trim()) || `Branch name "${branchName}" is not valid for git.`;
   }
 
   private async applyAction(action: Action): Promise<void> {
@@ -296,15 +337,15 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
         // The branch was discovered by a live lookup; fetch that one branch so
         // the remote-tracking ref exists before the tracking branch is created.
         const fetch = await runGit(['fetch', remoteName, branchName], root, this.options.git);
-        if (fetch.exitCode !== 0) throw new Error(fetch.stderr.trim() || fetch.stdout.trim() || `git fetch ${remoteName} ${branchName} failed`);
+        if (fetch.exitCode !== 0) throw new Error(redactGitError(fetch.stderr.trim() || fetch.stdout.trim()) || `git fetch ${remoteName} ${branchName} failed`);
       }
       const track = await runGit(['switch', '-c', branchName, '--track', `${remoteName}/${branchName}`], root, this.options.git);
-      if (track.exitCode !== 0) throw new Error(track.stderr.trim() || track.stdout.trim() || `git switch -c ${branchName} --track ${remoteName}/${branchName} failed`);
+      if (track.exitCode !== 0) throw new Error(redactGitError(track.stderr.trim() || track.stdout.trim()) || `git switch -c ${branchName} --track ${remoteName}/${branchName} failed`);
       return;
     }
     const args = exists ? ['switch', branchName] : ['switch', '-c', branchName, baseBranch];
     const result = await runGit(args, root, this.options.git);
-    if (result.exitCode !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(' ')} failed`);
+    if (result.exitCode !== 0) throw new Error(redactGitError(result.stderr.trim() || result.stdout.trim()) || `git ${args.join(' ')} failed`);
   }
 }
 

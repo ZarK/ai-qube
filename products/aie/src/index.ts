@@ -30,6 +30,29 @@ export {
   compositionUsesSelectedKinds,
   resolveCompositionFixturePath,
 } from './providers/compose.js';
+export {
+  GIT_CREDENTIALS_URL,
+  GIT_DOWNLOADS_URL,
+  GIT_SETUP_URL,
+  MINIMUM_GIT_VERSION,
+  classifyGitTransportFailure,
+  evaluateGitPrerequisites,
+  notRequiredGitPrerequisites,
+  prerequisiteCheck,
+  redactGitError,
+  redactRemoteUrl,
+  repositoryPrerequisiteStatusFor,
+} from './providers/local/git_prerequisites.js';
+export type {
+  EvaluateGitPrerequisitesOptions,
+} from './providers/local/git_prerequisites.js';
+export type {
+  RepositoryPrerequisiteCheck,
+  RepositoryPrerequisiteReasonCode,
+  RepositoryPrerequisites,
+  RepositoryPrerequisiteStage,
+  RepositoryPrerequisiteStatus,
+} from './core/repo_state.js';
 export type {
   CapabilityObservation,
   CompositionRole,

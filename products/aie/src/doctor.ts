@@ -22,6 +22,9 @@ import {
 import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from './doctor_diagnostics/index.js';
 import { findReviewSessionLocks } from './app/local_review_runner_support.js';
 import type { WorkflowDirtyState } from './doctor_diagnostics/index.js';
+import { configToExecutorPolicy } from './config_policy.js';
+import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider.js';
+import { prerequisiteCheck } from './providers/local/git_prerequisites.js';
 
 export {
   buildGateReadinessDiagnostics,
@@ -41,18 +44,33 @@ export {
 const requirePackage = createRequire(import.meta.url);
 
 class DoctorDiagnosticsBuilder {
+  constructor(private readonly options: { offline?: boolean } = {}) {}
+
   async buildDiagnostics(): Promise<DoctorDiagnostics> {
-    const repoRoot = this.getRepoRoot();
+    const initialRepository = await createLocalGitRepositoryProvider().inspect(configToExecutorPolicy(getDefaults()), { offline: true });
+    const initialRoot = initialRepository.root;
+    const configStatus = await this.checkConfig(initialRoot);
+    const effectiveConfig = (configStatus.valid ? (await loadConfig(initialRoot ?? undefined)) : null) || getDefaults();
+    const repository = await createLocalGitRepositoryProvider().inspect(configToExecutorPolicy(effectiveConfig), { offline: this.options.offline });
+    const prerequisites = repository.prerequisites;
+    const repoRoot = repository.root;
     const isRepo = !!repoRoot;
-    const gitAvailable = this.checkGit();
+    const gitCheck = prerequisiteCheck(prerequisites, 'git');
+    const gitAvailable = gitCheck?.reasonCode !== 'git-not-found';
     const ghStatus = this.checkGhAuth();
     const nodeStatus = this.checkNodeVersion();
-    const branch = this.getCurrentBranch();
-    const isWorktree = this.checkIsWorktree();
-    const configStatus = await this.checkConfig();
-    const effectiveConfig = (configStatus.valid ? (await loadConfig()) : null) || getDefaults();
+    const branch = repository.activeRef?.name ?? 'unknown';
+    const isWorktree = repository.worktree.linked;
     const labelStatus = await this.checkLabels(effectiveConfig);
-    const baseRef = getBaseRefStatus(effectiveConfig, repoRoot);
+    const baseRef = {
+      remote: effectiveConfig.baseRemote,
+      branch: effectiveConfig.baseBranch,
+      resolved: repository.baseRef.revision !== null,
+      localRevision: repository.baseRef.revision ?? undefined,
+      remoteRevision: repository.baseRef.remoteRevision ?? undefined,
+      upToDate: repository.baseRef.upToDate ?? null,
+      error: repository.baseRef.error ?? undefined,
+    };
     const instructions = getInstructionStatus(repoRoot);
     const planning = getPlanningStatus(repoRoot);
     const providerHealth = buildProviderHealthDiagnostics(effectiveConfig);
@@ -64,6 +82,9 @@ class DoctorDiagnosticsBuilder {
     const installedHarnesses = instructions.harnesses.filter(harness => harness.installed);
     const missingInstructionChecks = missingConfiguredInstructionChecks(instructionPolicy);
     const recommendations = this.buildEarlyRecommendations({ nodeStatus, gitAvailable, ghStatus, isRepo, isWorktree, configStatus, effectiveConfig, repoRoot, instructions, providerHealth, instructionPolicy, gateReadiness });
+    for (const prerequisite of prerequisites.checks.filter(candidate => candidate.status === 'needs-action' || candidate.status === 'unverified')) {
+      if (prerequisite.nextAction && !recommendations.includes(prerequisite.nextAction)) recommendations.push(prerequisite.nextAction);
+    }
     this.addLabelRecommendations(labelStatus, recommendations);
     const queueState = await this.readQueue(recommendations);
     const pullRequestState = await this.readPullRequests(effectiveConfig, recommendations);
@@ -81,7 +102,7 @@ class DoctorDiagnosticsBuilder {
       pullRequestError: pullRequestState.pullRequestError,
     });
     this.addLifecycleRecommendations(lifecycle, queueState.activeIssue, recommendations);
-    const dirty = this.checkDirtyState(repoRoot);
+    const dirty: WorkflowDirtyState = { dirty: repository.dirty.dirty, entries: repository.dirty.paths.slice(0, 50), error: repository.dirty.error };
     const workflowReadiness = buildWorkflowReadiness({
       config: effectiveConfig,
       configValid: configStatus.valid,
@@ -103,6 +124,7 @@ class DoctorDiagnosticsBuilder {
     }
     const milestoneState = await this.readMilestones(effectiveConfig, queueState.openIssuesForMilestones, recommendations);
     this.addMilestoneRecommendations(milestoneState.milestoneWarnings, recommendations);
+    const prerequisiteBlockers = prerequisites.checks.filter(candidate => candidate.status === 'needs-action' && !(queueState.activeIssue && (candidate.id === 'dirty-worktree' || candidate.id === 'worktree')));
     const overallOk = computeDoctorOk({
       isRepo,
       configValid: configStatus.valid,
@@ -122,6 +144,7 @@ class DoctorDiagnosticsBuilder {
       pullRequestError: effectiveConfig.blockOnOpenPRs ? pullRequestState.pullRequestError : undefined,
       instructionInstallOk: !repoRoot || (installedHarnesses.length > 0 && installedHarnesses.every(harness => harness.healthy) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
       staleReviewLockCount: reviewSessionLocks.filter(lock => lock.stale).length,
+      repositoryPrerequisitesReady: prerequisiteBlockers.length === 0,
     });
     return {
       ok: overallOk,
@@ -131,6 +154,7 @@ class DoctorDiagnosticsBuilder {
       nodeVersion: nodeStatus.version,
       nodeSatisfies: nodeStatus.satisfies,
       git: gitAvailable,
+      prerequisites,
       gh: ghStatus.available,
       ghAuthenticated: ghStatus.authenticated,
       currentBranch: branch,
@@ -343,20 +367,6 @@ class DoctorDiagnosticsBuilder {
     recommendations.push(`Milestone preservation warnings detected: ${sample} Review milestone assignments before relying on milestone ordering.`);
   }
 
-  private checkDirtyState(repoRoot: string | null): WorkflowDirtyState {
-    if (!repoRoot) return { dirty: false, entries: [], error: null };
-    try {
-      const entries = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot })
-        .split('\n')
-        .map(line => line.trimEnd())
-        .filter(line => line.trim() !== '');
-      return { dirty: entries.length > 0, entries: entries.slice(0, 50), error: null };
-    } catch (err: unknown) {
-      // An unobserved working tree must never be reported as clean.
-      return { dirty: false, entries: [], error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
   private resolveCurrentEvidence(repoRoot: string | null, currentBranch: string, openPullRequests: PullRequestSummary[]): { head: string | null; lanes: string[] } {
     if (!repoRoot) return { head: null, lanes: [] };
     const currentPr = openPullRequests.find(pr => pr.headRefName === currentBranch);
@@ -396,15 +406,6 @@ class DoctorDiagnosticsBuilder {
     return { head: headSha, lanes: [...lanes].sort() };
   }
 
-  private checkGit(): boolean {
-    try {
-      execSync('git --version', { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   private checkGhAuth(): { available: boolean; authenticated: boolean } {
     try {
       execSync('gh --version', { stdio: 'ignore' });
@@ -430,38 +431,7 @@ class DoctorDiagnosticsBuilder {
     }
   }
 
-  private getRepoRoot(): string | null {
-    try {
-      return execSync('git rev-parse --show-toplevel', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    } catch {
-      return null;
-    }
-  }
-
-  private getCurrentBranch(): string {
-    const repoRoot = this.getRepoRoot();
-    if (!repoRoot) return 'unknown';
-    try {
-      return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
-    } catch {
-      return 'unknown';
-    }
-  }
-
-  private checkIsWorktree(): boolean {
-    const repoRoot = this.getRepoRoot();
-    if (!repoRoot) return false;
-    try {
-      const gitDir = execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
-      const commonDir = execSync('git rev-parse --git-common-dir', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
-      return gitDir !== commonDir && gitDir.split(/[\\/]/).includes('worktrees');
-    } catch {
-      return false;
-    }
-  }
-
-  private async checkConfig(): Promise<{ present: boolean; valid: boolean; configPath?: string; configDisplayPath: string; baseBranch?: string; baseRemote?: string; note?: string; errors?: ValidationError[]; fieldSources?: Readonly<Record<string, string>> }> {
-    const repoRoot = this.getRepoRoot();
+  private async checkConfig(repoRoot: string | null): Promise<{ present: boolean; valid: boolean; configPath?: string; configDisplayPath: string; baseBranch?: string; baseRemote?: string; note?: string; errors?: ValidationError[]; fieldSources?: Readonly<Record<string, string>> }> {
     if (!repoRoot) return { present: false, valid: true, configDisplayPath: 'selected Executor config', note: 'Not inside a git repository' };
     const configPath = selectConfigPath(repoRoot);
     const configDisplay = displayConfigPath(repoRoot, configPath);
@@ -520,6 +490,6 @@ export function matchesLaneEvidenceIdentity(filePath: string, evidenceRootReal: 
   }
 }
 
-export function buildDoctorDiagnostics(): Promise<DoctorDiagnostics> {
-  return new DoctorDiagnosticsBuilder().buildDiagnostics();
+export function buildDoctorDiagnostics(options: { offline?: boolean } = {}): Promise<DoctorDiagnostics> {
+  return new DoctorDiagnosticsBuilder(options).buildDiagnostics();
 }

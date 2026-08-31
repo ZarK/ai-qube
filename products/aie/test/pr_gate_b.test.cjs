@@ -39,6 +39,7 @@ const {
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
   makeGitRepo,
+  makeConfiguredGitRepo,
   userReviewRepo,
   binRun,
   writeConfig,
@@ -590,9 +591,11 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('blocks executable local review commands when the trusted base cannot be verified', async () => {
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localCommandConfig();
     writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'untrusted config'], { cwd: repo, stdio: 'ignore' });
     const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
@@ -609,12 +612,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const config = localCommandConfig();
     const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
-
+    await assert.rejects(() => runPrGate(config, { prNumber: 12, repoRoot: repo, exec }), /not-a-repository/);
     assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
-    assert.equal(result.localReviewRunner.status, 'unavailable');
-    assert.equal(result.status, 'unavailable');
-    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
   });
 
   it('blocks executable local review commands when QUBE config is missing from the trusted base', async () => {
@@ -886,7 +885,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('carries forward an approved lane when the head delta does not touch its scope', async () => {
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
       { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
@@ -1161,7 +1160,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('carries scope-mode lanes across an instruction-doc-only delta while all-mode lanes rerun', async () => {
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
@@ -1210,7 +1209,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('reruns config-mode lanes on a configuration delta while scope-mode lanes carry forward', async () => {
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
@@ -1260,7 +1259,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   });
 
   it('rejects tampered head-mismatched carried evidence under scoped invalidation', async () => {
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
@@ -1306,7 +1305,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
   it('carries forward with non-empty risk card activation when prior fragment identity matches', async () => {
     const { formatRiskCardReviewerFragment, selectRiskCards } = require('../dist/risk_cards/index.js');
-    const repo = makeGitRepo();
+    const repo = makeConfiguredGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
       { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', rereview: 'delta' },

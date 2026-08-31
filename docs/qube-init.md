@@ -63,6 +63,144 @@ initialize Git. Non-interactive mutation requires `--git-init`. A dry run
 reports the Git action without creating `.git` or QUBE configuration. QUBE
 does not create a commit, remote, hosted repository, account, or credential.
 
+<a id="git-prerequisites"></a>
+
+## Git prerequisites
+
+`qube init --global` does not require Git. It does not run `git`, inspect a
+repository, or read commit identity. Its repository prerequisite rows have the
+`not-required` status.
+
+Repository initialization requires Git 2.28.0 or newer and the commands that
+QUBE uses, including `git init --initial-branch` and `git switch`. Install Git
+from the official download page for
+[Windows](https://git-scm.com/downloads/win),
+[macOS](https://git-scm.com/downloads/mac), or
+[Linux](https://git-scm.com/downloads/linux). QUBE reports the detected
+platform and installation link. It never runs an operating-system package
+manager or installer.
+
+For an existing repository, run `qube init` from the checkout or pass its
+directory. For a new project directory, use an interactive terminal or pass
+`--git-init` in a non-interactive command:
+
+```sh
+qube init ./existing-project
+qube init ./new-project --dry-run
+qube init ./new-project --git-init
+```
+
+Git initialization creates only repository metadata and the `main` branch. It
+does not create an initial commit or a remote. Local QUBE setup can complete in
+an unborn or remote-less repository. The readiness summary keeps the issue,
+review, completion, and shipping stages at `needs-action` until their Git
+requirements are ready.
+
+### Commit identity
+
+Future commits need an effective author name and email. QUBE reads each value
+with its Git configuration source: repository, user-global, system, or an
+included configuration file. Structured output reports only presence and
+source. It does not record the author name or email.
+
+In an interactive repository setup, QUBE shows the identity state before the
+ordinary setup choices. If a value is missing, QUBE recommends repository
+scope. Repository scope changes only the selected repository. User-global
+scope changes the default for all repositories used by the current operating-
+system user. QUBE asks for the missing values and a separate confirmation
+before it writes Git configuration. It does not infer identity from a provider
+account, operating-system account, package manifest, or QUBE setting.
+
+You can also configure identity directly. See the official
+[first-time Git setup guide](https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup).
+
+```sh
+git config --local user.name "Your Name"
+git config --local user.email "you@example.com"
+
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+### HEAD, branch, base, and working tree
+
+QUBE reports these facts separately:
+
+- Whether `HEAD` resolves to a commit or the repository is unborn.
+- Whether the checkout uses a named branch or detached `HEAD`.
+- Whether the checkout is primary or a linked worktree.
+- Whether the working tree is clean or dirty.
+- Whether the configured local base branch and remote-tracking base reference
+  exist and are current when repository policy requires freshness.
+
+Dirty files do not block QUBE configuration writes. They can block the start
+of new issue or branch work when clean-primary-checkout policy applies. A
+single active issue can still use its recovery path; the observation remains
+dirty, while only the new-work policy is bypassed.
+
+### Remote transport and provider connections
+
+A Git remote is not required for local setup. Provider-backed issue and
+shipping workflows normally require a remote. When a remote exists, QUBE uses
+a bounded, read-only `git ls-remote` probe. The probe disables terminal and
+credential-manager prompts, does not create or update refs, and does not test
+push access. A successful probe proves read access only.
+
+HTTPS transport can use an operating-system credential helper, a personal
+access token, or OAuth. SSH transport uses SSH keys and host-key verification.
+See the official [Git credential documentation](https://git-scm.com/docs/gitcredentials)
+for credential-helper behavior. QUBE removes URL user information, passwords,
+tokens, queries, fragments, and sensitive transport text from terminal output,
+JSON, logs, and errors.
+
+Git transport access is separate from a provider connection. For example,
+`gh auth` controls GitHub API access for issues and pull requests. It does not
+prove that Git can fetch or push a remote. QUBE never describes Git as logged
+in, and a read-only Git probe never claims write permission.
+
+Run offline diagnostics when network access is unavailable:
+
+```sh
+qube doctor --offline --json
+qube aie doctor --offline --json
+```
+
+Offline diagnostics run every local Git check. Only the network-dependent
+remote transport row becomes `unverified`.
+
+### Readiness statuses and recovery
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | The observed prerequisite is available for the listed stages. |
+| `needs-action` | One next action is required before the listed stages can run. |
+| `unverified` | QUBE did not make a trustworthy observation, usually because an offline run skipped the remote probe. |
+| `not-required` | The selected scope or stage does not use this prerequisite. |
+
+Rerun `qube init` after a prerequisite changes. QUBE reevaluates the pending
+rows and does not rewrite unchanged setup.
+
+### Stable reason codes
+
+| Reason code | Recovery |
+| --- | --- |
+| `git-not-found` | Install Git from the official download page, then rerun initialization. |
+| `git-unsupported` | Install Git 2.28.0 or newer with the required commands. |
+| `not-a-repository` | Confirm interactive Git initialization or pass `--git-init`. |
+| `repository-unreadable` | Repair repository metadata or directory permissions. |
+| `identity-name-missing` | Configure `user.name` at repository or user-global scope. |
+| `identity-email-missing` | Configure `user.email` at repository or user-global scope. |
+| `head-missing` | Review the setup and create the initial commit. |
+| `detached-head` | Switch to a named branch before starting issue work. |
+| `linked-worktree` | Continue from the primary checkout when repository policy requires it. |
+| `dirty-worktree` | Preserve local changes before starting new issue or branch work. |
+| `base-ref-missing` | Create or fetch the configured base branch and remote-tracking ref. |
+| `base-ref-stale` | Update the local base branch from the configured remote. |
+| `remote-missing` | Add the configured remote when provider-backed work is required. |
+| `remote-auth-failed` | Repair the selected HTTPS or SSH transport credential, permission, or host-key state. |
+| `remote-unreachable` | Correct the remote URL, repository path, or network access. |
+| `remote-unverified` | Rerun online when remote transport needs verification. |
+
 Initialization checks required component and adapter packages before any
 write. If a package is missing, QUBE reports its exact name and version, gives
 one exact npm or pnpm command for the detected package placement, and tells you

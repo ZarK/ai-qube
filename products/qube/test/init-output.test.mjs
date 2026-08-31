@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { notRequiredGitPrerequisites } from "@tjalve/aie";
 
 import {
   INIT_ACTION_LABELS,
@@ -30,6 +31,20 @@ const primaryHarness = Object.freeze({
 });
 
 describe("public QUBE init output", () => {
+  it("renders prerequisites before choices from the same typed result", () => {
+    const output = renderInitOutput({
+      scope: "global",
+      mode: "plan",
+      changed: false,
+      prerequisites: notRequiredGitPrerequisites(),
+      answers,
+    });
+
+    assert.ok(output.indexOf("Prerequisites:") < output.indexOf("Choices:"));
+    assert.match(output, /git: not-required/u);
+    assert.match(output, /Required for: local-setup, issue-workflow/u);
+  });
+
   it("shows every layer fact with a separate recommendation reason before an edited question", () => {
     const output = renderInitQuestion({
       step: 6,
@@ -107,7 +122,7 @@ describe("public QUBE init output", () => {
     assert.equal(output.match(/Rerun `qube init`/gu)?.length, 1);
   });
 
-  it("emits one quiet line for an unchanged apply", () => {
+  it("keeps unchanged apply output concise", () => {
     const output = renderInitOutput({
       scope: "repository",
       mode: "apply",

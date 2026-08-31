@@ -37,7 +37,7 @@ export interface BranchBaseRefStatus {
   resolved: boolean;
   localRevision?: string;
   remoteRevision?: string;
-  upToDate: boolean;
+  upToDate: boolean | null;
   error?: string;
 }
 
@@ -129,7 +129,7 @@ function branchStatus(input: {
       resolved: input.repoState.baseRef.revision !== null,
       localRevision: baseRevision,
       remoteRevision: input.repoState.baseRef.remoteRevision ?? undefined,
-      upToDate: input.repoState.baseRef.upToDate ?? false,
+      upToDate: input.repoState.baseRef.upToDate ?? null,
       error: input.repoState.baseRef.error ?? undefined,
     },
     remoteBranch: { ...input.remoteBranch },

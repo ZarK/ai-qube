@@ -11,6 +11,13 @@ export function formatInitHuman(result: InitResult): string {
   lines.push(`aie init${mode}: ${result.ok ? 'OK' : 'BLOCKED'}`);
   lines.push(`Target: ${result.target}`);
   lines.push(`Repository: ${result.repoRoot ?? 'not detected'}`);
+  if (result.prerequisites) {
+    lines.push('Prerequisites:');
+    for (const prerequisite of result.prerequisites.checks) {
+      const reason = prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : '';
+      lines.push(`  ${prerequisite.id}: ${prerequisite.status}${reason}; required for ${prerequisite.requiredFor.join(', ')} — ${prerequisite.summary}${prerequisite.nextAction ? ` Next: ${prerequisite.nextAction}` : ''}`);
+    }
+  }
   lines.push(`Tools: ${result.selectedTools.length > 0 ? result.selectedTools.join(', ') : 'none'}`);
   lines.push(`Policy: naming rules ${result.policy.namingRules ? 'enabled' : 'disabled'}, milestone ordering ${result.policy.milestoneOrdering ? 'enabled' : 'disabled'}, supply-chain safety ${result.policy.supplyChainSafety ? 'enabled' : 'disabled'}`);
   lines.push(`Config: ${result.configPath}`);

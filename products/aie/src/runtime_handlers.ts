@@ -925,8 +925,8 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   complete: handleComplete,
   deps: topic(['Use `aie deps blockers <issue>`, `aie deps blocking <issue>`, `aie deps chain <issue>`, `aie deps ready`, `aie deps blocked`, `aie deps graph --json`, or `aie deps fix --dry-run`.', 'Read-only commands explain the dependency state from "Blocked by: #N" lines in issue bodies. `aie deps fix` plans and applies S-Ready/S-Blocked/S-Blocking label changes (S-InProgress issues are never changed).']),
   doctor: async context => {
-    const diagnostics = await buildDoctorDiagnostics();
-    return commandResult(context, diagnostics, formatDoctorHuman(diagnostics));
+    const diagnostics = await buildDoctorDiagnostics({ offline: readBooleanFlag(context, 'offline') });
+    return commandResult(context, diagnostics, formatDoctorHuman(diagnostics), diagnostics.ok ? 0 : 1);
   },
   'deps blocked': handleDepsBlocked,
   'deps blockers': handleDepsBlockers,

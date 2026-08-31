@@ -94,6 +94,33 @@ describe('branch service', () => {
     assert.equal(state.dirty.dirty, false);
   });
 
+  it('does not report missing or stale remote base state when freshness is not required', async () => {
+    const repo = makeGitRepo();
+    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: repo, stdio: 'ignore' });
+    const { createLocalGitRepositoryProvider } = require('../dist/providers/local/local_git_provider.js');
+    const { configToExecutorPolicy } = require('../dist/config_policy.js');
+    const { formatBranchResult } = require('../dist/branch_command.js');
+    const { getBaseRefStatus } = require('../dist/repo/index.js');
+    const config = getDefaults();
+    config.requireBaseBranchFreshness = false;
+
+    const state = await createLocalGitRepositoryProvider({ cwd: repo }).inspect(configToExecutorPolicy(config), { offline: true });
+
+    assert.equal(state.prerequisites.checks.find(check => check.id === 'base-ref').status, 'ready');
+    assert.equal(state.baseRef.revision, headRevision(repo));
+    assert.equal(state.baseRef.remoteRevision, null);
+    assert.equal(state.baseRef.upToDate, undefined);
+    assert.equal(state.baseRef.error, null);
+    assert.equal(state.warnings.some(warning => /base branch|base ref/i.test(warning)), false);
+
+    const baseRef = getBaseRefStatus(config, repo);
+    assert.equal(baseRef.upToDate, null);
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: true, exec: makeExec(93), cwd: repo, config });
+    assert.equal(result.branch.baseRef.upToDate, null);
+    assert.match(formatBranchResult(result), /Base ref: origin\/main freshness not required/);
+  });
+
   it('reports staged, modified, and deleted paths in typed repository state', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'delete-me.txt'), 'delete me\n');
@@ -294,12 +321,24 @@ describe('branch service', () => {
   it('recovers a remote branch found by live lookup when the tracking ref is absent', async () => {
     const repo = makeGitRepo();
     const calls = [];
+    const transportOptions = [];
     addBareOriginRemote(repo);
     const remoteRevision = pushRemoteIssueBranch(repo, 'issue/93-add-branch-command', 'remote-work.md', 'existing implementation\n');
     // A clean-machine continuation has no remote-tracking ref yet.
     execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/issue/93-add-branch-command'], { cwd: repo, stdio: 'ignore' });
 
-    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const executeGit = makeGit(calls);
+    const result = await runBranchCommand({
+      command: 'branch create',
+      issueNumber: 93,
+      dryRun: false,
+      exec: makeExec(93),
+      git: async (args, options) => {
+        if (args[0] === 'ls-remote' && args.includes('--heads')) transportOptions.push(options);
+        return executeGit(args, options);
+      },
+      cwd: repo,
+    });
     const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
 
     assert.equal(result.ok, true);
@@ -309,6 +348,10 @@ describe('branch service', () => {
     assert.equal(headRevision(repo), remoteRevision);
     assert.ok(calls.some(args => args[0] === 'ls-remote'));
     assert.ok(calls.some(args => args[0] === 'fetch' && args.includes('issue/93-add-branch-command')));
+    assert.equal(transportOptions[0]?.timeoutMs, 10_000);
+    assert.equal(transportOptions[0]?.env?.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(transportOptions[0]?.env?.GCM_INTERACTIVE, 'Never');
+    assert.match(transportOptions[0]?.env?.GIT_SSH_COMMAND ?? '', /BatchMode=yes/);
   });
 
   it('stops with both revisions when local and remote issue branches diverge', async () => {

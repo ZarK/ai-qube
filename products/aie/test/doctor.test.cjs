@@ -809,8 +809,12 @@ describe('doctor diagnostics', () => {
     const result = binRun(['doctor', '--json'], repo);
     const parsed = JSON.parse(result.stdout);
 
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 1);
     assert.equal(parsed.command, 'doctor');
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.prerequisites.status, 'needs-action');
+    assert.equal(parsed.prerequisites.checks.find(check => check.id === 'head').reasonCode, 'head-missing');
+    assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote').reasonCode, 'remote-missing');
     assert.equal(parsed.providerHealth.providers.work.kind, 'github');
     assert.equal(parsed.providerHealth.providers.repository.kind, 'local-git');
     assert.equal(typeof parsed.providerHealth.normalizedPolicy.priorityLabels, 'number');
@@ -830,6 +834,21 @@ describe('doctor diagnostics', () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Check runtime environment/);
     assert.match(result.stdout, /--json/);
+    assert.match(result.stdout, /--offline/);
+  });
+
+  it('keeps local prerequisite failures in offline diagnostics and skips only transport', () => {
+    const repo = makeGitRepo();
+    const result = binRun(['doctor', '--offline', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 1);
+    assert.equal(parsed.prerequisites.checks.find(check => check.id === 'head').reasonCode, 'head-missing');
+    assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote').reasonCode, 'remote-missing');
+    assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote-transport').status, 'unverified');
+    const human = formatDoctorHuman(parsed);
+    assert.match(human, /head: needs-action \(head-missing\)/);
+    assert.match(human, /remote-transport: unverified \(remote-unverified\)/);
   });
 
   it('marks configured instruction policy missing when managed files are absent', () => {

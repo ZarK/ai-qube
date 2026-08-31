@@ -67,11 +67,21 @@ export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   lines.push(`CWD: ${diagnostics.cwd}`);
   lines.push(`Branch: ${diagnostics.currentBranch}`);
   lines.push(`git: ${diagnostics.git ? 'available' : 'missing'}`);
+  lines.push('Repository prerequisites:');
+  for (const prerequisite of diagnostics.prerequisites.checks) {
+    const reason = prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : '';
+    lines.push(`- ${prerequisite.id}: ${prerequisite.status}${reason}; required for ${prerequisite.requiredFor.join(', ')} — ${prerequisite.summary}${prerequisite.nextAction ? ` Next: ${prerequisite.nextAction}` : ''}`);
+  }
   lines.push(`gh: ${diagnostics.gh ? (diagnostics.ghAuthenticated ? 'authenticated' : 'not authenticated') : 'missing'}`);
   lines.push(`Worktree: ${diagnostics.isWorktree ? (diagnostics.repositoryPolicy.noWorktree ? 'yes (policy violation — switch to primary checkout)' : 'yes (allowed by policy)') : 'no'}`);
   lines.push(`Config: ${diagnostics.configPresent ? (diagnostics.configValid ? 'valid' : 'invalid') : 'not found (using defaults)'}`);
   if (diagnostics.baseBranch) lines.push(`Base: ${diagnostics.baseRemote || 'origin'}/${diagnostics.baseBranch}`);
-  lines.push(`Base ref: ${diagnostics.baseRef.remote}/${diagnostics.baseRef.branch} ${diagnostics.baseRef.resolved ? (diagnostics.baseRef.upToDate ? 'current' : 'stale') : 'unresolved'}`);
+  const baseRefState = diagnostics.baseRef.upToDate === null
+    ? 'freshness not required'
+    : diagnostics.baseRef.resolved
+      ? diagnostics.baseRef.upToDate ? 'current' : 'stale'
+      : 'unresolved';
+  lines.push(`Base ref: ${diagnostics.baseRef.remote}/${diagnostics.baseRef.branch} ${baseRefState}`);
   lines.push(`Repository policy: no-worktree=${diagnostics.repositoryPolicy.noWorktree ? 'enabled' : 'disabled'}, open-PR blocking=${diagnostics.repositoryPolicy.blockOnOpenPRs ? 'enabled' : 'disabled'}, base=${diagnostics.repositoryPolicy.baseRemote}/${diagnostics.repositoryPolicy.baseBranch}, milestone ordering=${diagnostics.repositoryPolicy.milestoneOrdering ? diagnostics.repositoryPolicy.missingMilestonePolicy : 'disabled'}`);
   lines.push(`Providers: work=${diagnostics.providerHealth.providers.work.kind}, review=${diagnostics.providerHealth.providers.review.kind}, repository=${diagnostics.providerHealth.providers.repository.kind}, ci=${diagnostics.providerHealth.providers.ci.kind}, layout=${diagnostics.providerHealth.providers.layout.kind}`);
   lines.push(`Open PRs: ${diagnostics.openPullRequests.length} (${diagnostics.blockingPullRequests.length} blocking)`);

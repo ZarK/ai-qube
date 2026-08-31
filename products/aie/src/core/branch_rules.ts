@@ -45,7 +45,7 @@ export interface BranchPlanInspection {
   repoState: RepoState;
 }
 
-export type PreStartBranchCheckName = 'worktree' | 'base-ref';
+export type PreStartBranchCheckName = 'worktree' | 'dirty-worktree' | 'base-ref';
 
 export interface PreStartBranchCheck {
   name: PreStartBranchCheckName;
@@ -234,10 +234,19 @@ function baseRefDetails(repoState: RepoState, policy: BranchPolicy): JsonObject 
     remote: policy.baseRemote,
     branch: policy.baseBranch,
     resolved: repoState.baseRef.revision !== null,
-    upToDate: repoState.baseRef.upToDate === true,
+    upToDate: repoState.baseRef.upToDate ?? null,
     localRevision: repoState.baseRef.revision,
     remoteRevision: repoState.baseRef.remoteRevision ?? null,
     error: repoState.baseRef.error ?? null,
+  };
+}
+
+function dirtyDetails(repoState: RepoState): JsonObject {
+  const prerequisite = repoState.prerequisites.checks.find(check => check.id === 'dirty-worktree');
+  return {
+    dirty: repoState.dirty.dirty,
+    error: repoState.dirty.error,
+    reasonCode: prerequisite?.reasonCode ?? null,
   };
 }
 
@@ -245,21 +254,30 @@ export function evaluatePreStartBranchChecks(input: { repoState: RepoState; poli
   if (input.bypassReason) {
     return [
       { name: 'worktree', ok: true, skipped: true, reason: input.bypassReason, details: worktreeDetails(input.repoState) },
+      { name: 'dirty-worktree', ok: true, skipped: true, reason: input.bypassReason, details: dirtyDetails(input.repoState) },
       { name: 'base-ref', ok: true, skipped: true, reason: input.bypassReason, details: baseRefDetails(input.repoState, input.policy) },
     ];
   }
 
-  const worktreeOk = !(input.policy.requirePrimaryCheckout && input.repoState.worktree.linked);
+  const worktreeOk = input.repoState.worktree.error === null && !(input.policy.requirePrimaryCheckout && input.repoState.worktree.linked);
   const baseRefResolved = input.repoState.baseRef.revision !== null;
   const baseRefUpToDate = input.repoState.baseRef.upToDate === true;
   const baseRefOk = !input.policy.requireFreshBase || (baseRefResolved && baseRefUpToDate);
+  const dirtyOk = !input.repoState.dirty.dirty && input.repoState.dirty.error === null;
   return [
     {
       name: 'worktree',
       ok: worktreeOk,
       skipped: false,
-      reason: worktreeOk ? undefined : 'Linked git worktree detected. Use the primary checkout before starting new issue work.',
+      reason: worktreeOk ? undefined : input.repoState.worktree.error ?? 'Linked git worktree detected. Use the primary checkout before starting new issue work.',
       details: worktreeDetails(input.repoState),
+    },
+    {
+      name: 'dirty-worktree',
+      ok: dirtyOk,
+      skipped: false,
+      reason: dirtyOk ? undefined : input.repoState.dirty.error ?? 'Dirty git checkout detected. Preserve local changes before starting new issue work.',
+      details: dirtyDetails(input.repoState),
     },
     {
       name: 'base-ref',

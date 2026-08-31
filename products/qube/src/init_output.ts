@@ -1,4 +1,5 @@
 import type { QubeInitFieldPlan } from "./init_config.js";
+import { repositoryPrerequisiteStatusFor, type RepositoryPrerequisites } from "@tjalve/aie";
 
 export interface PublicInitAnswer {
   readonly id: string;
@@ -37,6 +38,7 @@ export interface InitOutputOptions {
   readonly mode: "plan" | "apply";
   readonly changed: boolean;
   readonly answers: readonly PublicInitAnswer[];
+  readonly prerequisites?: RepositoryPrerequisites;
   readonly configuration?: {
     readonly scope: "repository";
     readonly action: "edit" | "inherit" | "inherit-all";
@@ -87,7 +89,7 @@ export function renderInitOutput(options: InitOutputOptions): string {
     && (!options.reviewPublisherReadiness || options.reviewPublisherReadiness.state === "ready")
     && !options.configuration
   ) {
-    return `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization is already current.\n`;
+    return `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization is already current.\n${options.prerequisites ? `\n${renderInitPrerequisites(options.prerequisites)}` : ""}`;
   }
 
   const lines = [
@@ -95,6 +97,8 @@ export function renderInitOutput(options: InitOutputOptions): string {
     `Mode: ${options.mode}.`,
     `Persistent values changed: ${options.changed ? "yes" : "no"}.`,
   ];
+
+  if (options.prerequisites) lines.push("", renderInitPrerequisites(options.prerequisites).trimEnd());
 
   if (options.configuration) {
     const userGlobalFound = options.configuration.fields.some(field => field.userGlobal.present);
@@ -171,6 +175,21 @@ export function renderInitOutput(options: InitOutputOptions): string {
     for (const followUp of followUps) lines.push(`- ${followUp}`);
   }
 
+  return `${lines.join("\n")}\n`;
+}
+
+export function renderInitPrerequisites(prerequisites: RepositoryPrerequisites): string {
+  const lines = ["Prerequisites:"];
+  for (const prerequisite of prerequisites.checks) {
+    const reason = prerequisite.reasonCode ? ` (${prerequisite.reasonCode})` : "";
+    lines.push(`- ${prerequisite.id}: ${prerequisite.status}${reason}`);
+    lines.push(`  Required for: ${prerequisite.requiredFor.join(", ")}`);
+    lines.push(`  ${prerequisite.summary}`);
+    if (prerequisite.nextAction) lines.push(`  Next: ${prerequisite.nextAction}`);
+    lines.push(`  Guide: ${prerequisite.docsUrl}`);
+  }
+  const localSetupStatus = repositoryPrerequisiteStatusFor(prerequisites, "local-setup");
+  lines.push(`Local setup: ${localSetupStatus}. Later workflow stages can still need action.`);
   return `${lines.join("\n")}\n`;
 }
 

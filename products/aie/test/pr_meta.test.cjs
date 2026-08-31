@@ -39,7 +39,7 @@ const {
   STANDARD_LOCAL_REVIEW_LANES,
   createGitHubReviewForgeProvider,
   observeReviewParticipants,
-  makeGitRepo,
+  makeCommittedGitRepo: makeGitRepo,
   userReviewRepo,
   binRun,
   writeConfig,

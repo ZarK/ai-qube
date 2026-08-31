@@ -184,7 +184,7 @@ function createQualityDoctorShim(root) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiq", version: "0.2.3" })}\n`, "utf8");
 }
 
-function createWorkflowDoctorShim(root) {
+function createWorkflowDoctorShim(root, argsLog, exitCode = 0) {
   const binDir = path.join(root, "node_modules", ".bin");
   const packageDir = path.join(root, "node_modules", "@tjalve", "aie");
   mkdirSync(binDir, { recursive: true });
@@ -206,8 +206,8 @@ function createWorkflowDoctorShim(root) {
   const commandPath = path.join(binDir, process.platform === "win32" ? "aie.cmd" : "aie");
   // Shell builtins only: the doctor tests run with an empty PATH, so external commands like cat are unavailable.
   writeFileSync(commandPath, process.platform === "win32"
-    ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\n"
-    : `#!/bin/sh\nprintf '%s\\n' '${doctorPayload}'\n`, "utf8");
+    ? `@echo off\r\n${argsLog ? `echo %* > ${JSON.stringify(argsLog)}\r\n` : ""}type \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b ${exitCode}\r\n`
+    : `#!/bin/sh\n${argsLog ? `printf '%s\\n' \"$@\" > ${JSON.stringify(argsLog)}\n` : ""}printf '%s\\n' '${doctorPayload}'\nexit ${exitCode}\n`, "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.2.2" })}\n`, "utf8");
 }
@@ -245,6 +245,15 @@ function addExecutablePath(environment, binDir) {
   const currentPath = environment.PATH ?? environment.Path ?? "";
   const executablePath = currentPath ? `${binDir}${path.delimiter}${currentPath}` : binDir;
   return { ...environment, PATH: executablePath, Path: executablePath };
+}
+
+function gitOnlyEnvironment(packageRoot) {
+  const executableNames = process.platform === "win32" ? ["git.exe", "git.cmd", "git.bat", "git"] : ["git"];
+  const gitDirectory = (process.env.PATH ?? process.env.Path ?? "")
+    .split(path.delimiter)
+    .find(directory => directory && executableNames.some(name => existsSync(path.join(directory, name))));
+  assert.ok(gitDirectory, "expected Git on the test PATH");
+  return initEnv(packageRoot, { PATH: gitDirectory, Path: gitDirectory });
 }
 
 function createAiuMergingShim(root) {
@@ -400,7 +409,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /review doctor\s+Validate reviewer publisher readiness/);
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
-    assert.match(help.stdout, /init\s+Initialize user-global QUBE choices or prepare one repository through the complete guided setup flow\./);
+    assert.match(help.stdout, /init\s+Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow\./);
     assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
@@ -657,14 +666,15 @@ describe("qube composer CLI", () => {
     })}\n`, "utf8");
 
     const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.configuration.status, "valid");
     assert.equal(parsed.configuration.fields.find(field => field.id === "hosts").effective.source, "repository");
     assert.equal(parsed.connectionStatus, "unverified");
     assert.deepEqual(parsed.connections.connections.map(connection => [connection.adapterId, connection.status]), [["github", "unverified"]]);
     assert.equal(parsed.connections.connections[0].readOnly, true);
-    assert.equal(parsed.workflow.status, "not-run");
+    assert.equal(parsed.workflow.status, "unavailable");
+    assert.equal(parsed.ok, false);
     assert.equal(parsed.permutation.status, "ok");
     assert.equal(parsed.permutation.work.kind, "github");
     assert.equal(parsed.permutation.review.kind, "github");
@@ -720,8 +730,10 @@ describe("qube composer CLI", () => {
         },
       })}\n`, "utf8");
       const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
-      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
       const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.workflow.status, "unavailable");
       assert.equal(parsed.permutation.work.kind, selection.work);
       assert.equal(parsed.permutation.review.kind, selection.review);
       assert.equal(parsed.permutation.ci.kind, selection.ci);
@@ -791,16 +803,26 @@ describe("qube composer CLI", () => {
     assert.match(human.stdout, /- shipping: manual — Manual shipping mode\./);
   });
 
-  it("reports the workflow section unavailable when the Executor doctor exits with a failure", () => {
+  it("runs Executor local prerequisites in offline doctor mode", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-offline-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-offline-packages-"));
+    const argsLog = path.join(packageRoot, "aie-args.txt");
+    createQualityDoctorShim(packageRoot);
+    createWorkflowDoctorShim(packageRoot, argsLog);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1 })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.workflow.status, "ok", result.stderr);
+    assert.match(readFileSync(argsLog, "utf8"), /doctor[\s\S]*--offline[\s\S]*--json/u);
+  });
+
+  it("preserves valid failed Executor diagnostics and returns a truthful aggregate failure", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-packages-"));
     createQualityDoctorShim(packageRoot);
-    createWorkflowDoctorShim(packageRoot);
-    const failingCommand = path.join(packageRoot, "node_modules", ".bin", process.platform === "win32" ? "aie.cmd" : "aie");
-    writeFileSync(failingCommand, process.platform === "win32"
-      ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b 3\r\n"
-      : "#!/bin/sh\nprintf '%s\\n' '{\"workflowReadiness\":{\"stages\":[]}}'\nexit 3\n", "utf8");
-    if (process.platform !== "win32") chmodSync(failingCommand, 0o755);
+    createWorkflowDoctorShim(packageRoot, undefined, 3);
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
       version: 1,
@@ -813,8 +835,13 @@ describe("qube composer CLI", () => {
 
     const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
     const parsed = JSON.parse(result.stdout);
-    // A failed Executor doctor invocation is never reported as successful workflow readiness, even with JSON on stdout.
-    assert.equal(parsed.workflow.status, "unavailable", result.stderr);
+    assert.notEqual(result.status, 0);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.workflow.status, "ok", result.stderr);
+    assert.equal(parsed.workflow.ok, false);
+    assert.equal(parsed.workflow.exitCode, 3);
+    assert.equal(parsed.workflow.readiness.stages.length, 3);
+    assert.equal(parsed.workflow.readiness.stages[0].stage, "lifecycle");
   });
 
   it("reports the workflow section unavailable when the Executor component cannot run", () => {
@@ -2308,6 +2335,8 @@ describe("qube init orchestrator", () => {
     assert.equal(firstPayload.changed, true);
     assert.equal(firstPayload.plan.target, undefined);
     assert.equal(firstPayload.plan.git, undefined);
+    assert.equal(firstPayload.plan.prerequisites.status, "not-required");
+    assert.equal(firstPayload.plan.prerequisites.checks.every(check => check.status === "not-required"), true);
     assert.deepEqual(firstPayload.plan.components, []);
     assert.deepEqual(readInitCalls(packageRoot), []);
     assert.equal(existsSync(path.join(cwd, ".git")), false);
@@ -2423,6 +2452,7 @@ describe("qube init orchestrator", () => {
     assert.equal(dryPayload.changed, true);
     assert.equal(dryPayload.plan.git.operation, "initialize");
     assert.equal(dryPayload.plan.git.baseBranch, "main");
+    assert.equal(dryPayload.plan.prerequisites.checks.find(check => check.id === "repository").reasonCode, "not-a-repository");
     assert.equal(dryPayload.plan.components.length, 4);
     assert.deepEqual(dryPayload.plan.diagnosticActions.map(action => action.id), ["aggregate-diagnostics"]);
     assert.ok(dryPayload.plan.components.every(component => component.args.includes("--dry-run")));
@@ -2444,6 +2474,8 @@ describe("qube init orchestrator", () => {
     assert.equal(existsSync(repoQubeConfigPath(cwd)), true);
     assert.ok(appliedPayload.pendingExternalActions.some(action => action.id === "labels-setup"));
     assert.equal(appliedPayload.readiness, "pending");
+    assert.equal(appliedPayload.prerequisites.checks.find(check => check.id === "head").reasonCode, "head-missing");
+    assert.equal(appliedPayload.prerequisites.checks.find(check => check.id === "remote").reasonCode, "remote-missing");
     assert.equal(appliedPayload.apply.aggregateDiagnostics.id, "aggregate-diagnostics");
     assert.match(appliedPayload.apply.aggregateDiagnostics.status, /^(?:ready|attention)$/u);
     const branch = spawnSync("git", ["-C", cwd, "symbolic-ref", "--short", "HEAD"], { encoding: "utf8" });
@@ -2553,6 +2585,7 @@ describe("qube init orchestrator", () => {
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--review-publisher", "github-app",
       "--config-scope", "repo",
       "--yes",
@@ -2795,12 +2828,13 @@ describe("qube init orchestrator", () => {
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--review-publisher", "github-app",
       "--yes",
       "--json",
     ], { cwd, env: initEnv(packageRoot) });
 
-    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.failedAction, "Repository setup choices");
     assert.equal(parsed.error, "Review publisher selection applies only when GitHub publishes reviews.");
@@ -2854,6 +2888,7 @@ describe("qube init orchestrator", () => {
     createInitShims(packageRoot);
     const initArgs = [
       "init", ".",
+      "--git-init",
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
@@ -3009,6 +3044,7 @@ describe("qube init orchestrator", () => {
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--host", "codex",
       "--ci-provider", "github",
       "--review-mode", "external",
@@ -3134,12 +3170,12 @@ describe("qube init orchestrator", () => {
     createInitShims(packageRoot);
     writeFileSync(path.join(cwd, ".qube"), "blocks the config directory\n", "utf8");
 
-    const result = runCli(["init", ".", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
+    const result = runCli(["init", ".", "--git-init", "--host", "codex", "--ci-provider", "github", "--yes", "--json"], {
       cwd,
       env: initEnv(packageRoot),
     });
 
-    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.match(parsed.error, /repository QUBE config is invalid.*non-directory parent/iu);
@@ -3166,6 +3202,7 @@ describe("qube init orchestrator", () => {
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
@@ -3291,10 +3328,11 @@ describe("qube init orchestrator", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-catalog-missing-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-catalog-missing-repo-"));
     createInitShims(packageRoot);
-    const env = initEnv(packageRoot, { PATH: "", Path: "" });
+    const env = gitOnlyEnvironment(packageRoot);
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--host", "codex",
       "--work-provider", "github",
       "--ci-provider", "github",
@@ -3303,7 +3341,7 @@ describe("qube init orchestrator", () => {
       "--json",
     ], { cwd, env });
 
-    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.failedAction, "Repository setup choices");
     assert.equal(
@@ -3319,10 +3357,11 @@ describe("qube init orchestrator", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-review-source-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-review-source-repo-"));
     createInitShims(packageRoot);
-    const env = initEnv(packageRoot, { PATH: "", Path: "" });
+    const env = gitOnlyEnvironment(packageRoot);
 
     const result = runCli([
       "init", ".",
+      "--git-init",
       "--host", "cursor",
       "--work-provider", "gitlab",
       "--ci-provider", "gitlab",
@@ -3330,7 +3369,7 @@ describe("qube init orchestrator", () => {
       "--json",
     ], { cwd, env });
 
-    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.failedAction, "Repository setup choices");
     assert.equal(parsed.error, "Review: no available Review source matches the selected Agent harnesses and issue tracker.");
@@ -3519,7 +3558,7 @@ describe("qube init orchestrator", () => {
   });
 
   it("rejects unknown harnesses and blocks unanswered JSON prompts", () => {
-    const unsupported = runCli(["init", ".", "--host", "bogus-host", "--yes", "--json"], {
+    const unsupported = runCli(["init", ".", "--git-init", "--host", "bogus-host", "--yes", "--json"], {
       env: initEnv(mkdtempSync(path.join(tmpdir(), "qube-init-invalid-root-"))),
     });
     assert.notEqual(unsupported.status, 0);
@@ -3533,14 +3572,14 @@ describe("qube init orchestrator", () => {
     const promptRoot = mkdtempSync(path.join(tmpdir(), "qube-init-prompt-root-"));
     const promptCwd = mkdtempSync(path.join(tmpdir(), "qube-init-prompt-cwd-"));
     const promptEnv = initEnv(promptRoot);
-    const unanswered = runCli(["init", ".", "--json"], { cwd: promptCwd, env: promptEnv });
+    const unanswered = runCli(["init", ".", "--git-init", "--json"], { cwd: promptCwd, env: promptEnv });
     assert.equal(unanswered.status, 2);
     const unansweredPayload = JSON.parse(unanswered.stdout);
     assert.equal(unansweredPayload.failedAction, "Repository setup choices");
     assert.equal(unansweredPayload.error, "Guided setup still needs an answer for agent-harnesses.");
     assert.equal(unansweredPayload.nextAction, "Rerun qube init in an interactive terminal, or supply the matching command option.");
 
-    const human = runCli(["init", "."], { cwd: promptCwd, env: promptEnv });
+    const human = runCli(["init", ".", "--git-init"], { cwd: promptCwd, env: promptEnv });
     assert.equal(human.status, 2);
     assert.equal(human.stdout, "");
     assert.equal(human.stderr, [

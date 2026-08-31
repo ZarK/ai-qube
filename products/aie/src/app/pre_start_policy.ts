@@ -43,6 +43,7 @@ export async function buildPreStartPolicy(input: {
     ok: blockers.length === 0,
     bypassed: input.bypassForResume,
     reason: input.bypassForResume ? bypassReason : undefined,
+    prerequisites: repoState.prerequisites,
     worktree,
     baseRef,
     blockingPullRequests,
@@ -54,12 +55,14 @@ export async function buildPreStartPolicy(input: {
 
 function buildPreStartChecks(config: Config, issueNumber: number, branchChecks: CorePreStartBranchCheck[], blockingPullRequests: PullRequestSummary[], reviewSessionLocks: ReviewSessionLockReport[], bypassReason?: string): PreStartPolicyCheck[] {
   const worktree = getCoreBranchCheck(branchChecks, 'worktree');
+  const dirtyWorktree = getCoreBranchCheck(branchChecks, 'dirty-worktree');
   const baseRef = getCoreBranchCheck(branchChecks, 'base-ref');
   const openPullRequestsOk = bypassReason ? true : !(config.blockOnOpenPRs && blockingPullRequests.length > 0);
   const reviewLockOk = bypassReason ? true : reviewSessionLocks.length === 0;
   const blockingLock = reviewSessionLocks[0];
   return [
     makePreStartPolicyCheck('worktree', issueNumber, worktree.ok, worktree.skipped, worktree.reason, worktree.details),
+    makePreStartPolicyCheck('dirty-worktree', issueNumber, dirtyWorktree.ok, dirtyWorktree.skipped, dirtyWorktree.reason, dirtyWorktree.details),
     makePreStartPolicyCheck(
       'open-pull-requests',
       issueNumber,
@@ -101,7 +104,7 @@ function repoStateToBaseRefStatus(repoState: RepoState, policy: BranchPolicy): B
     resolved: repoState.baseRef.revision !== null,
     localRevision: repoState.baseRef.revision ?? undefined,
     remoteRevision: repoState.baseRef.remoteRevision ?? undefined,
-    upToDate: repoState.baseRef.upToDate ?? false,
+    upToDate: repoState.baseRef.upToDate ?? null,
     error: repoState.baseRef.error ?? undefined,
   };
 }

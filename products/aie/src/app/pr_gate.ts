@@ -30,6 +30,9 @@ import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLock
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
+import type { RepositoryPrerequisites } from '../core/repo_state.js';
+import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
+import { prerequisiteCheck } from '../providers/local/git_prerequisites.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { evaluateReviewSourceContract, resolveReviewSources, type ReviewSourceContract } from '../review_source.js';
 import { ingestProviderReviewFindings } from '../provider_review_findings.js';
@@ -189,6 +192,7 @@ export interface PrGateResult {
   };
   warnings: string[];
   nextAction: string;
+  prerequisites: RepositoryPrerequisites;
 }
 
 export interface PrGateOptions {
@@ -798,6 +802,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const policy = reviewRequestPolicy(config);
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const repoRoot = options.repoRoot ?? process.cwd();
+  const prerequisites = (await createLocalGitRepositoryProvider({ cwd: repoRoot }).inspect(configToExecutorPolicy(config))).prerequisites;
+  const hardPrerequisite = ['git', 'repository', 'head'].map(id => prerequisiteCheck(prerequisites, id as 'git' | 'repository' | 'head')).find(check => check?.status === 'needs-action');
+  if (hardPrerequisite) throw new Error(`${hardPrerequisite.reasonCode ?? hardPrerequisite.id}: ${hardPrerequisite.summary} ${hardPrerequisite.nextAction ?? ''}`.trim());
   const localReviewContextCache = new Map<string, Promise<string[]>>();
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const localRequired = localReviewRequired(config);
@@ -1323,6 +1330,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     },
     warnings: warnings(finalSnapshot.item, reviewers),
     nextAction: shipReady.nextAction,
+    prerequisites,
   };
   } finally {
     if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, gateSessionLockHeadSha);
@@ -1336,6 +1344,7 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Pull request: ${result.pr.title} (${result.pr.url})`);
   lines.push(`Head: ${result.pr.headSha}`);
+  lines.push(`Repository prerequisites: ${result.prerequisites.status}.`);
   lines.push(`Ship readiness: ${result.shipReady.ready ? 'ready' : 'not ready'}; residual advisories=${result.shipReady.advisoryCount}.`);
   for (const reason of result.shipReady.reasons) lines.push(`- not ready: ${reason}`);
   lines.push(`Review decision: ${result.pr.reviewDecision}; merge state: ${result.pr.mergeState}; mergeability: ${result.pr.mergeability}.`);
