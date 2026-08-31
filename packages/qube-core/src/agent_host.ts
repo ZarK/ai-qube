@@ -49,9 +49,22 @@ export interface IsolatedReviewHostParsedEnvelope {
   readonly sessionId: string | null;
   /** Actual model identity reported by the executing host, when its envelope provides one. */
   readonly reportedModel?: string;
+  /** Fixed adapter diagnostic identifier; never contains host response text. */
+  readonly resultDecodeDiagnostic?: string;
   readonly transientTexts?: readonly string[];
   readonly usage?: Record<string, unknown>;
 }
+
+export interface IsolatedReviewHostEnvelopeFailure {
+  readonly failureReasonCode: string;
+  /** Fixed adapter diagnostic identifier; never contains host response text. */
+  readonly failureDiagnostic: string;
+}
+
+export type IsolatedReviewHostEnvelopeResult =
+  | IsolatedReviewHostParsedEnvelope
+  | IsolatedReviewHostEnvelopeFailure
+  | null;
 
 export interface IsolatedReviewHostInvocationContext {
   readonly repoRoot: string;
@@ -115,7 +128,7 @@ export interface IsolatedReviewHostAdapter {
     context: IsolatedReviewHostInvocationContext,
     executable: IsolatedReviewHostExecutable,
   ): IsolatedReviewHostBuiltInvocation;
-  parseEnvelope(stdout: string): IsolatedReviewHostParsedEnvelope | null;
+  parseEnvelope(stdout: string): IsolatedReviewHostEnvelopeResult;
   probeAfterVersion(context: IsolatedReviewHostProbeContext): IsolatedReviewHostProbeResult;
   listCatalog?(
     context: Pick<IsolatedReviewHostProbeContext, "executable" | "prefixArgs" | "runCommand">,

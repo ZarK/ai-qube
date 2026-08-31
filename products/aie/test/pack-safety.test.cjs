@@ -70,6 +70,70 @@ describe('package publish surface safety', () => {
     const routedRuntime = await import(pathToFileURL(join(stagedRoot, 'dist', 'app', 'model_review_runner.js')).href);
     assert.equal(typeof routedRuntime.runModelReview, 'function');
     assert.equal(typeof routedRuntime.buildModelRouteInvocation, 'function');
+
+    const plan = {
+      host: 'cursor',
+      tier: 'review',
+      model: 'cursor-grok-4.6-high-fast',
+      effort: null,
+      isolation: 'read-only',
+      timeoutSeconds: 60,
+      maxTurns: 8,
+      substitution: null,
+    };
+    const lane = {
+      issueNumber: 667,
+      prNumber: 700,
+      headSha: 'packed-head',
+      lane: 'code-quality',
+      status: 'passed',
+      severity: 'none',
+      recommendation: 'approve',
+      summary: 'Packed Cursor adapter accepted the bounded result.',
+      blockers: [],
+      findings: [],
+      artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+      commands: ['git diff --check'],
+      surfaces: ['packed routed review runtime'],
+      contextReviewed: [{ kind: 'diff', source: 'git diff', trust: 'local-evidence', freshness: 'current' }],
+      toolsUsed: ['git'],
+      completeness: 'Inspected the packed Cursor result decoder path.',
+      coverage: [{ area: 'code-quality', status: 'clear' }],
+      preconditions: [],
+    };
+    const packedResult = await routedRuntime.runModelReview({
+      plan,
+      selectedPlan: plan,
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      repoRoot: stagedRoot,
+      lane: 'code-quality',
+      issueNumber: 667,
+      prNumber: 700,
+      headSha: 'packed-head',
+      profile: 'local-focused',
+      promptStackHash: 'packed-prompt-hash',
+      promptText: 'Inspect the packed route.',
+      promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+      resolveHead: async () => 'packed-head',
+      resolveExecutable: async () => 'cursor-agent.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: `Bounded packed-host preface. ${JSON.stringify(lane)}`,
+          session_id: 'packed-cursor-session',
+        }),
+      }),
+    });
+    assert.equal(packedResult.error, null);
+    assert.equal(packedResult.evidence.status, 'passed');
+    assert.equal(packedResult.evidence.runnerProvenance.resultDecodeDiagnostic, 'cursor-bounded-preface-normalized');
   });
 
   it('preserves public help normalization forms', () => {

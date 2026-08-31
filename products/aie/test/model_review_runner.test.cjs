@@ -406,6 +406,91 @@ describe('model review runner', () => {
     assert.ok(!Object.hasOwn(withoutUsage.evidence, 'usage'));
   });
 
+  it('accepts one bounded Cursor ACP preface and retains only its fixed local diagnostic', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-preface-'));
+    const rawPreface = 'Cursor inspected the current head; private host chatter must not persist. ';
+    const cursorEnvelope = result => JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result,
+      session_id: 'cursor-preface-session',
+      model: 'grok-4.6[effort=high,fast=true]',
+    });
+    const accepted = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      resolveExecutable: async () => 'cursor-agent.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: cursorEnvelope(`${rawPreface}${JSON.stringify(laneResult())}`),
+      }),
+    });
+
+    assert.equal(accepted.error, null);
+    assert.equal(accepted.evidence.status, 'passed');
+    assert.equal(accepted.evidence.runnerProvenance.sessionId, 'cursor-preface-session');
+    assert.equal(accepted.evidence.runnerProvenance.resultDecodeDiagnostic, 'cursor-bounded-preface-normalized');
+    assert.doesNotMatch(JSON.stringify(accepted.evidence), /private host chatter/);
+
+    const trailing = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      resolveExecutable: async () => 'cursor-agent.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: cursorEnvelope(`${JSON.stringify(laneResult())} trailing`),
+      }),
+    });
+    assert.equal(trailing.evidence, null);
+    assert.equal(trailing.reasonCode, 'model-route-result-decode');
+    assert.match(trailing.error, /^cursor-result-trailing-output Raw output:/);
+
+    const wrongHead = laneResult();
+    wrongHead.headSha = 'stale-head';
+    const stale = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      resolveExecutable: async () => 'cursor-agent.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: cursorEnvelope(JSON.stringify(wrongHead)),
+      }),
+    });
+    assert.equal(stale.evidence, null);
+    assert.equal(stale.reasonCode, 'model-route-contract-mismatch');
+
+    const wrongLane = laneResult();
+    wrongLane.lane = 'security';
+    const mismatched = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      resolveExecutable: async () => 'cursor-agent.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: cursorEnvelope(JSON.stringify(wrongLane)),
+      }),
+    });
+    assert.equal(mismatched.evidence, null);
+    assert.equal(mismatched.reasonCode, 'model-route-contract-mismatch');
+  });
+
   it('classifies a Codex policy-blocked git inspection as a host fault, not a contract mismatch', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-policy-'));
     const result = await runModelReview({

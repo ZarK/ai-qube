@@ -65,6 +65,7 @@ export interface LocalReviewRunnerProvenance {
   route: ReviewRouteProvenance | null;
   isolation: 'read-only' | null;
   invocationId: string | null;
+  resultDecodeDiagnostic?: string | null;
 }
 
 export interface LocalReviewLane {

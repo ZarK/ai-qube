@@ -145,6 +145,8 @@ export type {
   IsolatedReviewHostBuiltInvocation,
   IsolatedReviewHostCapabilities,
   IsolatedReviewHostCapabilityNeed,
+  IsolatedReviewHostEnvelopeFailure,
+  IsolatedReviewHostEnvelopeResult,
   IsolatedReviewHostExecutable,
   IsolatedReviewHostInvocationContext,
   IsolatedReviewHostParsedEnvelope,

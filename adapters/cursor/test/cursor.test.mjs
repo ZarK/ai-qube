@@ -131,9 +131,65 @@ describe("Cursor isolated review adapter", () => {
       result: "Delta re-review of this head. Next I will check the proofs.{\"status\":\"passed\",\"lane\":\"issue-compliance\"}",
       session_id: "fresh",
     });
-    assert.deepEqual(cursor.parseCursorEnvelope(prefixed), { text: '{"status":"passed","lane":"issue-compliance"}', sessionId: "fresh" });
+    assert.deepEqual(cursor.parseCursorEnvelope(prefixed), {
+      text: '{"status":"passed","lane":"issue-compliance"}',
+      sessionId: "fresh",
+      resultDecodeDiagnostic: "cursor-bounded-preface-normalized",
+    });
     const reported = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "{\"status\":\"passed\"}", session_id: "fresh", model: "grok-4.6" });
     assert.deepEqual(cursor.parseCursorEnvelope(reported), { text: '{"status":"passed"}', sessionId: "fresh", reportedModel: "grok-4.6" });
+  });
+
+  it("decodes one bounded Cursor preface without selecting prose braces or quoted JSON", () => {
+    assert.deepEqual(cursor.decodeCursorReviewResult('{"status":"passed","details":{"count":1}}'), {
+      ok: true,
+      text: '{"status":"passed","details":{"count":1}}',
+      diagnostic: null,
+    });
+    assert.deepEqual(
+      cursor.decodeCursorReviewResult('Checked {not JSON} and quoted \'{"fake":true}\' plus "{\\"alsoFake\\":true}".\n{"status":"passed"}'),
+      {
+        ok: true,
+        text: '{"status":"passed"}',
+        diagnostic: "cursor-bounded-preface-normalized",
+      },
+    );
+    assert.deepEqual(
+      cursor.decodeCursorReviewResult(`${"x".repeat(1024)}{"status":"passed"}`),
+      {
+        ok: true,
+        text: '{"status":"passed"}',
+        diagnostic: "cursor-bounded-preface-normalized",
+      },
+    );
+  });
+
+  it("fails closed for ambiguous or unsafe Cursor final-result text with fixed diagnostics", () => {
+    const failure = (result, diagnostic) => assert.deepEqual(result, {
+      ok: false,
+      reasonCode: "model-route-result-decode",
+      diagnostic,
+    });
+    failure(cursor.decodeCursorReviewResult('```json\n{"status":"passed"}\n```'), "cursor-result-markdown-fence");
+    failure(cursor.decodeCursorReviewResult('{"first":true}\n{"second":true}'), "cursor-result-multiple-objects");
+    failure(cursor.decodeCursorReviewResult('[1,2]\n{"second":true}'), "cursor-result-json-preface");
+    failure(cursor.decodeCursorReviewResult('{"status":"passed"} trailing'), "cursor-result-trailing-output");
+    failure(cursor.decodeCursorReviewResult(`${"x".repeat(1025)}{"status":"passed"}`), "cursor-result-preface-limit");
+    failure(cursor.decodeCursorReviewResult('{"status":"passed"'), "cursor-result-truncated-json");
+    failure(cursor.decodeCursorReviewResult(`${'{"nested":'.repeat(65)}true${"}".repeat(65)}`), "cursor-result-depth-limit");
+    failure(cursor.decodeCursorReviewResult('[{"status":"passed"}]'), "cursor-result-trailing-output");
+
+    const envelope = result => JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result,
+      session_id: "fresh",
+    });
+    assert.deepEqual(cursor.parseCursorEnvelope(envelope('{"status":"passed"} trailing raw chatter')), {
+      failureReasonCode: "model-route-result-decode",
+      failureDiagnostic: "cursor-result-trailing-output",
+    });
   });
 
   it("parses authentication without returning account fields", () => {

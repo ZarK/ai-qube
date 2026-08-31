@@ -1217,6 +1217,9 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       route: parseReviewRouteProvenance(value.runnerProvenance.route, redact),
       isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
       invocationId: typeof value.runnerProvenance.invocationId === 'string' ? redact(value.runnerProvenance.invocationId) : null,
+      resultDecodeDiagnostic: value.runnerProvenance.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
+        ? 'cursor-bounded-preface-normalized'
+        : null,
     },
     ...(value.modelTier === 'review' || value.modelTier === 'economy' || value.modelTier === 'synthesis' ? { modelTier: value.modelTier } : {}),
     ...(usage ? { usage } : {}),
