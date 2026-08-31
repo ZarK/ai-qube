@@ -116,6 +116,7 @@ export interface AiuOpenCodeServerClient {
     readonly command?: (input: {
       readonly sessionID: string;
       readonly command: "make-it-so";
+      readonly arguments: string;
     }) => Promise<unknown>;
   };
 }
@@ -615,10 +616,14 @@ function createAiuOpenCodeClientDeliverer(
     if (!targetSessionId) {
       return Object.freeze({ delivered: false, reason: "missing-target-session" });
     }
-    await command.call(client.session, {
+    const response = await command.call(client.session, {
       sessionID: targetSessionId,
       command: "make-it-so",
+      arguments: "",
     });
+    if (isRecord(response) && response.error !== undefined && response.error !== null) {
+      return Object.freeze({ delivered: false, reason: "command-rejected" });
+    }
     return Object.freeze({ delivered: true, targetSessionId });
   };
 }
