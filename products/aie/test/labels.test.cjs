@@ -148,6 +148,34 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
     }
   });
 
+  it('blocks label reads and writes when GitHub write permission is unverified', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      let ghCalls = 0;
+      let applyCalls = 0;
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true, 'dry-run': true } },
+        {
+          loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({
+            status: 'unverified', reasonCode: 'unverified', summary: 'GitHub label write permission is unverified.',
+            nextAction: 'Confirm label write permission.', roles: ['labels'], capabilities: [], credentialSource: { kind: 'stored', name: 'gh credential store' },
+          }),
+          runGh: async () => { ghCalls += 1; throw new Error('must not run'); },
+          applyLabelPlan: async () => { applyCalls += 1; },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reasonCode, 'unverified');
+      assert.equal(parsed.nextAction, 'Confirm label write permission.');
+      assert.equal(ghCalls, 0);
+      assert.equal(applyCalls, 0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it('doctor ok is false when queue health reports drift, multiple active issues, or queue errors', () => {
     const healthy = {
       isRepo: true,

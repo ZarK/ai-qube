@@ -521,7 +521,8 @@ function ghDependency(readiness: GitHubReadiness): ToolkitCliDependency {
     id: "gh",
     required,
     present: readiness.reasonCode !== "missing-cli" && readiness.status !== "not-required",
-    authenticated: readiness.status === "ready" || readiness.status === "unverified",
+    authenticated: readiness.status === "ready"
+      || (readiness.status === "unverified" && Boolean(readiness.cliVersion && readiness.host && readiness.repository)),
     status,
     nextAction: readiness.nextAction ?? readiness.summary,
   });

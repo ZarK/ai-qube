@@ -4068,6 +4068,22 @@ describe("host toolkit manifests", () => {
     }));
     const offline = await probeHostToolkits({ cwd, env: { PATH: "", Path: "" }, offline: true });
     assert.deepEqual(offline.githubReadiness.roles, ["work", "review", "ci"]);
+    assert.equal(offline.cliDependencies[0].status, "unverified");
+    assert.equal(offline.cliDependencies[0].authenticated, false);
+
+    const onlineWriteUnverified = await probeHostToolkits({
+      cwd,
+      githubReadiness: {
+        ...offline.githubReadiness,
+        cliVersion: "2.99.0",
+        host: "github.com",
+        repository: "acme/widgets",
+        accountLogin: "octocat",
+        credentialSource: { kind: "stored", name: "gh credential store" },
+      },
+    });
+    assert.equal(onlineWriteUnverified.cliDependencies[0].status, "unverified");
+    assert.equal(onlineWriteUnverified.cliDependencies[0].authenticated, true);
 
     const probed = await probeHostToolkits({ cwd, env: { PATH: "", Path: "" }, offline: false });
     assert.equal(probed.status, "partial");
