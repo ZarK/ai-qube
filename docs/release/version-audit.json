@@ -16,7 +16,7 @@
         "0.2.4",
         "0.2.5"
       ],
-      "selectedVersion": "0.2.7"
+      "selectedVersion": "0.2.8"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -64,7 +64,7 @@
         "0.1.6",
         "0.1.7"
       ],
-      "selectedVersion": "0.1.9"
+      "selectedVersion": "0.1.10"
     },
     {
       "name": "@tjalve/qube-adapter-opencode",
@@ -94,7 +94,7 @@
         "0.1.4",
         "0.1.5"
       ],
-      "selectedVersion": "0.1.7"
+      "selectedVersion": "0.1.8"
     },
     {
       "name": "@tjalve/qube-adapter-gitlab",
@@ -169,7 +169,7 @@
         "0.1.6",
         "0.1.7"
       ],
-      "selectedVersion": "0.1.9"
+      "selectedVersion": "0.1.10"
     },
     {
       "name": "@tjalve/qube-adapter-cursor",
@@ -204,7 +204,7 @@
         "0.2.7",
         "0.2.8"
       ],
-      "selectedVersion": "0.2.10"
+      "selectedVersion": "0.2.11"
     },
     {
       "name": "@tjalve/aib",
@@ -243,7 +243,7 @@
         "0.0.8",
         "0.0.9"
       ],
-      "selectedVersion": "0.0.11"
+      "selectedVersion": "0.0.12"
     },
     {
       "name": "@tjalve/aiq",
