@@ -1072,6 +1072,9 @@ describe('init service', () => {
     assert.match(command, /Use composer `qube` commands/);
     assert.match(command, /`qube aie run start --name ui-audit -- <command>`/);
     assert.match(command, /`qube aie run wait --name ui-audit --url <url> --timeout 30/);
+    assert.match(command, /If start fails, run `qube aie run status --name ui-audit` exactly once/);
+    assert.match(command, /If start succeeds, run exactly one bounded wait/);
+    assert.match(command, /Do not run status after a successful start, retry wait/);
     assert.match(command, /QUBEReview publishes lane feedback as `qube-review\[bot\]`/);
     assert.match(command, /prefer repository package scripts/);
     assert.match(command, /Use agent-browser first for visual UI inspection/);

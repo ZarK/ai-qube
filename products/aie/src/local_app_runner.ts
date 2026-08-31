@@ -2,11 +2,14 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { lookup as dnsLookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
+import { randomBytes } from 'node:crypto';
 import { dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolveExecutable } from '@tjalve/qube-core';
-import { processIdentity } from './local_app_runner_process.js';
+import { processIdentity, windowsSupervisorMatches } from './local_app_runner_process.js';
+import { launchWindowsSupervisor, waitForWindowsSupervisorResult } from './local_app_runner_windows.js';
 import type {
   AttemptLogPaths,
   RunMetadata,
@@ -44,6 +47,7 @@ export type {
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const EARLY_SPAWN_WAIT_MS = 400;
+const WINDOWS_SUPERVISOR_WAIT_MS = 5000;
 const LOG_TAIL_LINES = 30;
 const SAFE_RUN_NAME = /^[A-Za-z0-9._-]+$/;
 const SAFE_ATTEMPT_ID = /^[A-Za-z0-9._-]+$/;
@@ -87,6 +91,13 @@ function attemptFilePaths(directory: string, attemptId: string): AttemptLogPaths
     attemptId,
     stdoutPath: join(directory, `stdout-${attemptId}.log`),
     stderrPath: join(directory, `stderr-${attemptId}.log`),
+  };
+}
+
+function attemptControlPaths(directory: string, attemptId: string): { launchManifestPath: string; supervisorResultPath: string } {
+  return {
+    launchManifestPath: join(directory, `launch-${attemptId}.json`),
+    supervisorResultPath: join(directory, `supervisor-${attemptId}.json`),
   };
 }
 
@@ -139,7 +150,9 @@ function writeCurrentAttempt(path: string, value: CurrentAttempt): void {
   writeJsonAtomic(path, { version: 1, ...value });
 }
 
-function baseRunPaths(repoRoot: string, name: string): Omit<RunPaths, 'attemptId' | 'stdoutPath' | 'stderrPath' | 'historicalLogs'> {
+type BaseRunPaths = Pick<RunPaths, 'directory' | 'metadataPath' | 'currentAttemptPath'>;
+
+function baseRunPaths(repoRoot: string, name: string): BaseRunPaths {
   const safeName = validateName(name);
   const directory = join(repoRoot, '.qube', 'aie', 'runs', safeName);
   return {
@@ -150,17 +163,18 @@ function baseRunPaths(repoRoot: string, name: string): Omit<RunPaths, 'attemptId
 }
 
 function withLogPaths(
-  base: Omit<RunPaths, 'attemptId' | 'stdoutPath' | 'stderrPath' | 'historicalLogs'>,
+  base: BaseRunPaths,
   attemptId: string | null,
   stdoutPath: string,
   stderrPath: string,
 ): RunPaths {
   const historicalLogs = listHistoricalLogs(base.directory);
+  const controlPaths = attemptControlPaths(base.directory, attemptId ?? 'not-started');
   if (attemptId && !historicalLogs.some(entry => entry.attemptId === attemptId)) {
     historicalLogs.push({ attemptId, stdoutPath, stderrPath });
     historicalLogs.sort((left, right) => left.attemptId.localeCompare(right.attemptId));
   }
-  return { ...base, attemptId, stdoutPath, stderrPath, historicalLogs };
+  return { ...base, attemptId, stdoutPath, stderrPath, ...controlPaths, historicalLogs };
 }
 
 export function runPaths(repoRoot: string, name: string, attemptId?: string): RunPaths {
@@ -227,6 +241,7 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
       windowsVerbatimArguments: true,
       stdoutPath: paths.stdoutPath,
       stderrPath: paths.stderrPath,
+      ownership: 'windows-supervisor',
     };
   }
   return {
@@ -239,15 +254,35 @@ export function buildSpawnPlan(options: RunStartOptions, paths = runPaths(option
     windowsVerbatimArguments: false,
     stdoutPath: paths.stdoutPath,
     stderrPath: paths.stderrPath,
+    ownership: isWindowsPlatform(platform) ? 'windows-supervisor' : 'direct',
   };
 }
 
-function metadataFromPlan(options: RunStartOptions, paths: RunPaths, plan: SpawnPlan, pid: number, platform: NodeJS.Platform): RunMetadata {
+function metadataFromPlan(
+  options: RunStartOptions,
+  paths: RunPaths,
+  plan: SpawnPlan,
+  pid: number,
+  platform: NodeJS.Platform,
+  ownership: {
+    ownerPid: number;
+    ownerToken: string | null;
+    supervisorPath: string | null;
+    launchManifestPath: string | null;
+    requiresDescendant: boolean;
+  },
+): RunMetadata {
   if (!paths.attemptId) throw new Error('run start requires an attempt id before writing metadata');
   return {
-    version: 1,
+    version: 2,
     name: validateName(options.name),
     pid,
+    ownerPid: ownership.ownerPid,
+    ownerKind: plan.ownership,
+    ownerToken: ownership.ownerToken,
+    supervisorPath: ownership.supervisorPath,
+    launchManifestPath: ownership.launchManifestPath,
+    requiresDescendant: ownership.requiresDescendant,
     command: options.command,
     cwd: plan.cwd,
     startedAt: (options.now ?? new Date()).toISOString(),
@@ -265,8 +300,14 @@ export function readRunMetadata(repoRoot: string, name: string): RunMetadata | n
   const parsed: unknown = JSON.parse(readFileSync(paths.metadataPath, 'utf8'));
   if (
     !isRecord(parsed)
-    || parsed.version !== 1
+    || parsed.version !== 2
     || typeof parsed.pid !== 'number'
+    || typeof parsed.ownerPid !== 'number'
+    || (parsed.ownerKind !== 'direct' && parsed.ownerKind !== 'windows-supervisor')
+    || (parsed.ownerToken !== null && typeof parsed.ownerToken !== 'string')
+    || (parsed.supervisorPath !== null && typeof parsed.supervisorPath !== 'string')
+    || (parsed.launchManifestPath !== null && typeof parsed.launchManifestPath !== 'string')
+    || typeof parsed.requiresDescendant !== 'boolean'
     || typeof parsed.name !== 'string'
     || typeof parsed.attemptId !== 'string'
     || parsed.attemptId !== paths.attemptId
@@ -330,6 +371,7 @@ function fallbackPaths(repoRoot: string, name: string): RunPaths {
   } catch {
     const directory = join(repoRoot, '.qube', 'aie', 'runs', 'unknown');
     const unavailable = attemptFilePaths(directory, 'not-started');
+    const controlPaths = attemptControlPaths(directory, 'not-started');
     return {
       directory,
       metadataPath: join(directory, 'metadata.json'),
@@ -337,6 +379,7 @@ function fallbackPaths(repoRoot: string, name: string): RunPaths {
       attemptId: null,
       stdoutPath: unavailable.stdoutPath,
       stderrPath: unavailable.stderrPath,
+      ...controlPaths,
       historicalLogs: [],
     };
   }
@@ -410,6 +453,7 @@ function startFailure(
   attemptId: string,
   error: string,
   pid: number | null = null,
+  status: RunStatusState = 'missing',
 ): RunStartResult {
   return {
     ok: false,
@@ -422,17 +466,159 @@ function startFailure(
     attemptId,
     paths,
     spawnPlan: plan,
-    status: 'missing',
+    status,
     nextAction: 'Fix the app command or working directory, inspect captured logs if present, then retry once.',
     error,
   };
+}
+
+function windowsSupervisorPath(): string {
+  return fileURLToPath(new URL('./local_app_runner_supervisor.js', import.meta.url));
+}
+
+function writeWindowsLaunchManifest(paths: RunPaths, plan: SpawnPlan, token: string): void {
+  writeJsonAtomic(paths.launchManifestPath, {
+    version: 1,
+    token,
+    command: plan.command,
+    args: plan.args,
+    cwd: plan.cwd,
+    stdoutPath: paths.stdoutPath,
+    stderrPath: paths.stderrPath,
+    resultPath: paths.supervisorResultPath,
+    windowsVerbatimArguments: plan.windowsVerbatimArguments,
+  });
+}
+
+function successfulStart(paths: RunPaths, plan: SpawnPlan, metadata: RunMetadata): RunStartResult {
+  return {
+    ok: true,
+    command: 'run start',
+    dryRun: false,
+    name: metadata.name,
+    commandLine: metadata.command,
+    cwd: metadata.cwd,
+    pid: metadata.pid,
+    attemptId: metadata.attemptId,
+    paths,
+    spawnPlan: plan,
+    status: 'running',
+    nextAction: `Run \`aie run wait --name ${metadata.name} --url <url> --timeout ${DEFAULT_TIMEOUT_SECONDS}\` to perform one bounded readiness wait.`,
+  };
+}
+
+async function startDirectProcess(options: RunStartOptions, paths: RunPaths, plan: SpawnPlan, platform: NodeJS.Platform): Promise<RunStartResult> {
+  const stdout = openSync(paths.stdoutPath, 'a');
+  const stderr = openSync(paths.stderrPath, 'a');
+  try {
+    appendFileSync(paths.stdoutPath, `[aie-runner] spawn ${plan.command} ${plan.args.join(' ')}\n`);
+    const child = spawn(plan.command, plan.args, {
+      cwd: plan.cwd,
+      detached: plan.detached,
+      windowsHide: plan.windowsHide,
+      windowsVerbatimArguments: plan.windowsVerbatimArguments,
+      shell: plan.shell,
+      stdio: ['ignore', stdout, stderr],
+    });
+    safeClose(stdout);
+    safeClose(stderr);
+    if (!child.pid) {
+      recordSpawnError(paths.stderrPath, 'The app process did not expose a PID after spawn.');
+      return startFailure(options, paths, plan, paths.attemptId ?? '', 'The app process did not expose a PID after spawn.');
+    }
+    const earlyFailure = await waitForEarlySpawnFailure(child);
+    if (earlyFailure) {
+      recordSpawnError(paths.stderrPath, earlyFailure);
+      return startFailure(options, paths, plan, paths.attemptId ?? '', earlyFailure, child.pid, 'stopped');
+    }
+    const metadata = metadataFromPlan(options, paths, plan, child.pid, platform, {
+      ownerPid: child.pid,
+      ownerToken: null,
+      supervisorPath: null,
+      launchManifestPath: null,
+      requiresDescendant: false,
+    });
+    try {
+      writeJsonAtomic(paths.metadataPath, metadata);
+    } catch (error: unknown) {
+      killProcessTree(child.pid, platform);
+      const message = error instanceof Error ? error.message : String(error);
+      return startFailure(options, paths, plan, metadata.attemptId, `Failed to write runner metadata: ${message}`, child.pid, 'unknown');
+    }
+    child.once('error', error => {
+      recordSpawnError(paths.stderrPath, error.message);
+      removeMetadataIfCurrentAttempt(paths.metadataPath, metadata.attemptId);
+    });
+    child.unref();
+    return successfulStart(paths, plan, metadata);
+  } catch (error: unknown) {
+    safeClose(stdout);
+    safeClose(stderr);
+    const message = error instanceof Error ? error.message : String(error);
+    recordSpawnError(paths.stderrPath, message);
+    return startFailure(options, paths, plan, paths.attemptId ?? '', message);
+  }
+}
+
+async function startWindowsProcess(options: RunStartOptions, paths: RunPaths, plan: SpawnPlan): Promise<RunStartResult> {
+  const token = randomBytes(24).toString('hex');
+  const supervisorPath = windowsSupervisorPath();
+  let ownerPid: number | null = null;
+  try {
+    writeWindowsLaunchManifest(paths, plan, token);
+    const launch = launchWindowsSupervisor({
+      nodePath: process.execPath,
+      supervisorPath,
+      manifestPath: paths.launchManifestPath,
+      token,
+      cwd: plan.cwd,
+      env: options.env ?? process.env,
+    });
+    ownerPid = launch.ownerPid;
+    const result = await waitForWindowsSupervisorResult(paths.supervisorResultPath, token, WINDOWS_SUPERVISOR_WAIT_MS);
+    const ownerMatches = () => windowsSupervisorMatches(launch.ownerPid, token, supervisorPath, paths.launchManifestPath);
+    if (!result) {
+      if (ownerMatches()) killProcessTree(launch.ownerPid, 'win32');
+      const message = `Windows supervisor did not report the startup handoff within ${WINDOWS_SUPERVISOR_WAIT_MS} ms.`;
+      recordSpawnError(paths.stderrPath, message);
+      return startFailure(options, paths, plan, paths.attemptId ?? '', message, null, 'unknown');
+    }
+    if (result.ownerPid !== launch.ownerPid || result.phase !== 'running' || !result.rootPid) {
+      if (ownerMatches()) killProcessTree(launch.ownerPid, 'win32');
+      const message = result.error ?? 'Windows supervisor reported an invalid startup result.';
+      recordSpawnError(paths.stderrPath, message);
+      return startFailure(options, paths, plan, paths.attemptId ?? '', message, result.rootPid, result.phase === 'failed' || result.phase === 'stopped' ? 'stopped' : 'unknown');
+    }
+    const metadata = metadataFromPlan(options, paths, plan, result.rootPid, 'win32', {
+      ownerPid: launch.ownerPid,
+      ownerToken: token,
+      supervisorPath,
+      launchManifestPath: paths.launchManifestPath,
+      requiresDescendant: plan.windowsVerbatimArguments,
+    });
+    try {
+      writeJsonAtomic(paths.metadataPath, metadata);
+    } catch (error: unknown) {
+      if (ownerMatches()) killProcessTree(launch.ownerPid, 'win32');
+      const message = error instanceof Error ? error.message : String(error);
+      return startFailure(options, paths, plan, metadata.attemptId, `Failed to write runner metadata: ${message}`, metadata.pid, 'unknown');
+    }
+    return successfulStart(paths, plan, metadata);
+  } catch (error: unknown) {
+    if (ownerPid !== null && windowsSupervisorMatches(ownerPid, token, supervisorPath, paths.launchManifestPath)) {
+      killProcessTree(ownerPid, 'win32');
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    recordSpawnError(paths.stderrPath, message);
+    return startFailure(options, paths, plan, paths.attemptId ?? '', message);
+  }
 }
 
 export async function runStart(options: RunStartOptions): Promise<RunStartResult> {
   const existingPaths = runPaths(options.repoRoot, options.name);
   const existing = readRunMetadata(options.repoRoot, options.name);
   const existingStatus = statusFromMetadata(existing);
-  if (existingStatus === 'running') {
+  if (existingStatus === 'running' || existingStatus === 'unknown') {
     const plan = buildSpawnPlan(options, existingPaths);
     return {
       ok: false,
@@ -445,9 +631,13 @@ export async function runStart(options: RunStartOptions): Promise<RunStartResult
       attemptId: existing?.attemptId ?? existingPaths.attemptId,
       paths: existingPaths,
       spawnPlan: plan,
-      status: 'running',
-      nextAction: `Stop the existing process with \`aie run stop --name ${options.name}\`, or choose a different --name.`,
-      error: `Run "${options.name}" is already running with PID ${existing?.pid}.`,
+      status: existingStatus,
+      nextAction: existingStatus === 'running'
+        ? `Stop the existing process with \`aie run stop --name ${options.name}\`, or choose a different --name.`
+        : `Inspect \`aie run status --name ${options.name}\`; do not overwrite ownership metadata until the unknown process tree is resolved.`,
+      error: existingStatus === 'running'
+        ? `Run "${options.name}" is already running with PID ${existing?.pid}.`
+        : `Run "${options.name}" has unknown process ownership and cannot be replaced safely.`,
     };
   }
   const attemptId = createAttemptId(options.now ?? new Date(), existingPaths.historicalLogs.map(entry => entry.attemptId));
@@ -492,92 +682,10 @@ export async function runStart(options: RunStartOptions): Promise<RunStartResult
     startedAt,
   });
   if (existsSync(paths.metadataPath)) rmSync(paths.metadataPath, { force: true });
-  const stdout = openSync(paths.stdoutPath, 'a');
-  const stderr = openSync(paths.stderrPath, 'a');
-  try {
-    appendFileSync(paths.stdoutPath, `[aie-runner] spawn ${plan.command} ${plan.args.join(' ')}\n`);
-    const child = spawn(plan.command, plan.args, {
-      cwd: plan.cwd,
-      detached: plan.detached,
-      windowsHide: plan.windowsHide,
-      windowsVerbatimArguments: plan.windowsVerbatimArguments,
-      shell: plan.shell,
-      stdio: ['ignore', stdout, stderr],
-    });
-    safeClose(stdout);
-    safeClose(stderr);
-    if (!child.pid) {
-      recordSpawnError(paths.stderrPath, 'The app process did not expose a PID after spawn.');
-      return startFailure(options, paths, plan, attemptId, 'The app process did not expose a PID after spawn.');
-    }
-    const earlyFailure = await waitForEarlySpawnFailure(child);
-    if (earlyFailure) {
-      recordSpawnError(paths.stderrPath, earlyFailure);
-      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
-      return startFailure(options, paths, plan, attemptId, earlyFailure, child.pid);
-    }
-    const metadata = metadataFromPlan(options, paths, plan, child.pid, options.platform ?? process.platform);
-    try {
-      writeJsonAtomic(paths.metadataPath, metadata);
-    } catch (err: unknown) {
-      child.kill();
-      const error = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        command: 'run start',
-        dryRun: false,
-        name: validateName(options.name),
-        commandLine: options.command,
-        cwd: plan.cwd,
-        pid: child.pid,
-        attemptId,
-        paths,
-        spawnPlan: plan,
-        status: 'unknown',
-        nextAction: 'Fix runner metadata storage, verify no child process remains, then retry once.',
-        error: `Failed to write runner metadata: ${error}`,
-      };
-    }
-    child.once('error', err => {
-      recordSpawnError(paths.stderrPath, err.message);
-      removeMetadataIfCurrentAttempt(paths.metadataPath, attemptId);
-    });
-    child.unref();
-    return {
-      ok: true,
-      command: 'run start',
-      dryRun: false,
-      name: metadata.name,
-      commandLine: metadata.command,
-      cwd: metadata.cwd,
-      pid: metadata.pid,
-      attemptId,
-      paths,
-      spawnPlan: plan,
-      status: 'running',
-      nextAction: `Run \`aie run wait --name ${metadata.name} --url <url> --timeout ${DEFAULT_TIMEOUT_SECONDS}\` to perform one bounded readiness wait.`,
-    };
-  } catch (err: unknown) {
-    safeClose(stdout);
-    safeClose(stderr);
-    const error = err instanceof Error ? err.message : String(err);
-    recordSpawnError(paths.stderrPath, error);
-    return {
-      ok: false,
-      command: 'run start',
-      dryRun: false,
-      name: validateName(options.name),
-      commandLine: options.command,
-      cwd: plan.cwd,
-      pid: null,
-      attemptId,
-      paths,
-      spawnPlan: plan,
-      status: 'missing',
-      nextAction: 'Fix the app command or working directory, inspect captured logs if present, then retry once.',
-      error,
-    };
-  }
+  const platform = options.platform ?? process.platform;
+  return platform === 'win32'
+    ? startWindowsProcess(options, paths, plan)
+    : startDirectProcess(options, paths, plan, platform);
 }
 
 function requestReady(url: URL, hostname: string, family?: 4 | 6): Promise<{ ready: boolean; httpStatus: number | null; error?: string }> {
@@ -838,7 +946,8 @@ export function runStop(options: RunStopOptions): RunStopResult {
       nextAction: `Rerun without --dry-run to stop PID ${metadata.pid} and remove metadata.`,
     };
   }
-  const stopped = status === 'stopped' || (status === 'running' && killProcessTree(metadata.pid, options.platform ?? process.platform));
+  const targetPid = metadata.ownerKind === 'windows-supervisor' ? metadata.ownerPid : metadata.pid;
+  const stopped = status === 'stopped' || (status === 'running' && killProcessTree(targetPid, options.platform ?? process.platform));
   if (stopped) {
     rmSync(paths.metadataPath, { force: true });
   }
@@ -853,6 +962,6 @@ export function runStop(options: RunStopOptions): RunStopResult {
     paths,
     logTail: logTail(paths),
     nextAction: stopped ? 'Runner metadata was removed. Inspect logs if startup or audit behavior needs review.' : 'Stop the process manually, then remove stale runner metadata.',
-    ...(stopped ? {} : { error: `Failed to stop PID ${metadata.pid}.` }),
+    ...(stopped ? {} : { error: `Failed to stop the owned process tree rooted at PID ${targetPid}.` }),
   };
 }
