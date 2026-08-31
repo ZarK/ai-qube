@@ -21,7 +21,13 @@ import {
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
 import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
-import { AGENT_HOST_IDS, qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
+import {
+  AGENT_HOST_IDS,
+  QUBE_INIT_LAYER_CONTEXT_ENV,
+  qubeCommandSurfaceContracts,
+  resolveExecutable,
+  serializeInitLayerContext,
+} from "@tjalve/qube-core";
 
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 import { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
@@ -36,10 +42,13 @@ import {
   type HostToolkitReport,
 } from "./host_toolkit.js";
 import {
+  QUBE_INIT_FIELDS,
   QUBE_REVIEW_MODES,
   QUBE_REVIEW_PUBLISHERS,
   configForQubeScope,
+  describeQubeInitFields,
   mergeQubeInitConfigs,
+  omitQubeInitFields,
   readQubeInitConfig,
   repoQubeConfigPath,
   resolveQubeInitConfig,
@@ -47,6 +56,7 @@ import {
   writeQubeInitConfig,
   type QubeExternalReviewer,
   type QubeInitConfig,
+  type QubeInitField,
   type QubeReviewMode,
   type QubeReviewPublisher,
   type QubeUmpireScope,
@@ -54,6 +64,7 @@ import {
 import {
   publicInitActionLabel,
   renderInitFailure,
+  renderInitQuestion,
   renderInitOutput,
   type InitPublisherReadiness,
   type PublicInitAnswer,
@@ -90,6 +101,7 @@ export interface DispatchRequest {
   readonly resolution: CommandResolution;
   readonly args: readonly string[];
   readonly cwd: string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface CliEnvironment {
@@ -737,6 +749,16 @@ const initCommand = defineCommand({
       type: "boolean"
     }),
     defineFlag({
+      name: "inherit",
+      description: `Remove comma-separated repository overrides so they inherit again. Use one or more of: ${QUBE_INIT_FIELDS.join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "inherit-all",
+      description: "Remove every repository override and recompute the effective setup from user-global settings, detection, and defaults.",
+      type: "boolean"
+    }),
+    defineFlag({
       name: "host",
       description: `Comma-separated Agent harnesses. The first harness is primary. Use one or more of: ${executorHostSurfaces.map(option => option.id).join(", ")}.`,
       type: "string"
@@ -1285,7 +1307,85 @@ function toolkitExitCode(hosts: HostToolkitReport): number {
   return hosts.status === "missing" || hosts.status === "partial" ? 1 : 0;
 }
 
+interface QubeDoctorConfigurationSection {
+  readonly status: "valid" | "invalid";
+  readonly scope: "repository";
+  readonly userGlobalPath: string;
+  readonly repositoryPath: string;
+  readonly fields?: ReturnType<typeof describeQubeInitFields>;
+  readonly sources?: Readonly<Record<QubeInitField, string>>;
+  readonly error?: string;
+  readonly nextAction?: string;
+}
+
+function collectComposerConfiguration(environment: CliEnvironment): QubeDoctorConfigurationSection {
+  const gitState = inspectInitGitState(environment.cwd, ".");
+  const repositoryRoot = gitState.repositoryRoot ?? environment.cwd;
+  const userGlobalPath = userQubeConfigPath(homeDirectory(environment));
+  const repositoryPath = repoQubeConfigPath(repositoryRoot);
+  const userGlobal = readQubeInitConfig(userGlobalPath);
+  const repository = readQubeInitConfig(repositoryPath);
+  const error = initConfigError("user-global", userGlobal) ?? initConfigError("repository", repository);
+  if (error) {
+    return Object.freeze({
+      status: "invalid",
+      scope: "repository",
+      userGlobalPath,
+      repositoryPath,
+      error,
+      nextAction: "Correct the invalid source configuration, then rerun `qube doctor`.",
+    });
+  }
+  const merged = mergeQubeInitConfigs(userGlobal.config, repository.config);
+  const hosts = merged.hosts && merged.hosts.length > 0 ? merged.hosts : Object.freeze(["codex"]);
+  const review = defaultReviewSelection(hosts);
+  const defaults = Object.freeze({
+    version: 1 as const,
+    hosts,
+    workProviders: Object.freeze(["github"]),
+    ciProviders: Object.freeze(["github"]),
+    continuousShipping: true,
+    umpire: Object.freeze({ scope: "ready" as const }),
+    quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
+    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user" as const }),
+    mcp: Object.freeze({ optIn: false }),
+  });
+  const resolved = resolveQubeInitConfig({ globalConfig: userGlobal.config, repoConfig: repository.config, defaults });
+  return Object.freeze({
+    status: "valid",
+    scope: "repository",
+    userGlobalPath,
+    repositoryPath,
+    sources: resolved.sources,
+    fields: describeQubeInitFields({
+      userGlobal: userGlobal.config,
+      repository: repository.config,
+      resolved,
+      projectedRepository: repository.config ?? Object.freeze({ version: 1 as const }),
+    }),
+  });
+}
+
+function formatComposerConfiguration(configuration: QubeDoctorConfigurationSection): string {
+  if (configuration.status === "invalid") {
+    return `Effective configuration: invalid — ${configuration.error}\nNext action: ${configuration.nextAction}\n`;
+  }
+  const lines = ["Effective configuration:"];
+  for (const field of configuration.fields ?? []) {
+    const derived = field.effective.derivedFrom?.length ? ` from ${field.effective.derivedFrom.join(", ")}` : "";
+    lines.push(`- ${field.id}: ${formatDoctorValue(field.effective.value)} (${field.effective.source}${derived})`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatDoctorValue(value: unknown): string {
+  if (Array.isArray(value)) return value.length === 0 ? "none" : value.join(", ");
+  return String(value);
+}
+
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const configuration = collectComposerConfiguration(environment);
+  const configurationExitCode = configuration.status === "invalid" ? 1 : 0;
   const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
     env: environment.env,
@@ -1305,12 +1405,13 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     const [connections, permutation, modelRouting, workflow] = await Promise.all([connectionsPromise, permutationPromise, modelRoutingPromise, workflowPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0
-      ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
+      ? Math.max(configurationExitCode, connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
       : planned.exitCode || 1;
     if (json) {
       const payload = {
         ok: false,
         command: "doctor",
+        configuration,
         quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
         workflow,
         continuation,
@@ -1325,7 +1426,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatComposerConfiguration(configuration)}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
   const [connections, permutation, modelRouting, quality, workflow] = await Promise.all([
@@ -1338,7 +1439,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
   let exitCode = quality.exitCode === 0
-    ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
+    ? Math.max(configurationExitCode, connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
@@ -1354,6 +1455,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     const payload = {
       ok: exitCode === 0,
       command: "doctor",
+      configuration,
       quality: qualityPayload,
       workflow,
       continuation,
@@ -1367,7 +1469,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatComposerConfiguration(configuration)}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
 }
@@ -1399,12 +1501,12 @@ function normalizeInitQuestionState(value: unknown): unknown {
 }
 
 /** Every init child is dispatched with its own JSON flag and parsed defensively; a failed, unavailable, or non-envelope child is never coerced into ok:true. */
-async function dispatchInitChild(componentName: string, args: readonly string[], environment: CliEnvironment, cwd = environment.cwd): Promise<QubeInitChildResult> {
+async function dispatchInitChild(componentName: string, args: readonly string[], environment: CliEnvironment, cwd = environment.cwd, env = environment.env): Promise<QubeInitChildResult> {
   const planned = planQubeDispatch(componentName, args, environment);
   if (!planned.dispatch) {
     return { component: componentName, args, ok: false, exitCode: planned.exitCode || 1, error: planned.stderr.trim() || `${componentName} is unavailable.` };
   }
-  const captured = await dispatchCommandCaptured({ ...planned.dispatch, cwd });
+  const captured = await dispatchCommandCaptured({ ...planned.dispatch, cwd, env });
   if (captured.truncated) {
     return { component: componentName, args, ok: false, exitCode: captured.exitCode || 1, stderr: captured.stderr, error: `${componentName} output exceeded the capture limit; truncated output is never accepted.` };
   }
@@ -1478,6 +1580,7 @@ interface QubeInitInvocation {
   readonly component: "aie" | "aib" | "aiq" | "aiu";
   readonly args: readonly string[];
   readonly cwd: string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 function homeDirectory(environment: CliEnvironment): string {
@@ -1502,7 +1605,7 @@ function detectCiProviders(target: string): readonly InstallCiProvider[] {
 
 function initConfigError(source: "user-global" | "repository", result: ReturnType<typeof readQubeInitConfig>): string | undefined {
   return result.status === "invalid"
-    ? `The ${source} QUBE config is invalid: ${result.error ?? "unknown validation error"}`
+    ? `The ${source} QUBE config is invalid at ${result.path}: ${result.error ?? "unknown validation error"}`
     : undefined;
 }
 
@@ -1958,19 +2061,82 @@ function guidedQuestionChoices(question: GuidedInitQuestion): {
   return { choices: Object.freeze(choices), values };
 }
 
-function showGuidedQuestion(question: GuidedInitQuestion): void {
-  process.stdout.write([
-    "",
-    `${question.step}. ${question.label}`,
-    question.explanation,
-    `Recommended: ${question.recommendation}. ${question.recommendationReason}`,
-    `Documentation: ${question.docsUrl}`,
-    "",
-  ].join("\n"));
+interface GuidedInitQuestionLayers {
+  readonly userGlobal: GuidedInitAnswers;
+  readonly repository: GuidedInitAnswers;
+  readonly detected: GuidedInitAnswers;
 }
 
-async function promptGuidedQuestion(question: GuidedInitQuestion, jsonMode: boolean): Promise<GuidedInitQuestion["selectedValue"]> {
-  if (!jsonMode) showGuidedQuestion(question);
+function guidedQuestionLayerValue(
+  questionId: GuidedInitQuestionId,
+  answers: GuidedInitAnswers,
+): { readonly present: boolean; readonly value: GuidedInitQuestion["currentValue"] } {
+  switch (questionId) {
+    case "agent-harnesses": return { present: Object.hasOwn(answers, "agentHarnesses"), value: answers.agentHarnesses ?? null };
+    case "issue-tracker": return { present: Object.hasOwn(answers, "issueTracker"), value: answers.issueTracker ?? null };
+    case "automated-checks": return { present: Object.hasOwn(answers, "automatedChecks"), value: answers.automatedChecks ?? null };
+    case "continuous-shipping": return {
+      present: Object.hasOwn(answers, "continuousShipping"),
+      value: answers.continuousShipping === undefined ? null : answers.continuousShipping ? "on" : "off",
+    };
+    case "umpire-scope": return { present: Object.hasOwn(answers, "umpireScope"), value: answers.umpireScope ?? null };
+    case "quality-checks": return { present: Object.hasOwn(answers, "qualityStages"), value: answers.qualityStages ?? null };
+    case "review-source": return { present: Object.hasOwn(answers, "reviewSource"), value: answers.reviewSource ?? null };
+    case "external-reviewer": return { present: Object.hasOwn(answers, "externalReviewers"), value: answers.externalReviewers ?? null };
+    case "review-harness": return { present: Object.hasOwn(answers, "reviewHarness"), value: answers.reviewHarness ?? null };
+    case "review-model": return {
+      present: Object.hasOwn(answers, "reviewModel"),
+      value: answers.reviewModel === undefined ? null : answers.reviewModel ?? GUIDED_INIT_UNPINNED_MODEL,
+    };
+    case "review-publisher": return { present: Object.hasOwn(answers, "reviewPublisher"), value: answers.reviewPublisher ?? null };
+  }
+}
+
+function guidedQuestionValueLabel(question: GuidedInitQuestion, value: GuidedInitQuestion["currentValue"]): string {
+  if (value === null) return "not set";
+  const label = (entry: string): string => question.options.find(option => option.value === entry)?.label ?? entry;
+  if (typeof value === "string") return label(value);
+  return value.length === 0 ? "none" : value.map(label).join(", ");
+}
+
+function showGuidedQuestion(question: GuidedInitQuestion, layers: GuidedInitQuestionLayers): void {
+  const userGlobal = guidedQuestionLayerValue(question.id, layers.userGlobal);
+  const repository = guidedQuestionLayerValue(question.id, layers.repository);
+  const detected = guidedQuestionLayerValue(question.id, layers.detected);
+  const source = repository.present
+    ? "repository"
+    : userGlobal.present
+      ? "user-global"
+      : detected.present
+        ? "detected"
+        : "QUBE default";
+  const effective = repository.present
+    ? repository.value
+    : userGlobal.present
+      ? userGlobal.value
+      : detected.present
+        ? detected.value
+        : question.recommendedValue;
+  process.stdout.write(renderInitQuestion({
+    step: question.step,
+    label: question.label,
+    explanation: question.explanation,
+    userGlobal: userGlobal.present ? guidedQuestionValueLabel(question, userGlobal.value) : "—",
+    repository: repository.present ? guidedQuestionValueLabel(question, repository.value) : "—",
+    effective: guidedQuestionValueLabel(question, effective),
+    source,
+    recommendation: question.recommendation,
+    reason: question.recommendationReason,
+    docsUrl: question.docsUrl,
+  }));
+}
+
+async function promptGuidedQuestion(
+  question: GuidedInitQuestion,
+  jsonMode: boolean,
+  layers: GuidedInitQuestionLayers,
+): Promise<GuidedInitQuestion["selectedValue"]> {
+  if (!jsonMode) showGuidedQuestion(question, layers);
   const mapped = guidedQuestionChoices(question);
   if (question.selection === "multiple") {
     const selected = await promptInstallerChoices({
@@ -2054,6 +2220,7 @@ async function collectGuidedInitAnswers(input: {
   readonly answers: GuidedInitAnswers;
   readonly current: GuidedInitAnswers;
   readonly defaults: GuidedInitAnswers;
+  readonly layers: GuidedInitQuestionLayers;
   readonly resolveDefaults: boolean;
   readonly jsonMode: boolean;
 }): Promise<{ readonly explicitAnswers: GuidedInitAnswers; readonly normalization: GuidedInitNormalization }> {
@@ -2107,7 +2274,7 @@ async function collectGuidedInitAnswers(input: {
     if (!question || !question.applicable || !question.promptNeeded || question.validationError) continue;
     const promptGate = evaluatePromptGate({ command: initCommand, jsonMode: input.jsonMode });
     if (!promptGate.allowed) continue;
-    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode));
+    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode, input.layers));
   }
 
   const finalQuestions = questions();
@@ -2309,8 +2476,9 @@ function qubeConfigOperation(
   current: ReturnType<typeof readQubeInitConfig>,
   desired: QubeInitConfig,
   skipEmptyRepo: boolean,
-): "create" | "update" | "skip" {
+): "create" | "update" | "remove" | "skip" {
   if (skipEmptyRepo && current.status === "missing" && Object.keys(desired).length === 1) return "skip";
+  if (skipEmptyRepo && current.status === "valid" && Object.keys(desired).length === 1) return "remove";
   if (current.status === "missing") return "create";
   if (current.config && JSON.stringify(current.config) === JSON.stringify(desired)) return "skip";
   return "update";
@@ -2367,6 +2535,27 @@ async function runInitAggregateDiagnostics(
 
 type QubeInitScope = "global" | "repository";
 
+type QubeInitConfigurationAction = "edit" | "inherit" | "inherit-all";
+
+interface QubeInitInheritance {
+  readonly action: QubeInitConfigurationAction;
+  readonly fields: readonly QubeInitField[];
+}
+
+const QUBE_INIT_FIELD_FLAGS: Readonly<Partial<Record<QubeInitField, string>>> = Object.freeze({
+  hosts: "host",
+  workProviders: "work-provider",
+  ciProviders: "ci-provider",
+  continuousShipping: "continuous-shipping",
+  "umpire.scope": "umpire-scope",
+  "quality.stages": "quality-stage",
+  "review.mode": "review-mode",
+  "review.harness": "review-harness",
+  "review.externalReviewers": "external-reviewer",
+  "review.publisher": "review-publisher",
+  "mcp.optIn": "mcp",
+});
+
 function resolveQubeInitScope(
   flags: Readonly<Record<string, unknown>>,
   args: Readonly<Record<string, unknown>>,
@@ -2386,6 +2575,47 @@ function resolveQubeInitScope(
     return { scope, error: "--git-init applies only to repository initialization and cannot be combined with --global." };
   }
   return { scope };
+}
+
+function resolveQubeInitInheritance(
+  flags: Readonly<Record<string, unknown>>,
+  scope: QubeInitScope,
+): { readonly inheritance: QubeInitInheritance; readonly error?: string } {
+  const requested = readOptionList<string>(flags, "inherit") ?? Object.freeze([]);
+  const inheritAll = flags["inherit-all"] === true;
+  const unknown = requested.filter(field => !(QUBE_INIT_FIELDS as readonly string[]).includes(field));
+  const fallback: QubeInitInheritance = Object.freeze({ action: "edit", fields: Object.freeze([]) });
+  if (unknown.length > 0) {
+    return {
+      inheritance: fallback,
+      error: `Unknown repository setting${unknown.length === 1 ? "" : "s"} for --inherit: ${unknown.join(", ")}. Use one or more of: ${QUBE_INIT_FIELDS.join(", ")}.`,
+    };
+  }
+  if ((inheritAll || requested.length > 0) && scope === "global") {
+    return {
+      inheritance: fallback,
+      error: "Inheritance actions apply only to repository initialization because user-global setup has no higher configuration scope.",
+    };
+  }
+  if (inheritAll && requested.length > 0) {
+    return { inheritance: fallback, error: "--inherit-all conflicts with --inherit. Choose one inheritance action." };
+  }
+  const fields = Object.freeze((inheritAll ? QUBE_INIT_FIELDS : [...new Set(requested)]) as readonly QubeInitField[]);
+  for (const field of fields) {
+    const selectionFlag = QUBE_INIT_FIELD_FLAGS[field];
+    if (selectionFlag && flags[selectionFlag] !== undefined) {
+      return {
+        inheritance: fallback,
+        error: `--inherit ${field} conflicts with --${selectionFlag}. Choose the repository value or inherit it, not both.`,
+      };
+    }
+  }
+  return {
+    inheritance: Object.freeze({
+      action: inheritAll ? "inherit-all" : fields.length > 0 ? "inherit" : "edit",
+      fields,
+    }),
+  };
 }
 
 interface InitGitState {
@@ -2610,6 +2840,17 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: scopeResult.error, nextAction }) };
   }
   const scope = scopeResult.scope;
+  const inheritanceResult = resolveQubeInitInheritance(flags, scope);
+  if (inheritanceResult.error) {
+    const nextAction = scope === "global"
+      ? "Remove the inheritance option, then rerun `qube init --global`."
+      : "Choose either repository selections or inheritance actions for each field, then rerun qube init.";
+    const payload = { ok: false, command: "init", scope, failedAction: publicInitActionLabel("config"), error: inheritanceResult.error, nextAction };
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` }
+      : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: inheritanceResult.error, nextAction }) };
+  }
+  const inheritance = inheritanceResult.inheritance;
   const configScope = scope === "global" ? "global" : "repo";
   const gitState = scope === "repository" ? inspectInitGitState(environment.cwd, readString(args.target) ?? ".") : null;
   if (gitState?.reason === "The repository target must be an existing directory.") {
@@ -2636,7 +2877,10 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "config", reason: configError, nextAction }) };
   }
 
-  const inherited = mergeQubeInitConfigs(globalConfig.config, scope === "repository" ? repositoryConfig.config : null);
+  const repositoryLayer = scope === "repository"
+    ? omitQubeInitFields(repositoryConfig.config, inheritance.fields)
+    : null;
+  const inherited = mergeQubeInitConfigs(globalConfig.config, repositoryLayer);
   const explicitReviewSelectionError = explicitGuidedReviewError(flags, inherited);
   if (explicitReviewSelectionError) {
     const nextAction = "Correct the Review selection, then rerun qube init.";
@@ -2657,6 +2901,11 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     answers: guidedFlagAnswers,
     current: guidedCurrent,
     defaults: guidedDefaults,
+    layers: Object.freeze({
+      userGlobal: guidedAnswersFromConfig(globalConfig.config),
+      repository: guidedAnswersFromConfig(repositoryLayer),
+      detected: guidedAnswersFromConfig(null, detectedCi),
+    }),
     resolveDefaults: useDefaults,
     jsonMode: json,
   });
@@ -2745,7 +2994,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   });
   const baseResolved = resolveQubeInitConfig({
     globalConfig: globalConfig.config,
-    repoConfig: repositoryConfig.config,
+    repoConfig: repositoryLayer,
     detected: detectedConfig,
     explicit,
     defaults: defaultsConfig,
@@ -2828,12 +3077,43 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   const selectedConfigPath = configScope === "global" ? globalConfigPath : repositoryConfigPath;
   const selectedConfigRead = configScope === "global" ? globalConfig : repositoryConfig;
-  const selectedConfig = configForQubeScope(resolved, configScope, globalConfig.config);
+  const projectedConfig = configForQubeScope(resolved, configScope, globalConfig.config);
+  const selectedConfig = configScope === "repo"
+    ? omitQubeInitFields(projectedConfig, inheritance.fields) ?? Object.freeze({ version: 1 as const })
+    : projectedConfig;
   const configOperation = qubeConfigOperation(selectedConfigRead, selectedConfig, configScope === "repo");
+  const configuration = scope === "repository"
+    ? Object.freeze({
+        scope: "repository" as const,
+        action: inheritance.action,
+        fields: describeQubeInitFields({
+          userGlobal: globalConfig.config,
+          repository: repositoryConfig.config,
+          resolved,
+          projectedRepository: selectedConfig,
+        }),
+      })
+    : undefined;
 
   const aieTool = resolveAieInitToolTargets(setup.hosts as readonly InstallHost[])[0];
   const aiuTool = resolveAiuInitToolTargets(setup.hosts as readonly InstallHost[])[0] ?? "none";
   const prospectiveRoot = scope === "repository" && gitState?.repositoryRoot === null;
+  const childEnvironment = scope === "repository"
+    ? Object.freeze({
+        ...environment.env,
+        [QUBE_INIT_LAYER_CONTEXT_ENV]: serializeInitLayerContext({
+          version: 1,
+          selectedScope: "repository",
+          effective: setup as unknown as Readonly<Record<string, unknown>>,
+          sources: resolved.sources,
+          baseline: globalConfig.config as unknown as Readonly<Record<string, unknown>> | null,
+          repository: selectedConfig as unknown as Readonly<Record<string, unknown>>,
+        }),
+      })
+    : environment.env;
+  const repositorySelection = <Value>(field: QubeInitField, value: Value): Value | undefined => (
+    scope === "repository" && resolved.sources[field] === "user-global" ? undefined : value
+  );
   const buildInvocations = (planOnly: boolean): readonly QubeInitInvocation[] => scope === "global"
     ? Object.freeze([])
     : Object.freeze([
@@ -2841,24 +3121,35 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       id: "aie",
       component: "aie",
       cwd: targetPath,
+      env: childEnvironment,
       args: buildAieInitArgs(targetPath, aieTool, {
         dryRun: planOnly,
         prospectiveRoot: planOnly && prospectiveRoot,
         force,
         yes: true,
         defaults: false,
-        workProvider: setup.workProviders[0],
-        reviewProvider,
-        ciProvider: setup.ciProviders[0],
-        primaryHost: primaryHarness,
-        reviewMode: setup.review.mode,
-        reviewAgents: setup.review.mode === "external" ? setup.review.externalReviewers : undefined,
-        localReviewAgents: setup.review.mode === "host" ? [primaryHarness] : undefined,
-        isolatedReviewAgent: setup.review.mode === "isolated" ? reviewHarness : undefined,
-        reviewModels: setup.review.mode === "external" ? undefined : setup.review.models,
-        publisher: reviewProvider === "github" ? setup.review.publisher : undefined,
+        workProvider: repositorySelection("workProviders", setup.workProviders[0]),
+        reviewProvider: repositorySelection("workProviders", reviewProvider),
+        ciProvider: repositorySelection("ciProviders", setup.ciProviders[0]),
+        primaryHost: repositorySelection("hosts", primaryHarness),
+        reviewMode: repositorySelection("review.mode", setup.review.mode),
+        reviewAgents: setup.review.mode === "external"
+          ? repositorySelection("review.externalReviewers", setup.review.externalReviewers)
+          : undefined,
+        localReviewAgents: setup.review.mode === "host"
+          ? repositorySelection("review.harness", [primaryHarness])
+          : undefined,
+        isolatedReviewAgent: setup.review.mode === "isolated"
+          ? repositorySelection("review.harness", reviewHarness)
+          : undefined,
+        reviewModels: setup.review.mode === "external"
+          ? undefined
+          : repositorySelection("review.models", setup.review.models),
+        publisher: reviewProvider === "github"
+          ? repositorySelection("review.publisher", setup.review.publisher)
+          : undefined,
         configScope,
-        continuousShipping: setup.continuousShipping,
+        continuousShipping: repositorySelection("continuousShipping", setup.continuousShipping),
         uiAuditEvidenceRoot: readOption<string>(flags, "ui-audit-evidence-root"),
         creditWarning: typeof flags["credit-warning"] === "boolean" ? flags["credit-warning"] : undefined,
       }),
@@ -2867,6 +3158,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       id: "aib",
       component: "aib",
       cwd: targetPath,
+      env: childEnvironment,
       args: Object.freeze([
         "init",
         targetPath,
@@ -2882,6 +3174,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       id: "aiq",
       component: "aiq",
       cwd: targetPath,
+      env: childEnvironment,
       args: Object.freeze([
         "config",
         "--stages",
@@ -2895,13 +3188,14 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       id: "aiu",
       component: "aiu",
       cwd: targetPath,
+      env: childEnvironment,
       args: buildAiuInitArgs(aiuTool, { dryRun: planOnly, force, scope: setup.umpire.scope }),
     },
   ]);
 
   const planInvocations = buildInvocations(true);
   const planResults = await Promise.all(planInvocations.map(invocation =>
-    dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd)));
+    dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd, invocation.env)));
   const firstPlanFailureIndex = planResults.findIndex(result => !result.ok);
   const targetArgument = readString(args.target);
   const rawPostInitActions = Object.freeze(planResults.flatMap(result => childPostInitActions(result.json)));
@@ -2967,6 +3261,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       path: selectedConfigPath,
       operation: configOperation,
     },
+    ...(configuration ? { configuration } : {}),
   };
   const planChanged = prospectiveRoot || configOperation !== "skip" || planResults.some(result => childChanged(result.json));
   const planStderr = planResults.map(result => result.stderr ?? "").join("");
@@ -2999,7 +3294,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   if (dryRun) {
     const readiness = pendingExternalActions.length > 0 ? "pending" : "planned";
-    const payload = { ok: true, command: "init", scope, mode: "plan", changed: planChanged, answers, plan, readiness, pendingExternalActions };
+    const payload = { ok: true, command: "init", scope, mode: "plan", changed: planChanged, answers, plan, ...(configuration ? { configuration } : {}), readiness, pendingExternalActions };
     if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: planStderr };
     return {
       exitCode: 0,
@@ -3008,6 +3303,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         mode: "plan",
         changed: planChanged,
         answers,
+        ...(configuration ? { configuration } : {}),
         primaryHarness: primaryHarnessPrompt,
         pendingNextActions: pendingExternalActions.flatMap(action => typeof action.nextAction === "string" ? [action.nextAction] : []),
       }),
@@ -3108,7 +3404,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   let failedApply: QubeInitChildResult | undefined;
   let failedApplyAction: QubeInitComponentId | undefined;
   for (const invocation of applyInvocations) {
-    const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd);
+    const result = await dispatchInitChild(invocation.component, invocation.args, environment, invocation.cwd, invocation.env);
     if (result.stderr) applyStderr.push(result.stderr);
     applySteps.push({
       id: invocation.id,
@@ -3200,6 +3496,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       mode: "apply",
       answers,
       plan,
+      ...(configuration ? { configuration } : {}),
       apply,
       failedAction: publicInitActionLabel(failedAction),
       error: failedApply.error,
@@ -3219,7 +3516,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
 
   const readiness = pendingExternalActions.length > 0 || aggregateDiagnostics?.status === "attention" ? "pending" : "ready";
-  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, plan, apply, readiness, pendingExternalActions };
+  const payload = { ok: true, command: "init", scope, mode: "apply", changed, answers, plan, ...(configuration ? { configuration } : {}), apply, readiness, pendingExternalActions };
   if (json) return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   return {
     exitCode: 0,
@@ -3228,6 +3525,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       mode: "apply",
       changed,
       answers,
+      ...(configuration ? { configuration } : {}),
       primaryHarness: primaryHarnessPrompt,
       pendingNextActions: [
         ...pendingExternalActions.flatMap(action => typeof action.nextAction === "string" ? [action.nextAction] : []),
@@ -5640,7 +5938,8 @@ function planQubeDispatch(componentName: string | undefined, componentArgs: read
       commandPath: resolution.commandPath,
       resolution,
       args: componentArgs,
-      cwd: environment.cwd
+      cwd: environment.cwd,
+      env: environment.env,
     }
   };
 }
@@ -6306,10 +6605,12 @@ function splitCsvOption(value: string): readonly string[] {
 
 function readOptionList<Value extends string>(flags: Readonly<Record<string, unknown>>, key: string): readonly Value[] | undefined {
   const value = flags[key];
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const tokens = splitCsvOption(value) as readonly Value[];
+  const values = typeof value === "string"
+    ? [value]
+    : Array.isArray(value) && value.every(entry => typeof entry === "string")
+      ? value as string[]
+      : [];
+  const tokens = values.flatMap(splitCsvOption) as unknown as readonly Value[];
   return tokens.length > 0 ? tokens : undefined;
 }
 
@@ -6493,6 +6794,7 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<CapturedProc
   }
   return captureChildOutput(spawn(command, args, {
     cwd: request.cwd,
+    env: request.env,
     stdio: ["inherit", "pipe", "pipe"],
     shell: false
   }));

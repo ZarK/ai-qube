@@ -116,7 +116,11 @@ pnpm exec aie queue --json
 QUBE remains the preferred entry point for automation, agent instructions, hooks,
 and durable examples in this monorepo. Direct package commands share QUBE-owned
 repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
-`.qube/aiq/out/`.
+`.qube/aiq/out/`. Configuration commands resolve explicit, machine-local,
+repository, user-global, detected, default, and derived sources consistently.
+Repository config stores only meaningful differences from explicit user-global
+settings. Use `qube init --inherit <field>` or `qube init --inherit-all` to
+remove repository overrides without editing JSON.
 
 Codex host setup and limitations are documented in the repository guide:
 [Codex host support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-codex-host-support.md).

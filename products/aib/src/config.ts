@@ -1,7 +1,14 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
-import { AGENT_HOST_IDS, type AgentHostId } from "@tjalve/qube-core";
+import {
+  AGENT_HOST_IDS,
+  resolveLayeredFields,
+  type AgentHostId,
+  type LayeredConfigField,
+  type LayeredConfigSource,
+} from "@tjalve/qube-core";
 
 export type AibAgentHost = AgentHostId;
 export type AibPrivacyMode = "local-first" | "network-allowed" | "restricted";
@@ -45,6 +52,48 @@ export interface AibConfig {
 export interface LoadedAibConfig {
   readonly path?: string;
   readonly config: AibConfig;
+  readonly fieldSources: Readonly<Record<string, LayeredConfigSource>>;
+  readonly layers: {
+    readonly explicit: AibConfig | null;
+    readonly machineLocal: AibConfig | null;
+    readonly repository: AibConfig | null;
+    readonly userGlobal: AibConfig | null;
+    readonly paths: {
+      readonly explicit?: string;
+      readonly machineLocal: string;
+      readonly repository: string;
+      readonly userGlobal: string;
+    };
+  };
+}
+
+export const AIB_REPOSITORY_CONFIG_FILENAME = "aib.config.json";
+export const AIB_MACHINE_CONFIG_FILENAME = "aib.config.local.json";
+export const AIB_USER_CONFIG_PATH = ".qube/aib/config.json";
+
+export class AibConfigLayerError extends TypeError {
+  readonly scope: "explicit" | "machine-local" | "repository" | "user-global" | "effective";
+  readonly path: string;
+  readonly field: string;
+  readonly reason: string;
+  readonly nextAction: string;
+
+  constructor(input: {
+    scope: AibConfigLayerError["scope"];
+    path: string;
+    field?: string;
+    reason: string;
+  }) {
+    const field = input.field ?? ".";
+    const nextAction = `Fix ${input.path} at ${field}, then rerun the command.`;
+    super(`Invalid ${input.scope} Bootstrap config at ${input.path}:${field}. Reason: ${input.reason} Next action: ${nextAction}`);
+    this.name = "AibConfigLayerError";
+    this.scope = input.scope;
+    this.path = input.path;
+    this.field = field;
+    this.reason = input.reason;
+    this.nextAction = nextAction;
+  }
 }
 
 export const defaultAibConfig: AibConfig = Object.freeze({
@@ -66,17 +115,55 @@ export const defaultAibConfig: AibConfig = Object.freeze({
   }
 });
 
-export function loadAibConfig(configPath: string | undefined): LoadedAibConfig {
-  if (!configPath) {
-    return { config: defaultAibConfig };
+export function loadAibConfig(
+  configPath: string | undefined,
+  options: { readonly startDir?: string; readonly homeDirectory?: string } = {},
+): LoadedAibConfig {
+  const startDir = resolve(options.startDir ?? ".");
+  const repositoryPath = join(startDir, AIB_REPOSITORY_CONFIG_FILENAME);
+  const machineLocalPath = join(startDir, AIB_MACHINE_CONFIG_FILENAME);
+  const userGlobalPath = join(resolve(options.homeDirectory ?? defaultHomeDirectory()), ...AIB_USER_CONFIG_PATH.split("/"));
+  const explicitPath = configPath ? resolve(configPath) : undefined;
+  const repository = explicitPath === repositoryPath ? null : readLayer(repositoryPath, "repository");
+  const layers = {
+    explicit: explicitPath ? readLayer(explicitPath, "explicit", true) : null,
+    machineLocal: readLayer(machineLocalPath, "machine-local"),
+    repository,
+    userGlobal: readLayer(userGlobalPath, "user-global"),
+  } as const;
+  const partials = [layers.userGlobal, layers.repository, layers.machineLocal, layers.explicit].filter((layer): layer is AibConfig => layer !== null);
+  const merged = mergeAibConfigLayers(partials);
+  let config: AibConfig;
+  try {
+    config = parseAibConfig(merged);
+  } catch (error) {
+    const parsed = parseFieldError(error);
+    throw new AibConfigLayerError({ scope: "effective", path: explicitPath ?? repositoryPath, ...parsed });
   }
-
-  const resolvedPath = resolve(configPath);
-  const parsed = JSON.parse(readFileSync(resolvedPath, "utf8")) as unknown;
-  const config = parseAibConfig(parsed);
+  const activeFields = AIB_CONFIG_FIELDS.filter(field => field.read(config) !== undefined);
+  const resolved = resolveLayeredFields({
+    fields: activeFields,
+    layers: [
+      { source: "explicit", config: layers.explicit },
+      { source: "machine-local", config: layers.machineLocal },
+      { source: "repository", config: layers.repository },
+      { source: "user-global", config: layers.userGlobal },
+      { source: "default", config: defaultAibConfig },
+    ],
+  });
   return {
-    path: resolvedPath,
-    config: mergeAibConfig(config)
+    ...(explicitPath ? { path: explicitPath } : layers.repository ? { path: repositoryPath } : {}),
+    config,
+    fieldSources: resolved.sources,
+    layers: {
+      ...layers,
+      paths: {
+        ...(explicitPath ? { explicit: explicitPath } : {}),
+        machineLocal: machineLocalPath,
+        repository: repositoryPath,
+        userGlobal: userGlobalPath,
+      },
+    },
   };
 }
 
@@ -87,6 +174,8 @@ export function parseAibConfig(value: unknown): AibConfig {
   if (value.version !== 1) {
     throw new TypeError("aib.config.json version must be 1.");
   }
+
+  rejectUnknownKeys(value, ["version", "project", "providers", "agent", "discovery", "paths", "safety"], "");
 
   const project = optionalRecord(value.project, "project");
   const providers = optionalRecord(value.providers, "providers");
@@ -128,6 +217,7 @@ export function mergeAibConfig(config: AibConfig): AibConfig {
 }
 
 function parseProject(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["project"]> {
+  rejectUnknownKeys(value, ["name", "privacy"], "project");
   const project: Record<string, string> = {};
   if (value.name !== undefined) project.name = requireString(value.name, "project.name");
   if (value.privacy !== undefined) project.privacy = requireOneOf(value.privacy, "project.privacy", ["local-first", "network-allowed", "restricted"]);
@@ -135,6 +225,7 @@ function parseProject(value: Readonly<Record<string, unknown>>): NonNullable<Aib
 }
 
 function parseProviders(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["providers"]> {
+  rejectUnknownKeys(value, ["work", "review"], "providers");
   const providers: Record<string, AibProviderKind> = {};
   if (value.work !== undefined) providers.work = requireOneOf(value.work, "providers.work", ["github", "gitlab", "linear", "jira", "local", "none"]);
   if (value.review !== undefined) providers.review = requireOneOf(value.review, "providers.review", ["github", "local", "none"]);
@@ -142,6 +233,7 @@ function parseProviders(value: Readonly<Record<string, unknown>>): NonNullable<A
 }
 
 function parseAgent(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["agent"]> {
+  rejectUnknownKeys(value, ["host", "questionBudget", "surfaces"], "agent");
   const agent: Record<string, string | number | readonly AibAgentHost[]> = {};
   if (value.host !== undefined) agent.host = requireOneOf(value.host, "agent.host", AGENT_HOST_IDS);
   if (value.questionBudget !== undefined) {
@@ -161,6 +253,7 @@ function parseAgent(value: Readonly<Record<string, unknown>>): NonNullable<AibCo
 }
 
 function parseDiscovery(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["discovery"]> {
+  rejectUnknownKeys(value, ["referencePaths", "inspectCurrentRepo", "inspectDocs", "inspectSiblingRepos"], "discovery");
   const discovery: {
     referencePaths?: readonly string[];
     inspectCurrentRepo?: boolean;
@@ -180,6 +273,7 @@ function parseDiscovery(value: Readonly<Record<string, unknown>>): NonNullable<A
 }
 
 function parsePaths(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["paths"]> {
+  rejectUnknownKeys(value, ["stateDir", "docsDir", "specPath", "milestonesDir", "issuesDir"], "paths");
   const paths: Record<string, string> = {};
   if (value.stateDir !== undefined) paths.stateDir = requireString(value.stateDir, "paths.stateDir");
   if (value.docsDir !== undefined) paths.docsDir = requireString(value.docsDir, "paths.docsDir");
@@ -190,6 +284,7 @@ function parsePaths(value: Readonly<Record<string, unknown>>): NonNullable<AibCo
 }
 
 function parseSafety(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["safety"]> {
+  rejectUnknownKeys(value, ["dryRunRequired", "allowNetwork", "packageAgeDays"], "safety");
   const safety: Record<string, boolean | number> = {};
   if (value.dryRunRequired !== undefined) safety.dryRunRequired = requireBoolean(value.dryRunRequired, "safety.dryRunRequired");
   if (value.allowNetwork !== undefined) safety.allowNetwork = requireBoolean(value.allowNetwork, "safety.allowNetwork");
@@ -232,4 +327,85 @@ function requireOneOf<const Values extends readonly string[]>(value: unknown, fi
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const AIB_CONFIG_FIELDS = Object.freeze([
+  field("project.name"), field("project.privacy"),
+  field("providers.work"), field("providers.review"),
+  field("agent.host"), field("agent.questionBudget"), field("agent.surfaces"),
+  field("discovery.referencePaths"), field("discovery.inspectCurrentRepo"), field("discovery.inspectDocs"), field("discovery.inspectSiblingRepos"),
+  field("paths.stateDir"), field("paths.docsDir"), field("paths.specPath"), field("paths.milestonesDir"), field("paths.issuesDir"),
+  field("safety.dryRunRequired"), field("safety.allowNetwork"), field("safety.packageAgeDays"),
+] as const);
+
+function field(id: string): LayeredConfigField<AibConfig, string> {
+  return { id, read: config => readPath(config, id.split(".")) };
+}
+
+function readPath(value: unknown, path: readonly string[]): unknown | undefined {
+  let current = value;
+  for (const segment of path) {
+    if (!isRecord(current) || !(segment in current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function defaultHomeDirectory(): string {
+  return process.env.USERPROFILE ?? process.env.HOME ?? homedir();
+}
+
+function readLayer(
+  path: string,
+  scope: "explicit" | "machine-local" | "repository" | "user-global",
+  required = false,
+): AibConfig | null {
+  if (!existsSync(path)) {
+    if (required) throw new AibConfigLayerError({ scope, path, reason: "The selected config file does not exist." });
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return parseAibConfig(parsed);
+  } catch (error) {
+    if (error instanceof AibConfigLayerError) throw error;
+    const parsed = parseFieldError(error);
+    throw new AibConfigLayerError({ scope, path, ...parsed });
+  }
+}
+
+function parseFieldError(error: unknown): { field?: string; reason: string } {
+  const reason = error instanceof Error ? error.message : String(error);
+  const match = /^([A-Za-z][A-Za-z0-9.[\]]*)\s/.exec(reason);
+  return { ...(match ? { field: match[1] } : {}), reason };
+}
+
+function mergeAibConfigLayers(layers: readonly AibConfig[]): AibConfig {
+  let result: AibConfig = defaultAibConfig;
+  for (const layer of layers) {
+    result = {
+      version: 1,
+      project: mergeSection(result.project, layer.project),
+      providers: mergeSection(result.providers, layer.providers),
+      agent: mergeSection(result.agent, layer.agent),
+      discovery: mergeSection(result.discovery, layer.discovery),
+      paths: mergeSection(result.paths, layer.paths),
+      safety: mergeSection(result.safety, layer.safety),
+    };
+  }
+  return result;
+}
+
+function mergeSection<Value extends object>(lower: Value | undefined, higher: Value | undefined): Value | undefined {
+  if (!lower && !higher) return undefined;
+  return { ...lower, ...higher } as Value;
+}
+
+function rejectUnknownKeys(value: Readonly<Record<string, unknown>>, allowed: readonly string[], path: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      const field = path ? `${path}.${key}` : key;
+      throw new TypeError(`${field} is not supported in the current Bootstrap config shape.`);
+    }
+  }
 }

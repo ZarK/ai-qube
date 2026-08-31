@@ -1,5 +1,7 @@
+import { rm } from 'fs/promises';
 import { join, relative, resolve } from 'path';
-import { AIE_CONFIG_FILENAME, type Config, type GitHubReviewPublisherConfig, type ReviewSourceConfig, configToFileShape, getDefaults, parseUserReviewPublisherFile, userReviewPublisherPath, validateConfig } from '../config/index.js';
+import { readInitLayerContext } from '@tjalve/qube-core';
+import { AIE_CONFIG_FILENAME, type Config, type GitHubReviewPublisherConfig, type ReviewSourceConfig, configToFileShape, getDefaults, mergeConfigOverlay, parseUserReviewPublisherFile, userConfigPath, userReviewPublisherPath, validateConfig } from '../config/index.js';
 import { defaultModelRoutingPolicy, resolveModelRouting, type ModelRoutingPolicy } from '../core/model_routing.js';
 import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
@@ -57,7 +59,8 @@ import type { InitAction, InitActionStatus, InitFromReport, InitOptions, InitPol
 interface PlannedWrite {
   actionId: string;
   path: string;
-  content: string;
+  operation: 'write' | 'remove';
+  content?: string;
 }
 
 interface InitPlanBuild {
@@ -294,10 +297,12 @@ function mergeConfig(
   policy: InitPolicyOptions | undefined,
   base: Record<string, unknown> = defaultsRecord(),
   preferBase = false,
+  persistDerived = true,
 ): ConfigMergeResult {
+  const baseline = cloneRecord(base);
   const defaults = cloneRecord(base);
   applyPolicyToRecord(defaults, policy);
-  persistReviewSources(defaults);
+  if (persistDerived) persistReviewSources(defaults);
   const defaultValidation = validateConfig(defaults);
   if (!defaultValidation.ok || !defaultValidation.config) {
     const first = defaultValidation.errors[0];
@@ -321,14 +326,14 @@ function mergeConfig(
       config: defaultValidation.config,
     };
   }
-  const validation = validateConfig(raw);
-  if (!validation.ok && !force) {
+  const validation = validateConfig(mergeConfigOverlay(baseline, raw));
+  if (!validation.ok) {
     const first = validation.errors[0];
     return {
       ok: false,
       content: null,
       changed: false,
-      reason: `Existing config is invalid at ${first.path}: ${first.message}. Rerun with --force to replace it with the current Executor config shape.`,
+      reason: `Invalid repository config at ${first.path}. Reason: ${first.message}. Next action: fix the file, then rerun the command.`,
       config: defaultValidation.config,
     };
   }
@@ -336,7 +341,7 @@ function mergeConfig(
     ? configToFileShape(validation.config) as unknown as Record<string, unknown>
     : defaults;
   applyPolicyToRecord(next, policy);
-  persistReviewSources(next);
+  if (persistDerived) persistReviewSources(next);
   const nextValidation = validateConfig(next);
   if (!nextValidation.ok || !nextValidation.config) {
     const first = nextValidation.errors[0];
@@ -391,37 +396,81 @@ async function planConfig(
   policy: InitPolicyOptions | undefined,
   base: Record<string, unknown> = defaultsRecord(),
   preferBase = false,
+  userGlobal: Record<string, unknown> | null = null,
 ): Promise<{ action: InitAction; write?: PlannedWrite; config: Config }> {
   const configPath = join(repoRoot, AIE_CONFIG_FILENAME);
   const configRead = await readConfig(configPath);
   const fallbackConfig = configFromPolicy(policy);
   if (configRead.parseError) {
-    if (!force) {
-      return {
-        action: makeAction({
-          id: 'config',
-          path: relativePath(repoRoot, configPath),
-          kind: 'config',
-          operation: 'blocked',
-          managedSection: false,
-          conflict: true,
-          reason: `Existing config could not be parsed: ${configRead.parseError}. Rerun with --force to replace it with valid Executor defaults.`,
-          }),
-          config: fallbackConfig,
-      };
-    }
-    warnings.push('Existing config could not be parsed and will be replaced because --force is set.');
+    return {
+      action: makeAction({
+        id: 'config',
+        path: relativePath(repoRoot, configPath),
+        kind: 'config',
+        operation: 'blocked',
+        managedSection: false,
+        conflict: true,
+        reason: `Invalid repository config at ${relativePath(repoRoot, configPath)}:. Reason: ${configRead.parseError}. Next action: fix the file, then rerun the command.`,
+      }),
+      config: fallbackConfig,
+    };
   }
-  const merged = mergeConfig(configRead.raw, force, policy, base, preferBase);
+  const merged = mergeConfig(configRead.raw, force, policy, base, preferBase, userGlobal === null);
   if (!merged.ok || merged.content === null) {
     return {
       action: makeAction({ id: 'config', path: relativePath(repoRoot, configPath), kind: 'config', operation: 'blocked', managedSection: false, conflict: true, reason: merged.reason }),
       config: merged.config,
     };
   }
-  const operation = !configRead.fileExists ? 'create' : merged.changed ? 'update-config' : 'unchanged';
-  const action = makeAction({ id: 'config', path: relativePath(repoRoot, configPath), kind: 'config', operation, managedSection: false, conflict: false, reason: merged.reason });
-  return operation === 'unchanged' ? { action, config: merged.config } : { action, write: { actionId: action.id, path: configPath, content: merged.content }, config: merged.config };
+  const projected = projectRepositoryConfig(configToFileShape(merged.config) as unknown as Record<string, unknown>, userGlobal);
+  const empty = Object.keys(projected).every(key => key === 'version');
+  const projectedContent = formatConfig(projected);
+  const currentContent = configRead.raw ? formatConfig(configRead.raw) : null;
+  const operation = empty
+    ? configRead.fileExists ? 'remove' : 'unchanged'
+    : !configRead.fileExists ? 'create'
+      : projectedContent !== currentContent ? 'update-config' : 'unchanged';
+  const reason = operation === 'remove'
+    ? 'Repository config contains no values that differ from explicit user-global settings and will be removed.'
+    : operation === 'unchanged'
+      ? 'Repository config already contains only meaningful differences from user-global settings.'
+      : 'Repository config will store only values that differ from explicit user-global settings.';
+  const action = makeAction({ id: 'config', path: relativePath(repoRoot, configPath), kind: 'config', operation, managedSection: false, conflict: false, reason });
+  if (operation === 'unchanged') return { action, config: merged.config };
+  return {
+    action,
+    write: operation === 'remove'
+      ? { actionId: action.id, path: configPath, operation: 'remove' }
+      : { actionId: action.id, path: configPath, operation: 'write', content: projectedContent },
+    config: merged.config,
+  };
+}
+
+function projectRepositoryConfig(
+  desired: Record<string, unknown>,
+  userGlobal: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const projected = projectRecord(desired, userGlobal);
+  return { version: 1, ...projected };
+}
+
+function projectRecord(
+  desired: Record<string, unknown>,
+  baseline: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(desired)) {
+    if (key === 'version') continue;
+    const baselineValue = baseline?.[key];
+    if (isPlainObject(value)) {
+      const child = projectRecord(value, isPlainObject(baselineValue) ? baselineValue : null);
+      if (Object.keys(child).length > 0) result[key] = child;
+      continue;
+    }
+    if (baseline && key in baseline && JSON.stringify(value) === JSON.stringify(baselineValue)) continue;
+    result[key] = value;
+  }
+  return result;
 }
 
 function missingNpmrcSettings(existingContent: string): string[] {
@@ -451,7 +500,7 @@ async function planLocalRuntimeGitignore(repoRoot: string): Promise<{ action: In
     reason: planned.reason,
   });
   if (planned.operation === 'unchanged' || planned.content === null) return { action };
-  return { action, write: { actionId: action.id, path, content: planned.content } };
+  return { action, write: { actionId: action.id, path, operation: 'write', content: planned.content } };
 }
 
 async function planPackageManagerDefaults(repoRoot: string, force: boolean): Promise<{ action: InitAction; write?: PlannedWrite }> {
@@ -460,7 +509,7 @@ async function planPackageManagerDefaults(repoRoot: string, force: boolean): Pro
   if (existingContent === null) {
     const content = 'ignore-scripts=true\nsave-exact=true\n';
     const action = makeAction({ id: 'npm-secure-defaults', path: '.npmrc', kind: 'config', operation: 'create', managedSection: false, conflict: false, reason: 'Project npm defaults will disable lifecycle scripts and save exact dependency versions.' });
-    return { action, write: { actionId: action.id, path, content } };
+    return { action, write: { actionId: action.id, path, operation: 'write', content } };
   }
   const missing = missingNpmrcSettings(existingContent);
   if (missing.length === 0) {
@@ -472,7 +521,7 @@ async function planPackageManagerDefaults(repoRoot: string, force: boolean): Pro
   const separator = existingContent.endsWith('\n') ? '' : '\n';
   const content = `${existingContent}${separator}${missing.join('\n')}\n`;
   const action = makeAction({ id: 'npm-secure-defaults', path: '.npmrc', kind: 'config', operation: 'append', managedSection: false, conflict: false, reason: `Project npm defaults will append ${missing.join(', ')}.` });
-  return { action, write: { actionId: action.id, path, content } };
+  return { action, write: { actionId: action.id, path, operation: 'write', content } };
 }
 
 async function planManagedFile(input: {
@@ -507,7 +556,7 @@ async function planManagedFile(input: {
     reason: update.diff ? `${update.reason}\nManaged section diff (current vs rendered):\n${update.diff}` : update.reason,
   });
   return update.ok && update.content !== null && update.operation !== 'unchanged'
-    ? { action, write: { actionId: action.id, path, content: update.content } }
+    ? { action, write: { actionId: action.id, path, operation: 'write', content: update.content } }
     : { action };
 }
 
@@ -562,16 +611,46 @@ function postInitActions(policy: InitPolicyOptions, config: Config, userPublishe
   }];
 }
 
-async function readUserPublisherForInit(homeDirectory?: string): Promise<GitHubReviewPublisherConfig | null> {
-  const content = await readTextIfPresent(userReviewPublisherPath(homeDirectory));
-  if (!content) return null;
+async function readUserPublisherForInit(homeDirectory?: string): Promise<{ publisher: GitHubReviewPublisherConfig | null; error: string | null }> {
+  const path = userReviewPublisherPath(homeDirectory);
+  const content = await readTextIfPresent(path);
+  if (!content) return { publisher: null, error: null };
   try {
     const parsed = parseUserReviewPublisherFile(JSON.parse(content) as unknown);
-    if (!parsed.ok || !parsed.publisher) return null;
-    return parsed.publisher as unknown as GitHubReviewPublisherConfig;
-  } catch {
-    return null;
+    if (!parsed.ok || !parsed.publisher) {
+      const first = parsed.errors[0];
+      return { publisher: null, error: `Invalid user-global config at ${path}:${first?.path ?? '.'}. Reason: ${first?.message ?? 'Validation failed.'} Next action: fix the file, then rerun the command.` };
+    }
+    return { publisher: parsed.publisher as unknown as GitHubReviewPublisherConfig, error: null };
+  } catch (error) {
+    return { publisher: null, error: `Invalid user-global config at ${path}:. Reason: ${error instanceof Error ? error.message : String(error)} Next action: fix the file, then rerun the command.` };
   }
+}
+
+async function readUserGlobalForInit(
+  homeDirectory: string | undefined,
+  publisher: GitHubReviewPublisherConfig | null,
+): Promise<{ config: Record<string, unknown> | null; error: string | null }> {
+  const path = userConfigPath(homeDirectory);
+  const current = await readConfig(path);
+  if (current.parseError) {
+    return { config: null, error: `Invalid user-global config at ${path}:. Reason: ${current.parseError} Next action: fix the file, then rerun the command.` };
+  }
+  const globalConfig = current.raw && !current.parseError ? current.raw : null;
+  const publisherLayer = publisher
+    ? { version: 1, providers: { review: { kind: 'github', publisher } } }
+    : null;
+  if (globalConfig) {
+    const validation = validateConfig(mergeConfigOverlay(defaultsRecord(), globalConfig));
+    if (!validation.ok) {
+      const first = validation.errors[0];
+      return { config: null, error: `Invalid user-global config at ${path}:${first.path}. Reason: ${first.message} Next action: fix the file, then rerun the command.` };
+    }
+  }
+  if (!globalConfig) return { config: publisherLayer, error: null };
+  if (!publisherLayer) return { config: globalConfig, error: null };
+  const merged = mergeConfigOverlay(globalConfig, publisherLayer);
+  return { config: isPlainObject(merged) ? merged : globalConfig, error: null };
 }
 
 function providerActions(config: Config): InitProviderAction[] {
@@ -610,17 +689,55 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     aiqAvailable: options.aiqAvailable,
   });
   let fromReport: InitFromReport | null = null;
-  let baseRecord = defaultsRecord();
   let currentAnswers: ReturnType<typeof answersFromPolicy> = {};
   let currentConfig: Config | null = null;
   let existingConfigIsBase = false;
   let policy = options.policy ? { ...options.policy } : {};
-  const userPublisher = await readUserPublisherForInit(options.homeDirectory);
+  const publisherRead = await readUserPublisherForInit(options.homeDirectory);
+  const globalRead = await readUserGlobalForInit(options.homeDirectory, publisherRead.publisher);
+  const userPublisher = publisherRead.publisher;
+  const userGlobal = globalRead.config;
+  const sourceError = publisherRead.error ?? globalRead.error;
+  if (sourceError) {
+    const fallbackConfig = configFromPolicy(policy);
+    return {
+      result: {
+        ok: false,
+        command: 'init',
+        dryRun: options.dryRun,
+        forced: options.force,
+        target: options.target,
+        repoRoot,
+        selectedTools,
+        policy: policySummary(fallbackConfig),
+        configPath: join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME),
+        actions: [],
+        plannedChanges: [],
+        completedChanges: [],
+        skippedActions: [],
+        warnings,
+        errors: [sourceError],
+        nextCommand: 'Fix the invalid user-global config, then rerun `aie init`.',
+        ...emptyGuideFields(),
+      },
+      writes: [],
+    };
+  }
+  const inheritedBase = userGlobal ? mergeConfigOverlay(defaultsRecord(), userGlobal) : defaultsRecord();
+  let baseRecord = isPlainObject(inheritedBase) ? inheritedBase : defaultsRecord();
+  if (userGlobal) {
+    const inherited = validateConfig(baseRecord);
+    if (inherited.ok && inherited.config) {
+      currentConfig = inherited.config;
+      currentAnswers = answersFromRecord(baseRecord);
+      existingConfigIsBase = true;
+    }
+  }
 
   if (!options.from && repoRoot) {
     const current = await readConfig(join(repoRoot, AIE_CONFIG_FILENAME));
     if (current.raw && !current.parseError) {
-      const validation = validateConfig(current.raw);
+      const validation = validateConfig(mergeConfigOverlay(baseRecord, current.raw));
       if (validation.ok && validation.config) {
         currentConfig = validation.config;
         baseRecord = configToFileShape(validation.config) as unknown as Record<string, unknown>;
@@ -878,7 +995,27 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     };
   }
 
-  const configPlan = await planConfig(repoRoot, options.force, warnings, policy, baseRecord, Boolean(options.from));
+  const parentLayerContext = readInitLayerContext();
+  const parentRepositoryFields = parentLayerContext?.repository ? Object.keys(parentLayerContext.repository).filter(field => field !== 'version') : [];
+  const executorRepositoryFields = parentRepositoryFields.filter(field => ['hosts', 'workProviders', 'ciProviders', 'continuousShipping', 'review'].includes(field));
+  const inheritComposerBaseline = parentLayerContext?.selectedScope === 'repository'
+    && parentLayerContext.baseline !== null
+    && executorRepositoryFields.length === 0;
+  const inheritedOnlyBaseline = inheritComposerBaseline
+    ? configToFileShape(configFromPolicy(policy)) as unknown as Record<string, unknown>
+    : userGlobal;
+  let configPlan = await planConfig(repoRoot, options.force, warnings, policy, baseRecord, Boolean(options.from), inheritedOnlyBaseline);
+  if (inheritComposerBaseline && configPlan.action.operation === 'create') {
+    configPlan = {
+      action: makeAction({
+        ...configPlan.action,
+        operation: 'unchanged',
+        status: 'skipped',
+        reason: 'Effective user-global settings and defaults require no repository config.',
+      }),
+      config: configPlan.config,
+    };
+  }
   const config = configPlan.config;
   let selectedProfiles;
   try {
@@ -992,7 +1129,17 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   for (const write of built.writes) {
     const action = actions.find(item => item.id === write.actionId);
     try {
-      await writeFileSafely(write.path, write.content);
+      if (write.operation === 'remove') {
+        const repoRoot = result.repoRoot;
+        const expectedPath = repoRoot ? resolve(repoRoot, AIE_CONFIG_FILENAME) : null;
+        if (!expectedPath || resolve(write.path) !== expectedPath) {
+          throw new Error('Refused to remove a config path outside the exact repository Executor config location.');
+        }
+        await rm(write.path, { force: true });
+      } else {
+        if (write.content === undefined) throw new Error('Planned config write has no content.');
+        await writeFileSafely(write.path, write.content);
+      }
       if (action) action.status = 'completed';
       completedChanges.push(action ? actionText(action) : `Wrote ${relativePath(result.repoRoot ?? process.cwd(), write.path)}`);
     } catch (err: unknown) {

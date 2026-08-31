@@ -113,6 +113,8 @@ export async function runConfigCommand(parsed: ParsedArgs, io: CliIo): Promise<n
           ...(resolvedConfig.configPath === undefined
             ? {}
             : { configPath: resolvedConfig.configPath }),
+          ...(resolvedConfig.configPaths === undefined ? {} : { configPaths: resolvedConfig.configPaths }),
+          ...(resolvedConfig.sources === undefined ? {} : { sources: resolvedConfig.sources }),
           progress: loadedProgress.progress,
           progressPath: loadedProgress.path,
           progressSource: loadedProgress.source,

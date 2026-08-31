@@ -1,5 +1,6 @@
 import type { ExecutorPolicy, ReviewAdapterKind, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewModelsPolicy, ReviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import type { ModelRoutingPolicy } from '../core/model_routing.js';
+import type { LayeredConfigSource } from '@tjalve/qube-core';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
@@ -286,6 +287,11 @@ export interface ValidationError {
   path: string;
   message: string;
   suggestion?: string;
+  scope?: 'machine-local' | 'repository' | 'user-global' | 'effective';
+  sourcePath?: string;
+  field?: string;
+  reason?: string;
+  nextAction?: string;
 }
 
 export interface ConfigValidationResult {
@@ -304,11 +310,13 @@ export interface ConfigLoadResult {
   /** Safe provenance for the resolved review publisher. Repository overlay and config are both repository sources. */
   publisherSource?: ReviewPublisherConfigSource;
   publisherFieldSources?: Readonly<Partial<Record<ReviewPublisherConfigField, ReviewPublisherConfigSource>>>;
+  /** Source for each effective leaf in the full Executor config shape. */
+  fieldSources?: Readonly<Record<string, ReviewPublisherConfigSource>>;
   /** Parsed source layers. Callers that write config must select one layer instead of serializing the merged config. */
   layers?: ConfigSourceLayers;
 }
 
-export type ReviewPublisherConfigSource = 'explicit' | 'repository-overlay' | 'repository' | 'user-global' | 'default';
+export type ReviewPublisherConfigSource = Extract<LayeredConfigSource, 'explicit' | 'machine-local' | 'repository' | 'user-global' | 'default'>;
 
 export type ReviewPublisherConfigField =
   | 'mode'
@@ -319,10 +327,12 @@ export type ReviewPublisherConfigField =
   | 'githubApp.login';
 
 export interface ConfigSourceLayers {
+  readonly userGlobalPath: string;
+  readonly userGlobal: Readonly<Record<string, unknown>> | null;
   readonly userPublisherPath: string;
   readonly userPublisher: Readonly<Record<string, unknown>> | null;
   readonly repository: Readonly<Record<string, unknown>> | null;
-  readonly repositoryOverlay: Readonly<Record<string, unknown>> | null;
+  readonly machineLocal: Readonly<Record<string, unknown>> | null;
 }
 
 export class ConfigLoadError extends Error {
@@ -333,7 +343,7 @@ export class ConfigLoadError extends Error {
     const first = errors[0];
     super(
       first
-        ? `Failed to load Executor config from ${path}: invalid value at ${first.path}. Likely cause: ${first.message}. Next action: run \`aie init . --dry-run --force\` to compare the file with the current config shape.`
+        ? `Failed to load Executor config from ${first.sourcePath ?? path}: invalid ${first.scope ?? 'effective'} value at ${first.field ?? first.path}. Likely cause: ${first.reason ?? first.message}. Next action: ${first.nextAction ?? 'run `aie init . --dry-run --force` to compare the file with the current config shape.'}`
         : `Failed to load Executor config from ${path}: validation failed without details. Next action: run \`aie init . --dry-run --force\` to compare the file with the current config shape.`,
     );
     this.name = 'ConfigLoadError';

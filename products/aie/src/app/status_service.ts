@@ -159,6 +159,7 @@ export interface StatusResult {
     present: boolean;
     valid: boolean;
     errors: ValidationError[];
+    fieldSources: Readonly<Record<string, string>>;
   };
   repository: RepoState | null;
   currentBranch: string | null;
@@ -300,7 +301,7 @@ function providerStatus(context: StatusServiceContext): StatusResult['providers'
 }
 
 function configStatus(load: ConfigLoadResult): StatusResult['config'] {
-  return { path: load.path, present: load.present, valid: load.ok, errors: load.errors };
+  return { path: load.path, present: load.present, valid: load.ok, errors: load.errors, fieldSources: load.fieldSources ?? {} };
 }
 
 async function inspectRepository(context: StatusServiceContext): Promise<RepoState | null> {

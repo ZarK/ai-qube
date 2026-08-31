@@ -1,5 +1,7 @@
-import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, type Stats } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import path from "node:path";
+
+import { projectSparseFieldIds, sameLayeredValue, type LayeredConfigField } from "@tjalve/qube-core";
 
 export const QUBE_USER_CONFIG_PATH = ".qube/config.json";
 export const QUBE_REPO_CONFIG_PATH = ".qube/init.json";
@@ -43,11 +45,12 @@ export interface QubeInitConfigReadResult {
   readonly error: string | null;
 }
 
-export type QubeInitFieldSource = "explicit" | "repo" | "global" | "detected" | "default" | "derived";
+export type QubeInitFieldSource = "explicit" | "machine-local" | "repository" | "user-global" | "detected" | "default" | "derived";
 
 export interface QubeResolvedInitConfig {
   readonly config: RequiredQubeInitConfig;
   readonly sources: Readonly<Record<QubeInitField, QubeInitFieldSource>>;
+  readonly derivedFrom: Readonly<Partial<Record<QubeInitField, readonly QubeInitField[]>>>;
   readonly deviations: readonly QubeInitField[];
 }
 
@@ -64,6 +67,32 @@ export type QubeInitField =
   | "review.publisher"
   | "review.models"
   | "mcp.optIn";
+
+export const QUBE_INIT_FIELDS = Object.freeze([
+  "hosts",
+  "workProviders",
+  "ciProviders",
+  "continuousShipping",
+  "umpire.scope",
+  "quality.stages",
+  "review.mode",
+  "review.harness",
+  "review.externalReviewers",
+  "review.publisher",
+  "review.models",
+  "mcp.optIn",
+] as const satisfies readonly QubeInitField[]);
+
+export const QUBE_INIT_FIELD_REGISTRY: readonly LayeredConfigField<QubeInitConfig, QubeInitField>[] = Object.freeze(
+  QUBE_INIT_FIELDS.map(field => Object.freeze({
+    id: field,
+    read: (config: QubeInitConfig) => readField(config, field),
+    comparison: (["workProviders", "ciProviders", "quality.stages", "review.externalReviewers"] as QubeInitField[]).includes(field)
+      ? "set" as const
+      : "ordered" as const,
+    applicable: (config: QubeInitConfig) => isQubeInitFieldApplicable(config as RequiredQubeInitConfig, field),
+  })),
+);
 
 export interface RequiredQubeInitConfig extends QubeInitConfig {
   readonly hosts: readonly string[];
@@ -82,7 +111,31 @@ export interface RequiredQubeInitConfig extends QubeInitConfig {
   readonly mcp: { readonly optIn: boolean };
 }
 
-export type QubeInitConfigWriteOperation = "create" | "update" | "skip";
+export type QubeRepositoryFieldAction = "add" | "update" | "remove" | "keep";
+
+export interface QubeInitFieldLayerValue {
+  readonly present: boolean;
+  readonly value?: unknown;
+}
+
+export interface QubeInitFieldPlan {
+  readonly id: QubeInitField;
+  readonly userGlobal: QubeInitFieldLayerValue;
+  readonly repository: QubeInitFieldLayerValue;
+  readonly effective: {
+    readonly value: unknown;
+    readonly source: QubeInitFieldSource;
+    readonly derivedFrom?: readonly QubeInitField[];
+  };
+  readonly planned: {
+    readonly repositoryAction: QubeRepositoryFieldAction;
+    readonly effectiveValue: unknown;
+    readonly source: QubeInitFieldSource;
+    readonly derivedFrom?: readonly QubeInitField[];
+  };
+}
+
+export type QubeInitConfigWriteOperation = "create" | "update" | "remove" | "skip";
 
 export function userQubeConfigPath(homeDirectory: string): string {
   return path.join(path.resolve(homeDirectory), ...QUBE_USER_CONFIG_PATH.split("/"));
@@ -185,8 +238,8 @@ export function resolveQubeInitConfig(input: {
 }): QubeResolvedInitConfig {
   const layers: readonly { readonly source: QubeInitFieldSource; readonly config: QubeInitConfig | null }[] = [
     { source: "explicit", config: input.explicit ?? null },
-    { source: "repo", config: input.repoConfig },
-    { source: "global", config: input.globalConfig },
+    { source: "repository", config: input.repoConfig },
+    { source: "user-global", config: input.globalConfig },
     { source: "detected", config: input.detected ?? null },
     { source: "default", config: input.defaults },
   ];
@@ -215,11 +268,11 @@ export function resolveQubeInitConfig(input: {
   const qualityStages = selected("quality.stages", config => config.quality?.stages);
   const selectedReviewMode = selected("review.mode", config => config.review?.mode);
   const reviewMode = selectedReviewMode.source === "default"
-    ? { value: selectedReviewMode.value, source: hosts.source }
+    ? { value: selectedReviewMode.value, source: "derived" as const }
     : selectedReviewMode;
-  const derivedReviewSource: QubeInitFieldSource = reviewMode.source === hosts.source ? hosts.source : "derived";
+  const derivedReviewSource: QubeInitFieldSource = "derived";
   const reviewHarness = reviewMode.value === "external"
-    ? { value: undefined, source: reviewMode.source }
+    ? { value: undefined, source: derivedReviewSource }
     : reviewMode.value === "host"
       ? { value: hosts.value[0], source: derivedReviewSource }
       : (() => {
@@ -232,12 +285,14 @@ export function resolveQubeInitConfig(input: {
         })();
   const selectedExternalReviewers = reviewMode.value === "external"
     ? selected("review.externalReviewers", config => config.review?.externalReviewers ?? (config === input.defaults ? [] : undefined))
-    : { value: Object.freeze([]) as readonly QubeExternalReviewer[], source: reviewMode.source };
+    : { value: Object.freeze([]) as readonly QubeExternalReviewer[], source: derivedReviewSource };
   const externalReviewers = reviewMode.value === "external" && selectedExternalReviewers.source === "default" && selectedReviewMode.source === "default"
-    ? { value: selectedExternalReviewers.value, source: hosts.source }
+    ? { value: selectedExternalReviewers.value, source: "derived" as const }
     : selectedExternalReviewers;
   const reviewPublisher = selected("review.publisher", config => config.review?.publisher);
-  const reviewModels = selected("review.models", config => config.review?.models ?? (config === input.defaults ? [] : undefined));
+  const reviewModels = reviewMode.value === "external"
+    ? { value: Object.freeze([]) as readonly string[], source: derivedReviewSource }
+    : selected("review.models", config => config.review?.models ?? (config === input.defaults ? [] : undefined));
   const mcpOptIn = selected("mcp.optIn", config => config.mcp?.optIn);
 
   const config: RequiredQubeInitConfig = Object.freeze({
@@ -275,10 +330,16 @@ export function resolveQubeInitConfig(input: {
     "review.models": reviewModels.source,
     "mcp.optIn": mcpOptIn.source,
   }) satisfies Readonly<Record<QubeInitField, QubeInitFieldSource>>;
+  const derivedFrom = Object.freeze({
+    ...(reviewMode.source === "derived" ? { "review.mode": Object.freeze(["hosts"] as const) } : {}),
+    ...(reviewHarness.source === "derived" ? { "review.harness": Object.freeze(["review.mode", "hosts"] as const) } : {}),
+    ...(externalReviewers.source === "derived" ? { "review.externalReviewers": Object.freeze(["review.mode", "hosts"] as const) } : {}),
+    ...(reviewModels.source === "derived" ? { "review.models": Object.freeze(["review.mode"] as const) } : {}),
+  }) satisfies Readonly<Partial<Record<QubeInitField, readonly QubeInitField[]>>>;
   const deviations = Object.freeze((Object.keys(sources) as QubeInitField[]).filter(field => {
-    return JSON.stringify(readField(config, field)) !== JSON.stringify(readField(input.defaults, field));
+    return !sameQubeInitFieldValue(field, readField(config, field), readField(input.defaults, field));
   }));
-  return Object.freeze({ config, sources, deviations });
+  return Object.freeze({ config, sources, derivedFrom, deviations });
 }
 
 export function configForQubeScope(
@@ -287,7 +348,8 @@ export function configForQubeScope(
   existingGlobal: QubeInitConfig | null = null,
 ): QubeInitConfig {
   if (scope === "global") {
-    const useResolved = (field: QubeInitField): boolean => !["repo", "derived"].includes(resolved.sources[field]);
+    const useResolved = (field: QubeInitField): boolean => !["repository", "derived"].includes(resolved.sources[field]);
+    const globalReviewMode = useResolved("review.mode") ? resolved.config.review.mode : existingGlobal?.review?.mode;
     return Object.freeze({
       version: 1,
       ...(useResolved("hosts") ? { hosts: resolved.config.hosts } : existingGlobal?.hosts ? { hosts: existingGlobal.hosts } : {}),
@@ -301,16 +363,22 @@ export function configForQubeScope(
           ? {
               review: Object.freeze({
                 ...(useResolved("review.mode") ? { mode: resolved.config.review.mode } : existingGlobal?.review?.mode ? { mode: existingGlobal.review.mode } : {}),
-                ...(useResolved("review.harness")
-                  ? resolved.config.review.harness ? { harness: resolved.config.review.harness } : {}
-                  : existingGlobal?.review?.harness ? { harness: existingGlobal.review.harness } : {}),
-                ...(useResolved("review.externalReviewers")
-                  ? resolved.config.review.externalReviewers ? { externalReviewers: resolved.config.review.externalReviewers } : {}
-                  : existingGlobal?.review?.externalReviewers ? { externalReviewers: existingGlobal.review.externalReviewers } : {}),
+                ...(globalReviewMode === "isolated"
+                  ? useResolved("review.harness")
+                    ? resolved.config.review.harness ? { harness: resolved.config.review.harness } : {}
+                    : existingGlobal?.review?.harness ? { harness: existingGlobal.review.harness } : {}
+                  : {}),
+                ...(globalReviewMode === "external"
+                  ? useResolved("review.externalReviewers")
+                    ? resolved.config.review.externalReviewers ? { externalReviewers: resolved.config.review.externalReviewers } : {}
+                    : existingGlobal?.review?.externalReviewers ? { externalReviewers: existingGlobal.review.externalReviewers } : {}
+                  : {}),
                 ...(useResolved("review.publisher") ? { publisher: resolved.config.review.publisher } : existingGlobal?.review?.publisher ? { publisher: existingGlobal.review.publisher } : {}),
-                ...(useResolved("review.models")
-                  ? resolved.config.review.models ? { models: resolved.config.review.models } : {}
-                  : existingGlobal?.review?.models ? { models: existingGlobal.review.models } : {}),
+                ...(globalReviewMode !== "external"
+                  ? useResolved("review.models")
+                    ? resolved.config.review.models ? { models: resolved.config.review.models } : {}
+                    : existingGlobal?.review?.models ? { models: existingGlobal.review.models } : {}
+                  : {}),
               }),
             }
           : existingGlobal?.review ? { review: existingGlobal.review } : {}
@@ -318,7 +386,16 @@ export function configForQubeScope(
       ...(useResolved("mcp.optIn") ? { mcp: resolved.config.mcp } : existingGlobal?.mcp ? { mcp: existingGlobal.mcp } : {}),
     });
   }
-  const include = (field: QubeInitField): boolean => !["global", "derived"].includes(resolved.sources[field]);
+  const sparseFields = new Set(projectSparseFieldIds({
+    fields: QUBE_INIT_FIELD_REGISTRY,
+    desired: resolved.config,
+    baseline: existingGlobal,
+  }));
+  const include = (field: QubeInitField): boolean => {
+    if (resolved.sources[field] === "derived") return false;
+    if (!existingGlobal && resolved.sources[field] === "user-global") return false;
+    return sparseFields.has(field);
+  };
   return Object.freeze({
     version: 1,
     ...(include("hosts") ? { hosts: resolved.config.hosts } : {}),
@@ -348,10 +425,90 @@ export function configForQubeScope(
   });
 }
 
+export function describeQubeInitFields(input: {
+  readonly userGlobal: QubeInitConfig | null;
+  readonly repository: QubeInitConfig | null;
+  readonly resolved: QubeResolvedInitConfig;
+  readonly projectedRepository: QubeInitConfig;
+}): readonly QubeInitFieldPlan[] {
+  return Object.freeze(QUBE_INIT_FIELDS.map(field => {
+    const userGlobalValue = input.userGlobal ? readField(input.userGlobal, field) : undefined;
+    const repositoryValue = input.repository ? readField(input.repository, field) : undefined;
+    const projectedValue = readField(input.projectedRepository, field);
+    const effectiveValue = readField(input.resolved.config, field);
+    const repositoryAction = repositoryFieldAction(field, repositoryValue, projectedValue);
+    const postApplySource: QubeInitFieldSource = input.resolved.sources[field] === "derived"
+      ? "derived"
+      : projectedValue !== undefined
+      ? "repository"
+      : userGlobalValue !== undefined
+        ? "user-global"
+        : input.resolved.sources[field] === "explicit"
+          ? "default"
+          : input.resolved.sources[field];
+    const derivedFrom = input.resolved.derivedFrom[field];
+    return Object.freeze({
+      id: field,
+      userGlobal: layerValue(userGlobalValue),
+      repository: layerValue(repositoryValue),
+      effective: Object.freeze({
+        value: effectiveValue,
+        source: input.resolved.sources[field],
+        ...(derivedFrom ? { derivedFrom } : {}),
+      }),
+      planned: Object.freeze({
+        repositoryAction,
+        effectiveValue,
+        source: postApplySource,
+        ...(postApplySource === "derived" && derivedFrom ? { derivedFrom } : {}),
+      }),
+    });
+  }));
+}
+
+export function omitQubeInitFields(
+  config: QubeInitConfig | null,
+  fields: readonly QubeInitField[],
+): QubeInitConfig | null {
+  if (!config || fields.length === 0) return config;
+  const omitted = new Set(fields);
+  const include = (field: QubeInitField): boolean => !omitted.has(field) && readField(config, field) !== undefined;
+  return Object.freeze({
+    version: 1,
+    ...(include("hosts") ? { hosts: config.hosts } : {}),
+    ...(include("workProviders") ? { workProviders: config.workProviders } : {}),
+    ...(include("ciProviders") ? { ciProviders: config.ciProviders } : {}),
+    ...(include("continuousShipping") ? { continuousShipping: config.continuousShipping } : {}),
+    ...(include("umpire.scope") ? { umpire: Object.freeze({ scope: config.umpire!.scope }) } : {}),
+    ...(include("quality.stages") ? { quality: Object.freeze({ stages: config.quality!.stages }) } : {}),
+    ...(
+      include("review.mode") || include("review.harness") || include("review.externalReviewers") || include("review.publisher") || include("review.models")
+        ? {
+            review: Object.freeze({
+              ...(include("review.mode") ? { mode: config.review!.mode } : {}),
+              ...(include("review.harness") ? { harness: config.review!.harness } : {}),
+              ...(include("review.externalReviewers") ? { externalReviewers: config.review!.externalReviewers } : {}),
+              ...(include("review.publisher") ? { publisher: config.review!.publisher } : {}),
+              ...(include("review.models") ? { models: config.review!.models } : {}),
+            }),
+          }
+        : {}
+    ),
+    ...(include("mcp.optIn") ? { mcp: Object.freeze({ optIn: config.mcp!.optIn }) } : {}),
+  });
+}
+
 export function writeQubeInitConfig(filePath: string, config: QubeInitConfig): QubeInitConfigWriteOperation {
   const target = resolveQubeConfigTarget(filePath);
-  const content = `${JSON.stringify(config, null, 2)}\n`;
   let targetStatus = assertSafeQubeConfigPath(target);
+  if (isEmptyQubeInitConfig(config)) {
+    if (!targetStatus) return "skip";
+    assertSafeQubeConfigPath(target);
+    unlinkSync(target.path);
+    return "remove";
+  }
+
+  const content = `${JSON.stringify(config, null, 2)}\n`;
   if (targetStatus) {
     const current = readFileSync(target.path, "utf8");
     if (current === content) return "skip";
@@ -453,6 +610,36 @@ function cloneReview(review: NonNullable<QubeInitConfig["review"]>): NonNullable
   });
 }
 
+export function isEmptyQubeInitConfig(config: QubeInitConfig): boolean {
+  return Object.keys(config).length === 1 && config.version === 1;
+}
+
+export function sameQubeInitFieldValue(field: QubeInitField, left: unknown, right: unknown): boolean {
+  const definition = QUBE_INIT_FIELD_REGISTRY.find(candidate => candidate.id === field)!;
+  return sameLayeredValue(left, right, definition.comparison);
+}
+
+function isQubeInitFieldApplicable(config: RequiredQubeInitConfig, field: QubeInitField): boolean {
+  if (field === "review.harness") return config.review.mode === "isolated";
+  if (field === "review.externalReviewers") return config.review.mode === "external";
+  if (field === "review.models") return config.review.mode !== "external";
+  return true;
+}
+
+function layerValue(value: unknown): QubeInitFieldLayerValue {
+  return Object.freeze(value === undefined ? { present: false } : { present: true, value });
+}
+
+function repositoryFieldAction(
+  field: QubeInitField,
+  current: unknown,
+  planned: unknown,
+): QubeRepositoryFieldAction {
+  if (current === undefined) return planned === undefined ? "keep" : "add";
+  if (planned === undefined) return "remove";
+  return sameQubeInitFieldValue(field, current, planned) ? "keep" : "update";
+}
+
 function readField(config: QubeInitConfig, field: QubeInitField): unknown {
   switch (field) {
     case "hosts": return config.hosts;
@@ -463,9 +650,9 @@ function readField(config: QubeInitConfig, field: QubeInitField): unknown {
     case "quality.stages": return config.quality?.stages;
     case "review.mode": return config.review?.mode;
     case "review.harness": return config.review?.harness;
-    case "review.externalReviewers": return config.review?.mode === "external" ? config.review.externalReviewers ?? [] : [];
+    case "review.externalReviewers": return config.review?.externalReviewers;
     case "review.publisher": return config.review?.publisher;
-    case "review.models": return config.review?.models ?? [];
+    case "review.models": return config.review?.models;
     case "mcp.optIn": return config.mcp?.optIn;
   }
 }

@@ -50,8 +50,22 @@ export async function resolveAiqConfig(
   options: ResolveAiqConfigOptions,
 ): Promise<ResolvedAiqConfig> {
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const loaded = await loadAiqConfig(cwd);
-  const config = mergeAiqConfig(defaultConfig, loaded.config);
+  const loaded = await loadAiqConfig(
+    cwd,
+    options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory },
+  );
+  const config = mergeAiqConfig(
+    mergeAiqConfig(
+      mergeAiqConfig(defaultConfig, loaded.userGlobalConfig),
+      loaded.config,
+    ),
+    loaded.machineLocalConfig,
+  );
+  const sources = attributeAiqSources(config, [
+    { source: "machine-local" as const, config: loaded.machineLocalConfig },
+    { source: "repository" as const, config: loaded.config },
+    { source: "user-global" as const, config: loaded.userGlobalConfig },
+  ]);
   const surfaceConfig = config.surfaces[options.surface];
   const profile = options.profile ?? surfaceConfig.profile;
   const profileConfig = resolveProfile(config, profile);
@@ -64,7 +78,7 @@ export async function resolveAiqConfig(
     cadenceStages,
     config,
     cwd,
-    loadedPath: loaded.path,
+    loadedPath: loaded.effectivePath,
     options,
     profile,
     profileConfig,
@@ -75,9 +89,47 @@ export async function resolveAiqConfig(
   if (loaded.path !== undefined) {
     resolved.configPath = loaded.path;
     resolved.stageConfigurations = resolveStageConfigurations(config, requestedStages);
+  } else if (loaded.effectivePath !== undefined) {
+    resolved.configPath = loaded.effectivePath;
+    resolved.stageConfigurations = resolveStageConfigurations(config, requestedStages);
   }
+  resolved.sources = sources;
+  resolved.configPaths = [
+    loaded.layers?.userGlobalFound ? loaded.layers.userGlobalPath : undefined,
+    loaded.layers?.repositoryFound ? loaded.layers.repositoryPath : undefined,
+    loaded.layers?.machineLocalFound ? loaded.layers.machineLocalPath : undefined,
+  ].filter((value): value is string => value !== undefined);
 
   return resolved;
+}
+
+function attributeAiqSources(
+  config: AiqConfig,
+  layers: readonly {
+    readonly source: "machine-local" | "repository" | "user-global";
+    readonly config: AiqConfigFile | undefined;
+  }[],
+): Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">> {
+  const sources: Record<string, "machine-local" | "repository" | "user-global" | "default"> = {};
+  for (const fieldPath of collectLeafPaths(config)) {
+    sources[fieldPath] = layers.find(layer => layer.config !== undefined && readConfigPath(layer.config, fieldPath) !== undefined)?.source ?? "default";
+  }
+  return Object.freeze(sources);
+}
+
+function collectLeafPaths(value: unknown, prefix = ""): string[] {
+  if (Array.isArray(value) || value === null || typeof value !== "object") return prefix === "" ? [] : [prefix];
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([key, entry]) => collectLeafPaths(entry, prefix === "" ? key : `${prefix}.${key}`));
+}
+
+function readConfigPath(config: AiqConfigFile, fieldPath: string): unknown {
+  let current: unknown = config;
+  for (const part of fieldPath.split(".")) {
+    if (current === null || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, part)) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
 }
 
 function applyInputOverrides(merged: AiqConfig, override: AiqConfigFile): void {

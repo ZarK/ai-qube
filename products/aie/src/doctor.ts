@@ -4,7 +4,7 @@ import { join, sep } from 'path';
 import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { cwd } from 'process';
-import { Config, displayConfigPath, getDefaults, loadConfig, selectConfigPath, validateConfig, ValidationError } from './config/index.js';
+import { Config, displayConfigPath, getDefaults, loadConfig, loadConfigFile, selectConfigPath, ValidationError } from './config/index.js';
 import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from './labels.js';
 import { runGh } from './providers/github_adapter_exports.js';
 import { computeQueue } from './queue/index.js';
@@ -138,6 +138,7 @@ class DoctorDiagnosticsBuilder {
       configPresent: configStatus.present,
       configValid: configStatus.valid,
       configErrors: configStatus.errors,
+      configSources: configStatus.fieldSources,
       baseBranch: configStatus.baseBranch,
       baseRemote: configStatus.baseRemote,
       labelsOk: labelStatus.ok,
@@ -459,21 +460,25 @@ class DoctorDiagnosticsBuilder {
     }
   }
 
-  private async checkConfig(): Promise<{ present: boolean; valid: boolean; configPath?: string; configDisplayPath: string; baseBranch?: string; baseRemote?: string; note?: string; errors?: ValidationError[] }> {
+  private async checkConfig(): Promise<{ present: boolean; valid: boolean; configPath?: string; configDisplayPath: string; baseBranch?: string; baseRemote?: string; note?: string; errors?: ValidationError[]; fieldSources?: Readonly<Record<string, string>> }> {
     const repoRoot = this.getRepoRoot();
     if (!repoRoot) return { present: false, valid: true, configDisplayPath: 'selected Executor config', note: 'Not inside a git repository' };
     const configPath = selectConfigPath(repoRoot);
     const configDisplay = displayConfigPath(repoRoot, configPath);
-    const present = existsSync(configPath);
-    if (!present) return { present: false, valid: true, configPath, configDisplayPath: configDisplay, note: `No ${configDisplay} — using built-in defaults` };
-    try {
-      const validation = validateConfig(JSON.parse(await readFile(configPath, 'utf8')));
-      if (validation.ok && validation.config) return { present: true, valid: true, configPath, configDisplayPath: configDisplay, baseBranch: validation.config.baseBranch, baseRemote: validation.config.baseRemote };
-      return { present: true, valid: false, configPath, configDisplayPath: configDisplay, errors: validation.errors, note: `${configDisplay} has ${validation.errors.length} validation error(s)` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { present: true, valid: false, configPath, configDisplayPath: configDisplay, note: `Failed to read or parse ${configDisplay}: ${message}. Fix JSON syntax or file permissions, then rerun \`aie doctor --json\`.` };
-    }
+    const repositoryPresent = existsSync(configPath);
+    const loaded = await loadConfigFile(repoRoot);
+    if (!loaded.ok) return { present: loaded.present, valid: false, configPath, configDisplayPath: configDisplay, errors: loaded.errors, note: `Effective Executor config has ${loaded.errors.length} validation error(s)`, fieldSources: loaded.fieldSources };
+    if (!loaded.config) return { present: false, valid: true, configPath, configDisplayPath: configDisplay, note: `No ${configDisplay} or user-global config — using built-in defaults`, fieldSources: loaded.fieldSources };
+    return {
+      present: loaded.present,
+      valid: true,
+      configPath,
+      configDisplayPath: configDisplay,
+      baseBranch: loaded.config.baseBranch,
+      baseRemote: loaded.config.baseRemote,
+      note: repositoryPresent ? undefined : 'Repository config is absent; effective settings come from user-global config and defaults.',
+      fieldSources: loaded.fieldSources,
+    };
   }
 
   private async checkLabels(config?: Config): Promise<{ ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError?: string }> {

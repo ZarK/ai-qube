@@ -7,7 +7,7 @@ const { tmpdir } = require('node:os');
 const { join, posix: pathPosix } = require('node:path');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
-const { configToFileShape, getDefaults } = require('../dist/config/index.js');
+const { configToFileShape, getDefaults, userConfigPath } = require('../dist/config/index.js');
 const { renderAgentInstructions } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
 const { renderManagedSection } = require('../dist/managed_file.js');
@@ -58,6 +58,55 @@ function opencodeCommandPath(name) {
 }
 
 describe('init service', () => {
+  it('keeps repository config absent when a complete user-global setup supplies the effective values', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-home-${process.pid}-${Date.now()}`);
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(userConfigPath(home), `${JSON.stringify(cleanConfig(), null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo, homeDirectory: home });
+
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.equal(result.actions.find(action => action.id === 'config').operation, 'unchanged');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+  });
+
+  it('stores one repository leaf when it differs from complete user-global setup', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-override-home-${process.pid}-${Date.now()}`);
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    const global = cleanConfig();
+    global.policy.audit.manualUiAudit = false;
+    writeFileSync(userConfigPath(home), `${JSON.stringify(global, null, 2)}\n`);
+
+    const result = await runInit({
+      target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo, homeDirectory: home,
+      policy: { manualUiAudit: true },
+    });
+
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.deepEqual(JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8')), {
+      version: 1,
+      policy: { audit: { manualUiAudit: true } },
+    });
+  });
+
+  it('removes a full repository config when every leaf equals explicit user-global setup', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-compact-home-${process.pid}-${Date.now()}`);
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    const global = cleanConfig();
+    writeFileSync(userConfigPath(home), `${JSON.stringify(global, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(global, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo, homeDirectory: home });
+
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.equal(result.actions.find(action => action.id === 'config').operation, 'remove');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube', 'aie')), true);
+  });
+
   it('plans against an explicit prospective repository root without writing Git or managed files', async () => {
     const target = join(tmpdir(), `aie-prospective-${process.pid}-${Date.now()}`);
     mkdirSync(target, { recursive: true });
@@ -333,7 +382,7 @@ describe('init service', () => {
     assert.equal(second.actions.every(action => action.status === 'skipped'), true);
   });
 
-  it('blocks unknown config fields unless force replaces with current shape', async () => {
+  it('blocks unknown config fields without rewriting them under force', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify({ version: 1, customPolicy: { keep: true } }, null, 2)}\n`);
 
@@ -343,10 +392,10 @@ describe('init service', () => {
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
 
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /customPolicy/);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
-    assert.equal(config.customPolicy, undefined);
-    assert.deepEqual(config.policy.labels.statuses, ['S-Ready', 'S-InProgress', 'S-Blocked', 'S-Blocking']);
+    assert.deepEqual(config.customPolicy, { keep: true });
   });
 
   it('normalizes partial current config files to full provider and policy shape', async () => {
@@ -377,7 +426,7 @@ describe('init service', () => {
     assert.equal(written.policy.supplyChain.pinCiActions, true);
   });
 
-  it('replaces old flat safety toggles under force instead of migrating unreleased shapes', async () => {
+  it('blocks old flat safety toggles under force without rewriting the invalid layer', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify({
       version: 1,
@@ -387,12 +436,11 @@ describe('init service', () => {
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
 
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /promptInjectionWarning/);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
-    assert.equal(config.promptInjectionWarning, undefined);
-    assert.equal(config.noCreditWarning, undefined);
-    assert.equal(config.policy.instructions.promptInjectionWarning, true);
-    assert.equal(config.policy.instructions.noCreditWarning, true);
+    assert.equal(config.promptInjectionWarning, false);
+    assert.equal(config.noCreditWarning, false);
   });
 
   it('preserves valid existing config values during forced init updates', async () => {
@@ -1198,14 +1246,17 @@ describe('init service', () => {
     assert.equal(second.actions.find(action => action.path === 'AGENTS.md').status, 'skipped');
   });
 
-  it('labels forced malformed config rewrites as config updates', async () => {
+  it('does not rewrite malformed repository config when force is supplied', async () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, '.qube/aie/config.json'), '{broken');
+    const configPath = join(repo, '.qube/aie/config.json');
+    writeFileSync(configPath, '{broken');
 
     const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: true, cwd: repo });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.actions.find(action => action.path === join('.qube', 'aie', 'config.json')).operation, 'update-config');
+    assert.equal(result.ok, false);
+    assert.equal(result.actions.find(action => action.path === join('.qube', 'aie', 'config.json')).operation, 'blocked');
+    assert.match(result.errors.join('\n'), /Invalid repository config.*fix the file, then rerun the command/iu);
+    assert.equal(readFileSync(configPath, 'utf8'), '{broken');
   });
 
   it('preserves requested policy summaries in blocked init plans', async () => {

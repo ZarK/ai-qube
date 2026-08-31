@@ -25,7 +25,7 @@ export { createAgentAssetPlan, writeAgentAssetFiles } from "./agent_assets.js";
 export type { AgentAssetFile, AgentAssetKind } from "./agent_assets.js";
 export { synthesizeAutoresearchArena } from "./arena.js";
 export type { AutoresearchSynthesisInput } from "./arena.js";
-export { defaultAibConfig, loadAibConfig, mergeAibConfig, parseAibConfig } from "./config.js";
+export { AIB_MACHINE_CONFIG_FILENAME, AIB_REPOSITORY_CONFIG_FILENAME, AIB_USER_CONFIG_PATH, AibConfigLayerError, defaultAibConfig, loadAibConfig, mergeAibConfig, parseAibConfig } from "./config.js";
 export type { AibAgentHost, AibConfig, AibPrivacyMode, AibProviderKind, LoadedAibConfig } from "./config.js";
 export { createInitPlan } from "./init.js";
 export type { InitPlan } from "./init.js";

@@ -1,4 +1,4 @@
-import { lstat, mkdir, writeFile } from "node:fs/promises";
+import { lstat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -6,6 +6,7 @@ import {
   type AiqProgressState,
   type AiqStageId,
   type AiqStageMetadata,
+  type AiqConfigFile,
   aiqConfigFileNames,
   aiqProgressFileName,
   aiqProgressStageIndexes,
@@ -22,11 +23,12 @@ import {
   saveAiqProgress,
 } from "./files.js";
 
-export type AiqSetupFileOperation = "create" | "skip" | "update";
+export type AiqSetupFileOperation = "create" | "remove" | "skip" | "update";
 export type AiqSetupSelectionMode = "cumulative" | "exact";
 
 export interface AiqSetupOptions {
   cwd?: string;
+  homeDirectory?: string;
   dryRun?: boolean;
   stages?: readonly AiqStageId[];
 }
@@ -39,6 +41,7 @@ export interface AiqSetupFileAction {
 
 export interface AiqSetupConfigAction extends AiqSetupFileAction {
   custom: boolean;
+  value?: AiqConfigFile;
 }
 
 export interface AiqSetupProgressAction extends AiqSetupFileAction {
@@ -59,6 +62,7 @@ export interface AiqSetupPlan {
   repoRoot: string;
   selection: AiqSetupSelection;
   stageMetadata: readonly AiqStageMetadata[];
+  homeDirectory?: string;
 }
 
 export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSetupPlan> {
@@ -72,7 +76,7 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
   const progressPath = existingProgressPath ?? path.join(repoRoot, aiqProgressFileName);
   await assertSafeSetupFiles(repoRoot, [configPath, progressPath]);
   const [loadedConfig, loadedProgress] = await Promise.all([
-    loadAiqConfig(cwd),
+    loadAiqConfig(cwd, options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory }),
     loadAiqProgress(cwd),
   ]);
   await assertSafeSetupFiles(repoRoot, [configPath, progressPath]);
@@ -88,9 +92,17 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
       : isCumulativeSelection(desiredProgress, resolvedStages)
         ? "cumulative"
         : "exact";
-  const configCustom =
-    loadedConfig.config !== undefined &&
-    Object.keys(loadedConfig.config).some((key) => key !== "version");
+  const projectedConfig = loadedConfig.config === undefined
+    ? undefined
+    : projectAiqRepositoryConfig(loadedConfig.config, loadedConfig.userGlobalConfig);
+  const configCustom = projectedConfig !== undefined && Object.keys(projectedConfig).some((key) => key !== "version");
+  const configOperation = existingConfigPath === undefined
+    ? "skip"
+    : projectedConfig !== undefined && Object.keys(projectedConfig).length === 1
+      ? "remove"
+      : JSON.stringify(projectedConfig) === JSON.stringify(loadedConfig.config)
+        ? "skip"
+        : "update";
   const progressOperation =
     existingProgressPath === undefined
       ? "create"
@@ -101,14 +113,19 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
   return {
     config: {
       custom: configCustom,
-      operation: existingConfigPath === undefined ? "create" : "skip",
+      operation: configOperation,
       path: configPath,
       reason:
         existingConfigPath === undefined
-          ? "The repository does not have AIQ config."
+          ? "Effective user-global settings and defaults require no repository config."
+          : configOperation === "remove"
+            ? "The repository config has no value that differs from explicit user-global settings."
+            : configOperation === "update"
+              ? "Redundant repository values will be removed while effective choices stay unchanged."
           : configCustom
             ? "The existing valid custom config is preserved."
             : "The existing valid config is preserved.",
+      ...(projectedConfig === undefined ? {} : { value: projectedConfig }),
     },
     dryRun: options.dryRun === true,
     ok: true,
@@ -130,6 +147,7 @@ export async function planAiqSetup(options: AiqSetupOptions = {}): Promise<AiqSe
       resolvedStages,
     },
     stageMetadata: aiqStageMetadata,
+    ...(options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory }),
   };
 }
 
@@ -140,21 +158,49 @@ export async function applyAiqSetupPlan(plan: AiqSetupPlan): Promise<AiqSetupPla
 
   const refreshed = await planAiqSetup({
     cwd: plan.repoRoot,
+    ...(plan.homeDirectory === undefined ? {} : { homeDirectory: plan.homeDirectory }),
     ...(plan.selection.requestedStages.length === 0
       ? {}
       : { stages: plan.selection.requestedStages }),
   });
   await assertSafeSetupFiles(refreshed.repoRoot, [refreshed.config.path, refreshed.progress.path]);
-  if (refreshed.config.operation === "create") {
-    await mkdir(path.dirname(refreshed.config.path), { recursive: true });
-    await assertSafeSetupFile(refreshed.repoRoot, refreshed.config.path);
-    await writeFile(refreshed.config.path, `${JSON.stringify({ version: 1 }, null, 2)}\n`, "utf8");
+  if (refreshed.config.operation === "remove") {
+    await unlink(refreshed.config.path);
+  } else if (refreshed.config.operation === "update" && refreshed.config.value !== undefined) {
+    await writeFile(refreshed.config.path, `${JSON.stringify(refreshed.config.value, null, 2)}\n`, "utf8");
   }
   if (refreshed.progress.operation !== "skip") {
     await assertSafeSetupFile(refreshed.repoRoot, refreshed.progress.path);
     await saveAiqProgress(refreshed.progress.path, refreshed.progress.value);
   }
   return refreshed;
+}
+
+function projectAiqRepositoryConfig(
+  repository: AiqConfigFile,
+  userGlobal: AiqConfigFile | undefined,
+): AiqConfigFile {
+  const projected = projectDifferences(repository, userGlobal ?? {}, "") as Record<string, unknown> | undefined;
+  return { version: 1, ...(projected ?? {}) } as AiqConfigFile;
+}
+
+function projectDifferences(desired: unknown, baseline: unknown, fieldPath: string): unknown {
+  if (Array.isArray(desired)) {
+    return baseline !== undefined && JSON.stringify(desired) === JSON.stringify(baseline) ? undefined : [...desired];
+  }
+  if (desired === null || typeof desired !== "object") {
+    return baseline !== undefined && Object.is(desired, baseline) ? undefined : desired;
+  }
+  const desiredRecord = desired as Record<string, unknown>;
+  const baselineRecord = baseline !== null && typeof baseline === "object" && !Array.isArray(baseline)
+    ? baseline as Record<string, unknown>
+    : {};
+  const projected = Object.fromEntries(Object.entries(desiredRecord).flatMap(([key, value]) => {
+    if (fieldPath === "" && (key === "version" || key === "$schema")) return [];
+    const difference = projectDifferences(value, baselineRecord[key], fieldPath === "" ? key : `${fieldPath}.${key}`);
+    return difference === undefined ? [] : [[key, difference]];
+  }));
+  return Object.keys(projected).length === 0 ? undefined : projected;
 }
 
 function normalizeRequestedStages(stages: readonly AiqStageId[]): AiqStageId[] {

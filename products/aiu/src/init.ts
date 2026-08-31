@@ -1,10 +1,13 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+
+import { readInitLayerContext } from "@tjalve/qube-core";
 
 import {
   AIU_CONFIG_FILENAME,
   AIU_HOSTS,
   type AiuConfig,
+  type AiuConfigLoadResult,
   type AiuHost,
   type AiuPostIssueScope,
   getDefaultAiuConfig,
@@ -40,10 +43,11 @@ export const AIU_INIT_TOOLS = [
 ] as const;
 
 export type AiuInitTool = (typeof AIU_INIT_TOOLS)[number];
-export type AiuInitFileOperation = "create" | "update" | "skip" | "conflict";
+export type AiuInitFileOperation = "create" | "update" | "remove" | "skip" | "conflict";
 
 export interface AiuInitOptions {
   readonly cwd?: string;
+  readonly homeDirectory?: string;
   readonly tool?: AiuInitTool;
   readonly postIssueScope?: AiuPostIssueScope;
   readonly dryRun?: boolean;
@@ -57,6 +61,7 @@ export interface AiuInitPlan {
   readonly dryRun: boolean;
   readonly force: boolean;
   readonly repoRoot: string;
+  readonly homeDirectory?: string;
   readonly configPath: string;
   readonly postIssueScope: AiuPostIssueScope;
   readonly tools: readonly AiuHost[];
@@ -103,7 +108,10 @@ export interface AiuInitConflict {
 }
 
 export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
-  const configLoad = loadAiuConfig({ cwd: options.cwd });
+  const configLoad = loadAiuConfig({
+    cwd: options.cwd,
+    ...(options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory }),
+  });
   const repoRoot = configLoad.repoRoot;
   const rootIdentity = captureInitRootIdentity(repoRoot);
   const tool = options.tool ?? "all";
@@ -113,7 +121,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
   const force = options.force === true;
   const hostProfiles = getAiuHostCapabilityProfiles(tools);
   const files = hostProfiles.flatMap((profile) => profile.managedFiles.map((file) => planFile(repoRoot, file, force)));
-  const config = planConfig(repoRoot, configLoad.selectedPath, configLoad.config, tools, postIssueScope);
+  const config = planConfig(repoRoot, configLoad, tools, postIssueScope);
   const configError = !configLoad.ok
     ? configLoad.diagnostics.find((diagnostic) => diagnostic.severity === "error")
     : undefined;
@@ -156,6 +164,7 @@ export function planAiuInit(options: AiuInitOptions = {}): AiuInitPlan {
     dryRun,
     force,
     repoRoot,
+    ...(options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory }),
     configPath: configLoad.selectedPath,
     postIssueScope,
     tools: Object.freeze(tools),
@@ -187,6 +196,7 @@ export function applyAiuInitPlan(plan: AiuInitPlan): AiuInitPlan {
 
   const refreshed = planAiuInit({
     cwd: plan.repoRoot,
+    ...(plan.homeDirectory === undefined ? {} : { homeDirectory: plan.homeDirectory }),
     tool: toolForPlan(plan.tools),
     postIssueScope: plan.postIssueScope,
     force: plan.force,
@@ -214,6 +224,18 @@ export function applyAiuInitPlan(plan: AiuInitPlan): AiuInitPlan {
   }
 
   for (const file of [...validated.files, validated.config]) {
+    if (file.operation === "remove") {
+      try {
+        unlinkSync(file.absolutePath);
+      } catch (error) {
+        return initWriteConflictPlan(
+          validated,
+          file.absolutePath,
+          `Managed destination could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      continue;
+    }
     if (file.operation === "create" || file.operation === "update") {
       try {
         mkdirSync(path.dirname(file.absolutePath), { recursive: true });
@@ -386,6 +408,7 @@ export function formatInitPlan(plan: AiuInitPlan): string {
     "",
     formatFileGroup("Created", plan, "create"),
     formatFileGroup("Updated", plan, "update"),
+    formatFileGroup("Removed", plan, "remove"),
     formatFileGroup("Skipped", plan, "skip"),
     formatFileGroup("Conflicts", plan, "conflict"),
     "Config changes:",
@@ -431,17 +454,27 @@ function planFile(repoRoot: string, file: AiuManagedHostFile, force: boolean): A
 
 function planConfig(
   repoRoot: string,
-  configPath: string,
-  loadedConfig: AiuConfig,
+  configLoad: AiuConfigLoadResult,
   tools: readonly AiuHost[],
   postIssueScope: AiuPostIssueScope,
 ): AiuInitConfigAction {
+  const configPath = configLoad.layers?.repositoryPath ?? configLoad.selectedPath;
   const relativePath = path.relative(repoRoot, configPath) || AIU_CONFIG_FILENAME;
   const existing = readExistingText(configPath);
   const existingRaw = existing.exists && existing.content !== undefined ? parseJsonObject(existing.content) : { ok: true, value: {} };
-  const mergedConfig = mergeConfig(loadedConfig, existingRaw.ok ? existingRaw.value : {}, tools, postIssueScope);
-  const content = stableJson(mergedConfig);
-  const planned = classifyConfigWrite(existing, existingRaw, content);
+  const mergedConfig = mergeConfig(configLoad.repositoryBaseConfig ?? configLoad.config, existingRaw.ok ? existingRaw.value : {}, tools, postIssueScope);
+  const parentLayerContext = readInitLayerContext();
+  const parentRepositoryFields = parentLayerContext?.repository ? Object.keys(parentLayerContext.repository).filter((field) => field !== "version") : [];
+  const umpireRepositoryFields = parentRepositoryFields.filter((field) => field === "hosts" || field === "umpire");
+  const inheritComposerBaseline = parentLayerContext?.selectedScope === "repository"
+    && parentLayerContext.baseline !== null
+    && umpireRepositoryFields.length === 0;
+  const userGlobalBaseline = inheritComposerBaseline
+    ? mergedConfig
+    : configLoad.userGlobalBaseConfig ?? getDefaultAiuConfig();
+  const sparseConfig = projectSparseConfig(mergedConfig, userGlobalBaseline);
+  const content = stableJson(sparseConfig);
+  const planned = classifyConfigWrite(existing, existingRaw, content, Object.keys(sparseConfig).length === 1);
 
   return Object.freeze({
     relativePath,
@@ -745,8 +778,10 @@ function classifyConfigWrite(
   existing: ExistingText,
   existingRaw: ReturnType<typeof parseJsonObject>,
   desired: string,
+  empty: boolean,
 ): { readonly operation: AiuInitFileOperation; readonly reason: string } {
   if (!existing.exists) {
+    if (empty) return { operation: "skip", reason: "Effective user-global settings require no repository override." };
     return { operation: "create", reason: reasonForOperation("create") };
   }
   if (existing.error !== undefined) {
@@ -754,6 +789,9 @@ function classifyConfigWrite(
   }
   if (!existingRaw.ok) {
     return { operation: "conflict", reason: "Existing config is not valid JSON." };
+  }
+  if (empty) {
+    return { operation: "remove", reason: "The repository config contains no value that differs from user-global settings." };
   }
   if (stableJson(existingRaw.value) === desired) {
     return { operation: "skip", reason: reasonForOperation("skip") };
@@ -765,7 +803,48 @@ function reasonForOperation(operation: AiuInitFileOperation): string {
   if (operation === "create") return "Managed file does not exist yet.";
   if (operation === "update") return "Existing managed file differs and --force was provided.";
   if (operation === "skip") return "Existing managed file already matches the planned content.";
+  if (operation === "remove") return "The repository override is empty.";
   return "Existing file differs; preserving it unless --force is provided.";
+}
+
+function projectSparseConfig(
+  desired: Record<string, unknown>,
+  userGlobal: AiuConfig | Record<string, unknown>,
+): Record<string, unknown> {
+  const differences = projectDifferences(desired, JSON.parse(JSON.stringify(userGlobal)) as Record<string, unknown>);
+  return {
+    version: 1,
+    ...(isRecord(differences) ? differences : {}),
+  };
+}
+
+function projectDifferences(desired: unknown, baseline: unknown, fieldPath = ""): unknown {
+  if (Array.isArray(desired)) {
+    const setLike = fieldPath === "hosts.enabled"
+      || fieldPath === "continuation.modes"
+      || /^hosts\.modes\.[^.]+$/u.test(fieldPath);
+    const normalizedDesired = setLike ? [...desired].sort(compareUnknown) : desired;
+    const normalizedBaseline = setLike && Array.isArray(baseline) ? [...baseline].sort(compareUnknown) : baseline;
+    return JSON.stringify(normalizedDesired) === JSON.stringify(normalizedBaseline) ? undefined : desired;
+  }
+  if (!isRecord(desired)) {
+    return Object.is(desired, baseline) ? undefined : desired;
+  }
+  const baselineRecord = isRecord(baseline) ? baseline : {};
+  const projected = Object.fromEntries(
+    Object.entries(desired).flatMap(([key, value]) => {
+      if (key === "version") return [];
+      const childPath = fieldPath === "" ? key : `${fieldPath}.${key}`;
+      if (["planning.enabled", "quality.enabled", "whip.enabled", "whip.usePackageDefaults"].includes(childPath)) return [];
+      const difference = projectDifferences(value, baselineRecord[key], childPath);
+      return difference === undefined ? [] : [[key, difference]];
+    }),
+  );
+  return Object.keys(projected).length === 0 ? undefined : projected;
+}
+
+function compareUnknown(left: unknown, right: unknown): number {
+  return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }
 
 function formatFileGroup(title: string, plan: AiuInitPlan, operation: AiuInitFileOperation): string {

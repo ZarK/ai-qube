@@ -102,6 +102,8 @@ export interface AiuDoctorReport {
     readonly found: boolean;
     readonly valid: boolean;
     readonly defaultsUsed: boolean;
+    readonly sources?: Readonly<Record<string, string>>;
+    readonly layers?: AiuConfigLoadResult["layers"];
   };
   readonly paths: AiuResolvedPaths;
   readonly hostProbes: readonly AiuHostContinuationProbe[];
@@ -232,6 +234,8 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
       found: configLoad.found,
       valid: configLoad.ok,
       defaultsUsed: configLoad.defaultsUsed,
+      ...(configLoad.sources === undefined ? {} : { sources: configLoad.sources }),
+      ...(configLoad.layers === undefined ? {} : { layers: configLoad.layers }),
     },
     paths,
     hostProbes,

@@ -1,3 +1,5 @@
+import type { QubeInitFieldPlan } from "./init_config.js";
+
 export interface PublicInitAnswer {
   readonly id: string;
   readonly label: string;
@@ -17,11 +19,29 @@ export interface InitHarnessPrompt {
   readonly makeItSo: string;
 }
 
+export interface InitQuestionOutputOptions {
+  readonly step: number;
+  readonly label: string;
+  readonly explanation: string;
+  readonly userGlobal: string;
+  readonly repository: string;
+  readonly effective: string;
+  readonly source: string;
+  readonly recommendation: string;
+  readonly reason: string;
+  readonly docsUrl: string;
+}
+
 export interface InitOutputOptions {
   readonly scope: "global" | "repository";
   readonly mode: "plan" | "apply";
   readonly changed: boolean;
   readonly answers: readonly PublicInitAnswer[];
+  readonly configuration?: {
+    readonly scope: "repository";
+    readonly action: "edit" | "inherit" | "inherit-all";
+    readonly fields: readonly QubeInitFieldPlan[];
+  };
   readonly primaryHarness?: InitHarnessPrompt;
   readonly pendingNextActions?: readonly string[];
   readonly reviewPublisherReadiness?: InitPublisherReadiness;
@@ -65,6 +85,7 @@ export function renderInitOutput(options: InitOutputOptions): string {
     && !options.changed
     && (options.pendingNextActions?.length ?? 0) === 0
     && (!options.reviewPublisherReadiness || options.reviewPublisherReadiness.state === "ready")
+    && !options.configuration
   ) {
     return `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization is already current.\n`;
   }
@@ -73,9 +94,55 @@ export function renderInitOutput(options: InitOutputOptions): string {
     `${options.scope === "global" ? "Global" : "Repository"} QUBE initialization ${options.mode === "plan" ? "plan is ready" : "is complete"}.`,
     `Mode: ${options.mode}.`,
     `Persistent values changed: ${options.changed ? "yes" : "no"}.`,
-    "",
-    "Choices:",
   ];
+
+  if (options.configuration) {
+    const userGlobalFound = options.configuration.fields.some(field => field.userGlobal.present);
+    const repositoryOverrides = options.configuration.fields.filter(field => field.repository.present).length;
+    const requiresRepositorySetup = options.configuration.fields.some(field => (
+      !field.userGlobal.present
+      && field.planned.source === "repository"
+      && field.planned.repositoryAction === "add"
+    ));
+    const sourceCounts = new Map<string, number>();
+    for (const field of options.configuration.fields) {
+      sourceCounts.set(field.planned.source, (sourceCounts.get(field.planned.source) ?? 0) + 1);
+    }
+    lines.push(
+      "",
+      "Setup scope: This repository",
+      `User-global setup: ${userGlobalFound ? "Found" : "Not found"}`,
+      `Repository overrides: ${repositoryOverrides}`,
+      `Effective sources: ${[...sourceCounts.entries()].map(([source, count]) => `${count} ${source}`).join(", ")}`,
+      "",
+      "User-global setup is inherited automatically.",
+      "This repository stores only differences.",
+      "",
+      "Available actions:",
+      requiresRepositorySetup
+        ? "- Complete repository setup (recommended)."
+        : repositoryOverrides === 0
+          ? "- Use user-global setup (recommended)."
+          : "- Keep effective setup (recommended).",
+      "- Review or customize this repository with the guided setup or selection options.",
+      ...(repositoryOverrides > 0 ? ["- Inherit all user-global settings with `qube init --inherit-all`."] : []),
+      "",
+      `Configuration action: ${options.configuration.action}`,
+      "Configuration fields:",
+    );
+    for (const field of options.configuration.fields) {
+      lines.push(
+        `- ${field.id}`,
+        `  User-global: ${field.userGlobal.present ? formatInitValue(field.userGlobal.value) : "—"}`,
+        `  Repository: ${field.repository.present ? formatInitValue(field.repository.value) : "—"}`,
+        `  Effective: ${formatInitValue(field.planned.effectiveValue)}`,
+        `  Source: ${formatInitSource(field.planned.source, field.planned.derivedFrom)}`,
+        `  Plan: ${field.planned.repositoryAction}`,
+      );
+    }
+  }
+
+  lines.push("", "Choices:");
 
   for (const answer of options.answers) {
     lines.push(`- ${answer.label}: ${answer.value}`);
@@ -105,6 +172,33 @@ export function renderInitOutput(options: InitOutputOptions): string {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+export function renderInitQuestion(options: InitQuestionOutputOptions): string {
+  return [
+    "",
+    `${options.step}. ${options.label}`,
+    options.explanation,
+    `User-global: ${options.userGlobal}`,
+    `Repository: ${options.repository}`,
+    `Effective: ${options.effective}`,
+    `Source: ${options.source}`,
+    `Recommended: ${options.recommendation}`,
+    `Reason: ${options.reason}`,
+    `Documentation: ${options.docsUrl}`,
+    "",
+  ].join("\n");
+}
+
+function formatInitValue(value: unknown): string {
+  if (Array.isArray(value)) return value.length === 0 ? "none" : value.join(", ");
+  if (value === undefined) return "not set";
+  return String(value);
+}
+
+function formatInitSource(source: string, derivedFrom: readonly string[] | undefined): string {
+  if (source === "derived") return `derived${derivedFrom && derivedFrom.length > 0 ? ` from ${derivedFrom.join(", ")}` : ""}`;
+  return source;
 }
 
 export function renderInitFailure(options: InitFailureOptions): string {

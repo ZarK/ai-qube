@@ -1,4 +1,5 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import {
@@ -17,6 +18,7 @@ import type {
   AiqStageId,
   AiqWorkflowStage,
   InitializedAiqProjectConfig,
+  LoadAiqConfigOptions,
   LoadedAiqConfig,
   LoadedAiqProgress,
 } from "./definitions.js";
@@ -24,14 +26,17 @@ import { validateAiqConfigFile, validateAiqProgressState } from "./validation.js
 
 export async function findAiqConfigFile(startDir: string): Promise<string | undefined> {
   let currentDir = path.resolve(startDir);
+  const userGlobalPath = path.join(resolveAiqHome(), ".qube", "aiq", "config.json");
 
   while (true) {
     for (const relativePath of aiqConfigFileNames) {
       const candidate = path.join(currentDir, relativePath);
-      if (await pathExists(candidate)) {
+      if (!samePath(candidate, userGlobalPath) && await pathExists(candidate)) {
         return candidate;
       }
     }
+
+    if (await pathExists(path.join(currentDir, ".git"))) return undefined;
 
     const nextDir = path.dirname(currentDir);
     if (nextDir === currentDir) {
@@ -73,26 +78,62 @@ export async function findAiqProjectRoot(startDir: string): Promise<string> {
     return projectRootFromKnownPath(configPath);
   }
 
+  let currentDir = path.resolve(startDir);
+  while (true) {
+    if (await pathExists(path.join(currentDir, ".git"))) return currentDir;
+    const nextDir = path.dirname(currentDir);
+    if (nextDir === currentDir) break;
+    currentDir = nextDir;
+  }
+
   return path.resolve(startDir);
 }
 
-export async function loadAiqConfig(cwd: string): Promise<LoadedAiqConfig> {
+export async function loadAiqConfig(cwd: string, options: LoadAiqConfigOptions = {}): Promise<LoadedAiqConfig> {
+  const repoRoot = await findAiqProjectRoot(cwd);
   const configPath = await findAiqConfigFile(cwd);
-  if (configPath === undefined) {
-    return {};
-  }
-
-  let rawValue: unknown;
-  try {
-    rawValue = JSON.parse(await readFile(configPath, "utf8"));
-  } catch (error) {
-    throw new Error(`Failed to parse ${configPath}: ${formatError(error)}`);
-  }
+  const userGlobalPath = path.join(resolveAiqHome(options.homeDirectory), ".qube", "aiq", "config.json");
+  const machineLocalPath = path.join(repoRoot, ".qube", "aiq", "config.local.json");
+  const [userGlobalConfig, repositoryConfig, machineLocalConfig] = await Promise.all([
+    readAiqConfigLayer(userGlobalPath, "user-global"),
+    configPath === undefined ? undefined : readAiqConfigLayer(configPath, "repository"),
+    readAiqConfigLayer(machineLocalPath, "machine-local"),
+  ]);
+  const effectivePath = machineLocalConfig !== undefined
+    ? machineLocalPath
+    : repositoryConfig !== undefined
+      ? configPath
+      : userGlobalConfig !== undefined
+        ? userGlobalPath
+        : undefined;
 
   return {
-    config: validateAiqConfigFile(rawValue, configPath),
-    path: configPath,
+    ...(repositoryConfig === undefined ? {} : { config: repositoryConfig }),
+    ...(configPath === undefined ? {} : { path: configPath }),
+    ...(userGlobalConfig === undefined ? {} : { userGlobalConfig }),
+    ...(machineLocalConfig === undefined ? {} : { machineLocalConfig }),
+    ...(effectivePath === undefined ? {} : { effectivePath }),
+    layers: {
+      userGlobalPath,
+      userGlobalFound: userGlobalConfig !== undefined,
+      repositoryPath: configPath ?? path.join(repoRoot, aiqConfigFileNames[0]),
+      repositoryFound: repositoryConfig !== undefined,
+      machineLocalPath,
+      machineLocalFound: machineLocalConfig !== undefined,
+    },
   };
+}
+
+async function readAiqConfigLayer(
+  filePath: string,
+  source: "machine-local" | "repository" | "user-global",
+): Promise<ReturnType<typeof validateAiqConfigFile> | undefined> {
+  if (!await pathExists(filePath)) return undefined;
+  try {
+    return validateAiqConfigFile(JSON.parse(await readFile(filePath, "utf8")), `${source} config ${filePath}`);
+  } catch (error) {
+    throw new Error(`Failed to parse or validate ${source} config ${filePath}: ${formatError(error)}`);
+  }
 }
 
 export async function loadAiqProgress(cwd: string): Promise<LoadedAiqProgress> {
@@ -232,10 +273,7 @@ export async function initializeAiqProjectConfig(
   const configPath = existingConfigPath ?? path.join(projectRoot, aiqConfigFileNames[0]);
   const progressPath = existingProgressPath ?? path.join(projectRoot, aiqProgressFileName);
 
-  if (existingConfigPath === undefined) {
-    await mkdir(path.dirname(configPath), { recursive: true });
-    await writeJsonFile(configPath, { version: 1 });
-  } else {
+  if (existingConfigPath !== undefined) {
     await loadAiqConfig(cwd);
   }
 
@@ -246,7 +284,7 @@ export async function initializeAiqProjectConfig(
   }
 
   return {
-    configCreated: existingConfigPath === undefined,
+    configCreated: false,
     configPath,
     progressCreated: existingProgressPath === undefined,
     progressPath,
@@ -294,4 +332,12 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function resolveAiqHome(homeDirectory?: string): string {
+  return path.resolve(homeDirectory ?? process.env.USERPROFILE ?? process.env.HOME ?? homedir());
+}
+
+function samePath(left: string, right: string): boolean {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }

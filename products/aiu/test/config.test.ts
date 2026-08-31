@@ -44,6 +44,66 @@ describe("config foundation", () => {
     assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
 
+  it("resolves user-global, repository, and machine-local leaves with stable sources", async () => {
+    const repoRoot = await createRepoRoot();
+    const userHome = await mkdtemp(path.join(tmpdir(), "aiu-home-"));
+    tempRoots.push(userHome);
+    await writeJson(path.join(userHome, ".qube", "aiu", "config.json"), {
+      version: 1,
+      timeouts: { commandMs: 11_000, hostMs: 4_000 },
+      cooldowns: { promptMs: 200_000 },
+    });
+    await writeConfig(repoRoot, { version: 1, timeouts: { hostMs: 7_000 } });
+    await writeJson(path.join(repoRoot, ".qube", "aiu", "config.local.json"), {
+      version: 1,
+      timeouts: { commandMs: 13_000 },
+    });
+
+    const result = loadAiuConfig({ cwd: repoRoot, homeDirectory: userHome });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.timeouts.commandMs, 13_000);
+    assert.equal(result.config.timeouts.hostMs, 7_000);
+    assert.equal(result.config.cooldowns.promptMs, 200_000);
+    assert.equal(result.sources?.["timeouts.commandMs"], "machine-local");
+    assert.equal(result.sources?.["timeouts.hostMs"], "repository");
+    assert.equal(result.sources?.["cooldowns.promptMs"], "user-global");
+    assert.equal(result.sources?.["continuation.stopOnUnknownState"], "default");
+    assert.equal(result.sources?.["quality.enabled"], "derived");
+    assert.deepEqual(result.derivedFrom?.["quality.enabled"], ["postIssueScope"]);
+  });
+
+  it("applies changed user-global values immediately without a repository override", async () => {
+    const repoRoot = await createRepoRoot();
+    const userHome = await mkdtemp(path.join(tmpdir(), "aiu-home-change-"));
+    tempRoots.push(userHome);
+    const globalPath = path.join(userHome, ".qube", "aiu", "config.json");
+    await writeJson(globalPath, { version: 1, cooldowns: { promptMs: 100_000 } });
+    assert.equal(loadAiuConfig({ cwd: repoRoot, homeDirectory: userHome }).config.cooldowns.promptMs, 100_000);
+
+    await writeJson(globalPath, { version: 1, cooldowns: { promptMs: 300_000 } });
+    const changed = loadAiuConfig({ cwd: repoRoot, homeDirectory: userHome });
+    assert.equal(changed.config.cooldowns.promptMs, 300_000);
+    assert.equal(changed.sources?.["cooldowns.promptMs"], "user-global");
+    assert.equal(changed.layers?.repositoryFound, false);
+  });
+
+  it("reports an invalid lower layer even when a repository value would hide it", async () => {
+    const repoRoot = await createRepoRoot();
+    const userHome = await mkdtemp(path.join(tmpdir(), "aiu-home-invalid-"));
+    tempRoots.push(userHome);
+    await writeJson(path.join(userHome, ".qube", "aiu", "config.json"), {
+      version: 1,
+      timeouts: { commandMs: "invalid" },
+    });
+    await writeConfig(repoRoot, { version: 1, timeouts: { commandMs: 5_000 } });
+
+    const result = loadAiuConfig({ cwd: repoRoot, homeDirectory: userHome });
+
+    assert.equal(result.ok, false);
+    assert.ok(result.diagnostics.some((item) => item.source === "user-global" && item.sourcePath?.endsWith("config.json") && item.path === "$.timeouts.commandMs"));
+  });
+
   it("loads valid config with argv trusted state descriptors", async () => {
     const repoRoot = await createRepoRoot();
     await writeConfig(repoRoot, {
@@ -298,7 +358,7 @@ describe("config foundation", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.selectedPath, path.join(repoRoot, ".qube", "aiu", "config.json"));
-    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.message.includes("Could not parse .qube/aiu/config.json")));
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.source === "repository" && diagnostic.sourcePath === result.selectedPath));
   });
 
   it("rejects config paths outside the repository without loading trusted commands", async () => {
@@ -529,6 +589,10 @@ async function createRepoRoot(): Promise<string> {
 
 async function writeConfig(repoRoot: string, config: unknown): Promise<void> {
   const configPath = path.join(repoRoot, ".qube", "aiu", "config.json");
+  await writeJson(configPath, config);
+}
+
+async function writeJson(configPath: string, config: unknown): Promise<void> {
   await mkdir(path.dirname(configPath), { recursive: true });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

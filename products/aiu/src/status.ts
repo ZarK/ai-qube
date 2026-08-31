@@ -32,6 +32,8 @@ export interface AiuStatusReport {
     readonly found: boolean;
     readonly valid: boolean;
     readonly defaultsUsed: boolean;
+    readonly sources?: Readonly<Record<string, string>>;
+    readonly layers?: AiuConfigLoadResult["layers"];
   };
   readonly inputEnvelopes: readonly AiuTrustedStateEnvelope[];
   readonly adapterRuns: readonly AiuStatusAdapterRun[];
@@ -163,6 +165,9 @@ export interface AiuStatusWarning {
 
 export async function runAiuStatus(options: AiuStatusOptions = {}): Promise<AiuStatusReport> {
   const configLoad = loadAiuConfig(resolveConfigOptions(options));
+  if (!configLoad.ok) {
+    return createAiuStatusReport(configLoad, []);
+  }
   const adapterResults: AiuTrustedStateAdapterResult[] = [];
 
   for (const [sourceId, descriptor] of Object.entries(configLoad.config.trustedStateCommands)) {
@@ -243,6 +248,8 @@ export function createAiuStatusReport(
       found: configLoad.found,
       valid: configLoad.ok,
       defaultsUsed: configLoad.defaultsUsed,
+      ...(configLoad.sources === undefined ? {} : { sources: configLoad.sources }),
+      ...(configLoad.layers === undefined ? {} : { layers: configLoad.layers }),
     }),
     inputEnvelopes: Object.freeze(inputEnvelopes),
     adapterRuns: Object.freeze(adapterResults.map(adapterRun)),

@@ -549,7 +549,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'repo prime',
-    description: 'Prepare repository labels, minimal config, and pre-start visibility for Executor issue execution. This command can mutate GitHub labels and local config.',
+    description: 'Prepare repository labels, sparse repository configuration, and pre-start visibility for Executor issue execution. This command can mutate GitHub labels and repository configuration.',
     args: [],
     flags: ['--json', '--dry-run', '--yes', '--help'],
     mutationTargets: ['github', 'local-files'],
