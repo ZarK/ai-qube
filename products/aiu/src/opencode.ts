@@ -1,22 +1,20 @@
 import { loadAiuConfig, type AiuConfig } from "./config.js";
 import {
-  acquireAiuContinuationLock,
   appendAiuContinuationLog,
-  buildAiuContinuationState,
-  continuationPromptIsDuplicate,
-  continuationPromptOwnedByOtherSession,
-  continuationPromptTargetsSameItem,
   createAiuTrustedStateFingerprint,
   createAiuDecisionId,
-  persistedLastPromptAt,
-  readAiuContinuationState,
-  releaseAiuContinuationLock,
   resolveAiuContinuationPaths,
   writeAiuHostActivation,
-  writeAiuContinuationState,
   type AiuContinuationPaths,
   type AiuContinuationState,
 } from "./continuation_store.js";
+import {
+  continuationSafetyCooldownActive,
+  markAiuContinuationDeliveryEmitted,
+  releaseAiuContinuationSafety,
+  reserveAiuContinuation,
+  startAiuContinuationSafety,
+} from "./continuation_safety.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
 import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./prompt.js";
 import {
@@ -206,7 +204,8 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
   }
 
   const host = buildAiuOpenCodeHostSession(decoded.event);
-  const paths = resolveAiuContinuationPaths(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
+  const repoRoot = normalizedContext.cwd ?? process.cwd();
+  const paths = resolveAiuContinuationPaths(repoRoot, normalizedContext.config);
   const activationSuppressions: string[] = normalizedContext.deliverPrompt === undefined ? ["host-delivery-unavailable"] : [];
   if (host.suppressions.length > 0) {
     return Object.freeze({
@@ -214,52 +213,28 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
       metadata: resultMetadata(event, host, 0, [], [...host.suppressions, ...activationSuppressions], paths),
     });
   }
-  let lock;
-  try {
-    lock = acquireAiuContinuationLock({
-      paths,
-      observedAt,
-      eventType: event.type,
-      ...(host.state.sessionId ? { sessionId: host.state.sessionId } : {}),
-      staleAfterMs: lockStaleAfterMs(normalizedContext.config),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  const safety = startAiuContinuationSafety({
+    repoRoot,
+    config: normalizedContext.config,
+    hostId: "opencode",
+    eventType: event.type,
+    observedAt,
+    ...(host.state.sessionId ? { sessionId: host.state.sessionId } : {}),
+    ...(host.state.selectedSessionId ? { targetSessionId: host.state.selectedSessionId } : {}),
+    nativeDelivery: false,
+    consumeEvidence: true,
+  });
+  if (!safety.ok) {
     return Object.freeze({
       handled: true,
-      metadata: resultMetadata(event, host, 0, [`continuation-lock: ${message}`], ["continuation-lock-unavailable", ...activationSuppressions], paths),
-    });
-  }
-  if (!lock.acquired) {
-    safeAppendContinuationLog(paths, {
-      event: "lock-contended",
-      observedAt,
-      eventType: event.type,
-      hostId: "opencode",
-      ...(host.state.sessionId ? { sessionId: host.state.sessionId } : {}),
-      ...(host.state.selectedSessionId ? { selectedSessionId: host.state.selectedSessionId } : {}),
-      suppressions: ["lock-held"],
-      message: lock.lock ? `Lock held since ${lock.lock.acquiredAt}.` : "Lock held.",
-    });
-    return Object.freeze({
-      handled: true,
-      metadata: resultMetadata(event, host, 0, [], ["lock-held", ...activationSuppressions], paths),
+      metadata: resultMetadata(event, host, 0, [], [safety.reason, ...activationSuppressions], safety.paths),
     });
   }
 
+  const transaction = safety.transaction;
   const start = Date.now();
   try {
-    const persisted = readAiuContinuationState(paths);
-    if (lock.staleRecovered) {
-      safeAppendContinuationLog(paths, {
-        event: "stale-lock-recovered",
-        observedAt,
-        eventType: event.type,
-        hostId: "opencode",
-        ...(host.state.sessionId ? { sessionId: host.state.sessionId } : {}),
-        ...(lock.staleLock ? { message: `Recovered stale lock ${lock.staleLock.ownerId} acquired at ${lock.staleLock.acquiredAt}.` } : {}),
-      });
-    }
+    const persisted = transaction.state;
     const { states, adapterErrors } = await collectTrustedStates(event, normalizedContext, host.state);
     const trustedStateWasRead = states.some((state) => state.sourceId !== "opencode") && adapterErrors.length === 0;
     const whipRead = readAiuWhipState(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
@@ -276,7 +251,9 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
         stopOnSupplyChainApprovalBlock: normalizedContext.config.continuation.stopOnSupplyChainApprovalBlock,
         planningEnabled: normalizedContext.config.planning.enabled,
         qualityEnabled: normalizedContext.config.quality.enabled,
-        cooldownActive: isCooldownActive(normalizedContext, persisted),
+        cooldownActive: normalizedContext.lastPromptAt
+          ? timestampWithinCooldown(normalizedContext.lastPromptAt, observedAt, normalizedContext.config.cooldowns.promptMs)
+          : continuationSafetyCooldownActive(transaction),
       },
       ...(whipDecision.enqueuesPrompt && whipDecision.task ? { whipTask: whipDecision.task } : {}),
       ...(normalizedContext.config.whip.enabled && whipRead.errors.length > 0 ? { whipStateError: { kind: "whip", sourceId: whipRead.path, status: "malformed" } } : {}),
@@ -299,15 +276,15 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
         decision,
         metadata: resultMetadata(event, host, states.length, adapterErrors, metadataSuppressions, paths, persisted, {
           decisionId: createAiuDecisionId({ observedAt, eventType: event.type, sessionId: host.state.sessionId, reasonCodes: decision.reasonCodes }),
-          staleLockRecovered: lock.staleRecovered,
+          staleLockRecovered: transaction.staleLockRecovered,
         }),
       });
     }
 
     const prompt = renderAiuContinuationPrompt({ decision, config: normalizedContext.config });
-    const promptSuppressions = promptPersistenceSuppressions(persisted, prompt, host.state.sessionId);
-    if (promptSuppressions.length > 0) {
-      const reportedSuppressions = [...promptSuppressions, ...activationSuppressions];
+    const reservation = reserveAiuContinuation(transaction, decision, prompt);
+    if (!reservation.ok) {
+      const reportedSuppressions = [reservation.reason, ...activationSuppressions];
       const logged = safeLogDecision(paths, {
         event,
         host,
@@ -326,7 +303,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
         metadata: resultMetadata(event, host, states.length, adapterErrors, metadataSuppressions, paths, persisted, {
           decisionId: createAiuDecisionId({ observedAt, eventType: event.type, sessionId: host.state.sessionId, promptFingerprint: prompt.fingerprint, reasonCodes: decision.reasonCodes }),
           promptFingerprint: prompt.fingerprint,
-          staleLockRecovered: lock.staleRecovered,
+          staleLockRecovered: transaction.staleLockRecovered,
         }),
       });
     }
@@ -334,20 +311,11 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     const delivery = await deliverAiuOpenCodePrompt(prompt, event, normalizedContext);
     const suppressions = delivery.delivered ? [...baseSuppressions] : [...baseSuppressions, delivery.reason ?? "prompt-delivery-failed"];
     if (delivery.delivered) {
+      const emitted = markAiuContinuationDeliveryEmitted(transaction);
+      if (!emitted.ok) suppressions.push(emitted.reason);
       if (trustedStateWasRead) {
         const activationSuppression = recordOpenCodeActivation(paths, observedAt, normalizedContext.config);
         if (activationSuppression) suppressions.push(activationSuppression);
-      }
-      try {
-        writeAiuContinuationState(paths, buildAiuContinuationState({
-          observedAt,
-          ...(host.state.sessionId ? { ownerSessionId: host.state.sessionId } : {}),
-          ...(delivery.targetSessionId ?? host.state.selectedSessionId ? { targetSessionId: delivery.targetSessionId ?? host.state.selectedSessionId } : {}),
-          decision,
-          prompt,
-        }));
-      } catch {
-        suppressions.push("continuation-state-write-failed");
       }
     }
     const logged = safeLogDecision(paths, {
@@ -372,11 +340,11 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
       metadata: resultMetadata(event, host, states.length, adapterErrors, suppressions, paths, persisted, {
         decisionId: createAiuDecisionId({ observedAt, eventType: event.type, sessionId: host.state.sessionId, promptFingerprint: prompt.fingerprint, reasonCodes: decision.reasonCodes }),
         promptFingerprint: prompt.fingerprint,
-        staleLockRecovered: lock.staleRecovered,
+        staleLockRecovered: transaction.staleLockRecovered,
       }),
     });
   } finally {
-    releaseAiuContinuationLock(paths, lock);
+    releaseAiuContinuationSafety(transaction);
   }
 }
 
@@ -550,18 +518,10 @@ function hostPolicySuppressions(config: AiuConfig | undefined, decisionKind: Aiu
   return Object.freeze([]);
 }
 
-function isCooldownActive(context: AiuOpenCodeResolvedContext, persisted: AiuContinuationState | undefined): boolean {
-  const lastPromptAt = context.lastPromptAt ?? persistedLastPromptAt(persisted);
-  if (!lastPromptAt) {
-    return false;
-  }
-  const lastPrompt = Date.parse(lastPromptAt);
-  const observedAt = Date.parse(context.observedAt ?? new Date().toISOString());
-  return Number.isFinite(lastPrompt) && Number.isFinite(observedAt) && observedAt - lastPrompt < context.config.cooldowns.promptMs;
-}
-
-function lockStaleAfterMs(config: AiuConfig): number {
-  return Math.max(config.timeouts.hostMs, 60_000);
+function timestampWithinCooldown(previousAt: string, observedAt: string, cooldownMs: number): boolean {
+  const previous = Date.parse(previousAt);
+  const current = Date.parse(observedAt);
+  return Number.isFinite(previous) && Number.isFinite(current) && current - previous < cooldownMs;
 }
 
 async function deliverAiuOpenCodePrompt(
@@ -642,24 +602,6 @@ function resultMetadata(
     ...(paths ? { statePath: paths.statePath, lockPath: paths.lockPath, logPath: paths.logPath } : {}),
     ...extras,
   });
-}
-
-function promptPersistenceSuppressions(
-  persisted: AiuContinuationState | undefined,
-  prompt: AiuContinuationPrompt,
-  sessionId: string | undefined,
-): readonly string[] {
-  const suppressions: string[] = [];
-  if (continuationPromptOwnedByOtherSession(persisted, sessionId)) {
-    suppressions.push("prompt-owned-by-other-session");
-  }
-  if (continuationPromptIsDuplicate(persisted, prompt)) {
-    suppressions.push("duplicate-prompt-fingerprint");
-  }
-  if (continuationPromptTargetsSameItem(persisted, prompt)) {
-    suppressions.push("duplicate-prompt-target");
-  }
-  return Object.freeze(suppressions);
 }
 
 function safeLogDecision(paths: AiuContinuationPaths, input: {

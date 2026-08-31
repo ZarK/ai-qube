@@ -114,7 +114,7 @@ export const grokBuildStopHookFile: GrokBuildStopHookFile = Object.freeze({
         {
           hooks: [
             {
-              command: "pnpm exec aiu hook-stop --tool grok-build",
+              command: "aiu hook-stop --tool grok-build",
               type: "command",
             },
           ],

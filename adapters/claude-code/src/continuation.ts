@@ -26,13 +26,14 @@ export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
 export const claudeCodeContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: claudeCodeContinuationDeclaration,
-  renderManagedAssets() {
-    return Object.freeze([Object.freeze({ ...settingsAsset, content: stableJson({ hooks: { Stop: [ownedStopGroup()] } }) })]);
+  renderManagedAssets(context) {
+    const command = `${context.commandPrefix ?? "aiu"} hook-stop --tool claude-code`;
+    return Object.freeze([Object.freeze({ ...settingsAsset, command, content: stableJson({ hooks: { Stop: [ownedStopGroup(context.commandPrefix)] } }) })]);
   },
   validateManagedAsset: validateClaudeAsset,
   mergeManagedAsset(assetId, existing, desired) {
     if (assetId !== settingsAsset.id) return failedUnknownAsset(assetId);
-    const current = validateClaudeAsset(assetId, existing);
+    const current = validateClaudeAsset(assetId, existing, desired);
     if (current.state === "malformed") return Object.freeze({ ok: false, reason: current.reason, validation: current });
     const parsed = parseJsonObject(existing);
     if (!parsed.ok) return Object.freeze({ ok: false, reason: current.reason, validation: current });
@@ -48,7 +49,13 @@ export const claudeCodeContinuationAdapter = defineContinuationAdapter({
       managedIndex ??= stopGroups.length;
       if (hooks.length > 0) stopGroups.push({ ...group, hooks });
     }
-    stopGroups.splice(managedIndex ?? stopGroups.length, 0, ownedStopGroup());
+    const desiredValue = parseJsonObject(desired.content);
+    const desiredGroups = desiredValue.ok && isRecord(desiredValue.value.hooks) && Array.isArray(desiredValue.value.hooks.Stop)
+      ? desiredValue.value.hooks.Stop
+      : [];
+    const desiredManagedGroup = desiredGroups.find((group) => isRecord(group) && Array.isArray(group.hooks) && group.hooks.some(isOwnedStopHook));
+    if (!desiredManagedGroup) return failedMalformed("Desired Claude Code Stop hook is missing.");
+    stopGroups.splice(managedIndex ?? stopGroups.length, 0, desiredManagedGroup);
     const content = stableJson({ ...parsed.value, hooks: { ...existingHooks, Stop: stopGroups } });
     return Object.freeze({ ok: true, content, changed: stableJson(parsed.value) !== content, validation: current });
   },
@@ -66,7 +73,7 @@ export const claudeCodeContinuationAdapter = defineContinuationAdapter({
   probe(input) { return probeContinuationSurface(claudeCodeContinuationDeclaration, input); },
 });
 
-function validateClaudeAsset(assetId: string, existing: string | undefined): ContinuationAssetValidation {
+function validateClaudeAsset(assetId: string, existing: string | undefined, desired: { readonly content: string }): ContinuationAssetValidation {
     if (assetId !== settingsAsset.id) return unknownAsset(assetId);
     if (existing === undefined) return validation("missing", "Managed host file is missing.");
     const parsed = parseJsonObject(existing);
@@ -79,7 +86,12 @@ function validateClaudeAsset(assetId: string, existing: string | undefined): Con
     if (!hooks.ok) return validation("malformed", hooks.error);
     if (hooks.values.length === 0) return validation("missing", "The managed Claude Code Stop hook is missing.");
     if (hooks.values.length > 1) return validation("duplicate", "Claude Code settings contain duplicate managed Stop hooks.");
-    return jsonEquals(hooks.values[0], ownedStopHook())
+    const desiredValue = parseJsonObject(desired.content);
+    const desiredHooks = desiredValue.ok && isRecord(desiredValue.value.hooks) && Array.isArray(desiredValue.value.hooks.Stop)
+      ? collectOwnedHooks(desiredValue.value.hooks.Stop)
+      : { ok: false as const, error: "Desired Claude Code Stop hook is malformed." };
+    if (!desiredHooks.ok || desiredHooks.values.length !== 1) return validation("malformed", desiredHooks.ok ? "Desired Claude Code Stop hook is missing." : desiredHooks.error);
+    return jsonEquals(hooks.values[0], desiredHooks.values[0])
       ? validation("current", "The managed Claude Code Stop hook is canonical.")
       : validation("conflicting", "The managed Claude Code Stop hook conflicts with package content.");
 }
@@ -95,9 +107,9 @@ function validateClaudePayload(input: Record<string, unknown>): string | undefin
   return undefined;
 }
 
-function ownedStopHook(): Record<string, unknown> { return { command: "pnpm exec aiu hook-stop --tool claude-code", type: "command" }; }
-function ownedStopGroup(): Record<string, unknown> { return { hooks: [ownedStopHook()] }; }
-function isOwnedStopHook(value: unknown): value is Record<string, unknown> { return isRecord(value) && typeof value.command === "string" && /(?:^|\s)aiu\s+hook-stop(?:\s|$)/.test(value.command); }
+function ownedStopHook(commandPrefix?: string): Record<string, unknown> { return { command: `${commandPrefix ?? "aiu"} hook-stop --tool claude-code`, type: "command" }; }
+function ownedStopGroup(commandPrefix?: string): Record<string, unknown> { return { hooks: [ownedStopHook(commandPrefix)] }; }
+function isOwnedStopHook(value: unknown): value is Record<string, unknown> { return isRecord(value) && typeof value.command === "string" && /\baiu(?:\.(?:cmd|exe))?["']?\s+hook-stop\b/i.test(value.command); }
 function collectOwnedHooks(groups: unknown[]): { readonly ok: true; readonly values: Record<string, unknown>[] } | { readonly ok: false; readonly error: string } { const values: Record<string, unknown>[] = []; for (const group of groups) { if (!isRecord(group) || !Array.isArray(group.hooks) || group.hooks.some((hook) => !isRecord(hook))) return { ok: false, error: "Claude Code Stop hook groups and hooks must use JSON object and array shapes." }; values.push(...group.hooks.filter(isOwnedStopHook)); } return { ok: true, values }; }
 function malformed(error: string) { return Object.freeze({ ok: false as const, code: "malformed-event" as const, error }); }
 function validation(state: ContinuationAssetValidation["state"], reason: string): ContinuationAssetValidation { return Object.freeze({ state, reason }); }

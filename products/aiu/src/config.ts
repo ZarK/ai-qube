@@ -62,11 +62,13 @@ export interface AiuContinuationPolicy {
   readonly allowProviderMutation: boolean;
   readonly allowBackgroundScheduling: boolean;
   readonly trustUnstructuredProse: boolean;
+  readonly nativeLoopLimit: number;
 }
 
 export interface AiuTimeoutsConfig {
   readonly commandMs: number;
   readonly hostMs: number;
+  readonly hookMs: number;
 }
 
 export interface AiuCooldownsConfig {
@@ -175,10 +177,12 @@ const DEFAULT_CONFIG: AiuConfig = Object.freeze({
     allowProviderMutation: false,
     allowBackgroundScheduling: false,
     trustUnstructuredProse: false,
+    nativeLoopLimit: 3,
   }),
   timeouts: Object.freeze({
     commandMs: 30_000,
     hostMs: 5_000,
+    hookMs: 4_000,
   }),
   cooldowns: Object.freeze({
     promptMs: 600_000,
@@ -804,6 +808,7 @@ function normalizeContinuation(value: unknown, diagnostics: AiuConfigDiagnostic[
     allowProviderMutation: normalizeBoolean(value.allowProviderMutation, DEFAULT_CONFIG.continuation.allowProviderMutation, "$.continuation.allowProviderMutation", diagnostics),
     allowBackgroundScheduling: normalizeBoolean(value.allowBackgroundScheduling, DEFAULT_CONFIG.continuation.allowBackgroundScheduling, "$.continuation.allowBackgroundScheduling", diagnostics),
     trustUnstructuredProse: normalizeBoolean(value.trustUnstructuredProse, DEFAULT_CONFIG.continuation.trustUnstructuredProse, "$.continuation.trustUnstructuredProse", diagnostics),
+    nativeLoopLimit: normalizeDuration(value.nativeLoopLimit, DEFAULT_CONFIG.continuation.nativeLoopLimit, "$.continuation.nativeLoopLimit", diagnostics),
   });
 }
 
@@ -816,7 +821,8 @@ function normalizeTimeouts(value: unknown, diagnostics: AiuConfigDiagnostic[]): 
   }
   const commandMs = normalizeDuration(value.commandMs, DEFAULT_CONFIG.timeouts.commandMs, "$.timeouts.commandMs", diagnostics);
   const hostMs = normalizeDuration(value.hostMs, DEFAULT_CONFIG.timeouts.hostMs, "$.timeouts.hostMs", diagnostics);
-  return Object.freeze({ commandMs, hostMs });
+  const hookMs = normalizeDuration(value.hookMs, DEFAULT_CONFIG.timeouts.hookMs, "$.timeouts.hookMs", diagnostics);
+  return Object.freeze({ commandMs, hostMs, hookMs });
 }
 
 function normalizeCooldowns(value: unknown, diagnostics: AiuConfigDiagnostic[]): AiuCooldownsConfig {

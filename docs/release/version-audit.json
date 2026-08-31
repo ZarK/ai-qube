@@ -224,7 +224,7 @@
         "0.2.7",
         "0.2.8"
       ],
-      "selectedVersion": "0.2.10"
+      "selectedVersion": "0.2.11"
     },
     {
       "name": "@tjalve/aiu",
@@ -282,7 +282,7 @@
         "0.2.10",
         "0.2.11"
       ],
-      "selectedVersion": "0.2.13"
+      "selectedVersion": "0.2.14"
     }
   ]
 }

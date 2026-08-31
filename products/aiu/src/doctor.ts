@@ -466,7 +466,7 @@ function checkStatePaths(paths: AiuResolvedPaths): readonly AiuDoctorCheck[] {
 }
 
 function checkHostFiles(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
-  return getAiuHostCapabilityProfiles(configLoad.config.hosts.enabled).flatMap((profile) =>
+  return getAiuHostCapabilityProfiles(configLoad.config.hosts.enabled, configLoad.repoRoot).flatMap((profile) =>
     profile.managedFiles.map((file) => {
       const absolutePath = path.join(configLoad.repoRoot, file.relativePath);
       if (!existsSync(absolutePath)) {
@@ -493,10 +493,10 @@ function checkHostFiles(configLoad: AiuConfigLoadResult): readonly AiuDoctorChec
 }
 
 function checkHostEntrypoints(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
-  return getAiuHostCapabilityProfiles(configLoad.config.hosts.enabled).flatMap((profile) =>
+  return getAiuHostCapabilityProfiles(configLoad.config.hosts.enabled, configLoad.repoRoot).flatMap((profile) =>
     profile.managedFiles.flatMap((file) => {
       if (file.role !== "entrypoint") return [];
-      const expectedMarker = packageBackedEntrypointMarker(file.content);
+      const expectedMarker = file.command ?? packageBackedEntrypointMarker(file.content);
       if (!expectedMarker) {
         return [];
       }
@@ -526,7 +526,7 @@ function checkHostEntrypoints(configLoad: AiuConfigLoadResult): readonly AiuDoct
 function packageBackedEntrypointMarker(content: string): string | undefined {
   const packageImport = content.match(/@tjalve\/aiu\/opencode/u)?.[0];
   if (packageImport) return packageImport;
-  return content.match(/pnpm exec aiu hook-stop --tool [a-z-]+/u)?.[0];
+  return content.match(/[^"'\r\n]*\baiu(?:\.(?:cmd|exe))?["']?\s+hook-stop\s+--tool\s+[a-z-]+/iu)?.[0]?.trim();
 }
 
 function checkHostNativeProbes(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
@@ -555,7 +555,7 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
   const continuationPaths = resolveAiuContinuationPaths(configLoad.repoRoot, configLoad.config);
   const runtimePolicy = evaluateAiuHostRuntimePolicy(configLoad.config.hosts, configLoad.config.continuation.modes);
   return Object.freeze(AIU_HOSTS.map((host) => {
-    const profile = getAiuHostCapabilityProfile(host);
+    const profile = getAiuHostCapabilityProfile(host, configLoad.repoRoot);
     const configured = configLoad.config.hosts.enabled.includes(host);
     const delivery = profile.capabilities.promptDelivery.delivery ?? "none";
     const activationPath = resolveAiuHostActivationPath(continuationPaths, host);

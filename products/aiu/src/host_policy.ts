@@ -5,6 +5,7 @@ import { AGENT_HOST_CAPABILITY_PROFILES, AGENT_HOST_CAPABILITY_SUPPORT, type Age
 import type { AiuContinuationMode, AiuHost, AiuHostCapabilityName, AiuHostsConfig } from "./config.js";
 import { AIU_CONTINUATION_HOSTS, getAiuContinuationAdapter, getAiuRuntimeHostProfile } from "./continuation_adapters.js";
 import { getAiuPackageVersion } from "./package_metadata.js";
+import { resolveAiuHookCommand } from "./hook_command.js";
 
 export const AIU_HOST_SUPPORT_LEVELS = AGENT_HOST_CAPABILITY_SUPPORT;
 export const AIU_HOST_CAPABILITY_SUPPORT = ["supported", "experimental", "disabled", "unsupported", "unknown"] as const;
@@ -75,7 +76,7 @@ const HOST_MODE_REQUIREMENTS: Readonly<Record<AiuContinuationMode, readonly AiuH
   stop: Object.freeze([] satisfies AiuHostCapabilityName[]),
 });
 
-function buildHostProfile(tool: AiuHost, declared: AgentHostCapabilityProfile, runtime: AgentHostProfile): AiuHostCapabilityProfile {
+function buildHostProfile(tool: AiuHost, declared: AgentHostCapabilityProfile, runtime: AgentHostProfile, repoRoot?: string): AiuHostCapabilityProfile {
   const continuation = getAiuContinuationAdapter(tool);
   const stopHook = declared.capabilities["continuation-stop-hook"];
   const idleEvent = declared.capabilities["continuation-idle-event"];
@@ -117,17 +118,20 @@ function buildHostProfile(tool: AiuHost, declared: AgentHostCapabilityProfile, r
         ? `AI Umpire init enables ${declared.displayName} Stop-hook blocking. An explicit false value disables blocking.`
         : `${declared.displayName} continuation uses host delivery rather than a blocking Stop hook.`,
     }),
-    managedFiles: Object.freeze(continuation.renderManagedAssets({ packageVersions: { "@tjalve/aiu": getAiuPackageVersion() } }).map((file) => Object.freeze({ ...file, relativePath: file.relativePath.split("/").join(path.sep), host: tool }))),
+    managedFiles: Object.freeze(continuation.renderManagedAssets({
+      packageVersions: { "@tjalve/aiu": getAiuPackageVersion() },
+      ...(repoRoot && usesStopHook ? { commandPrefix: resolveAiuHookCommand(repoRoot).commandPrefix } : {}),
+    }).map((file) => Object.freeze({ ...file, relativePath: file.relativePath.split("/").join(path.sep), host: tool }))),
     trustSteps: Object.freeze(runtime.trust.actions.map((action) => action.description)),
   });
 }
 
-export function getAiuHostCapabilityProfile(tool: AiuHost): AiuHostCapabilityProfile {
-  return buildHostProfile(tool, AGENT_HOST_CAPABILITY_PROFILES[tool], getAiuRuntimeHostProfile(tool));
+export function getAiuHostCapabilityProfile(tool: AiuHost, repoRoot?: string): AiuHostCapabilityProfile {
+  return buildHostProfile(tool, AGENT_HOST_CAPABILITY_PROFILES[tool], getAiuRuntimeHostProfile(tool), repoRoot);
 }
 
-export function getAiuHostCapabilityProfiles(tools: readonly AiuHost[]): readonly AiuHostCapabilityProfile[] {
-  return Object.freeze(tools.map((tool) => getAiuHostCapabilityProfile(tool)));
+export function getAiuHostCapabilityProfiles(tools: readonly AiuHost[], repoRoot?: string): readonly AiuHostCapabilityProfile[] {
+  return Object.freeze(tools.map((tool) => getAiuHostCapabilityProfile(tool, repoRoot)));
 }
 
 export function getAllAiuHostCapabilityProfiles(): readonly AiuHostCapabilityProfile[] {

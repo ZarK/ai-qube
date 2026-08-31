@@ -1183,6 +1183,9 @@ describe("qube composer CLI", () => {
         umpire: supports["umpire-continuation"],
         models: supports["live-models"],
       }, expected.support, host);
+      assert.equal(componentRow.continuationSafety.applicable, expected.support.umpire !== "unsupported", host);
+      assert.equal(componentRow.continuationSafety.state, expected.support.umpire === "unsupported" ? "not-applicable" : "shared-persistent", host);
+      assert.deepEqual(componentRow.continuationSafety.deliveryStates, expected.support.umpire === "unsupported" ? [] : ["reserved", "emitted", "consumed"], host);
 
     }
   });
@@ -2993,6 +2996,15 @@ describe("qube init orchestrator", () => {
     assert.equal(initialized.status, 0, initialized.stderr);
     mkdirSync(path.join(target, "packages", "app"), { recursive: true });
     createInitShims(packageRoot, {
+      aiu: {
+        plan: {
+          ok: true,
+          command: "init",
+          init: {
+            files: [{ operation: "create", relativePath: "plugins/ai-umpire/hooks/hooks.json", command: "npm exec -- aiu hook-stop --tool codex", content: "omitted" }],
+          },
+        },
+      },
       aiq: {
         plan: {
           ok: true,
@@ -3064,6 +3076,8 @@ describe("qube init orchestrator", () => {
     );
     assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build");
     assert.equal(optionValue(rows.get("aiu").args, "--post-issue-scope"), "ready");
+    assert.equal(rows.get("aiu").actions[0].command, "npm exec -- aiu hook-stop --tool codex");
+    assert.equal(rows.get("aiu").actions[0].content, undefined);
     const calls = readInitCalls(packageRoot);
     assert.equal(calls.length, 4);
     assert.ok(calls.every(call => call.layerContext?.selectedScope === "repository"));

@@ -49,10 +49,12 @@ export interface ContinuationDeclaration {
 
 export interface ContinuationRenderedAsset extends ContinuationManagedAssetDeclaration {
   readonly content: string;
+  readonly command?: string;
 }
 
 export interface ContinuationRenderContext {
   readonly packageVersions: Readonly<Record<string, string>>;
+  readonly commandPrefix?: string;
 }
 
 export interface ContinuationAssetValidation {

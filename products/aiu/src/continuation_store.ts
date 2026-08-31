@@ -25,7 +25,10 @@ export interface AiuHostActivation {
 }
 
 export interface AiuContinuationState {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
+  readonly deliveryState: "reserved" | "emitted" | "consumed";
+  readonly hostId: AiuHost;
+  readonly eventType: string;
   readonly ownerSessionId?: string;
   readonly targetSessionId?: string;
   readonly selectedItem?: AiuDecisionSelectedItem;
@@ -36,6 +39,7 @@ export interface AiuContinuationState {
   readonly pendingPromptFingerprint?: string;
   readonly lastPromptAt?: string;
   readonly pendingPromptAt?: string;
+  readonly nativeLoopCount: number;
   readonly updatedAt: string;
   readonly sourceSummaries: readonly AiuDecisionSourceSummary[];
 }
@@ -78,6 +82,8 @@ export interface AiuContinuationLogEntry {
   readonly reasonCodes?: readonly string[];
   readonly promptFingerprint?: string;
   readonly targetSessionId?: string;
+  readonly deliveryState?: AiuContinuationState["deliveryState"];
+  readonly nativeLoopCount?: number;
   readonly sourceSummaries?: readonly AiuDecisionSourceSummary[];
   readonly adapterErrors?: readonly string[];
   readonly suppressions?: readonly string[];
@@ -107,11 +113,30 @@ export function resolveAiuContinuationPaths(repoRoot: string, config: Pick<AiuCo
 }
 
 export function readAiuContinuationState(paths: Pick<AiuContinuationPaths, "statePath">): AiuContinuationState | undefined {
+  const result = inspectAiuContinuationState(paths);
+  return result.status === "ready" ? result.state : undefined;
+}
+
+export type AiuContinuationStateRead =
+  | Readonly<{ status: "ready"; state: AiuContinuationState }>
+  | Readonly<{ status: "missing" }>
+  | Readonly<{ status: "invalid"; reason: string }>;
+
+export function inspectAiuContinuationState(paths: Pick<AiuContinuationPaths, "statePath">): AiuContinuationStateRead {
   try {
     const parsed = JSON.parse(readFileSync(paths.statePath, "utf8")) as unknown;
-    return normalizeContinuationState(parsed);
-  } catch {
-    return undefined;
+    const state = normalizeContinuationState(parsed);
+    return state
+      ? Object.freeze({ status: "ready" as const, state })
+      : Object.freeze({ status: "invalid" as const, reason: "Continuation state does not match schema version 2." });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return Object.freeze({ status: "missing" as const });
+    }
+    return Object.freeze({
+      status: "invalid" as const,
+      reason: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -168,25 +193,59 @@ export function createAiuTrustedStateFingerprint(commands: AiuConfig["trustedSta
 
 export function buildAiuContinuationState(input: {
   readonly observedAt: string;
+  readonly hostId: AiuHost;
+  readonly eventType: string;
   readonly ownerSessionId?: string;
   readonly targetSessionId?: string;
   readonly decision: AiuContinuationDecision;
   readonly prompt: AiuContinuationPrompt;
+  readonly previous?: AiuContinuationState;
+  readonly nativeDelivery?: boolean;
 }): AiuContinuationState {
+  const nativeLoopCount = input.nativeDelivery === true
+    ? continuesNativeLoop(input.previous, input) ? input.previous!.nativeLoopCount + 1 : 1
+    : 0;
   return Object.freeze({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
+    deliveryState: "reserved" as const,
+    hostId: input.hostId,
+    eventType: input.eventType,
     ...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
     ...(input.targetSessionId ? { targetSessionId: input.targetSessionId } : {}),
     ...(input.decision.selectedItem ? { selectedItem: Object.freeze({ ...input.decision.selectedItem }) } : {}),
     mode: input.decision.selectedMode,
     decisionKind: input.decision.kind,
     reasonCodes: Object.freeze([...input.decision.reasonCodes]),
-    lastPromptFingerprint: input.prompt.fingerprint,
+    ...(input.previous?.lastPromptFingerprint ? { lastPromptFingerprint: input.previous.lastPromptFingerprint } : {}),
     pendingPromptFingerprint: input.prompt.fingerprint,
-    lastPromptAt: input.observedAt,
+    ...(input.previous?.lastPromptAt ? { lastPromptAt: input.previous.lastPromptAt } : {}),
     pendingPromptAt: input.observedAt,
+    nativeLoopCount,
     updatedAt: input.observedAt,
     sourceSummaries: Object.freeze(input.decision.sourceSummaries.map((source) => Object.freeze({ ...source }))),
+  });
+}
+
+export function markAiuContinuationEmitted(state: AiuContinuationState, observedAt: string): AiuContinuationState {
+  return Object.freeze({
+    ...state,
+    deliveryState: "emitted" as const,
+    ...(state.pendingPromptFingerprint ? { lastPromptFingerprint: state.pendingPromptFingerprint } : {}),
+    ...(state.pendingPromptAt ? { lastPromptAt: state.pendingPromptAt } : {}),
+    updatedAt: observedAt,
+  });
+}
+
+export function markAiuContinuationConsumed(state: AiuContinuationState, observedAt: string): AiuContinuationState {
+  const {
+    pendingPromptFingerprint: _pendingPromptFingerprint,
+    pendingPromptAt: _pendingPromptAt,
+    ...persisted
+  } = state;
+  return Object.freeze({
+    ...persisted,
+    deliveryState: "consumed" as const,
+    updatedAt: observedAt,
   });
 }
 
@@ -242,15 +301,23 @@ export function appendAiuContinuationLog(paths: Pick<AiuContinuationPaths, "logD
 }
 
 export function continuationPromptIsDuplicate(state: AiuContinuationState | undefined, prompt: AiuContinuationPrompt): boolean {
-  return state?.pendingPromptFingerprint === prompt.fingerprint || state?.lastPromptFingerprint === prompt.fingerprint;
+  return state?.lastPromptFingerprint === prompt.fingerprint
+    || (state?.deliveryState === "emitted" && state.pendingPromptFingerprint === prompt.fingerprint);
 }
 
 export function continuationPromptOwnedByOtherSession(state: AiuContinuationState | undefined, sessionId: string | undefined): boolean {
-  return Boolean(state?.pendingPromptFingerprint && state.ownerSessionId && sessionId && state.ownerSessionId !== sessionId);
+  return Boolean(state
+    && state.deliveryState === "emitted"
+    && state.pendingPromptFingerprint
+    && state.ownerSessionId
+    && sessionId
+    && state.ownerSessionId !== sessionId);
 }
 
 export function continuationPromptTargetsSameItem(state: AiuContinuationState | undefined, prompt: AiuContinuationPrompt): boolean {
-  if (!state?.pendingPromptFingerprint || !state.selectedItem || !prompt.selectedItem) {
+  const hasDeliveredPrompt = Boolean(state?.lastPromptFingerprint
+    || (state?.deliveryState === "emitted" && state.pendingPromptFingerprint));
+  if (!hasDeliveredPrompt || !state?.selectedItem || !prompt.selectedItem) {
     return false;
   }
   return state.mode === prompt.decisionKind
@@ -259,8 +326,19 @@ export function continuationPromptTargetsSameItem(state: AiuContinuationState | 
     && state.selectedItem.sourceId === prompt.selectedItem.sourceId;
 }
 
+export function continuationTargetsSession(
+  state: AiuContinuationState | undefined,
+  targetSessionId: string | undefined,
+): boolean {
+  return Boolean(state
+    && state.deliveryState === "emitted"
+    && state.pendingPromptFingerprint
+    && targetSessionId
+    && (state.targetSessionId ?? state.ownerSessionId) === targetSessionId);
+}
+
 export function persistedLastPromptAt(state: AiuContinuationState | undefined): string | undefined {
-  return state?.lastPromptAt ?? state?.pendingPromptAt;
+  return state?.lastPromptAt ?? (state?.deliveryState === "emitted" ? state.pendingPromptAt : undefined);
 }
 
 export function createAiuDecisionId(input: {
@@ -389,9 +467,28 @@ function boundLogEntry(entry: AiuContinuationLogEntry): string {
 }
 
 function normalizeContinuationState(value: unknown): AiuContinuationState | undefined {
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.updatedAt !== "string") return undefined;
+  if (!isRecord(value)
+    || value.schemaVersion !== 2
+    || (value.deliveryState !== "reserved" && value.deliveryState !== "emitted" && value.deliveryState !== "consumed")
+    || !isAiuHost(value.hostId)
+    || typeof value.eventType !== "string"
+    || typeof value.nativeLoopCount !== "number"
+    || !Number.isSafeInteger(value.nativeLoopCount)
+    || value.nativeLoopCount < 0
+    || typeof value.updatedAt !== "string"
+    || !Number.isFinite(Date.parse(value.updatedAt))
+    || !validOptionalFingerprint(value.lastPromptFingerprint)
+    || !validOptionalFingerprint(value.pendingPromptFingerprint)
+    || !validOptionalTimestamp(value.lastPromptAt)
+    || !validOptionalTimestamp(value.pendingPromptAt)
+    || ((value.deliveryState === "reserved" || value.deliveryState === "emitted")
+      && (typeof value.pendingPromptFingerprint !== "string" || typeof value.pendingPromptAt !== "string"))
+    || (value.deliveryState === "consumed" && (value.pendingPromptFingerprint !== undefined || value.pendingPromptAt !== undefined))) return undefined;
   return Object.freeze({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
+    deliveryState: value.deliveryState,
+    hostId: value.hostId,
+    eventType: value.eventType,
     ...(typeof value.ownerSessionId === "string" ? { ownerSessionId: value.ownerSessionId } : {}),
     ...(typeof value.targetSessionId === "string" ? { targetSessionId: value.targetSessionId } : {}),
     ...(isRecord(value.selectedItem) ? { selectedItem: Object.freeze({ ...value.selectedItem }) as unknown as AiuDecisionSelectedItem } : {}),
@@ -402,9 +499,42 @@ function normalizeContinuationState(value: unknown): AiuContinuationState | unde
     ...(typeof value.pendingPromptFingerprint === "string" ? { pendingPromptFingerprint: value.pendingPromptFingerprint } : {}),
     ...(typeof value.lastPromptAt === "string" ? { lastPromptAt: value.lastPromptAt } : {}),
     ...(typeof value.pendingPromptAt === "string" ? { pendingPromptAt: value.pendingPromptAt } : {}),
+    nativeLoopCount: value.nativeLoopCount,
     updatedAt: value.updatedAt,
     sourceSummaries: Object.freeze(Array.isArray(value.sourceSummaries) ? value.sourceSummaries.filter(isRecord).map((item) => Object.freeze({ ...item }) as unknown as AiuDecisionSourceSummary) : []),
   });
+}
+
+function validOptionalFingerprint(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^[a-f0-9]{64}$/u.test(value));
+}
+
+function validOptionalTimestamp(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && Number.isFinite(Date.parse(value)));
+}
+
+function isAiuHost(value: unknown): value is AiuHost {
+  return value === "opencode" || value === "codex" || value === "claude-code" || value === "grok-build";
+}
+
+function continuesNativeLoop(
+  previous: AiuContinuationState | undefined,
+  input: {
+    readonly ownerSessionId?: string;
+    readonly targetSessionId?: string;
+    readonly decision: AiuContinuationDecision;
+  },
+): boolean {
+  if (!previous || previous.deliveryState === "reserved" || previous.nativeLoopCount <= 0) return false;
+  const previousSession = previous.targetSessionId ?? previous.ownerSessionId;
+  const nextSession = input.targetSessionId ?? input.ownerSessionId;
+  if (!previousSession || previousSession !== nextSession) return false;
+  const previousItem = previous.selectedItem;
+  const nextItem = input.decision.selectedItem;
+  if (!previousItem || !nextItem) return previousItem === nextItem;
+  return previousItem.kind === nextItem.kind
+    && previousItem.id === nextItem.id
+    && previousItem.sourceId === nextItem.sourceId;
 }
 
 function normalizeContinuationLock(value: unknown): AiuContinuationLock | undefined {

@@ -259,6 +259,8 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.config?.policyFields?.includes("hosts.stopHookBlocking"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("planning.enabled"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("whip.enabled"));
+    assert.ok(parsed.sections?.config?.policyFields?.includes("continuation.nativeLoopLimit"));
+    assert.ok(parsed.sections?.config?.policyFields?.includes("timeouts.hookMs"));
     assert.deepEqual(parsed.sections?.config?.promptSectionKinds, ["work", "planning", "quality", "whip"]);
     assert.ok(parsed.sections?.config?.promptCustomizationFields?.includes("prompts.sections.whip"));
     assert.equal(parsed.sections?.trustedState?.schemaVersion, 1);
@@ -291,7 +293,9 @@ describe("metadata-backed CLI", () => {
     assert.deepEqual(parsed.sections?.hookStop?.outputKinds, ["allow", "block"]);
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("malformed-hook-input"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("trusted-state-load-failed"));
-    assert.equal(parsed.sections?.continuationState?.schemaVersion, 1);
+    assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("hook-deadline-exhausted"));
+    assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("native-loop-limit-exhausted"));
+    assert.equal(parsed.sections?.continuationState?.schemaVersion, 2);
     assert.deepEqual(parsed.sections?.continuationState?.files, {
       state: "continuation.json",
       lock: "continuation.lock",
@@ -299,6 +303,8 @@ describe("metadata-backed CLI", () => {
     });
     assert.ok(parsed.sections?.continuationState?.ownershipFields?.includes("ownerSessionId"));
     assert.ok(parsed.sections?.continuationState?.ownershipFields?.includes("pendingPromptFingerprint"));
+    assert.ok(parsed.sections?.continuationState?.ownershipFields?.includes("deliveryState"));
+    assert.ok(parsed.sections?.continuationState?.ownershipFields?.includes("nativeLoopCount"));
     assert.ok(parsed.sections?.continuationState?.lockFields?.includes("acquiredAt"));
     assert.ok(parsed.sections?.continuationState?.logFields?.includes("decisionId"));
     assert.ok(parsed.sections?.continuationState?.logFields?.includes("promptKind"));

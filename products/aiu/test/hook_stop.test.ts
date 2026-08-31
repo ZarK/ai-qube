@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getDefaultAiuConfig } from "../dist/src/config.js";
-import { readAiuHostActivation, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
+import { readAiuContinuationState, readAiuHostActivation, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
 import type * as HookStop from "../src/hook_stop.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +36,11 @@ describe("provider-neutral stop hooks", () => {
       assert.match("reason" in result.stdoutJson ? result.stdoutJson.reason : "", /Continue active work/);
       assert.equal(result.continuationDecision?.kind, "continue");
       assert.deepEqual(result.continuationDecision?.reasonCodes, ["continue-active-work"]);
+      const state = readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()));
+      assert.equal(state?.schemaVersion, 2);
+      assert.equal(state?.deliveryState, "emitted");
+      assert.equal(state?.ownerSessionId, "codex-session");
+      assert.equal(state?.nativeLoopCount, 1);
       const activation = readAiuHostActivation(resolveAiuContinuationPaths(target, getDefaultAiuConfig()), "codex");
       assert.equal(activation?.schemaVersion, 1);
       assert.equal(activation?.host, "codex");
@@ -45,6 +50,170 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(activation?.observedAt, observedAt);
     } finally {
       await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent Stop hooks and preserves the winning session owner", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const state = activeWorkState();
+    const target = await createRepo({
+      tool: "codex",
+      stopHookBlocking: true,
+      trustedCommand: [
+        process.execPath,
+        "-e",
+        `setTimeout(() => process.stdout.write(${JSON.stringify(JSON.stringify(state))}), 100)`,
+      ],
+    });
+    try {
+      const [first, second] = await Promise.all([
+        runAiuHookStop({ tool: "codex", cwd: target, observedAt, stdin: JSON.stringify(stopPayload(target, "session-a")) }),
+        runAiuHookStop({ tool: "codex", cwd: target, observedAt, stdin: JSON.stringify(stopPayload(target, "session-b")) }),
+      ]);
+      const decisions = [first, second].map((result) => result.decision).sort();
+      assert.deepEqual(decisions, ["allow", "block"]);
+      assert.ok([first.reason, second.reason].includes("lock-held"));
+      const persisted = readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()));
+      assert.equal(persisted?.deliveryState, "emitted");
+      assert.ok(["session-a", "session-b"].includes(persisted?.ownerSessionId ?? ""));
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a persisted reservation that was never emitted", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "codex", stopHookBlocking: true, trustedState: activeWorkState() });
+    try {
+      const paths = resolveAiuContinuationPaths(target, getDefaultAiuConfig());
+      const first = await runAiuHookStop({
+        tool: "codex", cwd: target, observedAt, stdin: JSON.stringify(stopPayload(target, "reserved-session")),
+      });
+      assert.equal(first.decision, "block");
+      const emitted = readAiuContinuationState(paths)!;
+      await writeFile(paths.statePath, `${JSON.stringify({
+        ...emitted,
+        deliveryState: "reserved",
+        lastPromptFingerprint: undefined,
+        lastPromptAt: undefined,
+      }, null, 2)}\n`, "utf8");
+
+      const recovered = await runAiuHookStop({
+        tool: "codex",
+        cwd: target,
+        observedAt: "2026-05-23T00:01:00.000Z",
+        stdin: JSON.stringify(stopPayload(target, "reserved-session")),
+      });
+
+      assert.equal(recovered.decision, "block");
+      assert.equal(readAiuContinuationState(paths)?.deliveryState, "emitted");
+      assert.match(await readFile(paths.logPath, "utf8"), /reservation-recovered/);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("suppresses restart duplicates, records later consumption evidence, and rejects competing sessions", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "claude-code", stopHookBlocking: true, trustedState: activeWorkState() });
+    try {
+      const first = await runAiuHookStop({
+        tool: "claude-code", cwd: target, observedAt, stdin: JSON.stringify(stopPayload(target, "owner-session")),
+      });
+      assert.equal(first.decision, "block");
+
+      const competing = await runAiuHookStop({
+        tool: "claude-code", cwd: target, observedAt: "2026-05-23T00:01:00.000Z", stdin: JSON.stringify(stopPayload(target, "other-session")),
+      });
+      assert.equal(competing.decision, "allow");
+      assert.equal(competing.reason, "prompt-owned-by-other-session");
+      assert.equal(readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()))?.deliveryState, "emitted");
+
+      const replay = await runAiuHookStop({
+        tool: "claude-code", cwd: target, observedAt: "2026-05-23T00:20:00.000Z", stdin: JSON.stringify(stopPayload(target, "owner-session")),
+      });
+      assert.equal(replay.decision, "allow");
+      assert.ok(["duplicate-prompt-target", "duplicate-prompt-fingerprint"].includes(replay.reason));
+      const consumed = readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()));
+      assert.equal(consumed?.deliveryState, "consumed");
+      assert.equal(consumed?.pendingPromptFingerprint, undefined);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces cooldowns, native loop limits, and the dedicated hook deadline", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const cooldownTarget = await createRepo({
+      tool: "codex", stopHookBlocking: true, trustedState: activeWorkState(), promptCooldownMs: 600_000,
+    });
+    const deadlineTarget = await createRepo({
+      tool: "codex",
+      stopHookBlocking: true,
+      trustedCommand: [process.execPath, "-e", "setTimeout(() => process.stdout.write('{}'), 1000)"],
+      hookMs: 150,
+      hostMs: 500,
+    });
+    try {
+      const first = await runAiuHookStop({ tool: "codex", cwd: cooldownTarget, observedAt, stdin: JSON.stringify(stopPayload(cooldownTarget, "loop-session")) });
+      assert.equal(first.decision, "block");
+      const cooldown = await runAiuHookStop({ tool: "codex", cwd: cooldownTarget, observedAt: "2026-05-23T00:01:00.000Z", stdin: JSON.stringify(stopPayload(cooldownTarget, "loop-session")) });
+      assert.equal(cooldown.decision, "allow");
+      assert.equal(cooldown.reason, "wait-cooldown-active");
+
+      const paths = resolveAiuContinuationPaths(cooldownTarget, getDefaultAiuConfig());
+      const current = readAiuContinuationState(paths)!;
+      await writeFile(paths.statePath, `${JSON.stringify({ ...current, deliveryState: "consumed", nativeLoopCount: 3, pendingPromptFingerprint: undefined, pendingPromptAt: undefined }, null, 2)}\n`, "utf8");
+      const exhausted = await runAiuHookStop({ tool: "codex", cwd: cooldownTarget, observedAt: "2026-05-23T00:20:00.000Z", stdin: JSON.stringify(stopPayload(cooldownTarget, "loop-session")) });
+      assert.equal(exhausted.decision, "allow");
+      const log = await readFile(paths.logPath, "utf8");
+      assert.match(log, /native-loop-limit-exhausted/);
+
+      const started = Date.now();
+      const deadline = await runAiuHookStop({ tool: "codex", cwd: deadlineTarget, stdin: JSON.stringify(stopPayload(deadlineTarget, "deadline-session")) });
+      assert.equal(deadline.decision, "allow");
+      assert.equal(deadline.reason, "hook-deadline-exhausted");
+      assert.ok(Date.now() - started < 750);
+    } finally {
+      await rm(cooldownTarget, { recursive: true, force: true });
+      await rm(deadlineTarget, { recursive: true, force: true });
+    }
+  });
+
+  it("fails safe on invalid state and keeps emitted state valid when logging or serialization fails", async () => {
+    const { formatHookStopJson, runAiuHookStop } = await loadHookStop();
+    const invalidTarget = await createRepo({ tool: "codex", stopHookBlocking: true, trustedState: activeWorkState() });
+    const logFailureTarget = await createRepo({ tool: "codex", stopHookBlocking: true, trustedState: activeWorkState() });
+    try {
+      const invalidPaths = resolveAiuContinuationPaths(invalidTarget, getDefaultAiuConfig());
+      await mkdir(invalidPaths.stateDir, { recursive: true });
+      await writeFile(invalidPaths.statePath, "{\"schemaVersion\":2,\"deliveryState\":\"emitted\"}\n", "utf8");
+      const invalid = await runAiuHookStop({ tool: "codex", cwd: invalidTarget, stdin: JSON.stringify(stopPayload(invalidTarget, "invalid-session")) });
+      assert.equal(invalid.decision, "allow");
+      assert.equal(invalid.reason, "continuation-state-invalid");
+      assert.equal(existsSync(invalidPaths.lockPath), false);
+
+      const logFailurePaths = resolveAiuContinuationPaths(logFailureTarget, getDefaultAiuConfig());
+      const configPath = path.join(logFailureTarget, ".qube", "aiu", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as { trustedStateCommands: { work: { argv: string[] } } };
+      config.trustedStateCommands.work.argv = [
+        process.execPath,
+        "-e",
+        `const fs=require("node:fs");fs.rmSync(${JSON.stringify(logFailurePaths.logDir)},{recursive:true,force:true});fs.writeFileSync(${JSON.stringify(logFailurePaths.logDir)},"not a directory");process.stdout.write(${JSON.stringify(JSON.stringify(activeWorkState()))})`,
+      ];
+      await writeFile(configPath, JSON.stringify(config), "utf8");
+      const emitted = await runAiuHookStop({ tool: "codex", cwd: logFailureTarget, stdin: JSON.stringify(stopPayload(logFailureTarget, "log-session")) });
+      assert.equal(emitted.decision, "block");
+      assert.equal(readAiuContinuationState(logFailurePaths)?.deliveryState, "emitted");
+      assert.equal(existsSync(logFailurePaths.lockPath), false);
+
+      const cyclic: { self?: unknown } = {};
+      cyclic.self = cyclic;
+      assert.throws(() => formatHookStopJson({ ...emitted, stdoutJson: cyclic as never }), /circular/i);
+      assert.equal(readAiuContinuationState(logFailurePaths)?.deliveryState, "emitted");
+    } finally {
+      await rm(invalidTarget, { recursive: true, force: true });
+      await rm(logFailureTarget, { recursive: true, force: true });
     }
   });
 
@@ -142,6 +311,16 @@ describe("provider-neutral stop hooks", () => {
 
       assert.equal(result.decision, "allow");
       assert.equal(result.reason, "session-end-stop");
+
+      const aborted = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify({ ...grokStopPayload(target, "grok-session"), reason: "abort" }),
+      });
+      assert.equal(aborted.decision, "allow");
+      assert.equal(aborted.reason, "session-end-stop");
+      assert.equal(readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig())), undefined);
     } finally {
       await rm(target, { recursive: true, force: true });
     }
@@ -219,7 +398,8 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(result.decision, "block");
       assert.equal("decision" in result.stdoutJson ? result.stdoutJson.decision : undefined, "block");
       assert.equal(result.diagnostics[0]?.code, "trusted-command-stderr");
-      assert.equal(result.diagnostics[0]?.message.length, 240);
+      assert.match(result.diagnostics[0]?.message ?? "", /output was omitted/);
+      assert.doesNotMatch(result.stderr, /x{20}/);
       assert.match(result.stderr, /trusted-command-stderr/);
       assert.doesNotMatch(JSON.stringify(result.stdoutJson), /trusted-command-stderr/);
     } finally {
@@ -452,6 +632,10 @@ async function createRepo(options: {
   readonly whipEnabled?: boolean;
   readonly postIssueScope?: "ready" | "standard" | "custom";
   readonly modes?: readonly ("continue" | "repair" | "stop")[];
+  readonly promptCooldownMs?: number;
+  readonly nativeLoopLimit?: number;
+  readonly hookMs?: number;
+  readonly hostMs?: number;
 }): Promise<string> {
   const target = await mkdtemp(path.join(tmpdir(), "aiu-hook-stop-"));
   await mkdir(path.join(target, ".git"));
@@ -483,6 +667,16 @@ async function createRepo(options: {
         timeoutMs: 1_000,
         maxOutputBytes: 16_384,
       },
+    },
+    continuation: {
+      nativeLoopLimit: options.nativeLoopLimit ?? 3,
+    },
+    cooldowns: {
+      promptMs: options.promptCooldownMs ?? 600_000,
+    },
+    timeouts: {
+      hookMs: options.hookMs ?? 4_000,
+      hostMs: options.hostMs ?? 5_000,
     },
     ...(options.whipEnabled === false ? { whip: { enabled: false } } : {}),
   }), "utf8");

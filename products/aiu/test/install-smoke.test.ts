@@ -88,15 +88,15 @@ describe("packed tarball install smoke", () => {
     assert.doesNotMatch(opencodeWrapper, /export default/);
     assert.match(
       await readFile(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json"), "utf8"),
-      /aiu hook-stop --tool codex/,
+      /aiu(?:\.cmd)? hook-stop --tool codex/,
     );
     assert.match(
       await readFile(path.join(target, ".claude", "settings.json"), "utf8"),
-      /aiu hook-stop --tool claude-code/,
+      /aiu(?:\.cmd)? hook-stop --tool claude-code/,
     );
     assert.match(
       await readFile(path.join(target, ".grok", "hooks", "ai-umpire.json"), "utf8"),
-      /aiu hook-stop --tool grok-build/,
+      /aiu(?:\.cmd)? hook-stop --tool grok-build/,
     );
 
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
