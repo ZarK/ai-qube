@@ -26,7 +26,9 @@ export async function handleLabelsSetup(
       roles: ['labels'],
       env: process.env,
     });
-    if (githubReadiness.status !== 'ready') return readinessFailure(context, dryRun, githubReadiness);
+    const githubConnectionUsable = githubReadiness.status === 'ready'
+      || (githubReadiness.status === 'unverified' && Boolean(githubReadiness.cliVersion && githubReadiness.host && githubReadiness.repository));
+    if (!githubConnectionUsable) return readinessFailure(context, dryRun, githubReadiness);
     const listResult = await runtime.runGh(['label', 'list', '--json', 'name,color,description', '--limit', '1000']);
     const plan = computeLabelPlan(parseGhLabelList(listResult.stdout), getDesiredLabels(config));
     const hadChanges = plan.created.length > 0 || plan.updated.length > 0;

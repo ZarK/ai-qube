@@ -148,7 +148,36 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
     }
   });
 
-  it('blocks label reads and writes when GitHub write permission is unverified', async () => {
+  it('allows label operations when only the online write capability remains unverified', async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      let ghCalls = 0;
+      let applyCalls = 0;
+      const result = await handleLabelsSetup(
+        { args: {}, flags: { json: true } },
+        {
+          loadConfig: async () => getDefaults(),
+          evaluateGitHubReadiness: async () => ({
+            status: 'unverified', reasonCode: 'unverified', summary: 'GitHub label write permission is unverified.',
+            nextAction: 'Confirm label write permission.', cliVersion: '2.99.0', host: 'github.com', repository: 'acme/widgets',
+            roles: ['labels'], capabilities: [], credentialSource: { kind: 'stored', name: 'gh credential store' },
+          }),
+          runGh: async () => { ghCalls += 1; return { stdout: '[]', stderr: '', exitCode: 0, args: [] }; },
+          applyLabelPlan: async () => { applyCalls += 1; },
+        },
+      );
+      const parsed = JSON.parse(result.jsonStdout);
+      assert.equal(parsed.ok, true);
+      assert.equal(parsed.githubReadiness.status, 'unverified');
+      assert.equal(parsed.applied, true);
+      assert.equal(ghCalls, 1);
+      assert.equal(applyCalls, 1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('blocks label reads and writes when offline readiness is unverified', async () => {
     const previousExitCode = process.exitCode;
     try {
       let ghCalls = 0;
