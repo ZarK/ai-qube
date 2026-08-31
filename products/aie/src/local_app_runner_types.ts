@@ -8,9 +8,15 @@ export interface AttemptLogPaths {
 }
 
 export interface RunMetadata {
-  version: 1;
+  version: 2;
   name: string;
   pid: number;
+  ownerPid: number;
+  ownerKind: 'direct' | 'windows-supervisor';
+  ownerToken: string | null;
+  supervisorPath: string | null;
+  launchManifestPath: string | null;
+  requiresDescendant: boolean;
   command: string[];
   cwd: string;
   startedAt: string;
@@ -28,6 +34,8 @@ export interface RunPaths {
   attemptId: string | null;
   stdoutPath: string;
   stderrPath: string;
+  launchManifestPath: string;
+  supervisorResultPath: string;
   historicalLogs: AttemptLogPaths[];
 }
 
@@ -41,6 +49,7 @@ export interface SpawnPlan {
   windowsVerbatimArguments: boolean;
   stdoutPath: string;
   stderrPath: string;
+  ownership: 'direct' | 'windows-supervisor';
 }
 
 export interface RunStartResult {

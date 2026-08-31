@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
 const http = require('node:http');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
@@ -28,6 +28,94 @@ function repo() {
 
 function binRun(args, cwd = process.cwd()) {
   return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
+}
+
+function writeCurrentRun(paths, root, command = [process.execPath]) {
+  writeFileSync(paths.currentAttemptPath, JSON.stringify({
+    version: 1,
+    attemptId: paths.attemptId,
+    stdoutPath: paths.stdoutPath,
+    stderrPath: paths.stderrPath,
+    startedAt: '2026-06-18T00:00:00.000Z',
+  }, null, 2));
+  writeFileSync(paths.metadataPath, JSON.stringify({
+    version: 2,
+    name: 'ui-audit',
+    pid: process.pid,
+    ownerPid: process.pid,
+    ownerKind: 'direct',
+    ownerToken: null,
+    supervisorPath: null,
+    launchManifestPath: null,
+    requiresDescendant: false,
+    command,
+    cwd: root,
+    startedAt: '2026-06-18T00:00:00.000Z',
+    platform: process.platform,
+    attemptId: paths.attemptId,
+    stdoutPath: paths.stdoutPath,
+    stderrPath: paths.stderrPath,
+    metadataPath: paths.metadataPath,
+  }, null, 2));
+}
+
+function windowsMetadata(overrides = {}) {
+  return {
+    version: 2,
+    name: 'ui-audit',
+    pid: 200,
+    ownerPid: 100,
+    ownerKind: 'windows-supervisor',
+    ownerToken: 'owner-token',
+    supervisorPath: 'C:\\qube\\local_app_runner_supervisor.js',
+    launchManifestPath: 'C:\\repo\\.qube\\launch.json',
+    requiresDescendant: true,
+    command: ['pnpm', 'dev'],
+    cwd: 'C:\\repo',
+    startedAt: '2026-06-18T00:00:00.000Z',
+    platform: 'win32',
+    attemptId: '20260618T000000000Z',
+    stdoutPath: 'C:\\repo\\stdout.log',
+    stderrPath: 'C:\\repo\\stderr.log',
+    metadataPath: 'C:\\repo\\metadata.json',
+    ...overrides,
+  };
+}
+
+function supervisorRecord(commandLine) {
+  return { pid: 100, parentPid: 50, name: 'node.exe', commandLine };
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function availablePort() {
+  const server = http.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen({ host: '127.0.0.1', port: 0 }, resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  await new Promise(resolve => server.close(resolve));
+  return address.port;
+}
+
+function windowsParentProcess(pid) {
+  const script = [
+    `$processValue = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"`,
+    '$parentValue = Get-CimInstance Win32_Process -Filter "ProcessId = $($processValue.ParentProcessId)"',
+    '[pscustomobject]@{ processId = [int]$processValue.ProcessId; parentId = [int]$processValue.ParentProcessId; parentName = [string]$parentValue.Name } | ConvertTo-Json -Compress',
+  ].join('; ');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
 }
 
 describe('local app runner service', () => {
@@ -72,6 +160,7 @@ describe('local app runner service', () => {
     assert.match(plan.args[3], /^".*pnpm\.cmd.*quoted ""arg"".*"$/i);
     assert.equal(plan.shell, false);
     assert.equal(plan.windowsVerbatimArguments, true);
+    assert.equal(plan.ownership, 'windows-supervisor');
   });
 
   it('wraps an explicit Windows launcher path through cmd.exe', async () => {
@@ -141,26 +230,7 @@ describe('local app runner service', () => {
 
     const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
-    writeFileSync(paths.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(paths.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      metadataPath: paths.metadataPath,
-    }, null, 2));
+    writeCurrentRun(paths, root);
     writeFileSync(paths.stdoutPath, 'ready-ish\n');
     const status = runStatus({ repoRoot: root, name: 'ui-audit' });
 
@@ -175,26 +245,7 @@ describe('local app runner service', () => {
     const root = repo();
     const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
-    writeFileSync(paths.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(paths.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: ['go'],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      metadataPath: paths.metadataPath,
-    }, null, 2));
+    writeCurrentRun(paths, root, ['go']);
 
     const status = runStatus({ repoRoot: root, name: 'ui-audit' });
 
@@ -228,26 +279,7 @@ describe('local app runner service', () => {
     const root = repo();
     const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
-    writeFileSync(paths.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(paths.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      metadataPath: paths.metadataPath,
-    }, null, 2));
+    writeCurrentRun(paths, root);
     writeFileSync(paths.stderrPath, 'port already in use\n');
 
     const result = await runWait({
@@ -315,26 +347,7 @@ describe('local app runner service', () => {
     mkdirSync(failed.directory, { recursive: true });
     writeFileSync(failed.stderrPath, 'spawn npm ENOENT\n');
     writeFileSync(succeeded.stdoutPath, 'listening on 5173\n');
-    writeFileSync(succeeded.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: succeeded.attemptId,
-      stdoutPath: succeeded.stdoutPath,
-      stderrPath: succeeded.stderrPath,
-      startedAt: '2026-06-18T00:00:01.000Z',
-    }, null, 2));
-    writeFileSync(succeeded.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:01.000Z',
-      platform: process.platform,
-      attemptId: succeeded.attemptId,
-      stdoutPath: succeeded.stdoutPath,
-      stderrPath: succeeded.stderrPath,
-      metadataPath: succeeded.metadataPath,
-    }, null, 2));
+    writeCurrentRun(succeeded, root);
 
     const status = runStatus({ repoRoot: root, name: 'ui-audit' });
     const wait = await runWait({
@@ -408,26 +421,7 @@ describe('local app runner service', () => {
     const current = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(current.directory, { recursive: true });
     writeFileSync(current.stdoutPath, 'listening on 5173\n');
-    writeFileSync(current.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: current.attemptId,
-      stdoutPath: current.stdoutPath,
-      stderrPath: current.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(current.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: current.attemptId,
-      stdoutPath: current.stdoutPath,
-      stderrPath: current.stderrPath,
-      metadataPath: current.metadataPath,
-    }, null, 2));
+    writeCurrentRun(current, root);
 
     const historic = runStatus({ repoRoot: root, name: 'ui-audit', attemptId: 'missing-attempt' });
     const currentStatus = runStatus({ repoRoot: root, name: 'ui-audit' });
@@ -505,26 +499,7 @@ describe('local app runner service', () => {
     const root = repo();
     const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
-    writeFileSync(paths.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(paths.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      metadataPath: paths.metadataPath,
-    }, null, 2));
+    writeCurrentRun(paths, root);
     const server = http.createServer((_request, response) => {
       response.writeHead(200);
       response.end('ok');
@@ -569,26 +544,7 @@ describe('local app runner service', () => {
     const root = repo();
     const paths = runPaths(root, 'ui-audit', '20260618T000000000Z');
     mkdirSync(paths.directory, { recursive: true });
-    writeFileSync(paths.currentAttemptPath, JSON.stringify({
-      version: 1,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      startedAt: '2026-06-18T00:00:00.000Z',
-    }, null, 2));
-    writeFileSync(paths.metadataPath, JSON.stringify({
-      version: 1,
-      name: 'ui-audit',
-      pid: process.pid,
-      command: [process.execPath],
-      cwd: root,
-      startedAt: '2026-06-18T00:00:00.000Z',
-      platform: process.platform,
-      attemptId: paths.attemptId,
-      stdoutPath: paths.stdoutPath,
-      stderrPath: paths.stderrPath,
-      metadataPath: paths.metadataPath,
-    }, null, 2));
+    writeCurrentRun(paths, root);
     const server = http.createServer((_request, response) => {
       response.writeHead(200);
       response.end('ok');
@@ -616,7 +572,149 @@ describe('local app runner service', () => {
   });
 });
 
+describe('Windows runner ownership and lifecycle', () => {
+  it('requires the supervisor token, root parent, and a real launcher descendant', async () => {
+    const { classifyWindowsProcessTree } = await import('../dist/local_app_runner_process.js');
+    const metadata = windowsMetadata();
+    const ownerCommand = `"${process.execPath}" "${metadata.supervisorPath}" --manifest "${metadata.launchManifestPath}" --token ${metadata.ownerToken}`;
+    const records = [
+      supervisorRecord(ownerCommand),
+      { pid: 200, parentPid: 100, name: 'cmd.exe', commandLine: 'cmd.exe /c pnpm.cmd dev' },
+      { pid: 201, parentPid: 200, name: 'conhost.exe', commandLine: null },
+      { pid: 202, parentPid: 200, name: 'node.exe', commandLine: 'node app.mjs' },
+    ];
+
+    const identity = classifyWindowsProcessTree(metadata, records);
+
+    assert.equal(identity.state, 'running');
+    assert.deepEqual(identity.ownedPids, [100, 200, 201, 202]);
+  });
+
+  it('reports an early supervised Windows app exit without leaving live metadata', { skip: process.platform !== 'win32' }, async () => {
+    const { runStart, runStatus } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const result = await runStart({
+      repoRoot: root,
+      name: 'early-exit',
+      command: [process.execPath, '-e', 'process.exit(7)'],
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'stopped');
+    assert.match(result.error ?? '', /exited.*code 7/i);
+    assert.equal(runStatus({ repoRoot: root, name: 'early-exit' }).status, 'missing');
+  });
+
+  it('bounds readiness for a live supervised Windows app that never becomes ready', { skip: process.platform !== 'win32' }, async () => {
+    const { runStart, runStop, runWait } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const started = await runStart({
+      repoRoot: root,
+      name: 'never-ready',
+      command: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+    });
+    try {
+      assert.equal(started.ok, true, started.error);
+      const waitStarted = Date.now();
+      const result = await runWait({
+        repoRoot: root,
+        name: 'never-ready',
+        url: 'http://127.0.0.1:1',
+        timeoutSeconds: 1,
+        pollIntervalMs: 100,
+      });
+      assert.equal(result.status, 'timeout');
+      assert.ok(Date.now() - waitStarted < 3000);
+    } finally {
+      runStop({ repoRoot: root, name: 'never-ready' });
+    }
+  });
+
+  it('returns unknown when supervisor provenance or tree ownership does not match', async () => {
+    const { classifyWindowsProcessTree } = await import('../dist/local_app_runner_process.js');
+    const metadata = windowsMetadata();
+    const validOwner = `"${process.execPath}" "${metadata.supervisorPath}" --manifest "${metadata.launchManifestPath}" --token ${metadata.ownerToken}`;
+    const root = { pid: 200, parentPid: 100, name: 'cmd.exe', commandLine: 'cmd.exe /c pnpm.cmd dev' };
+    const app = { pid: 202, parentPid: 200, name: 'node.exe', commandLine: 'node app.mjs' };
+
+    assert.equal(classifyWindowsProcessTree(metadata, [supervisorRecord(validOwner.replace('owner-token', 'other-token')), root, app]).state, 'unknown');
+    assert.equal(classifyWindowsProcessTree(metadata, [supervisorRecord(validOwner), { ...root, parentPid: 99 }, app]).state, 'unknown');
+    assert.equal(classifyWindowsProcessTree(metadata, [supervisorRecord(validOwner), root, { pid: 201, parentPid: 200, name: 'conhost.exe', commandLine: null }]).state, 'unknown');
+  });
+
+  it('reports stopped only when the recorded supervisor is absent', async () => {
+    const { classifyWindowsProcessTree } = await import('../dist/local_app_runner_process.js');
+    const identity = classifyWindowsProcessTree(windowsMetadata(), []);
+    assert.equal(identity.state, 'stopped');
+    assert.deepEqual(identity.ownedPids, []);
+  });
+
+  it('does not call an orphaned recorded root stopped when its supervisor is absent', async () => {
+    const { classifyWindowsProcessTree } = await import('../dist/local_app_runner_process.js');
+    const identity = classifyWindowsProcessTree(windowsMetadata(), [
+      { pid: 200, parentPid: 99, name: 'cmd.exe', commandLine: 'cmd.exe /c pnpm.cmd dev' },
+    ]);
+    assert.equal(identity.state, 'unknown');
+    assert.deepEqual(identity.ownedPids, []);
+  });
+});
+
 describe('local app runner CLI', () => {
+  it('detaches and owns a real Windows package-script tree while preserving unrelated processes', { skip: process.platform !== 'win32', timeout: 20000 }, async () => {
+    const root = repo();
+    const port = await availablePort();
+    const serverPath = join(root, 'server.cjs');
+    writeFileSync(serverPath, [
+      "const http = require('node:http');",
+      "console.log('owned stdout');",
+      "console.error('owned stderr');",
+      `http.createServer((_request, response) => response.end('ok')).listen(${port}, '127.0.0.1');`,
+    ].join('\n'));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { serve: 'node server.cjs' } }, null, 2));
+    const sentinel = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
+    assert.ok(sentinel.pid);
+    let started;
+    try {
+      const launchStarted = Date.now();
+      const start = binRun(['run', 'start', '--name', 'windows-owned', '--json', '--', 'pnpm', 'run', 'serve'], root);
+      assert.equal(start.status, 0, start.stderr || start.stdout);
+      assert.ok(Date.now() - launchStarted < 5000, `start took ${Date.now() - launchStarted} ms`);
+      started = JSON.parse(start.stdout);
+      assert.equal(started.status, 'running');
+
+      const status = binRun(['run', 'status', '--name', 'windows-owned', '--json'], root);
+      assert.equal(status.status, 0, status.stderr || status.stdout);
+      const statusResult = JSON.parse(status.stdout);
+      assert.equal(statusResult.status, 'running');
+      assert.equal(statusResult.metadata.ownerKind, 'windows-supervisor');
+      assert.notEqual(statusResult.metadata.ownerPid, statusResult.metadata.pid);
+      assert.match(windowsParentProcess(statusResult.metadata.ownerPid).parentName, /^WmiPrvSE\.exe$/i);
+
+      const duplicate = binRun(['run', 'start', '--name', 'windows-owned', '--json', '--', 'pnpm', 'run', 'serve'], root);
+      assert.notEqual(duplicate.status, 0);
+      assert.match(duplicate.stdout + duplicate.stderr, /already running/i);
+
+      const wait = binRun(['run', 'wait', '--name', 'windows-owned', '--url', `http://127.0.0.1:${port}`, '--timeout', '3', '--json'], root);
+      assert.equal(wait.status, 0, wait.stderr || wait.stdout);
+      assert.equal(JSON.parse(wait.stdout).status, 'ready');
+      assert.match(readFileSync(started.paths.stdoutPath, 'utf8'), /owned stdout/);
+      assert.match(readFileSync(started.paths.stderrPath, 'utf8'), /owned stderr/);
+
+      const stop = binRun(['run', 'stop', '--name', 'windows-owned', '--json'], root);
+      assert.equal(stop.status, 0, stop.stderr || stop.stdout);
+      await delay(300);
+      assert.equal(processIsRunning(started.pid), false);
+      assert.equal(processIsRunning(sentinel.pid), true);
+      const stoppedStatus = binRun(['run', 'status', '--name', 'windows-owned', '--json'], root);
+      assert.equal(JSON.parse(stoppedStatus.stdout).status, 'missing');
+    } finally {
+      if (started && processIsRunning(started.pid)) {
+        binRun(['run', 'stop', '--name', 'windows-owned', '--json'], root);
+      }
+      sentinel.kill();
+    }
+  });
+
   it('accepts the documented -- command separator for dry-run start JSON', () => {
     const root = repo();
     const result = binRun(['run', 'start', '--name', 'ui-audit', '--cwd', '.', '--dry-run', '--json', '--', 'npm', 'run', 'dev'], root);
