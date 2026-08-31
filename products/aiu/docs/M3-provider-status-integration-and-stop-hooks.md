@@ -2,7 +2,7 @@
 
 ## Strategic Goal
 
-M3 connects the M2 decision engine to real host integrations. OpenCode should receive safe event-driven continuation prompts, and Codex/Claude Code stop hooks should block stopping only when trusted state says there is clear work to continue.
+M3 connects the M2 decision engine to real host integrations. OpenCode should receive safe event-driven `/make-it-so` continuation commands, and Codex/Claude Code stop hooks should block stopping only when trusted state says there is clear work to continue.
 
 This milestone wires the M2 decision engine into supported hosts through package-owned adapters.
 
@@ -166,7 +166,7 @@ Continuation state records:
 
 Host events are serialized with a lock. Stale locks are recoverable after a configured timeout and must be logged.
 
-OpenCode continuation acquires the configured lock before trusted-state loading, decision-making, and prompt delivery. A live lock suppresses delivery with `lock-held`; a stale lock is recovered only after the configured host timeout and is logged without completing or discarding work.
+OpenCode continuation acquires the configured lock before trusted-state loading, decision-making, and command delivery. A live lock suppresses delivery with `lock-held`; a stale lock is recovered only after the configured host timeout and is logged without completing or discarding work.
 
 ### 4.4 - Logging
 
@@ -194,7 +194,7 @@ Schema includes hook commands, host capability profiles, state file shapes, deci
 
 Tests cover:
 
-- OpenCode idle prompt delivery
+- OpenCode idle command delivery
 - no prompt while busy or user active
 - prompt deduplication
 - lock contention and stale lock recovery
@@ -205,7 +205,7 @@ Tests cover:
 
 | Host | Support | Lifecycle Events | Prompt Path | Repo Config | Permission Model | Install Path | Safety Risks |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenCode | supported | Project plugin idle/status, todo, message, TUI activity, and selected-session events. | Host plugin delivery through `@tjalve/aiu/opencode`; no stdout stop-hook path. | `hosts.enabled` includes `opencode`; managed wrapper at `.opencode/plugins/ai-umpire-continuation.ts`; modes default to `continue`, `repair`, `wait`, `stop`. | Requires explicit project plugin trust before OpenCode executes the wrapper. | `aiu init --tool opencode` writes the package-backed plugin wrapper. | Prompting the wrong session, duplicate prompts, and stale state are controlled by selected-session checks, durable ownership, cooldowns, locks, and trusted state validation. |
+| OpenCode | supported | Deprecated `session.idle` and current nested idle `session.status`, plus advisory todo, message, TUI activity, and selected-session events. | Same-session `/make-it-so` command through `@tjalve/aiu/opencode`; no stdout stop-hook path. | `hosts.enabled` includes `opencode`; `.opencode/package.json` pins the installed AIU version; the managed wrapper is `.opencode/plugins/ai-umpire-continuation.ts`; modes default to `continue`, `repair`, `wait`, `stop`. | Requires the exact package to resolve and explicit project plugin trust before OpenCode executes the named wrapper. | `aiu init --tool opencode` writes or merges the package manifest and writes the package-backed plugin wrapper. | Missing session identity, non-idle status, duplicate commands, and stale state are controlled by event decoding, durable ownership, cooldowns, locks, and trusted state validation. |
 | Codex | experimental | Stop hook only; no verified project idle event contract. | Stdout block response from `pnpm exec aiu hook-stop --tool codex`. | `hosts.enabled` includes `codex`; `hosts.stopHookBlocking.codex` must be explicitly true before blocking; modes default to `stop`. | Requires repo-local plugin review and hook approval. | `aiu init --tool codex` writes `.agents/plugins/marketplace.json` and `plugins/ai-umpire/**` package-backed hook files. | Hook payload and host text are untrusted; malformed input, missing trusted state, adapter failures, or disabled blocking safe-allow stopping. |
 | Claude Code | experimental | Stop hook only; no verified project idle event contract. | Stdout block response from `pnpm exec aiu hook-stop --tool claude-code`. | `hosts.enabled` includes `claude-code`; `hosts.stopHookBlocking.claude-code` must be explicitly true before blocking; modes default to `stop`. | Requires project settings hook review and approval. | `aiu init --tool claude-code` writes `.claude/settings.json` with the package-backed Stop hook command. | Hook payload and transcript-adjacent data are untrusted; malformed input, missing trusted state, adapter failures, or disabled blocking safe-allow stopping. |
 | Other host tools | recipe-only or unsupported | No confirmed M3 project-level idle or stop hook contract. | None in package runtime. | Not accepted in `hosts.enabled`. | Requires a future verified integration design. | No installer output. | Umpire must not infer prompts or blocking from unverified host behavior or copied legacy helper scripts. |
@@ -224,9 +224,9 @@ Status: implemented by the shared `host_policy` module, schema host profile outp
 
 ### M3.2 - Rework OpenCode Plugin Around The Decision Engine
 
-Wire OpenCode events through trusted state collection, decision-making, prompt rendering, ownership, cooldowns, and prompt delivery.
+Wire OpenCode events through trusted state collection, decision-making, prompt rendering, ownership, cooldowns, and same-session command delivery.
 
-Status: implemented by the `@tjalve/aiu/opencode` runtime delegate. It normalizes OpenCode host-session state, loads trusted state through configured adapters or an injected loader, runs the shared decision engine, renders prompt metadata and fingerprints, suppresses unsafe host sessions, and delivers prompts only through the package subpath's typed deliverer API.
+Status: implemented by the `@tjalve/aiu/opencode` runtime delegate. It normalizes current and deprecated OpenCode idle events, loads trusted state through configured adapters or an injected loader, runs the shared decision engine, renders decision metadata and fingerprints, suppresses unsafe host sessions, and dispatches the managed `make-it-so` command only through the package subpath's typed same-session deliverer.
 
 ### M3.3 - Implement Provider-Neutral Stop Hooks For Codex And Claude Code
 

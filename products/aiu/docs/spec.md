@@ -97,7 +97,7 @@ M2.5 implements the agent-facing `aiu status` surface over the trusted adapter, 
 
 M3.1 adds the provider-neutral host policy surface. `host_policy` exposes typed host profiles, support levels, capability support values, safe default per-host modes, and runtime checks for disabled, experimental, unsupported, or unsafe stop-hook behavior. `aiu schema --json` includes host profile and policy fields, config validation records host-policy diagnostics, and `aiu doctor` reports compatibility without mutating host files or provider state.
 
-M3.2 wires the `@tjalve/aiu/opencode` runtime around trusted state adapters, the shared decision engine, and prompt rendering. The OpenCode subpath now builds normalized host-session state from idle, status, todo, message, TUI, and selected-session events; suppresses helper, busy, conflicting, active-user, and todo-active sessions; delivers only concrete `continue` or safe `repair` prompts through an injected host deliverer; and keeps repository wrappers on the public composition API.
+M3.2 wires the `@tjalve/aiu/opencode` runtime around trusted state adapters, the shared decision engine, and prompt rendering. The OpenCode subpath builds normalized host-session state from deprecated `session.idle` and current nested idle `session.status` events; suppresses helper, busy, retrying, unknown-status, conflicting, active-user, and todo-active sessions; dispatches the managed `/make-it-so` command to the same session for concrete `continue` or safe `repair` decisions; and keeps repository wrappers on the public composition API.
 
 M3.3 wires `aiu hook-stop --tool codex|claude-code` into the same trusted-state decision runtime. Stop hooks parse host payloads, normalize host-session state, load configured trusted state commands, render concrete prompts, and emit clean host JSON. They block only when trusted state loads successfully, the decision is `continue` or safe `repair`, the prompt is concrete, and `hosts.stopHookBlocking.<tool>` is explicitly enabled; all unavailable, malformed, stale, unknown, unsupported, blocked, wait, stop, human-question, and safety-block states allow the host to stop.
 
@@ -109,7 +109,7 @@ M3.5 closes the host integration milestone with explicit diagnostics and schema 
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-07-001 | OpenCode support includes an event-driven project plugin wrapper that delegates to the package runtime. | Required |
+| FR-07-001 | OpenCode support includes an exact-version package manifest and named event-driven project plugin that delegates to the package runtime. | Required |
 | FR-07-002 | Codex and Claude Code support includes stop-hook commands where those hosts provide project-level stop hooks. | Required |
 | FR-07-003 | Host adapters provide session state, selected-session information where available, prompt delivery capability, trust requirements, and busy/idle signals. | Required |
 | FR-07-004 | Host adapters respect active user typing, selected-session changes, helper sessions, prompt ownership, cooldowns, and locks to avoid duplicate or competing prompts. | Required |

@@ -448,6 +448,53 @@ describe("trusted command adapters", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("runs qube aie status through a Windows command shim without a direct shim spawn", async (t) => {
+    if (process.platform !== "win32") {
+      t.skip("Windows command shim execution is a Windows host concern.");
+      return;
+    }
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { runAiuTrustedStateAdapter } = await loadTrustedAdapter();
+    const directory = mkdtempSync(path.join(tmpdir(), "aiu-qube-status-path-"));
+    const payload = {
+      schemaVersion: 1,
+      states: [{
+        kind: "work-queue",
+        status: "pass",
+        activeItems: [],
+        readyItems: [],
+        blockedItems: [],
+        unknownItems: [],
+      }],
+    };
+    writeFileSync(path.join(directory, "qube.cmd"), [
+      "@echo off",
+      "if not \"%1 %2 %3\"==\"aie status --json\" exit /b 9",
+      `echo ${JSON.stringify(payload)}`,
+    ].join("\r\n"));
+    try {
+      const result = await runAiuTrustedStateAdapter("work", {
+        argv: ["qube", "aie", "status", "--json"],
+        timeoutMs: 5_000,
+        maxOutputBytes: 16_384,
+      }, {
+        observedAt,
+        env: {
+          ...process.env,
+          PATH: directory,
+          PATHEXT: ".CMD;.EXE",
+        },
+      });
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.record.command.argv, ["qube", "aie", "status", "--json"]);
+      assert.equal(result.states[0]?.value.kind, "work-queue");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 async function loadTrustedAdapter(): Promise<typeof TrustedAdapter> {

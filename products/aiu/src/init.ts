@@ -649,10 +649,38 @@ function mergeSharedJson(
   existing: Record<string, unknown>,
   desired: Record<string, unknown>,
 ): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
+  if (managedEntry === "opencode-package-dependency") {
+    return mergeOpenCodePackage(existing, desired);
+  }
   if (managedEntry === "codex-marketplace-plugin") {
     return mergeCodexMarketplace(existing, desired);
   }
   return mergeClaudeSettings(existing, desired);
+}
+
+function mergeOpenCodePackage(
+  existing: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
+  if (existing.dependencies !== undefined && !isRecord(existing.dependencies)) {
+    return { ok: false, reason: "Existing OpenCode dependencies value is not a JSON object. QUBE will not replace the shared file." };
+  }
+  const desiredDependencies = isRecord(desired.dependencies) ? desired.dependencies : undefined;
+  const desiredVersion = desiredDependencies?.["@tjalve/aiu"];
+  if (typeof desiredVersion !== "string" || desiredVersion.length === 0) {
+    throw new Error("Managed OpenCode package content does not contain an exact @tjalve/aiu dependency.");
+  }
+  return {
+    ok: true,
+    value: {
+      ...desired,
+      ...existing,
+      dependencies: {
+        ...(isRecord(existing.dependencies) ? existing.dependencies : {}),
+        "@tjalve/aiu": desiredVersion,
+      },
+    },
+  };
 }
 
 function mergeCodexMarketplace(

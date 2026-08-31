@@ -82,7 +82,7 @@ completes a task.
 
 | Host | Status | Init target | Notes |
 | --- | --- | --- | --- |
-| OpenCode | Supported | `aiu init --tool opencode` | Project plugin delegates to the package runtime. |
+| OpenCode | Supported | `aiu init --tool opencode` | A named project plugin delegates `/make-it-so` to the exact package version declared in `.opencode/package.json`. |
 | Codex CLI/Desktop | Experimental | `aiu init --tool codex` | Stop-hook behavior must be explicitly trusted and enabled. |
 | Claude Code | Experimental | `aiu init --tool claude-code` | Project settings are preserved on conflict. |
 | Generic MCP, Git hooks, GitHub Actions | Not a continuation host | none | These are not interactive idle-session continuation surfaces. |

@@ -110,8 +110,8 @@ export const opencodeHostProfile = defineAgentHostProfile({
   umpire: Object.freeze({
     continuation: Object.freeze({
       support: "supported",
-      description: "The managed OpenCode plugin can deliver a continuation prompt for current-issue recovery while Continuous Shipping is enabled.",
-      nextAction: "Run `qube aiu init --tool opencode`, review the plugin wrapper, and trust the project plugin.",
+      description: "The managed OpenCode plugin can run /make-it-so for current-issue recovery while Continuous Shipping is enabled.",
+      nextAction: "Run `qube aiu init --tool opencode`, install the exact package declared in .opencode/package.json, review the plugin files, and trust the project plugin.",
       delivery: "host",
       currentIssueRecovery: true,
     }),
@@ -129,8 +129,8 @@ export const opencodeHostProfile = defineAgentHostProfile({
       Object.freeze({
         id: "review-opencode-plugin",
         kind: "review-files",
-        description: "Review the managed OpenCode Umpire plugin wrapper.",
-        paths: Object.freeze([".opencode/plugins/ai-umpire-continuation.ts"]),
+        description: "Review the managed OpenCode Umpire package manifest and plugin wrapper.",
+        paths: Object.freeze([".opencode/package.json", ".opencode/plugins/ai-umpire-continuation.ts"]),
       }),
       Object.freeze({
         id: "trust-opencode-plugin",

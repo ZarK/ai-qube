@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +26,7 @@ const tempRoots: string[] = [];
 
 const expectedHostAssets = [
   ".opencode/plugins/ai-umpire-continuation.ts",
+  ".opencode/package.json",
   ".agents/plugins/marketplace.json",
   "plugins/ai-umpire/.codex-plugin/plugin.json",
   "plugins/ai-umpire/hooks/hooks.json",
@@ -79,10 +80,12 @@ describe("packed tarball install smoke", () => {
     for (const relativePath of expectedHostAssets) {
       assert.equal(existsSync(path.join(target, ...relativePath.split("/"))), true, relativePath);
     }
-    assert.match(
-      await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"),
-      /createAiuOpenCodeServerPlugin/,
-    );
+    const opencodeWrapper = await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8");
+    const opencodeManifest = JSON.parse(await readFile(path.join(target, ".opencode", "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    assert.match(opencodeWrapper, /export const AiuUmpireContinuation = createAiuOpenCodeServerPlugin\(\)/);
+    assert.doesNotMatch(opencodeWrapper, /export default/);
     assert.match(
       await readFile(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json"), "utf8"),
       /aiu hook-stop --tool codex/,
@@ -118,9 +121,10 @@ describe("packed tarball install smoke", () => {
     const installedAiuRoot = await realpath(path.join(target, "node_modules", "@tjalve", "aiu"));
     const installedAiuManifest = JSON.parse(
       await readFile(path.join(installedAiuRoot, "package.json"), "utf8"),
-    ) as { bin?: Record<string, string> };
+    ) as { bin?: Record<string, string>; version: string };
     const installedLauncher = path.join(installedAiuRoot, "bin", "run");
     assert.deepEqual(installedAiuManifest.bin, { aiu: "bin/run" });
+    assert.equal(opencodeManifest.dependencies["@tjalve/aiu"], installedAiuManifest.version);
     assert.equal(existsSync(installedLauncher), true);
     assert.match(await readFile(installedLauncher, "utf8"), /\.\.\/dist\/src\/cli\.js/);
     if (process.platform !== "win32") {
@@ -135,6 +139,14 @@ describe("packed tarball install smoke", () => {
       ) as { version: string };
       assert.equal(installedManifest.version, packedPackage.manifest.version, packedPackage.name);
     }
+    const installedDoctor = await import(pathToFileURL(path.join(installedAiuRoot, "dist", "src", "doctor.js")).href) as {
+      runAiuDoctor(options: { cwd: string }): { checks: Array<{ kind: string; status: string }> };
+    };
+    const doctor = installedDoctor.runAiuDoctor({ cwd: target });
+    assert.ok(
+      doctor.checks.some((check) => check.kind === "opencode-plugin-package-resolved" && check.status === "ok"),
+      JSON.stringify(doctor.checks.filter((check) => check.kind.includes("opencode-plugin-package"))),
+    );
     assert.equal(existsSync(path.join(target, "node_modules", "@tjalve", "qube-adapter-cursor")), false);
   });
 });
