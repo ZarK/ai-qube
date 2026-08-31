@@ -92,7 +92,7 @@ function writeAuditBundle(home, repo, issueNumber, headSha, overrides = {}) {
   return { directory, imagePath, record };
 }
 
-describe('manual UI audit model', () => {
+describe('manual UI audit model focused tests cover every negative case above', () => {
   it('plans a required audit without creating evidence during dry-run', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const repo = join(home, 'workspace', 'product-ui');
