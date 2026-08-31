@@ -24,7 +24,7 @@ describe("repository policy", () => {
     assert.equal(config.policy.instructions.supplyChainSafety, true);
     assert.equal(config.policy.reviews.route.host, "cursor");
     assert.equal(config.policy.reviews.lanes.find(lane => lane.id === "security")?.route?.host, "cursor");
-    assert.deepEqual(config.policy.reviews.models.review.cursor, { model: "cursor-grok-4.6-high", effort: null });
+    assert.deepEqual(config.policy.reviews.models.review.cursor, { model: "cursor-grok-4.6-high-fast", effort: null });
   });
 
   it("keeps active publishing workflow tokenless and branch guarded", () => {

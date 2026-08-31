@@ -388,18 +388,29 @@ export function probeCursor(
       status: "blocked",
       modelListed: null,
       diagnostic: "Cursor ACP model compatibility could not be inspected without a prompt. Authenticate the current Cursor CLI, then rerun init or doctor.",
-      reasonCode: "model-route-model-unsupported",
+      reasonCode: "model-route-probe-blocked",
       transport: "acp",
       resolvedModel: null,
       availableModels: Object.freeze([]),
     };
   }
   const compatible = compatibleCursorAcpModels(catalog, acpCatalog.options);
-  const descriptor: CursorModelDescriptor | null = model && catalog.includes(model)
+  const choices = compatible.map(candidate => candidate.displayId);
+  if (model && !catalog.includes(model)) {
+    return {
+      status: "blocked",
+      modelListed: false,
+      diagnostic: `Cursor model compatibility failed: requested ${model}; transport acp. The model is not in the Cursor CLI catalog. Compatible Cursor choices: ${sanitize(choices.join(", ")) || "none"}. Select a compatible model, then rerun.`,
+      reasonCode: "model-route-model-unsupported",
+      transport: "acp",
+      resolvedModel: null,
+      availableModels: Object.freeze(choices),
+    };
+  }
+  const descriptor: CursorModelDescriptor | null = model
     ? resolveCursorAcpModel(acpCatalog.options, model)
     : null;
   if (model && !descriptor) {
-    const choices = compatible.map(candidate => candidate.displayId);
     return {
       status: "blocked",
       modelListed: false,
@@ -417,7 +428,7 @@ export function probeCursor(
     reasonCode: null,
     transport: "acp",
     resolvedModel: descriptor?.transportValue ?? null,
-    availableModels: Object.freeze(compatible.map(candidate => candidate.displayId)),
+    availableModels: Object.freeze(choices),
   };
 }
 

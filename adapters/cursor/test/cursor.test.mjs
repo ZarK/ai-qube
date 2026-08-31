@@ -180,6 +180,19 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.probeCursor({ ...base, model: "missing" }, "linux").modelListed, false);
     assert.equal(cursor.probeCursor({ ...base, runCommand: (_exe, args) => args.at(-1) === "--help" ? "--print" : output(args) }, "linux").status, "blocked");
 
+    const missingAcpCatalog = cursor.probeCursor({
+      ...base,
+      runCommand: (_exe, args) => args.at(-1) === "--acp-models" ? "not-json" : output(args),
+    }, "win32");
+    assert.equal(missingAcpCatalog.status, "blocked");
+    assert.equal(missingAcpCatalog.reasonCode, "model-route-probe-blocked");
+
+    const unlisted = cursor.probeCursor({ ...base, model: "missing" }, "win32");
+    assert.equal(unlisted.status, "blocked");
+    assert.equal(unlisted.reasonCode, "model-route-model-unsupported");
+    assert.match(unlisted.diagnostic, /not in the Cursor CLI catalog/);
+    assert.deepEqual(unlisted.availableModels, ["model-a"]);
+
     const incompatible = cursor.probeCursor({
       ...base,
       model: "cursor-grok-4.6-medium-fast",
