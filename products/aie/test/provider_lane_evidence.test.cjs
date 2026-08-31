@@ -14,6 +14,14 @@ function record(overrides = {}) {
     issueNumber: 93,
     prNumber: 12,
     host: 'grok-build',
+    route: {
+      source: 'configured',
+      selected: { host: 'grok-build', model: 'grok-test-review', effort: 'high', tier: 'review' },
+      executed: { host: 'grok-build', requestedModel: 'grok-test-review', transportModel: null, reportedModel: 'grok-test-review', modelSource: 'host-reported', effort: 'high', tier: 'review', transport: 'exec' },
+      reason: null,
+      substitutions: [],
+      degradedReviewerSeparation: false,
+    },
     recommendation: 'approve',
     status: 'passed',
     summary: 'Lane approved at the current head.',
@@ -131,7 +139,7 @@ describe('readTrustedProviderLanes', () => {
   it('rejects records missing required marker fields', () => {
     const reuse = readTrustedProviderLanes([record({ runId: '' })], gate);
     assert.equal(reuse.accepted.length, 0);
-    assert.match(reuse.rejected[0].reason, /missing required marker fields \(runId, host, or summary\)/);
+    assert.match(reuse.rejected[0].reason, /missing or mismatches required marker fields \(runId, host, route, or summary\)/);
   });
 
   it('ignores malformed entries and records for inactive lanes without crashing', () => {

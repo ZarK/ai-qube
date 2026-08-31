@@ -76,6 +76,14 @@ function writeLocalLaneReview(repo, issueNumber, codeQualityStatus = 'passed') {
         promptStackHash: 'review-prompt-hash',
         headSha: 'abc123',
         providerPublishStatus: null,
+        route: {
+          source: 'configured',
+          selected: { host: 'local-command', model: null, effort: null, tier: 'review' },
+          executed: { host: 'local-command', requestedModel: null, transportModel: null, reportedModel: null, modelSource: 'host-default', effort: null, tier: 'review', transport: 'command' },
+          reason: null,
+          substitutions: [],
+          degradedReviewerSeparation: false,
+        },
       },
     }, null, 2)}\n`);
   }

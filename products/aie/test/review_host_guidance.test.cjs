@@ -80,11 +80,23 @@ describe('host review subagent guidance', () => {
         promptStackHash: 'a'.repeat(64),
         headSha: 'abc123',
         providerPublishStatus: null,
-        model: null,
-        effort: null,
-        isolation: 'read-only',
-        invocationId: 'i',
-        routeSource: 'configured',
+        route: {
+          source: 'configured',
+          selected: { host: '', model: null, effort: null, tier: 'review' },
+          executed: {
+            host: '',
+            requestedModel: null,
+            transportModel: null,
+            reportedModel: null,
+            modelSource: 'host-default',
+            effort: null,
+            tier: 'review',
+            transport: 'exec',
+          },
+          reason: null,
+          substitutions: [],
+          degradedReviewerSeparation: false,
+        },
       },
     }, 'local-host');
     const body = JSON.parse(readFileSync(path, 'utf8'));

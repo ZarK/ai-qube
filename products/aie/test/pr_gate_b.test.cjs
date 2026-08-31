@@ -228,9 +228,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.ok(codexLanes.length >= 3);
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
-      assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+      assert.equal(evidence.runnerProvenance.route.source, 'fallback');
       assert.equal(evidence.runnerProvenance.host, 'codex');
-      assert.equal(evidence.runnerProvenance.fallbackReason, 'model-route-model-unsupported');
+      assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-model-unsupported');
       assert.match(lane.route.substitution, /model-route-model-unsupported/);
     }
   });

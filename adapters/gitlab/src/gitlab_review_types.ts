@@ -1,4 +1,4 @@
-import type { ReviewItem, ReviewLaneReviewPublishInput } from "@tjalve/qube-core";
+import type { ReviewItem, ReviewLaneReviewPublishInput, ReviewRouteProvenance } from "@tjalve/qube-core";
 
 export interface GitLabUser {
   readonly id?: number;
@@ -193,6 +193,7 @@ export interface GitLabMetadata {
   readonly issueNumber?: number;
   readonly prNumber?: number;
   readonly host?: string;
+  readonly route?: ReviewRouteProvenance;
   readonly recommendation?: ReviewLaneReviewPublishInput["recommendation"];
   readonly status?: string;
   readonly summary?: string;

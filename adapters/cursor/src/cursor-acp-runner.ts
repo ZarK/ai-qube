@@ -320,6 +320,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
       is_error: false,
       result: agentText,
       session_id: session.sessionId,
+      model: transportModel ?? null,
     };
   } finally {
     rejectPending(new Error("Cursor ACP process closed."));

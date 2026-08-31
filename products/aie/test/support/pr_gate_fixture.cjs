@@ -174,7 +174,7 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
-function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount, expectedLanes = [lane] } = {}) {
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount, expectedLanes = [lane], route = testReviewRoute('codex') } = {}) {
   const metadata = {
     version: 1,
     head,
@@ -185,6 +185,7 @@ function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendat
     issueNumber,
     prNumber,
     host: 'codex',
+    route,
     recommendation,
     status,
     summary,
@@ -243,6 +244,18 @@ function withPromptStackProvenance(provenance, promptStack) {
   return { ...provenance, promptStackHash: promptStackHash(promptStack) };
 }
 
+function testReviewRoute(host) {
+  const model = host === 'codex' ? 'gpt-test-review' : null;
+  return {
+    source: 'configured',
+    selected: { host, model, effort: null, tier: 'review' },
+    executed: { host, requestedModel: model, transportModel: null, reportedModel: null, modelSource: model ? 'configured' : 'host-default', effort: null, tier: 'review', transport: host === 'local-command' ? 'command' : 'exec' },
+    reason: null,
+    substitutions: [],
+    degradedReviewerSeparation: false,
+  };
+}
+
 function safeEvidenceSegment(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
 }
@@ -269,8 +282,7 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
     sessionId: provenance.sessionId,
     threadId: provenance.threadId,
     promptStackHash: provenance.promptStackHash,
-    model: provenance.model ?? null,
-    effort: provenance.effort ?? null,
+    route: provenance.route,
     isolation: provenance.isolation ?? null,
     invocationId: provenance.invocationId ?? null,
     recordedAt: '2026-06-22T00:00:00.000Z',
@@ -313,6 +325,7 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
     promptStackHash: null,
     headSha,
     providerPublishStatus: null,
+    route: testReviewRoute(adapter === 'local-host' ? 'codex' : adapter),
   };
   const laneProvenance = id => withPromptStackProvenance(provenance, promptStackForLane(id));
   return {
@@ -465,6 +478,7 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
     promptStackHash: null,
     headSha: 'abc123',
     providerPublishStatus: null,
+    route: testReviewRoute('codex'),
   };
   const laneIds = [
     'task-record-compliance',
@@ -853,6 +867,7 @@ function fixtureLocalCommand(args) {
         promptStackHash: promptStackHashValue,
         headSha,
         providerPublishStatus: null,
+        route: testReviewRoute(runnerKind === 'local-host' ? 'codex' : 'local-command'),
       },
     }),
     stderr: '',
@@ -924,6 +939,7 @@ module.exports = {
   promptTextHash,
   promptStackForLane,
   promptForLane,
+  testReviewRoute,
   withPromptStackProvenance,
   safeEvidenceSegment,
   trustedLocalHostProvenancePath,

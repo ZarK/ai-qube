@@ -300,7 +300,20 @@ Third-party reviewers are never enabled unless configured. Human output and JSON
 
 The command must not claim that all feedback is non-actionable by default. If relevant reviewer comments or unresolved review threads exist, the agent must inspect them, address actionable items, rerun affected gates, push follow-up commits, and rerun `aie pr gate` when material changes were made.
 
-### 4.3 - Merge Boundary
+### 4.3 - Review Route Provenance
+
+Every accepted isolated-review lane must preserve two distinct identities:
+
+- the selected route before probing or execution: host, model, effort, and tier
+- the executed route that produced accepted evidence: host, requested model, transport-resolved model, host-reported model, model source, effort, tier, and transport
+
+The route source is `configured` or `fallback`. A fallback also carries a stable reason code, a concise safe explanation, and safe route or model substitutions. A fallback that returns to the implementation host records degraded reviewer separation. Publisher identity remains a separate provider-publishing concept and must not be presented as the review compute host.
+
+Lane evidence, trusted host provenance, per-lane provider publication, consolidated round publication, provider markers, provider readback, concise PR view JSON, and human provenance output must use the same typed route. Provider-visible text keeps the executed route compact and puts fallback details in the Provenance section. Providers without collapsed sections render the same content under a visible Provenance heading.
+
+Same-head publication identity includes the complete route. If a rerun changes the executed host or any model identity, Executor updates or supersedes the stale provider marker. Clearing a mutable host-fault counter after successful fallback must not remove the accepted lane's route or reason.
+
+### 4.4 - Merge Boundary
 
 Executor may report a merge-ready state and suggest the configured merge command when policy permits, but M5 must keep context-sensitive merge execution in the agent's hands. The agent performs the merge after policy, CI, tests, configured gates, and review feedback are satisfied.
 

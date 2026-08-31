@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import { parseReviewRouteProvenance, reviewRouteFingerprint, type ReviewFinding, type ReviewRouteProvenance } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
 import { acceptedProviderLane } from './provider_lane_evidence.js';
 import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evidence.js';
@@ -62,14 +62,9 @@ export interface LocalReviewRunnerProvenance {
   promptStackHash: string | null;
   headSha: string;
   providerPublishStatus: string | null;
-  model: string | null;
-  transport: string | null;
-  transportModel: string | null;
-  effort: string | null;
+  route: ReviewRouteProvenance | null;
   isolation: 'read-only' | null;
   invocationId: string | null;
-  routeSource: 'configured' | 'fallback' | null;
-  fallbackReason: string | null;
 }
 
 export interface LocalReviewLane {
@@ -161,14 +156,9 @@ interface TrustedLocalHostProvenance {
   threadId: string | null;
   promptStackHash: string;
   recordedAt: string;
-  model: string | null;
-  transport: string | null;
-  transportModel: string | null;
-  effort: string | null;
+  route: ReviewRouteProvenance;
   isolation: 'read-only' | null;
   invocationId: string | null;
-  routeSource: 'configured' | 'fallback' | null;
-  fallbackReason: string | null;
 }
 
 interface LocalReviewPublishEvidence {
@@ -470,14 +460,9 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     promptStackHash: readNullableString(value.promptStackHash),
     headSha: stringValue(value.headSha, 'unknown-head'),
     providerPublishStatus: readNullableString(value.providerPublishStatus),
-    model: readNullableString(value.model),
-    transport: readNullableString(value.transport),
-    transportModel: readNullableString(value.transportModel),
-    effort: readNullableString(value.effort),
+    route: parseReviewRouteProvenance(value.route, redact),
     isolation: value.isolation === 'read-only' ? 'read-only' : null,
     invocationId: readNullableString(value.invocationId),
-    routeSource: value.routeSource === 'configured' || value.routeSource === 'fallback' ? value.routeSource : null,
-    fallbackReason: readNullableString(value.fallbackReason),
   };
 }
 
@@ -805,6 +790,8 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
     if (parsed.runnerKind !== 'local-host' || typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
     if (typeof parsed.evidenceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.evidenceSha256)) return null;
     if (parsed.freshContext !== true || parsed.promptOnly === true || typeof parsed.promptStackHash !== 'string' || parsed.promptStackHash.trim() === '') return null;
+    const route = parseReviewRouteProvenance(parsed.route, redact);
+    if (!route) return null;
     return {
       version: 1,
       issueNumber,
@@ -821,14 +808,9 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
       threadId: readNullableString(parsed.threadId),
       promptStackHash: parsed.promptStackHash,
       recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '',
-      model: readNullableString(parsed.model),
-      transport: readNullableString(parsed.transport),
-      transportModel: readNullableString(parsed.transportModel),
-      effort: readNullableString(parsed.effort),
+      route,
       isolation: parsed.isolation === 'read-only' ? 'read-only' : null,
       invocationId: readNullableString(parsed.invocationId),
-      routeSource: parsed.routeSource === 'configured' || parsed.routeSource === 'fallback' ? parsed.routeSource : null,
-      fallbackReason: readNullableString(parsed.fallbackReason),
     };
   } catch {
     return null;
@@ -854,14 +836,10 @@ function trustedLocalHostBlockers(input: {
   if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the host record.`);
   if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the host record.`);
   if (
-    trusted.model !== input.provenance.model
-    || trusted.transport !== input.provenance.transport
-    || trusted.transportModel !== input.provenance.transportModel
-    || trusted.effort !== input.provenance.effort
+    !input.provenance.route
+    || reviewRouteFingerprint(trusted.route) !== reviewRouteFingerprint(input.provenance.route)
     || trusted.isolation !== input.provenance.isolation
     || trusted.invocationId !== input.provenance.invocationId
-    || trusted.routeSource !== input.provenance.routeSource
-    || trusted.fallbackReason !== input.provenance.fallbackReason
   ) blockers.push(`${input.laneId} routed model provenance does not match the trusted host record.`);
   if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
   return blockers;

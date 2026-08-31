@@ -59,6 +59,7 @@ const {
   promptTextHash,
   promptStackForLane,
   promptForLane,
+  testReviewRoute,
   withPromptStackProvenance,
   safeEvidenceSegment,
   trustedLocalHostProvenancePath,
@@ -1076,7 +1077,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       recommendation: 'approve', summary: 'ok', blockers: [], findings: [],
       artifacts: [{ kind: 'json', path: 'README.md', sha256: null }],
       commands: [], surfaces: [], contextReviewed: [], promptStack: [], toolsUsed: [], completeness: 'complete', preconditions: [],
-      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false },
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false, route: testReviewRoute('model-host') },
     }, 'code-quality', 93, 12, 'abc123');
     assert.equal(normalized.artifacts[0].sha256, null);
     assert.equal(laneArtifactViolation('code-quality', 'passed', normalized.artifacts, repo), null);
@@ -1148,7 +1149,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       ],
       artifacts: [{ kind: 'json', path: 'README.md', sha256: null }],
       commands: [], surfaces: [], contextReviewed: [], promptStack: [], toolsUsed: [], completeness: 'complete', preconditions: [],
-      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false },
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false, route: testReviewRoute('model-host') },
     }, 'code-quality', 93, 12, 'abc123');
 
     const byMessage = Object.fromEntries(normalized.findings.map(finding => [finding.message, finding.severity]));
@@ -1553,6 +1554,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'passed',
       recommendation: 'approve',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review passed',
       findings: [],
@@ -1590,6 +1592,59 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(exactDuplicate.status, 'skipped');
   });
 
+  it('publishes superseding lane feedback when the executed route changes on the same head', async () => {
+    const input = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      expectedLanes: ['code-quality'],
+      round: 'round-route-change-1',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      route: testReviewRoute('codex'),
+      issueNumber: 93,
+      summary: 'code review passed',
+      findings: [],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const draftProvider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const first = await draftProvider.publishLaneReviewFeedback((await draftProvider.loadPullRequestReview(12)).item, input);
+    const fallbackRoute = {
+      source: 'fallback',
+      selected: { host: 'codex', model: 'gpt-test-review', effort: null, tier: 'review' },
+      executed: {
+        host: 'grok-build',
+        requestedModel: null,
+        transportModel: null,
+        reportedModel: 'grok-review-fallback',
+        modelSource: 'host-reported',
+        effort: null,
+        tier: 'review',
+        transport: 'exec',
+      },
+      reason: { code: 'model-route-readiness-failed', message: 'The selected route failed its readiness check.' },
+      substitutions: [{ kind: 'route', from: 'codex/review', to: 'grok-build/review' }],
+      degradedReviewerSeparation: false,
+    };
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-778' }] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const changed = await provider.publishLaneReviewFeedback(snapshot.item, { ...input, dryRun: false, host: 'grok-build', route: fallbackRoute });
+    const duplicate = await provider.publishLaneReviewFeedback(snapshot.item, { ...input, dryRun: false, host: 'grok-build', route: fallbackRoute });
+
+    assert.notEqual(first.runId, changed.runId, 'route identity must contribute to publication idempotency');
+    assert.equal(changed.status, 'published');
+    assert.equal(changed.publishKind, 'issue-comment');
+    assert.match(changed.body ?? '', /code-quality: Grok Build \/ grok-review-fallback \(host-reported\)/);
+    assert.match(changed.body ?? '', /Fallback from Codex \/ gpt-test-review/);
+    assert.match(changed.body ?? '', /Reason \(model-route-readiness-failed\): The selected route failed its readiness check/);
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/issues/comments/778' && call[call.indexOf('--method') + 1] === 'PATCH'));
+    assert.equal(duplicate.status, 'skipped');
+  });
+
   it('keeps one current lane marker per linked issue on a multi-issue head', async () => {
     // A PR closing two issues publishes the same lane once per issue; the
     // latest-per-key read must keep both instead of letting the later
@@ -1617,6 +1672,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'passed',
       recommendation: 'approve',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review passed',
       findings: [],
@@ -1683,6 +1739,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'failed',
       recommendation: 'request-changes',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review found blockers',
       findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the first blocker.' }],
@@ -1822,6 +1879,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'failed',
       recommendation: 'request-changes',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review found blockers',
       findings: [{ severity: 'blocking', message: 'Fix the changed export.', location: { path: 'src/review.ts', line: 2 } }],
@@ -1859,6 +1917,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'passed',
       recommendation: 'approve',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review found no blockers',
       findings: [{ severity: 'advisory', message: 'No blocking findings.', location: { path: 'src/review.ts', line: 2 } }],
@@ -1903,6 +1962,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'failed',
       recommendation: 'request-changes',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review found blockers',
       findings: [{ severity: 'blocking', message: 'Fix the removed export.', location: { path: 'src/review.ts', line: 1, side: 'source' } }],
@@ -1938,6 +1998,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'failed',
       recommendation: 'request-changes',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'code review found blockers',
       findings: [{ severity: 'blocking', message: 'Fix the removed file before deleting it.', location: { path: 'src/removed.ts', line: 1, side: 'source' } }],
@@ -1971,6 +2032,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       status: 'failed',
       recommendation: 'request-changes',
       host: 'codex',
+      route: testReviewRoute('codex'),
       issueNumber: 93,
       summary: 'api_key=plain-secret-value OPENAI_API_KEY=openai-secret password: hunter2 Authorization: Bearer bearer-secret',
       findings: ['AWS key AKIA1234567890ABCDEF and GITHUB_TOKEN=github-secret DATABASE_PASSWORD=db-secret token=another-secret-value must not publish.'],
@@ -2307,13 +2369,15 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const repo = makeGitRepo();
     const config = localReviewConfig();
     const evidence = localEvidence();
-    for (const lane of evidence.lanes) {
-      lane.runnerProvenance = { ...lane.runnerProvenance, model: 'gpt-5.6-luna', effort: 'high', isolation: 'read-only', invocationId: `route-${lane.id}` };
-    }
     writeLocalEvidence(repo, evidence);
     const provenancePath = trustedLocalHostProvenancePath(repo, 93, 12, 'abc123', 'code-quality');
     const provenance = JSON.parse(readFileSync(provenancePath, 'utf8'));
-    writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, model: 'forged-model' }, null, 2)}\n`);
+    const forgedRoute = {
+      ...provenance.route,
+      selected: { ...provenance.route.selected, model: 'forged-model' },
+      executed: { ...provenance.route.executed, requestedModel: 'forged-model' },
+    };
+    writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, route: forgedRoute }, null, 2)}\n`);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -2388,6 +2452,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
         ...lane.runnerProvenance,
         runnerKind: 'local-command',
         host: 'local-command',
+        route: testReviewRoute('local-command'),
       },
     };
     writeFileSync(lanePath, `${JSON.stringify(mixedLane, null, 2)}\n`);

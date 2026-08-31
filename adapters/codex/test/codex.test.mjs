@@ -123,11 +123,12 @@ describe("codex adapter", () => {
     const parsed = isolatedReviewHostAdapter.parseEnvelope([
       JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
       JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: progress } }),
-      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: terminal } }),
+      JSON.stringify({ type: "item.completed", model: "gpt-5.6-luna", item: { type: "agent_message", text: terminal } }),
     ].join("\n"));
 
     assert.equal(parsed.text, terminal);
     assert.deepEqual(parsed.transientTexts, [progress]);
     assert.equal(parsed.sessionId, "thread-1");
+    assert.equal(parsed.reportedModel, "gpt-5.6-luna");
   });
 });

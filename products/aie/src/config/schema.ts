@@ -978,7 +978,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     };
   }
   rejectUnknownKeys(value, ['adapter', 'mode', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'deltaFullEvery', 'models', 'route', 'failover'], 'policy.reviews', errors);
-  return {
+  const reviews: ReviewConfig = {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     mode: readReviewMode(value.mode, defaultValue.mode, 'policy.reviews.mode', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -999,6 +999,20 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     route: readReviewRoute(value.route, 'policy.reviews.route', errors),
     failover: readReviewFailover(value.failover, 'policy.reviews.failover', errors),
   };
+  if (reviews.failover) {
+    const primaryRoutes = [reviews.route, ...reviews.lanes.map(lane => lane.route)].filter((route): route is ReviewRoutePolicy => route !== null);
+    for (const [index, primary] of primaryRoutes.entries()) {
+      if (primary.host === reviews.failover.route.host && primary.tier === reviews.failover.route.tier) {
+        errors.push({
+          kind: 'invalid',
+          path: 'policy.reviews.failover.route',
+          message: `policy.reviews.failover.route duplicates ${index === 0 && reviews.route ? 'policy.reviews.route' : 'an active lane route'}; a fallback must differ by host, pinned model, effort, tier, or transport`,
+        });
+        break;
+      }
+    }
+  }
+  return reviews;
 }
 
 function readCarryForwardPublish(value: unknown, defaultValue: 'note' | 'none', path: string, errors: ValidationError[]): 'note' | 'none' {

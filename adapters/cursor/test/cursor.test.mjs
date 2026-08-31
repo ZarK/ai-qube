@@ -132,6 +132,8 @@ describe("Cursor isolated review adapter", () => {
       session_id: "fresh",
     });
     assert.deepEqual(cursor.parseCursorEnvelope(prefixed), { text: '{"status":"passed","lane":"issue-compliance"}', sessionId: "fresh" });
+    const reported = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "{\"status\":\"passed\"}", session_id: "fresh", model: "grok-4.6" });
+    assert.deepEqual(cursor.parseCursorEnvelope(reported), { text: '{"status":"passed"}', sessionId: "fresh", reportedModel: "grok-4.6" });
   });
 
   it("parses authentication without returning account fields", () => {

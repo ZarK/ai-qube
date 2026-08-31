@@ -983,7 +983,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.reviewSourceContract.allSatisfied, true, 'the provider-observed published round must satisfy the local-lane source in the same invocation');
     assert.equal(snapshotReadsAfterSummary, 1, 'a successful round adds exactly one bounded post-publication provider snapshot read');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok-build'));
-    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok-build'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'trusted-provider' && lane.runnerProvenance === null));
     const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
     assert.deepEqual(writtenLane.reviewer, { id: 'grok-build', name: 'Grok Build', adapterKind: 'local' });
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
@@ -1692,7 +1692,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(secondRunModelCalls, 0);
     assert.equal(result.localReview.status, 'passed');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed' && lane.evidenceSource === 'local'));
-    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local' || lane.origin === 'trusted-provider'));
     // Reused local evidence still publishes: a validated lane result without
     // a current provider marker reaches the provider on this run instead of
     // staying local-only.
@@ -1963,15 +1963,19 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.match(failedOver.summary, /routed review passed/);
     const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(evidence.runnerProvenance.host, 'codex');
-    assert.equal(evidence.runnerProvenance.model, 'gpt-fallback-test');
-    assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+    assert.equal(evidence.runnerProvenance.route.selected.host, 'grok-build');
+    assert.equal(evidence.runnerProvenance.route.selected.model, 'grok-4.5');
+    assert.equal(evidence.runnerProvenance.route.executed.host, 'codex');
+    assert.equal(evidence.runnerProvenance.route.executed.requestedModel, 'gpt-fallback-test');
+    assert.equal(evidence.runnerProvenance.route.source, 'fallback');
+    assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-process-failed');
     const trustedProvenance = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'host-provenance', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(trustedProvenance.host, 'codex');
-    assert.equal(trustedProvenance.routeSource, 'fallback');
+    assert.deepEqual(trustedProvenance.route, evidence.runnerProvenance.route);
     ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
     assert.ok(!(faultedLane in ledger.lanes), 'a completed fallback verdict clears the lane fault tally');
     const otherEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${thirdRun.localReviewRunner.lanes.filter(lane => lane.route !== null).map(lane => lane.lane).find(lane => lane !== faultedLane)}.json`), 'utf8'));
-    assert.equal(otherEvidence.runnerProvenance.routeSource, 'configured');
+    assert.equal(otherEvidence.runnerProvenance.route.source, 'configured');
   });
 
   it('never triggers failover from a review verdict', async () => {
@@ -2024,7 +2028,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(!existsSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json')) || Object.keys(JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8')).lanes).length === 0, 'review verdicts must record zero host faults');
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
-      assert.equal(evidence.runnerProvenance.routeSource, 'configured');
+      assert.equal(evidence.runnerProvenance.route.source, 'configured');
     }
   });
 
@@ -2112,7 +2116,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(recovered.route.host, 'grok-build', 'a blocked fallback probe must retry the configured primary route');
     const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(evidence.runnerProvenance.host, 'grok-build');
-    assert.equal(evidence.runnerProvenance.routeSource, 'configured');
+    assert.equal(evidence.runnerProvenance.route.source, 'configured');
     const ledger = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8'));
     assert.ok(!(faultedLane in ledger.lanes), 'the recovered primary verdict clears the fault tally');
   });
@@ -2249,7 +2253,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
       assert.equal(evidence.runnerProvenance.host, 'grok-build');
-      assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+      assert.equal(evidence.runnerProvenance.route.source, 'fallback');
+      assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-policy-blocked');
       assert.match(JSON.stringify({ route: lane.route, runnerProvenance: evidence.runnerProvenance }), /rejected a required read-only inspection command/);
     }
   });

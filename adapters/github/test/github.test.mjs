@@ -19,6 +19,15 @@ import {
   resolveReviewAgent,
 } from "../dist/index.js";
 
+const configuredCodexRoute = {
+  source: "configured",
+  selected: { host: "codex", model: "gpt-5.4", effort: "high", tier: "review" },
+  executed: { host: "codex", requestedModel: "gpt-5.4", transportModel: null, reportedModel: "gpt-5.4", modelSource: "host-reported", effort: "high", tier: "review", transport: "exec" },
+  reason: null,
+  substitutions: [],
+  degradedReviewerSeparation: false,
+};
+
 describe("github adapter contract", () => {
   it("exposes a real GitHub capability map", () => {
     assert.equal(githubAdapter.id, "github");
@@ -265,6 +274,7 @@ describe("github adapter contract", () => {
       issueNumber: 290,
       prNumber,
       host: "codex",
+      route: configuredCodexRoute,
       recommendation,
       status,
       summary: "review summary",
@@ -358,7 +368,7 @@ describe("github adapter contract", () => {
     const marker = login => ({
       author: { login },
       createdAt: "2026-01-01T00:00:00Z",
-      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
+      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", route: configuredCodexRoute, recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
     });
     const exec = async args => {
       if (args.join(" ").startsWith("api user")) return { args, exitCode: 0, stdout: JSON.stringify({ login: "review-bot", type: "User" }), stderr: "" };
@@ -381,7 +391,7 @@ describe("github adapter contract", () => {
     const marker = login => ({
       author: { login },
       createdAt: "2026-01-01T00:00:00Z",
-      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
+      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", route: configuredCodexRoute, recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
     });
     const exec = async args => {
       if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };

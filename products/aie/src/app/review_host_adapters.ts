@@ -20,6 +20,7 @@ export interface ReviewHostCapabilities {
 export interface ReviewHostParsedEnvelope {
   text: string;
   sessionId: string | null;
+  reportedModel?: string;
   transientTexts?: string[];
   usage?: LaneUsage;
 }

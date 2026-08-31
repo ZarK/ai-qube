@@ -23,6 +23,14 @@ import {
 const fixtureRoot = dirname(fileURLToPath(import.meta.url));
 const workCorpus = readFixture("./fixtures/conformance-work-items.json");
 const reviewCorpus = readFixture("./fixtures/conformance-review.json");
+const configuredCodexRoute = {
+  source: "configured",
+  selected: { host: "codex", model: "gpt-5.4", effort: "high", tier: "review" },
+  executed: { host: "codex", requestedModel: "gpt-5.4", transportModel: null, reportedModel: "gpt-5.4", modelSource: "host-reported", effort: "high", tier: "review", transport: "exec" },
+  reason: null,
+  substitutions: [],
+  degradedReviewerSeparation: false,
+};
 const checkFixture = readFixture("./fixtures/conformance-checks.json");
 const connectionFixture = readFixture("./fixtures/connection-pass.json");
 const issues = workCorpus.issues;
@@ -275,6 +283,7 @@ const review = defineReviewForgeHarness({
           status: "needs-work",
           recommendation: "request-changes",
           host: "codex",
+          route: configuredCodexRoute,
           issueNumber: 301,
           summary: "Conformance dry-run publish payload.",
           findings: ["Shared suite publish payload finding."],

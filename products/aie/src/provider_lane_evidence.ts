@@ -1,5 +1,6 @@
 import type { LocalReviewLaneId, LocalReviewProfile } from './local_review_evidence.js';
 import { normalizedRoundLanes, reviewRoundId } from './review_round.js';
+import { parseReviewRouteProvenance, type ReviewRouteProvenance } from '@tjalve/qube-core';
 
 export interface TrustedProviderLane {
   head: string;
@@ -10,6 +11,7 @@ export interface TrustedProviderLane {
   issueNumber: number;
   prNumber: number;
   host: string;
+  route: ReviewRouteProvenance;
   recommendation: 'approve';
   status: 'passed';
   summary: string;
@@ -157,8 +159,9 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
       const runId = nonEmptyString(record.runId);
       const host = nonEmptyString(record.host);
       const summary = nonEmptyString(record.summary);
-      if (!runId || !host || !summary) {
-        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} is missing required marker fields (runId, host, or summary).` });
+      const route = parseReviewRouteProvenance(record.route);
+      if (!runId || !host || !summary || !route || route.executed.host !== host) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} is missing or mismatches required marker fields (runId, host, route, or summary).` });
         continue;
       }
       // Fail-closed round completeness: a partially published round can never
@@ -200,6 +203,7 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
         issueNumber: gateIssueNumber,
         prNumber: input.prNumber,
         host,
+        route,
         recommendation: 'approve',
         status: 'passed',
         summary,

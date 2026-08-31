@@ -1,7 +1,7 @@
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ReviewItem, ReviewItemKey } from '../core/review_item.js';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import type { ReviewFinding, ReviewRouteProvenance } from '@tjalve/qube-core';
 
 export interface ReviewProviderCapabilities {
   loadReview: boolean;
@@ -20,6 +20,7 @@ export interface ReviewLaneReviewPublishInput {
   status: string;
   recommendation: 'approve' | 'request-changes' | 'pending' | 'inconclusive';
   host: string;
+  route: ReviewRouteProvenance;
   issueNumber: number;
   summary: string;
   findings: Array<ReviewFinding | string>;

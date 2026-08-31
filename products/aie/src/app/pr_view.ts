@@ -4,6 +4,7 @@ import { getDefaults, loadConfig } from '../config/index.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeCiDiagnostic, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
 import { parsePrNumber } from './pr_gate.js';
+import { formatLaneRun, parseReviewRouteProvenance, reviewHostDisplayName, type ReviewRouteProvenance } from '@tjalve/qube-core';
 
 export interface PrViewExecResult {
   args: string[];
@@ -88,6 +89,7 @@ export interface PrViewLaneReview {
   reviewUrl?: string;
   stale: boolean;
   author?: string;
+  route: ReviewRouteProvenance;
 }
 
 export interface PrViewRoundSummary {
@@ -203,7 +205,8 @@ function prLaneReviews(item: ReviewItem): PrViewLaneReview[] {
     const recommendation = stringValue(record.recommendation);
     const status = stringValue(record.status);
     const inline = stringValue(record.inline);
-    if (!lane || !recommendation || !status || !inline) return [];
+    const route = parseReviewRouteProvenance(record.route);
+    if (!lane || !recommendation || !status || !inline || !route) return [];
     const bodyFindingCount = numberValue(record.bodyFindingCount);
     return [{
       lane,
@@ -215,6 +218,7 @@ function prLaneReviews(item: ReviewItem): PrViewLaneReview[] {
       reviewUrl: stringValue(record.url),
       stale: record.stale === true,
       author: stringValue(record.author),
+      route,
     }];
   });
 }
@@ -364,7 +368,25 @@ export function formatPrView(result: PrViewResult): string {
   }
   if (result.laneReviews.length > 0) {
     lines.push('Lane reviews:');
-    for (const item of result.laneReviews) lines.push(`- ${item.lane}: ${item.recommendation}; inline=${item.inline}; inlineComments=${item.inlineCommentCount}; bodyFindings=${item.bodyFindingCount ?? 'unknown'}${item.reviewUrl ? `; ${item.reviewUrl}` : ''}`);
+    for (const item of result.laneReviews) {
+      const selectedModel = item.route.selected.model ?? 'host default (not pinned)';
+      const selectedEffort = item.route.selected.effort ? ` (${item.route.selected.effort})` : '';
+      const selected = `${reviewHostDisplayName(item.route.selected.host)} / ${selectedModel}${selectedEffort}`;
+      const executed = formatLaneRun({
+        laneId: item.lane,
+        status: item.status,
+        recommendation: item.recommendation as 'approve' | 'request-changes' | 'pending' | 'inconclusive',
+        summary: '',
+        findings: [],
+        evidenceHeadSha: result.pr.headSha,
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        route: item.route,
+      });
+      const fallback = item.route.reason ? `; fallback=${item.route.reason.code}: ${item.route.reason.message}` : '';
+      const degraded = item.route.degradedReviewerSeparation ? '; reviewerSeparation=degraded' : '';
+      lines.push(`- ${item.lane}: ${item.recommendation}; selected=${selected}; executed=${executed}; source=${item.route.source}${fallback}${degraded}; inline=${item.inline}; inlineComments=${item.inlineCommentCount}; bodyFindings=${item.bodyFindingCount ?? 'unknown'}${item.reviewUrl ? `; ${item.reviewUrl}` : ''}`);
+    }
   }
   if (result.roundSummary) {
     lines.push(`Round summary: head=${result.roundSummary.head}; round=${result.roundSummary.round}; stale=${result.roundSummary.stale ? 'yes' : 'no'}${result.roundSummary.url ? `; ${result.roundSummary.url}` : ''}`);

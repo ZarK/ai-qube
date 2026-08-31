@@ -172,6 +172,132 @@ export function partitionReviewFindings(findings: readonly ReviewFinding[], diff
   return { inline, body };
 }
 
+export type ReviewRouteSource = "configured" | "fallback";
+export type ReviewRouteModelSource = "configured" | "transport-resolved" | "host-reported" | "host-default";
+
+export interface ReviewSelectedRoute {
+  readonly host: string;
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly tier: string;
+}
+
+export interface ReviewExecutedRoute {
+  readonly host: string;
+  readonly requestedModel: string | null;
+  readonly transportModel: string | null;
+  readonly reportedModel: string | null;
+  readonly modelSource: ReviewRouteModelSource;
+  readonly effort: string | null;
+  readonly tier: string;
+  readonly transport: string | null;
+}
+
+export interface ReviewRouteReason {
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface ReviewRouteSubstitution {
+  readonly kind: "route" | "model";
+  readonly from: string;
+  readonly to: string;
+}
+
+export interface ReviewRouteProvenance {
+  readonly source: ReviewRouteSource;
+  readonly selected: ReviewSelectedRoute;
+  readonly executed: ReviewExecutedRoute;
+  readonly reason: ReviewRouteReason | null;
+  readonly substitutions: readonly ReviewRouteSubstitution[];
+  readonly degradedReviewerSeparation: boolean;
+}
+
+function routeRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function routeString(value: unknown, sanitize: (value: string) => string, max = 160): string | null {
+  if (typeof value !== "string") return null;
+  const result = sanitize(value).trim().slice(0, max);
+  return result === "" ? null : result;
+}
+
+function routeNullableString(value: unknown, sanitize: (value: string) => string): string | null | undefined {
+  if (value === null) return null;
+  const result = routeString(value, sanitize);
+  return result ?? undefined;
+}
+
+/** Parse the provider-safe Review route contract without accepting partial or ambiguous identities. */
+export function parseReviewRouteProvenance(
+  value: unknown,
+  sanitize: (value: string) => string = (input) => input,
+): ReviewRouteProvenance | null {
+  if (!routeRecord(value) || (value.source !== "configured" && value.source !== "fallback")) return null;
+  if (!routeRecord(value.selected) || !routeRecord(value.executed)) return null;
+  const selectedHost = routeString(value.selected.host, sanitize);
+  const selectedModel = routeNullableString(value.selected.model, sanitize);
+  const selectedEffort = routeNullableString(value.selected.effort, sanitize);
+  const selectedTier = routeString(value.selected.tier, sanitize);
+  const executedHost = routeString(value.executed.host, sanitize);
+  const requestedModel = routeNullableString(value.executed.requestedModel, sanitize);
+  const transportModel = routeNullableString(value.executed.transportModel, sanitize);
+  const reportedModel = routeNullableString(value.executed.reportedModel, sanitize);
+  const executedEffort = routeNullableString(value.executed.effort, sanitize);
+  const executedTier = routeString(value.executed.tier, sanitize);
+  const transport = routeNullableString(value.executed.transport, sanitize);
+  const modelSource = value.executed.modelSource;
+  if (!selectedHost || selectedModel === undefined || selectedEffort === undefined || !selectedTier
+    || !executedHost || requestedModel === undefined || transportModel === undefined || reportedModel === undefined
+    || executedEffort === undefined || !executedTier || transport === undefined
+    || (modelSource !== "configured" && modelSource !== "transport-resolved" && modelSource !== "host-reported" && modelSource !== "host-default")) return null;
+  if (modelSource === "host-reported" && reportedModel === null) return null;
+  if (modelSource === "transport-resolved" && transportModel === null) return null;
+  if (modelSource === "configured" && requestedModel === null) return null;
+  if (modelSource === "host-default" && (requestedModel !== null || transportModel !== null || reportedModel !== null)) return null;
+  let reason: ReviewRouteReason | null = null;
+  if (value.reason !== null) {
+    if (!routeRecord(value.reason)) return null;
+    const code = routeString(value.reason.code, sanitize);
+    const message = routeString(value.reason.message, sanitize, 240);
+    if (!code || !message) return null;
+    reason = { code, message };
+  }
+  if ((value.source === "configured" && reason !== null) || (value.source === "fallback" && reason === null)) return null;
+  if (!Array.isArray(value.substitutions) || value.substitutions.length > 8) return null;
+  const substitutions: ReviewRouteSubstitution[] = [];
+  for (const entry of value.substitutions) {
+    if (!routeRecord(entry) || (entry.kind !== "route" && entry.kind !== "model")) return null;
+    const from = routeString(entry.from, sanitize);
+    const to = routeString(entry.to, sanitize);
+    if (!from || !to) return null;
+    substitutions.push({ kind: entry.kind, from, to });
+  }
+  if (typeof value.degradedReviewerSeparation !== "boolean") return null;
+  return {
+    source: value.source,
+    selected: { host: selectedHost, model: selectedModel, effort: selectedEffort, tier: selectedTier },
+    executed: {
+      host: executedHost,
+      requestedModel,
+      transportModel,
+      reportedModel,
+      modelSource,
+      effort: executedEffort,
+      tier: executedTier,
+      transport,
+    },
+    reason,
+    substitutions,
+    degradedReviewerSeparation: value.degradedReviewerSeparation,
+  };
+}
+
+export function reviewRouteFingerprint(route: ReviewRouteProvenance): string {
+  return JSON.stringify(route);
+}
+
 export interface ReviewLaneReviewPublishInput {
   readonly dryRun: boolean;
   readonly prNumber: number;
@@ -184,6 +310,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly status: string;
   readonly recommendation: "approve" | "request-changes" | "pending" | "inconclusive";
   readonly host: string;
+  readonly route: ReviewRouteProvenance;
   readonly issueNumber: number;
   readonly summary: string;
   readonly findings: readonly (ReviewFinding | string)[];

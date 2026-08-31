@@ -25,6 +25,7 @@ import type { IssueChecklistSummary } from './issue_checklist.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 import { reviewerDisplayName } from '../agent_host_adapters.js';
+import { sameReviewRouteIdentity } from '../review_route_provenance.js';
 
 export type LocalReviewRunStatus = 'disabled' | 'planned' | 'completed' | 'pending' | 'unavailable' | 'failed';
 export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'pending' | 'unavailable' | 'failed';
@@ -235,6 +236,11 @@ export function resolveFailoverReviewPlan(config: Config): ModelReviewRoutePlan 
   };
 }
 
+export function resolveDistinctFailoverReviewPlan(config: Config, primary: ModelReviewRoutePlan): ModelReviewRoutePlan | null {
+  const fallback = resolveFailoverReviewPlan(config);
+  return fallback && !sameReviewRouteIdentity(primary, fallback) ? fallback : null;
+}
+
 export function hostFailoverSubstitution(primaryHost: string, reasonCode: string | undefined): string {
   if (reasonCode === 'model-route-policy-blocked') {
     return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
@@ -287,10 +293,6 @@ export interface PlannedReviewRouteChain {
   fallbackRoute: ModelReviewRoutePlan | null;
 }
 
-function sameReviewRoute(left: ModelReviewRoutePlan, right: ModelReviewRoutePlan): boolean {
-  return left.host === right.host && left.model === right.model;
-}
-
 export function plannedReviewRouteChains(config: Config): PlannedReviewRouteChain[] {
   if (reviewModeOf(config) !== 'isolated') return [];
   const fallbackRoute = resolveFailoverReviewPlan(config);
@@ -301,7 +303,7 @@ export function plannedReviewRouteChains(config: Config): PlannedReviewRouteChai
     chains.push({
       lane: lane.id as LocalReviewLaneId,
       preferredRoute,
-      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+      fallbackRoute: fallbackRoute && !sameReviewRouteIdentity(preferredRoute, fallbackRoute) ? fallbackRoute : null,
     });
   }
   if (chains.length === 0 && config.reviewRoute) {
@@ -320,7 +322,7 @@ export function plannedReviewRouteChains(config: Config): PlannedReviewRouteChai
     chains.push({
       lane: null,
       preferredRoute,
-      fallbackRoute: fallbackRoute && !sameReviewRoute(preferredRoute, fallbackRoute) ? fallbackRoute : null,
+      fallbackRoute: fallbackRoute && !sameReviewRouteIdentity(preferredRoute, fallbackRoute) ? fallbackRoute : null,
     });
   }
   return chains;
@@ -337,8 +339,11 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
     addRoute(chain.preferredRoute);
     addRoute(chain.fallbackRoute);
   }
-  addRoute(resolveFailoverReviewPlan(config));
   return [...targets.values()];
+}
+
+function configuredImplementationHost(config: Config): string | null {
+  return config.modelRouting.catalog.find(entry => entry.id === config.modelRouting.primary)?.host ?? null;
 }
 
 // Local checkout drift is not a host fault; every other route failure class
@@ -807,7 +812,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         // current primary before failover engages again.
         const faultRecord = readRouteFaults(input.repoRoot, issueNumber, input.prNumber).lanes[lane];
         const laneFaults = faultRecord && faultRecord.routeKey === reviewRouteKey(configuredRoute) ? faultRecord.count : 0;
-        const fallbackPlan = laneFaults >= config.reviewFailover.faults ? resolveFailoverReviewPlan(config) : null;
+        const fallbackPlan = laneFaults >= config.reviewFailover.faults ? resolveDistinctFailoverReviewPlan(config, configuredRoute) : null;
         if (fallbackPlan) {
           route = withHostFailoverSubstitution(fallbackPlan, configuredRoute.host, faultRecord?.lastReasonCode);
           routeSource = 'fallback';
@@ -826,7 +831,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           if (check.status === 'ready') {
             resolvedExecutable = check.resolved ?? null;
           } else {
-            const fallbackPlan = routeSource === 'configured' ? resolveFailoverReviewPlan(config) : null;
+            const fallbackPlan = routeSource === 'configured' && configuredRoute ? resolveDistinctFailoverReviewPlan(config, configuredRoute) : null;
             const fallbackCheck = fallbackPlan ? dryRunProbeFor(fallbackPlan) : null;
             const selection = selectProbedReviewRoute(route, fallbackPlan, false, fallbackCheck?.status === 'ready', check.reasonCode ?? 'model-route-probe-blocked');
             if (selection.route && selection.source === 'fallback') {
@@ -918,9 +923,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             reviewScope: plannedScope,
             run: () => runModelReview({
               plan: job.route,
+              selectedPlan: job.primaryRoute ?? job.route,
               transportModel: job.probedModel,
               transport: job.transport,
-              fallbackReason: job.fallbackReason,
+              routeReasonCode: job.fallbackReason,
+              implementationHost: configuredImplementationHost(config),
               repoRoot: input.repoRoot,
               lane: jobLane,
               issueNumber: jobIssueNumber,
@@ -1020,7 +1027,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const check = probeFor(job.route);
       if (check?.status === 'ready') {
         job.probedExecutable = check.resolved ?? null;
-        job.probedModel = check.resolvedModel === undefined ? job.route.model : check.resolvedModel;
+        job.probedModel = check.resolvedModel;
         job.transport = check.transport ?? null;
         runnableJobs.push(job);
         continue;
@@ -1034,7 +1041,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           job.routeSource = 'configured';
           job.host = job.primaryRoute.host;
           job.probedExecutable = primaryCheck.resolved ?? null;
-          job.probedModel = primaryCheck.resolvedModel === undefined ? job.primaryRoute.model : primaryCheck.resolvedModel;
+          job.probedModel = primaryCheck.resolvedModel;
           job.transport = primaryCheck.transport ?? null;
           job.fallbackReason = null;
           runnableJobs.push(job);
@@ -1046,7 +1053,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       // ready fallback immediately. Runtime failures still use the persisted
       // fault threshold that selected the route before probing.
       if (job.routeSource === 'configured') {
-        const fallbackPlan = resolveFailoverReviewPlan(config);
+        const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
         const fallbackCheck = fallbackPlan ? probeFor(fallbackPlan) : null;
         const selection = selectProbedReviewRoute(
           job.primaryRoute ?? job.route,
@@ -1060,7 +1067,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           job.routeSource = selection.source;
           job.host = selection.route.host;
           job.probedExecutable = fallbackCheck?.resolved ?? null;
-          job.probedModel = fallbackCheck?.resolvedModel === undefined ? selection.route.model : fallbackCheck.resolvedModel;
+          job.probedModel = fallbackCheck?.resolvedModel;
           job.transport = fallbackCheck?.transport ?? null;
           job.fallbackReason = check?.reasonCode ?? 'model-route-probe-blocked';
           runnableJobs.push(job);
@@ -1086,8 +1093,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         && job.routeSource === 'configured'
         && config.reviewFailover
       ) {
-        const fallbackPlan = resolveFailoverReviewPlan(config);
-        if (fallbackPlan && fallbackPlan.host !== job.route.host) {
+        const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
+        if (fallbackPlan) {
           const fallbackCheck = probeFor(fallbackPlan);
           if (fallbackCheck?.status === 'ready') {
             const primaryHost = job.primaryRoute?.host ?? job.route.host;
@@ -1095,7 +1102,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             job.routeSource = 'fallback';
             job.host = fallbackPlan.host;
             job.probedExecutable = fallbackCheck.resolved ?? null;
-            job.probedModel = fallbackCheck.resolvedModel === undefined ? fallbackPlan.model : fallbackCheck.resolvedModel;
+            job.probedModel = fallbackCheck.resolvedModel;
             job.transport = fallbackCheck.transport ?? null;
             job.fallbackReason = 'model-route-policy-blocked';
             routed = await job.run();
@@ -1119,13 +1126,14 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
         continue;
       }
-      // Any valid completed verdict clears the lane's host-fault tally; review
-      // verdicts are evidence, never faults, and never advance failover.
-      clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
       const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, { ...routed.evidence, modelTier: job.route.tier, reviewScope: job.reviewScope.scope, baseHeadSha: job.reviewScope.baseHeadSha }, 'local-host');
       const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, routed.evidence);
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
+      // Persist the immutable selected/executed route and trusted provenance
+      // before clearing the fault tally. A successful fallback must retain its
+      // reason after the counter that selected it is reset.
+      clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
     }
   }

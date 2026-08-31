@@ -223,6 +223,13 @@ export type {
   ReviewForgeStatsProvider,
   ReviewLaneReviewPublishInput,
   ReviewLaneReviewPublishResult,
+  ReviewExecutedRoute,
+  ReviewRouteModelSource,
+  ReviewRouteProvenance,
+  ReviewRouteReason,
+  ReviewRouteSource,
+  ReviewRouteSubstitution,
+  ReviewSelectedRoute,
   ReviewRequestTrigger,
   ReviewRoundLaneStatus,
   ReviewRoundStatusLane,
@@ -232,7 +239,7 @@ export type {
   ReviewRoundSummaryPublishInput,
   ReviewRoundSummaryPublishResult,
 } from "./review_forge.js";
-export { normalizeReviewFinding, partitionReviewFindings, supportsReviewStats } from "./review_forge.js";
+export { normalizeReviewFinding, parseReviewRouteProvenance, partitionReviewFindings, reviewRouteFingerprint, supportsReviewStats } from "./review_forge.js";
 export type {
   ReviewFindingRenderRow,
   ReviewLaneBodyRenderInput,

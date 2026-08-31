@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ReviewDiffIndex, ReviewFinding } from "./review_forge.js";
+import type { ReviewDiffIndex, ReviewFinding, ReviewRouteProvenance } from "./review_forge.js";
 
 export type ReviewRoundVerdict = "approve" | "request-changes" | "pending" | "inconclusive";
 export type ReviewLaneRenderState = "approved" | "request-changes" | "inconclusive" | "reused" | "carried" | "not-run";
@@ -60,6 +60,7 @@ export interface ReviewLaneRenderInput {
   readonly host?: string;
   readonly model?: string | null;
   readonly effort?: string | null;
+  readonly route?: ReviewRouteProvenance;
   readonly profile?: string;
   readonly evidencePath?: string;
 }
@@ -352,6 +353,7 @@ function looksLikeAbsolutePath(path: string): boolean {
 }
 
 export function formatLaneRun(lane: ReviewLaneRenderInput): string {
+  if (lane.route) return formatExecutedRoute(lane.route);
   const host = lane.host && lane.host.trim() !== "" ? reviewHostDisplayName(lane.host.trim()) : null;
   const model = lane.model && lane.model.trim() !== "" ? lane.model.trim() : null;
   const effort = lane.effort && lane.effort.trim() !== "" ? lane.effort.trim() : null;
@@ -360,6 +362,38 @@ export function formatLaneRun(lane: ReviewLaneRenderInput): string {
   if (host && model) return `${host} / ${model}`;
   if (host) return host;
   return model ?? "host not recorded";
+}
+
+function formatSelectedRoute(route: ReviewRouteProvenance): string {
+  const host = reviewHostDisplayName(route.selected.host);
+  const model = route.selected.model ?? "host default (not pinned)";
+  const effort = route.selected.effort ? ` (${route.selected.effort})` : "";
+  return `${host} / ${model}${effort}`;
+}
+
+function formatExecutedRoute(route: ReviewRouteProvenance): string {
+  const host = reviewHostDisplayName(route.executed.host);
+  let model: string;
+  if (route.executed.modelSource === "host-reported") model = `${route.executed.reportedModel} (host-reported)`;
+  else if (route.executed.modelSource === "transport-resolved") model = `${route.executed.transportModel} (transport-resolved)`;
+  else if (route.executed.modelSource === "configured") model = `${route.executed.requestedModel} (configured request)`;
+  else model = "host default (not reported)";
+  const effort = route.executed.effort ? ` (${route.executed.effort})` : "";
+  return `${host} / ${model}${effort}`;
+}
+
+function laneRouteLines(lane: ReviewLaneRenderInput): string[] {
+  if (!lane.route) return [`- ${lane.laneId}: ${formatLaneRun(lane)}`];
+  const route = lane.route;
+  const lines = [`- ${lane.laneId}: ${formatExecutedRoute(route)}`];
+  if (route.source === "fallback") {
+    lines.push(`  - Fallback from ${formatSelectedRoute(route)}`);
+    lines.push(`  - Reason (${route.reason?.code ?? "unknown"}): ${route.reason?.message ?? "No safe fallback explanation was recorded."}`);
+    if (route.executed.requestedModel === null) lines.push("  - Fallback model: host default (not pinned)");
+  }
+  if (route.degradedReviewerSeparation) lines.push("  - Reviewer separation: degraded; fallback returned to the configured implementation host.");
+  for (const substitution of route.substitutions) lines.push(`  - ${substitution.kind === "route" ? "Route" : "Model"} substitution: ${substitution.from} → ${substitution.to}`);
+  return lines;
 }
 
 function laneNoteText(
@@ -398,10 +432,10 @@ function renderCollapsedNotes(
   const preconditions = [...new Set(input.lanes.flatMap((lane) => lane.preconditions ?? []).map((item) => item.trim()).filter((item) => item !== ""))];
   const profiles = [...new Set(input.lanes.map((lane) => lane.profile).filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
   const evidence = [...new Set(input.lanes.map((lane) => lane.evidencePath).filter((item): item is string => typeof item === "string" && item.trim() !== "" && !looksLikeAbsolutePath(item)))];
-  const laneRuns = input.expectedLanes.map((laneId) => {
+  const laneRuns = input.expectedLanes.flatMap((laneId) => {
     const lane = byLane.get(laneId);
-    if (!lane) return `- ${laneId}: not run`;
-    return `- ${laneId}: ${formatLaneRun(lane)}`;
+    if (!lane) return [`- ${laneId}: not run`];
+    return laneRouteLines(lane);
   });
   const provenance = [
     `- head: ${input.headSha}`,
@@ -482,6 +516,18 @@ export function renderLaneReviewBody(
   const completeness = input.completeness && input.completeness.trim() !== ""
     ? sanitize(profile, input.completeness)
     : null;
+  const evidencePath = input.lane.evidencePath && !looksLikeAbsolutePath(input.lane.evidencePath)
+    ? input.lane.evidencePath
+    : null;
+  const provenance = input.lane.route
+    ? wrapCollapsed(profile, "Provenance", [
+        `- head: ${input.headSha}`,
+        ...(input.lane.profile ? [`- profile: ${sanitize(profile, input.lane.profile)}`] : []),
+        "- lane:",
+        ...laneRouteLines(input.lane).map((line) => `  ${line}`),
+        ...(evidencePath ? [`- evidence: ${sanitize(profile, evidencePath)}`] : []),
+      ].join("\n"))
+    : null;
   const parts = [
     input.marker,
     "",
@@ -496,6 +542,7 @@ export function renderLaneReviewBody(
     ...(input.transport !== "review-api" ? [`${DEGRADED_TRANSPORT_LABEL}; inline comments are not available.`] : []),
     ...(withheldNote ? [withheldNote] : []),
     ...(completeness ? ["", wrapCollapsed(profile, "Completeness", completeness)] : []),
+    ...(provenance ? ["", provenance] : []),
   ];
   return { body: `${parts.join("\n").trimEnd()}\n`, marker: input.marker };
 }

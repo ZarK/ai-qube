@@ -11,6 +11,24 @@ import {
   mapGitLabPipelineStatus,
 } from "../dist/index.js";
 
+const configuredCodexRoute = {
+  source: "configured",
+  selected: { host: "codex", model: "gpt-5.4", effort: "high", tier: "review" },
+  executed: { host: "codex", requestedModel: "gpt-5.4", transportModel: null, reportedModel: "gpt-5.4", modelSource: "host-reported", effort: "high", tier: "review", transport: "exec" },
+  reason: null,
+  substitutions: [],
+  degradedReviewerSeparation: false,
+};
+
+const fallbackGrokRoute = {
+  source: "fallback",
+  selected: { host: "codex", model: "gpt-5.4", effort: "high", tier: "review" },
+  executed: { host: "grok-build", requestedModel: null, transportModel: null, reportedModel: "grok-review-fallback", modelSource: "host-reported", effort: null, tier: "review", transport: "exec" },
+  reason: { code: "model-route-readiness-failed", message: "The selected route failed its readiness check." },
+  substitutions: [{ kind: "route", from: "Codex / gpt-5.4 / review / high", to: "Grok Build / host default / review" }],
+  degradedReviewerSeparation: false,
+};
+
 function makeGitLabIssue(overrides = {}) {
   return {
     id: 1001,
@@ -561,6 +579,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -571,7 +590,7 @@ describe("GitLab review forge adapter", () => {
     await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, withheld: { duplicates: 2, offDiff: 1, byCap: 3 } });
     await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, lane: "security", withheld: { duplicates: 0, offDiff: 0, byCap: 0 } });
 
-    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 cross-lane duplicate\(s\), 1 outside the current diff, 3 beyond the advisory cap/);
+    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 duplicate, 1 off-diff, 3 beyond cap/);
     assert.doesNotMatch(notes[1].body, /Synthesis withheld/);
   });
 
@@ -606,6 +625,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -647,6 +667,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -691,6 +712,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -741,6 +763,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -791,6 +814,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "approve",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Review passed.",
       findings: [],
@@ -843,6 +867,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "request-changes",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "First review.",
       findings: ["Fix the first issue."],
@@ -871,8 +896,68 @@ describe("GitLab review forge adapter", () => {
     assert.match(notes[0].body, /Second review\./);
   });
 
+  it("updates same-head GitLab provenance when the executed route changes", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: 1, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const note = notes.find(candidate => String(candidate.id) === String(noteId));
+        note.body = body;
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      round: "round-route-change-1",
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      route: configuredCodexRoute,
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    const first = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const changedInput = { ...input, host: "grok-build", route: fallbackGrokRoute };
+    const changed = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, changedInput);
+    const duplicate = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, changedInput);
+    const readback = await provider.loadPullRequestReview(12);
+
+    assert.notEqual(first.runId, changed.runId);
+    assert.equal(changed.status, "published");
+    assert.equal(duplicate.status, "skipped");
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].body, /code-quality: Grok Build \/ grok-review-fallback \(host-reported\)/);
+    assert.match(notes[0].body, /Fallback from Codex \/ gpt-5.4 \(high\)/);
+    assert.deepEqual(readback.item.trustedMetadata.trustedLaneReviews[0].route, fallbackGrokRoute);
+  });
+
   it("never attributes a foreign merge request's marker to this one", async () => {
-    const foreignMarker = { version: 1, kind: "lane-review", head: "head-sha", lane: "code-quality", expectedLanes: ["code-quality"], round: "round-foreign", profile: "focused", runId: "foreign-run", issueNumber: 185, prNumber: 99, host: "codex", recommendation: "approve", status: "complete", summary: "Foreign MR review.", inline: "gitlab-note" };
+    const foreignMarker = { version: 1, kind: "lane-review", head: "head-sha", lane: "code-quality", expectedLanes: ["code-quality"], round: "round-foreign", profile: "focused", runId: "foreign-run", issueNumber: 185, prNumber: 99, host: "codex", route: configuredCodexRoute, recommendation: "approve", status: "complete", summary: "Foreign MR review.", inline: "gitlab-note" };
     const ownMarker = { ...foreignMarker, round: "round-own", runId: "own-run", prNumber: 12, summary: "Own MR review." };
     const notes = [
       { id: 1, body: `QUBE_REVIEW_METADATA ${JSON.stringify(foreignMarker)}\nForeign marker.`, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" },
@@ -944,6 +1029,7 @@ describe("GitLab review forge adapter", () => {
       status: "failed",
       recommendation: "request-changes",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Blocking review.",
       findings: ["Fix the blocker."],
@@ -1003,6 +1089,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "request-changes",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "First review.",
       findings: ["Fix the first issue."],
@@ -1271,6 +1358,7 @@ describe("GitLab review forge adapter", () => {
       issueNumber: 185,
       prNumber: 12,
       host: "codex",
+      route: configuredCodexRoute,
       recommendation: "approve",
       status: "complete",
       summary: "Forged approval.",
@@ -1394,6 +1482,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "request-changes",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Retry.",
       findings: ["Still broken."],
@@ -1603,6 +1692,7 @@ describe("GitLab review forge adapter", () => {
       status: "complete",
       recommendation: "request-changes",
       host: "codex",
+      route: configuredCodexRoute,
       issueNumber: 185,
       summary: "Found token=ghp_abcdefghijklmnopqrstuvwxyz1234567890 and glpat-abcdefghijklmnopqrstuvwxyz",
       findings: ["Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456 and C:\\Users\\person\\secret.txt"],

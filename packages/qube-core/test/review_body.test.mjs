@@ -12,7 +12,9 @@ import {
   clipReviewAnchorSpan,
   clipReviewAnchorSpanToDiff,
   computeReviewRoundDelta,
+  formatLaneRun,
   isSelfAuthoredReviewBody,
+  parseReviewRouteProvenance,
   renderAggregatedFixPrompt,
   renderInlineReviewComment,
   renderLaneChips,
@@ -21,6 +23,7 @@ import {
   renderVerdictSentence,
   reviewFindingFingerprint,
   reviewFindingKey,
+  reviewRouteFingerprint,
   suggestionFenceSafety,
   truncatedVisibleReviewProse,
   visibleReviewProse,
@@ -52,6 +55,7 @@ function lane(overrides = {}) {
     host: overrides.host,
     model: overrides.model,
     effort: overrides.effort,
+    route: overrides.route,
     evidencePath: overrides.evidencePath,
   };
 }
@@ -262,6 +266,60 @@ describe("renderRoundReviewBody", () => {
     assert.match(render.body, /rerun: `aie pr gate 528`/);
   });
 
+  it("renders configured and fallback route identities without hiding degraded reviewer separation", () => {
+    const route = {
+      source: "fallback",
+      selected: { host: "cursor", model: "cursor-grok-4.6-high", effort: "high", tier: "review" },
+      executed: { host: "grok-build", requestedModel: null, transportModel: null, reportedModel: null, modelSource: "host-default", effort: null, tier: "review", transport: "exec" },
+      reason: { code: "model-route-model-unsupported", message: "The selected model is unavailable through the active Review transport." },
+      substitutions: [{ kind: "route", from: "Cursor / cursor-grok-4.6-high / review / high", to: "Grok Build / host default / review" }],
+      degradedReviewerSeparation: true,
+    };
+    const render = renderRoundReviewBody({
+      marker: marker(),
+      verdict: "approve",
+      headSha: "headsha1234567",
+      expectedLanes: ["code-quality"],
+      lanes: [lane({ route })],
+      findings: [],
+      transport: "review-api",
+    });
+    assert.match(render.body, /code-quality: Grok Build \/ host default \(not reported\)/);
+    assert.match(render.body, /Fallback from Cursor \/ cursor-grok-4\.6-high \(high\)/);
+    assert.match(render.body, /Fallback model: host default \(not pinned\)/);
+    assert.match(render.body, /model-route-model-unsupported/);
+    assert.match(render.body, /Reviewer separation: degraded/);
+    assert.doesNotMatch(render.body, /configured request/);
+    assert.doesNotMatch(render.body, /host-reported/);
+  });
+
+  it("keeps unpinned fallback binding distinct from the unreported executed model", () => {
+    const route = {
+      source: "fallback",
+      selected: { host: "cursor", model: "cursor-grok-4.6-high", effort: "high", tier: "review" },
+      executed: { host: "codex", requestedModel: null, transportModel: null, reportedModel: null, modelSource: "host-default", effort: null, tier: "review", transport: "exec" },
+      reason: { code: "model-route-model-unsupported", message: "The selected model is unavailable through the active Review transport." },
+      substitutions: [{ kind: "route", from: "Cursor / cursor-grok-4.6-high / review / high", to: "Codex / host default / review" }],
+      degradedReviewerSeparation: false,
+    };
+    const compact = formatLaneRun(lane({ route }));
+    const render = renderRoundReviewBody({
+      marker: marker(),
+      verdict: "approve",
+      headSha: "headsha1234567",
+      expectedLanes: ["code-quality"],
+      lanes: [lane({ route })],
+      findings: [],
+      transport: "review-api",
+    });
+    assert.equal(compact, "Codex / host default (not reported)");
+    assert.match(render.body, /code-quality: Codex \/ host default \(not reported\)/);
+    assert.match(render.body, /Fallback model: host default \(not pinned\)/);
+    assert.doesNotMatch(compact, /not pinned/);
+    assert.doesNotMatch(render.body, /configured request/);
+    assert.doesNotMatch(render.body, /host-reported/);
+  });
+
   it("names issue-comment transport and never claims posted inline", () => {
     const row = {
       laneId: "code-quality",
@@ -284,6 +342,28 @@ describe("renderRoundReviewBody", () => {
     assert.doesNotMatch(render.body, /posted inline/);
     assert.doesNotMatch(render.body, /\[!NOTE\]/);
     assert.match(visibleReviewProse(render.body), /\*\*No issues found|\*\*Approve|issue-comment transport/);
+  });
+});
+
+describe("Review route provenance", () => {
+  const configured = {
+    source: "configured",
+    selected: { host: "cursor", model: "cursor-grok-4.6-high-fast", effort: "high", tier: "review" },
+    executed: { host: "cursor", requestedModel: "cursor-grok-4.6-high-fast", transportModel: "grok-4.6[effort=high,fast=true]", reportedModel: "grok-4.6", modelSource: "host-reported", effort: "high", tier: "review", transport: "acp" },
+    reason: null,
+    substitutions: [{ kind: "model", from: "cursor-grok-4.6-high-fast", to: "grok-4.6[effort=high,fast=true]" }],
+    degradedReviewerSeparation: false,
+  };
+
+  it("round-trips all distinct model identities and fingerprints route changes", () => {
+    assert.deepEqual(parseReviewRouteProvenance(configured), configured);
+    assert.notEqual(reviewRouteFingerprint(configured), reviewRouteFingerprint({ ...configured, executed: { ...configured.executed, reportedModel: "grok-4.7" } }));
+  });
+
+  it("rejects partial, contradictory, and unreasoned fallback routes", () => {
+    assert.equal(parseReviewRouteProvenance({ ...configured, source: "fallback" }), null);
+    assert.equal(parseReviewRouteProvenance({ ...configured, executed: { ...configured.executed, modelSource: "host-default" } }), null);
+    assert.equal(parseReviewRouteProvenance({ ...configured, selected: { ...configured.selected, host: "" } }), null);
   });
 });
 
@@ -314,6 +394,34 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     assert.match(render.body, /No issues found/);
     assert.doesNotMatch(render.body, /QUBE review \(code-quality\)/);
     assert.doesNotMatch(render.body, /- finding digest:/);
+  });
+
+  it("renders fallback provenance in per-lane provider bodies", () => {
+    const route = {
+      source: "fallback",
+      selected: { host: "cursor", model: "cursor-grok-4.6-high", effort: "high", tier: "review" },
+      executed: { host: "codex", requestedModel: null, transportModel: null, reportedModel: null, modelSource: "host-default", effort: null, tier: "review", transport: "exec" },
+      reason: { code: "model-route-model-unsupported", message: "The selected model is unavailable through the active Review transport." },
+      substitutions: [{ kind: "route", from: "Cursor / cursor-grok-4.6-high / review / high", to: "Codex / host default / review" }],
+      degradedReviewerSeparation: true,
+    };
+    const render = renderLaneReviewBody({
+      marker: "<!-- qube-pr-review:{\"version\":1} -->",
+      lane: lane({ route, evidencePath: ".qube/aie/reviews/1/2/abc/code-quality.json" }),
+      bodyFindings: [],
+      inlineCount: 0,
+      transport: "review-api",
+      headSha: "headsha1234567",
+    });
+
+    assert.match(render.body, /code-quality: Codex \/ host default \(not reported\)/);
+    assert.match(render.body, /Fallback from Cursor \/ cursor-grok-4\.6-high \(high\)/);
+    assert.match(render.body, /Fallback model: host default \(not pinned\)/);
+    assert.match(render.body, /Reason \(model-route-model-unsupported\)/);
+    assert.match(render.body, /Reviewer separation: degraded/);
+    assert.match(render.body, /\.qube\/aie\/reviews\/1\/2\/abc\/code-quality\.json/);
+    assert.doesNotMatch(render.body, /configured request/);
+    assert.doesNotMatch(render.body, /host-reported/);
   });
 
   it("renders an inline comment through the shared path and withholds unsafe fences", () => {

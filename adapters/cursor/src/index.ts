@@ -212,6 +212,7 @@ export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnv
   return {
     text,
     sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : null,
+    ...(typeof parsed.model === "string" && parsed.model.trim() !== "" ? { reportedModel: parsed.model.trim() } : {}),
   };
 }
 

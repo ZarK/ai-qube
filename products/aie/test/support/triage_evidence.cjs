@@ -26,6 +26,14 @@ function laneEvidenceBody(repo, lane, findings, { issueNumber, prNumber, headSha
     promptStackHash: promptStackHash(promptStack),
     headSha,
     providerPublishStatus: null,
+    route: {
+      source: 'configured',
+      selected: { host: 'codex', model: 'gpt-test-review', effort: null, tier: 'review' },
+      executed: { host: 'codex', requestedModel: 'gpt-test-review', transportModel: null, reportedModel: null, modelSource: 'configured', effort: null, tier: 'review', transport: 'exec' },
+      reason: null,
+      substitutions: [],
+      degradedReviewerSeparation: false,
+    },
   };
   return {
     version: 1,
@@ -78,8 +86,7 @@ function writeValidLaneEvidence(repo, lane, findings, { issueNumber = 93, prNumb
     sessionId: null,
     threadId: null,
     promptStackHash: body.runnerProvenance.promptStackHash,
-    model: null,
-    effort: null,
+    route: body.runnerProvenance.route,
     isolation: null,
     invocationId: null,
     recordedAt: '2026-07-18T00:00:00.000Z',
