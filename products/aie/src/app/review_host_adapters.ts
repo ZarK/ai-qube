@@ -21,9 +21,17 @@ export interface ReviewHostParsedEnvelope {
   text: string;
   sessionId: string | null;
   reportedModel?: string;
+  resultDecodeDiagnostic?: string;
   transientTexts?: string[];
   usage?: LaneUsage;
 }
+
+export interface ReviewHostEnvelopeFailure {
+  failureReasonCode: string;
+  failureDiagnostic: string;
+}
+
+export type ReviewHostEnvelopeResult = ReviewHostParsedEnvelope | ReviewHostEnvelopeFailure | null;
 
 export interface ReviewHostInvocationContext {
   repoRoot: string;
@@ -78,7 +86,7 @@ export interface ReviewHostAdapter {
   windowsNodeModulesScriptPath(shimDir: string): string | null;
   windowsFallbackExecutablePath(): string | null;
   buildInvocation(context: ReviewHostInvocationContext, executable: ModelHostExecutable): ReviewHostBuiltInvocation;
-  parseEnvelope(stdout: string): ReviewHostParsedEnvelope | null;
+  parseEnvelope(stdout: string): ReviewHostEnvelopeResult;
   probeAfterVersion(context: ReviewHostProbeContext): ReviewHostProbeResult;
   listCatalog?(context: Pick<ReviewHostProbeContext, 'executable' | 'prefixArgs' | 'runCommand'>): string[] | null;
 }

@@ -22,6 +22,7 @@ export function reviewRouteReasonMessage(code: string): string {
   if (code === 'model-route-authentication') return 'The selected Review route is not authenticated.';
   if (code === 'model-route-timeout') return 'The selected Review route exceeded its execution time limit.';
   if (code === 'model-route-process-failed') return 'The selected Review route reached the configured host-fault threshold.';
+  if (code === 'model-route-result-decode') return 'The selected Review host returned an ambiguous or unsafe final-result shape.';
   return 'The selected Review route could not produce accepted lane evidence.';
 }
 
@@ -40,6 +41,7 @@ const REVIEW_ROUTE_REASON_CODES = new Set([
   'model-route-probe-blocked',
   'model-route-process-failed',
   'model-route-prompt-delivery',
+  'model-route-result-decode',
   'model-route-timeout',
   'model-route-unavailable',
 ]);

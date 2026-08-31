@@ -9,9 +9,9 @@ import type {
   InstructionTarget,
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
+  IsolatedReviewHostEnvelopeResult,
   IsolatedReviewHostExecutable,
   IsolatedReviewHostInvocationContext,
-  IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
   IsolatedReviewHostProbeResult,
   MakeItSoSurface,
@@ -166,26 +166,130 @@ export function listCursorModels(
   return compatibleCursorAcpModels(displayIds, acpCatalog.options).map(model => model.displayId);
 }
 
-function extractJsonObject(text: string): string | null {
-  const trimmed = text.trim();
-  try {
-    if (isRecord(JSON.parse(trimmed))) return trimmed;
-  } catch {
-    // Cursor Grok often prefixes the lane JSON with a short thinking sentence.
-  }
-  for (let index = trimmed.lastIndexOf("{"); index >= 0; index = trimmed.lastIndexOf("{", Math.max(0, index - 1))) {
-    const candidate = trimmed.slice(index);
-    try {
-      if (isRecord(JSON.parse(candidate))) return candidate;
-    } catch {
-      // Keep scanning earlier object starts.
+const CURSOR_RESULT_MAX_BYTES = 1_048_576;
+const CURSOR_PREFACE_MAX_BYTES = 1_024;
+const CURSOR_JSON_MAX_DEPTH = 64;
+const CURSOR_PREFACE_DIAGNOSTIC = "cursor-bounded-preface-normalized";
+const CURSOR_DECODE_REASON = "model-route-result-decode";
+
+type CursorReviewResultDecode =
+  | { readonly ok: true; readonly text: string; readonly diagnostic: string | null }
+  | { readonly ok: false; readonly reasonCode: typeof CURSOR_DECODE_REASON; readonly diagnostic: string };
+
+type JsonObjectScan =
+  | { readonly kind: "complete"; readonly end: number }
+  | { readonly kind: "deep" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "truncated" };
+
+function scanJsonObject(text: string, start: number): JsonObjectScan {
+  const expectedClosers: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
     }
-    if (index === 0) break;
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{" || character === "[") {
+      expectedClosers.push(character === "{" ? "}" : "]");
+      if (expectedClosers.length > CURSOR_JSON_MAX_DEPTH) return { kind: "deep" };
+      continue;
+    }
+    if (character === "}" || character === "]") {
+      if (expectedClosers.at(-1) !== character) return { kind: "invalid" };
+      expectedClosers.pop();
+      if (expectedClosers.length === 0) return { kind: "complete", end: index + 1 };
+    }
   }
-  return null;
+  return { kind: "truncated" };
 }
 
-export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnvelope | null {
+function quotedCandidate(text: string, start: number, end: number): boolean {
+  const quote = text[start - 1];
+  return (quote === '"' || quote === "'" || quote === "`") && text[end] === quote;
+}
+
+export function decodeCursorReviewResult(text: string): CursorReviewResultDecode {
+  if (Buffer.byteLength(text, "utf8") > CURSOR_RESULT_MAX_BYTES) {
+    return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-size-limit" };
+  }
+  const trimmed = text.trim();
+  if (trimmed === "") return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-empty" };
+  if (trimmed.includes("```")) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-markdown-fence" };
+
+  const candidates: Array<{ start: number; end: number; text: string }> = [];
+  let sawDeepObject = false;
+  let sawTruncatedObject = false;
+  let sawBalancedObject = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    if (trimmed[index] !== "{") continue;
+    const scan = scanJsonObject(trimmed, index);
+    if (scan.kind === "deep") {
+      sawDeepObject = true;
+      continue;
+    }
+    if (scan.kind === "truncated") {
+      sawTruncatedObject = true;
+      continue;
+    }
+    if (scan.kind === "invalid") continue;
+    sawBalancedObject = true;
+    const candidateText = trimmed.slice(index, scan.end);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidateText);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    if (quotedCandidate(trimmed, index, scan.end)) {
+      index = scan.end;
+      continue;
+    }
+    candidates.push({ start: index, end: scan.end, text: candidateText });
+    index = scan.end - 1;
+  }
+
+  if (sawDeepObject) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-depth-limit" };
+  if (candidates.length > 1) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-multiple-objects" };
+  const candidate = candidates[0];
+  if (!candidate) {
+    return {
+      ok: false,
+      reasonCode: CURSOR_DECODE_REASON,
+      diagnostic: sawTruncatedObject
+        ? "cursor-result-truncated-json"
+        : sawBalancedObject
+          ? "cursor-result-malformed-json"
+          : "cursor-result-missing-object",
+    };
+  }
+  if (trimmed.slice(candidate.end).trim() !== "") {
+    return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-trailing-output" };
+  }
+  const preface = trimmed.slice(0, candidate.start);
+  if (preface.trim() === "") return { ok: true, text: candidate.text, diagnostic: null };
+  if (Buffer.byteLength(preface, "utf8") > CURSOR_PREFACE_MAX_BYTES) {
+    return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-preface-limit" };
+  }
+  try {
+    JSON.parse(preface.trim());
+    return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-json-preface" };
+  } catch {
+    // A supported preface is host-generated prose, not a second JSON value.
+  }
+  return { ok: true, text: candidate.text, diagnostic: CURSOR_PREFACE_DIAGNOSTIC };
+}
+
+export function parseCursorEnvelope(stdout: string): IsolatedReviewHostEnvelopeResult {
   const records: Record<string, unknown>[] = [];
   try {
     const parsed: unknown = JSON.parse(stdout.trim());
@@ -207,12 +311,15 @@ export function parseCursorEnvelope(stdout: string): IsolatedReviewHostParsedEnv
     || parsed.is_error !== false
     || typeof parsed.result !== "string"
     || parsed.result.trim() === "") return null;
-  const text = extractJsonObject(parsed.result);
-  if (!text) return null;
+  const decoded = decodeCursorReviewResult(parsed.result);
+  if (!decoded.ok) {
+    return { failureReasonCode: decoded.reasonCode, failureDiagnostic: decoded.diagnostic };
+  }
   return {
-    text,
+    text: decoded.text,
     sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : null,
     ...(typeof parsed.model === "string" && parsed.model.trim() !== "" ? { reportedModel: parsed.model.trim() } : {}),
+    ...(decoded.diagnostic ? { resultDecodeDiagnostic: decoded.diagnostic } : {}),
   };
 }
 

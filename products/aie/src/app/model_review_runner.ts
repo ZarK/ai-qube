@@ -973,6 +973,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if (!result.stdinDelivered) return captureRawOutput(input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
     const parsedHostOutput = adapter.parseEnvelope(result.stdout);
     if (!parsedHostOutput) return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
+    if ('failureReasonCode' in parsedHostOutput) {
+      return captureRawOutput(input, result, parsedHostOutput.failureReasonCode, parsedHostOutput.failureDiagnostic);
+    }
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {
       return captureRawOutput(input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
@@ -1000,6 +1003,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       }),
       isolation: 'read-only',
       invocationId,
+      resultDecodeDiagnostic: parsedHostOutput.resultDecodeDiagnostic ?? null,
     };
     if ('transientTexts' in parsedHostOutput) {
       const transientTexts = parsedHostOutput.transientTexts;

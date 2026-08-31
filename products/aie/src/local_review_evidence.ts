@@ -65,6 +65,7 @@ export interface LocalReviewRunnerProvenance {
   route: ReviewRouteProvenance | null;
   isolation: 'read-only' | null;
   invocationId: string | null;
+  resultDecodeDiagnostic?: string | null;
 }
 
 export interface LocalReviewLane {
@@ -463,6 +464,9 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     route: parseReviewRouteProvenance(value.route, redact),
     isolation: value.isolation === 'read-only' ? 'read-only' : null,
     invocationId: readNullableString(value.invocationId),
+    resultDecodeDiagnostic: value.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
+      ? 'cursor-bounded-preface-normalized'
+      : null,
   };
 }
 
