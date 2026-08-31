@@ -22,7 +22,7 @@ export const MODEL_ROUTING_HOSTS = AGENT_HOST_IDS;
 export type ModelRoutingHostId = AgentHostId;
 export type ModelRoutingTransport = 'cli' | 'host';
 
-const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*(?:\[[A-Za-z0-9._:/-]+=[A-Za-z0-9._:/-]+(?:,[A-Za-z0-9._:/-]+=[A-Za-z0-9._:/-]+)*\])?$/;
 const CATALOG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 export interface ModelCatalogEntry {
