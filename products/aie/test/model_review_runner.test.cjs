@@ -22,17 +22,19 @@ const {
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok-build') {
+  const plan = {
+    host,
+    tier: 'review',
+    model: host === 'grok-build' ? 'grok-4.5' : 'gpt-5.6-luna',
+    effort: host === 'codex' ? 'high' : null,
+    isolation: 'read-only',
+    timeoutSeconds: 60,
+    maxTurns: 8,
+    substitution: null,
+  };
   return {
-    plan: {
-      host,
-      tier: 'review',
-      model: host === 'grok-build' ? 'grok-4.5' : 'gpt-5.6-luna',
-      effort: host === 'codex' ? 'high' : null,
-      isolation: 'read-only',
-      timeoutSeconds: 60,
-      maxTurns: 8,
-      substitution: null,
-    },
+    plan,
+    selectedPlan: plan,
     repoRoot,
     lane: 'code-quality',
     issueNumber: 309,
@@ -604,7 +606,14 @@ describe('model review runner', () => {
 
     assert.equal(result.error, null);
     assert.equal(result.evidence.runnerProvenance.host, 'grok-build');
-    assert.equal(result.evidence.runnerProvenance.model, 'grok-4.5');
+    assert.deepEqual(result.evidence.runnerProvenance.route, {
+      source: 'configured',
+      selected: { host: 'grok-build', model: 'grok-4.5', effort: null, tier: 'review' },
+      executed: { host: 'grok-build', requestedModel: 'grok-4.5', transportModel: null, reportedModel: null, modelSource: 'configured', effort: null, tier: 'review', transport: null },
+      reason: null,
+      substitutions: [],
+      degradedReviewerSeparation: false,
+    });
     assert.equal(result.evidence.runnerProvenance.isolation, 'read-only');
     assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-session');
     assert.equal(result.evidence.promptStack[0].id, 'review-lanes/code-quality');
@@ -629,11 +638,17 @@ describe('model review runner', () => {
   it('executes the exact probed Cursor transport model and records fallback provenance', { skip: process.platform !== 'win32' }, async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-transport-'));
     let capturedArgs = null;
+    const selectedPlan = {
+      ...reviewInput(repoRoot, 'cursor').plan,
+      model: 'cursor-grok-4.6-high',
+    };
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'cursor'),
+      selectedPlan,
       transport: 'acp',
       transportModel: 'grok-4.6[effort=high,fast=true]',
-      fallbackReason: 'model-route-model-unsupported',
+      routeSource: 'fallback',
+      routeReasonCode: 'model-route-model-unsupported',
       plan: {
         ...reviewInput(repoRoot, 'cursor').plan,
         model: 'cursor-grok-4.6-high-fast',
@@ -660,10 +675,14 @@ describe('model review runner', () => {
       '--requested-model',
       'cursor-grok-4.6-high-fast',
     ]);
-    assert.equal(result.evidence.runnerProvenance.model, 'cursor-grok-4.6-high-fast');
-    assert.equal(result.evidence.runnerProvenance.transport, 'acp');
-    assert.equal(result.evidence.runnerProvenance.transportModel, 'grok-4.6[effort=high,fast=true]');
-    assert.equal(result.evidence.runnerProvenance.fallbackReason, 'model-route-model-unsupported');
+    assert.equal(result.evidence.runnerProvenance.route.source, 'fallback');
+    assert.equal(result.evidence.runnerProvenance.route.selected.model, 'cursor-grok-4.6-high');
+    assert.equal(result.evidence.runnerProvenance.route.executed.requestedModel, 'cursor-grok-4.6-high-fast');
+    assert.equal(result.evidence.runnerProvenance.route.executed.transport, 'acp');
+    assert.equal(result.evidence.runnerProvenance.route.executed.transportModel, 'grok-4.6[effort=high,fast=true]');
+    assert.equal(result.evidence.runnerProvenance.route.executed.modelSource, 'transport-resolved');
+    assert.equal(result.evidence.runnerProvenance.route.reason.code, 'model-route-model-unsupported');
+    assert.deepEqual(result.evidence.runnerProvenance.route.substitutions.map(entry => entry.kind), ['route', 'model']);
   });
 
   it('redacts model-derived evidence before persistence or publication', async () => {

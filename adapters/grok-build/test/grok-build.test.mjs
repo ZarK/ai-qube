@@ -86,13 +86,14 @@ describe("grok-build adapter", () => {
       "starting review",
       JSON.stringify({ type: "progress", message: "reading" }),
       JSON.stringify({ text: progress, sessionId: "grok-session" }),
-      JSON.stringify({ text: final, usage: { input_tokens: 10 } }),
+      JSON.stringify({ text: final, model: "grok-4.6", usage: { input_tokens: 10 } }),
       JSON.stringify({ type: "telemetry" }),
     ].join("\n"));
 
     assert.equal(parsed.text, final);
     assert.deepEqual(parsed.transientTexts, [progress]);
     assert.equal(parsed.sessionId, "grok-session");
+    assert.equal(parsed.reportedModel, "grok-4.6");
     assert.equal(parsed.usage.inputTokens, 10);
   });
 

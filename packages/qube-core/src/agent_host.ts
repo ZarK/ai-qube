@@ -47,6 +47,8 @@ export type IsolatedReviewHostExecutable = string | { executable: string; prefix
 export interface IsolatedReviewHostParsedEnvelope {
   readonly text: string;
   readonly sessionId: string | null;
+  /** Actual model identity reported by the executing host, when its envelope provides one. */
+  readonly reportedModel?: string;
   readonly transientTexts?: readonly string[];
   readonly usage?: Record<string, unknown>;
 }

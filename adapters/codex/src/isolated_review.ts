@@ -69,6 +69,7 @@ function usageFromCodexEvent(record: Record<string, unknown>): Record<string, un
 function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
   const messages: string[] = [];
   let sessionId: string | null = null;
+  let reportedModel: string | undefined;
   let usage: Record<string, unknown> | undefined;
   for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== "")) {
     let event: unknown;
@@ -80,6 +81,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
     if (!event || typeof event !== "object" || Array.isArray(event)) continue;
     const record = event as Record<string, unknown>;
     if (record.type === "thread.started" && typeof record.thread_id === "string") sessionId = record.thread_id;
+    if (typeof record.model === "string" && record.model.trim() !== "") reportedModel = record.model.trim();
     if (record.type === "item.completed" && record.item && typeof record.item === "object" && !Array.isArray(record.item)) {
       const item = record.item as Record<string, unknown>;
       if (item.type === "agent_message" && typeof item.text === "string") messages.push(item.text);
@@ -91,6 +93,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
   return {
     text: messages[messages.length - 1]!,
     sessionId,
+    ...(reportedModel ? { reportedModel } : {}),
     ...(messages.length > 1 ? { transientTexts: messages.slice(0, -1) } : {}),
     ...(usage ? { usage } : {}),
   };

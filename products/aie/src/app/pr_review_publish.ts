@@ -1,7 +1,7 @@
 import type { Config } from '../config/index.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import { parseReviewRouteProvenance, reviewRouteFingerprint, type ReviewFinding, type ReviewRouteProvenance } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, carryForwardScopeFromConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
@@ -132,8 +132,7 @@ export interface ValidatedRoundLane {
   readonly carriedForwardFromHeadSha: string | null;
   readonly origin: 'local' | 'trusted-provider';
   readonly host: string;
-  readonly model: string | null;
-  readonly effort: string | null;
+  readonly route: ReviewRouteProvenance;
   readonly profile: string;
   readonly path: string;
 }
@@ -142,7 +141,7 @@ export interface ValidatedRoundLane {
 // summary, reusing the exact same fail-closed validation as per-lane publish
 // (trust chain, provenance, artifact contract) so the summary never renders
 // content that would not itself pass lane publication.
-export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[], providerReuseLanes: ReadonlySet<LocalReviewLaneId>): { lanes: ValidatedRoundLane[]; missing: LocalReviewLaneId[] } {
+export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[], providerReuseRoutes: ReadonlyMap<LocalReviewLaneId, ReviewRouteProvenance>): { lanes: ValidatedRoundLane[]; missing: LocalReviewLaneId[] } {
   const lanes: ValidatedRoundLane[] = [];
   const missing: LocalReviewLaneId[] = [];
   for (const laneId of expectedLanes) {
@@ -165,13 +164,13 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
         carriedForwardFromHeadSha,
         origin: 'local',
         host: validated.host,
-        model: validated.model,
-        effort: validated.effort,
+        route: validated.route,
         profile: validated.profile,
         path: validated.path,
       });
     } catch (error) {
-      if (providerReuseLanes.has(laneId)) {
+      const providerRoute = providerReuseRoutes.get(laneId);
+      if (providerRoute) {
         lanes.push({
           laneId,
           status: 'passed',
@@ -182,9 +181,8 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
           evidenceHeadSha: headSha,
           carriedForwardFromHeadSha: null,
           origin: 'trusted-provider',
-          host: 'trusted-provider',
-          model: null,
-          effort: null,
+          host: providerRoute.executed.host,
+          route: providerRoute,
           profile: 'local-focused',
           path: '',
         });
@@ -296,12 +294,17 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   if (typeof parsed.evidenceSha256 !== 'string' || parsed.evidenceSha256 !== localReviewEvidenceSha256(evidence)) {
     throw laneEvidenceFailure(evidencePath, 'trusted local-host provenance evidence digest does not match lane evidence.');
   }
-  for (const field of ['host', 'model', 'transport', 'transportModel', 'effort', 'isolation', 'invocationId', 'routeSource', 'fallbackReason'] as const) {
+  for (const field of ['host', 'isolation', 'invocationId'] as const) {
     if ((parsed[field] ?? null) !== (provenance[field] ?? null)) throw laneEvidenceFailure(evidencePath, `trusted local-host provenance ${field} does not match lane evidence.`);
+  }
+  const trustedRoute = parseReviewRouteProvenance(parsed.route, value => value);
+  const evidenceRoute = parseReviewRouteProvenance(provenance.route, value => value);
+  if (!trustedRoute || !evidenceRoute || reviewRouteFingerprint(trustedRoute) !== reviewRouteFingerprint(evidenceRoute)) {
+    throw laneEvidenceFailure(evidencePath, 'trusted local-host provenance route does not match lane evidence.');
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; model: string | null; effort: string | null; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; route: ReviewRouteProvenance; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if (raw.version !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if (raw.issueNumber !== issueNumber || raw.prNumber !== prNumber || raw.headSha !== headSha || raw.lane !== lane) {
@@ -372,8 +375,9 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   }
   const host = stringField(provenance, 'host') || 'local-review';
   if (!validPublishIdentifier(host)) throw laneEvidenceFailure(path, 'runnerProvenance host must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
-  const model = typeof provenance.model === 'string' && provenance.model.trim() !== '' ? provenance.model.trim() : null;
-  const effort = typeof provenance.effort === 'string' && provenance.effort.trim() !== '' ? provenance.effort.trim() : null;
+  const route = parseReviewRouteProvenance(provenance.route, value => value);
+  if (!route) throw laneEvidenceFailure(path, 'runnerProvenance route must contain the complete selected and executed Review route contract.');
+  if (route.executed.host !== host) throw laneEvidenceFailure(path, 'runnerProvenance host must match route.executed.host.');
   return {
     evidence: raw,
     path,
@@ -384,8 +388,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     completeness,
     profile,
     host,
-    model,
-    effort,
+    route,
     recommendation,
   };
 }
@@ -529,6 +532,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     status: evidence.status,
     recommendation: evidence.recommendation,
     host: evidence.host,
+    route: evidence.route,
     issueNumber,
     summary: evidence.summary,
     findings: synthesisPlan.published,

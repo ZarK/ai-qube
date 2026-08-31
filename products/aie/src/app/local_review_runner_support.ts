@@ -9,11 +9,12 @@ import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForward
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
-import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
+import { parseReviewRouteProvenance, type RepoAffectedResult, type RepoPathSignal, type ReviewFinding } from '@tjalve/qube-core';
 import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { loadReviewLearningsFragment } from '../review_learnings.js';
+import { sameReviewRouteIdentity, type ReviewRoutePlanIdentity } from '../review_route_provenance.js';
 import { reviewerDisplayName } from '../agent_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeKind, type ReviewScopeSelection } from './review_delta_scope.js';
 
@@ -401,6 +402,7 @@ export async function evaluateCarryForwardDecision(input: {
   requiredCommand: string | null;
   expectedModelTier?: ReviewModelTierId;
   expectedHost?: string | null;
+  expectedSelectedRoute?: ReviewRoutePlanIdentity | null;
 }): Promise<{ source: CarryForwardSource | null; priorApproved: boolean; deltaComputed: boolean; deltaPaths: readonly string[] | null }> {
   const source = await findCarryForwardSource(input);
   if (source) return { source, priorApproved: true, deltaComputed: true, deltaPaths: [] };
@@ -460,6 +462,7 @@ export async function findCarryForwardSource(input: {
   requiredCommand: string | null;
   expectedModelTier?: ReviewModelTierId;
   expectedHost?: string | null;
+  expectedSelectedRoute?: ReviewRoutePlanIdentity | null;
 }): Promise<CarryForwardSource | null> {
   const expectedCommandIdentity = input.expectedCommandSuppliedIdentity ?? riskCardCommandIdentity([]);
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
@@ -489,6 +492,10 @@ export async function findCarryForwardSource(input: {
       if (!isRecord(parsed.runnerProvenance)) continue;
       if (input.expectedModelTier && parsed.modelTier !== input.expectedModelTier) continue;
       if (input.expectedHost && parsed.runnerProvenance.host !== input.expectedHost) continue;
+      if (input.expectedSelectedRoute) {
+        const priorRoute = parseReviewRouteProvenance(parsed.runnerProvenance.route);
+        if (!priorRoute || !sameReviewRouteIdentity(input.expectedSelectedRoute, priorRoute.selected)) continue;
+      }
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
       if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
       const provenance = parsed.runnerProvenance;
@@ -886,10 +893,10 @@ export function laneContextLines(host: ReviewModelHostId, lane: LocalReviewLaneI
     'Report the admissible blocking findings for this lane at this head, then at most a few high-confidence advisories. A blocker must name a violated acceptance criterion with a concrete failing scenario or a defect introduced by this diff with a concrete wrong outcome; pre-existing adjacent code and speculative hardening are advisory at most.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
-    `Include runnerProvenance with runnerKind local-host, host ${host}, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, the model id that executed this lane, and the subagent task/session/thread id when the host exposes one.`,
+    `Include runnerProvenance with runnerKind local-host, host ${host}, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, a complete route object that separately records selected and executed Review routes, and the subagent task/session/thread id when the host exposes one. The route must name its source, selected host/model/effort/tier, executed host/requestedModel/transportModel/reportedModel/modelSource/effort/tier/transport, bounded reason, substitutions, and degradedReviewerSeparation.`,
     `The main session binds validated local-host evidence to same-user host provenance at this exact path: ${trustedLocalHostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
-    'The main session creates host provenance with version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the validated evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
+    'The main session creates host provenance with version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, route, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the validated evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Do not write the requested evidence or host-provenance files. Do not edit any other file. Do not make any provider change from inside the reviewer lane.',
     'Return candidate evidence for this lane only. After validation and persistence, the main session publishes provider-visible feedback.',
@@ -1207,14 +1214,9 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' && /^[a-f0-9]{64}$/i.test(value.runnerProvenance.promptStackHash) ? value.runnerProvenance.promptStackHash.toLowerCase() : null,
       headSha: typeof value.runnerProvenance.headSha === 'string' ? redact(value.runnerProvenance.headSha) : headSha,
       providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? redact(value.runnerProvenance.providerPublishStatus) : null,
-      model: typeof value.runnerProvenance.model === 'string' ? redact(value.runnerProvenance.model) : null,
-      transport: typeof value.runnerProvenance.transport === 'string' ? redact(value.runnerProvenance.transport) : null,
-      transportModel: typeof value.runnerProvenance.transportModel === 'string' ? redact(value.runnerProvenance.transportModel) : null,
-      effort: typeof value.runnerProvenance.effort === 'string' ? redact(value.runnerProvenance.effort) : null,
+      route: parseReviewRouteProvenance(value.runnerProvenance.route, redact),
       isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
       invocationId: typeof value.runnerProvenance.invocationId === 'string' ? redact(value.runnerProvenance.invocationId) : null,
-      routeSource: value.runnerProvenance.routeSource === 'configured' || value.runnerProvenance.routeSource === 'fallback' ? value.runnerProvenance.routeSource : null,
-      fallbackReason: typeof value.runnerProvenance.fallbackReason === 'string' ? redact(value.runnerProvenance.fallbackReason) : null,
     },
     ...(value.modelTier === 'review' || value.modelTier === 'economy' || value.modelTier === 'synthesis' ? { modelTier: value.modelTier } : {}),
     ...(usage ? { usage } : {}),
@@ -1404,14 +1406,9 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     sessionId: provenance.sessionId,
     threadId: provenance.threadId,
     promptStackHash: provenance.promptStackHash,
-    model: provenance.model,
-    transport: provenance.transport,
-    transportModel: provenance.transportModel,
-    effort: provenance.effort,
+    route: provenance.route,
     isolation: provenance.isolation,
     invocationId: provenance.invocationId,
-    routeSource: provenance.routeSource,
-    fallbackReason: provenance.fallbackReason,
     recordedAt: new Date().toISOString(),
   }, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   return path;

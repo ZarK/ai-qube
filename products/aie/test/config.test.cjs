@@ -311,6 +311,19 @@ describe('config validation', () => {
     const unknownKeyResult = validateConfig(unknownKey);
     assert.equal(unknownKeyResult.ok, false);
     assert.ok(unknownKeyResult.errors.some(error => error.path.startsWith('policy.reviews.failover')));
+
+    const identical = defaultFile();
+    identical.policy.reviews.route = { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    identical.policy.reviews.failover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const identicalResult = validateConfig(identical);
+    assert.equal(identicalResult.ok, false);
+    assert.ok(identicalResult.errors.some(error => error.path === 'policy.reviews.failover.route' && /duplicates policy\.reviews\.route/.test(error.message)));
+
+    const distinctTier = defaultFile();
+    distinctTier.policy.reviews.route = { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    distinctTier.policy.reviews.failover = { faults: 2, route: { host: 'codex', tier: 'economy', timeoutSeconds: 600, maxTurns: 8 } };
+    const distinctTierResult = validateConfig(distinctTier);
+    assert.equal(distinctTierResult.ok, true);
   });
 
   it('rejects turn budgets below the routed inspection floor', () => {
@@ -665,7 +678,10 @@ describe('config validation', () => {
   it('parses reviewModels tiers and rejects invalid tier bindings', () => {
     const input = defaultFile();
     input.policy.reviews.models = {
-      review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } },
+      review: {
+        codex: { model: 'gpt-5.5-codex', effort: 'high' },
+        cursor: { model: 'grok-4.6[effort=high,fast=true]', effort: null },
+      },
       economy: { codex: { model: 'gpt-5-mini' } },
     };
 
@@ -673,6 +689,7 @@ describe('config validation', () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(result.config.reviewModels.review.codex, { model: 'gpt-5.5-codex', effort: 'high' });
+    assert.deepEqual(result.config.reviewModels.review.cursor, { model: 'grok-4.6[effort=high,fast=true]', effort: null });
     assert.deepEqual(result.config.reviewModels.economy.codex, { model: 'gpt-5-mini', effort: null });
     assert.deepEqual(result.config.reviewModels.synthesis, {});
 

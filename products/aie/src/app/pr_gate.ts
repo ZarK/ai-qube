@@ -1114,7 +1114,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         localReviewPublish = pendingLocalReviewPublish(`${failure} Rerun the routed lanes for the current head.`);
       } else {
         try {
-          const providerReuseLanesForSummary = localReview.evidence.flatMap(evidence => evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id));
+          const providerReuseRoutesForSummary = (providerLaneReuse?.accepted ?? []).map(entry => ({ lane: entry.lane, route: entry.route }));
           const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
           const summaryPublished = await runPrReviewSummaryPublishWithProvider(provider, {
             prNumber: options.prNumber,
@@ -1124,7 +1124,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
             repoRoot,
             exec: options.exec,
             expectedLanes: activeFocuses,
-            providerReuseLanes: providerReuseLanesForSummary,
+            providerReuseRoutes: providerReuseRoutesForSummary,
             changedPaths: summaryDeltaPaths,
             nitCap: config.reviewNitCap,
           });

@@ -54,6 +54,7 @@ const {
   promptTextHash,
   promptStackForLane,
   promptForLane,
+  testReviewRoute,
   withPromptStackProvenance,
   safeEvidenceSegment,
   trustedLocalHostProvenancePath,
@@ -983,7 +984,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.reviewSourceContract.allSatisfied, true, 'the provider-observed published round must satisfy the local-lane source in the same invocation');
     assert.equal(snapshotReadsAfterSummary, 1, 'a successful round adds exactly one bounded post-publication provider snapshot read');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok-build'));
-    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok-build'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'trusted-provider' && lane.runnerProvenance === null));
     const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
     assert.deepEqual(writtenLane.reviewer, { id: 'grok-build', name: 'Grok Build', adapterKind: 'local' });
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
@@ -1402,7 +1403,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
     assert.ok(laneIds.length > 0);
-    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `reuse-${lane}` }));
+    const routes = new Map(plan.localReviewRunner.lanes.map(lane => [lane.lane, lane.route]));
+    const comments = laneIds.map(lane => {
+      const route = routes.get(lane);
+      return laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `reuse-${lane}`, route: testReviewRoute(route.host, route.model, route.effort, route.tier) });
+    });
     const fixture = makePrExec({ prViews: [cleanLocalPr({ comments, reviewDecision: 'APPROVED' })] });
 
     const result = await runPrGate(config, {
@@ -1471,6 +1476,27 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     });
     assert.notEqual(blocked.status, 'passed');
     assert.equal(blocked.evidence[0].lanes.find(lane => lane.id === 'code-quality').origin, 'local', 'provider approval must not hide a local blocking verdict');
+  });
+
+  it('does not provider-reuse current-head lanes selected under a different route', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    const staleRoute = testReviewRoute('codex');
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `stale-route-${lane}`, route: staleRoute }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments, reviewDecision: 'APPROVED' })] }).exec });
+
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route.model === 'grok-4.5'));
   });
 
   it('reports a visible round-summary error when no issue number can be resolved', async () => {
@@ -1615,6 +1641,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(laneIds.length > 2);
     const wrongProfileLane = laneIds[0];
     const nonApproveLane = laneIds[1];
+    const routes = new Map(plan.localReviewRunner.lanes.map(lane => [lane.lane, lane.route]));
     const comments = laneIds.map(lane => laneReviewComment({
       lane,
       profile: lane === wrongProfileLane ? 'local-comprehensive' : profile,
@@ -1625,6 +1652,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       prNumber: 12,
       expectedLanes: laneIds,
       runId: `mixed-${lane}`,
+      route: testReviewRoute(routes.get(lane).host, routes.get(lane).model, routes.get(lane).effort, routes.get(lane).tier),
     }));
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
@@ -1692,12 +1720,34 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(secondRunModelCalls, 0);
     assert.equal(result.localReview.status, 'passed');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed' && lane.evidenceSource === 'local'));
-    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local' || lane.origin === 'trusted-provider'));
     // Reused local evidence still publishes: a validated lane result without
     // a current provider marker reaches the provider on this run instead of
     // staying local-only.
     assert.equal(result.localReviewPublish.status, 'published');
     assert.match(result.localReviewPublish.nextAction, /round review|round summary|published/i);
+
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.6', effort: null };
+    let reroutedModelCalls = 0;
+    const rerouted = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: makePrExec({ prViews: [cleanLocalPr()] }).exec,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+      routeProbe: readyRouteProbe,
+      modelRouteProcess: async invocation => {
+        reroutedModelCalls += 1;
+        return modelRouteProcess(invocation);
+      },
+    });
+
+    assert.ok(reroutedModelCalls > 0);
+    assert.ok(rerouted.localReviewRunner.lanes.every(lane => lane.evidenceSource === 'fresh-run'));
+    for (const lane of rerouted.localReviewRunner.lanes) {
+      const evidence = JSON.parse(readFileSync(lane.evidencePath, 'utf8'));
+      assert.equal(evidence.runnerProvenance.route.selected.model, 'grok-4.6');
+    }
   });
 
   it('re-executes a lane whose local current-head evidence is non-terminal instead of provider-reusing it', async () => {
@@ -1717,7 +1767,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const laneDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(laneDirectory, { recursive: true });
     writeFileSync(join(laneDirectory, `${nonTerminalLane}.json`), `${JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: nonTerminalLane, status: 'unavailable', summary: 'host fault before verdict' })}\n`);
-    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `mixed-source-${lane}` }));
+    const routes = new Map(plan.localReviewRunner.lanes.map(lane => [lane.lane, lane.route]));
+    const comments = laneIds.map(lane => {
+      const route = routes.get(lane);
+      return laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `mixed-source-${lane}`, route: testReviewRoute(route.host, route.model, route.effort, route.tier) });
+    });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
 
@@ -1963,15 +2017,19 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.match(failedOver.summary, /routed review passed/);
     const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(evidence.runnerProvenance.host, 'codex');
-    assert.equal(evidence.runnerProvenance.model, 'gpt-fallback-test');
-    assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+    assert.equal(evidence.runnerProvenance.route.selected.host, 'grok-build');
+    assert.equal(evidence.runnerProvenance.route.selected.model, 'grok-4.5');
+    assert.equal(evidence.runnerProvenance.route.executed.host, 'codex');
+    assert.equal(evidence.runnerProvenance.route.executed.requestedModel, 'gpt-fallback-test');
+    assert.equal(evidence.runnerProvenance.route.source, 'fallback');
+    assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-process-failed');
     const trustedProvenance = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'host-provenance', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(trustedProvenance.host, 'codex');
-    assert.equal(trustedProvenance.routeSource, 'fallback');
+    assert.deepEqual(trustedProvenance.route, evidence.runnerProvenance.route);
     ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
     assert.ok(!(faultedLane in ledger.lanes), 'a completed fallback verdict clears the lane fault tally');
     const otherEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${thirdRun.localReviewRunner.lanes.filter(lane => lane.route !== null).map(lane => lane.lane).find(lane => lane !== faultedLane)}.json`), 'utf8'));
-    assert.equal(otherEvidence.runnerProvenance.routeSource, 'configured');
+    assert.equal(otherEvidence.runnerProvenance.route.source, 'configured');
   });
 
   it('never triggers failover from a review verdict', async () => {
@@ -2024,7 +2082,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(!existsSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json')) || Object.keys(JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8')).lanes).length === 0, 'review verdicts must record zero host faults');
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
-      assert.equal(evidence.runnerProvenance.routeSource, 'configured');
+      assert.equal(evidence.runnerProvenance.route.source, 'configured');
     }
   });
 
@@ -2112,7 +2170,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(recovered.route.host, 'grok-build', 'a blocked fallback probe must retry the configured primary route');
     const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
     assert.equal(evidence.runnerProvenance.host, 'grok-build');
-    assert.equal(evidence.runnerProvenance.routeSource, 'configured');
+    assert.equal(evidence.runnerProvenance.route.source, 'configured');
     const ledger = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8'));
     assert.ok(!(faultedLane in ledger.lanes), 'the recovered primary verdict clears the fault tally');
   });
@@ -2249,7 +2307,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     for (const lane of routedLanes) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
       assert.equal(evidence.runnerProvenance.host, 'grok-build');
-      assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+      assert.equal(evidence.runnerProvenance.route.source, 'fallback');
+      assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-policy-blocked');
       assert.match(JSON.stringify({ route: lane.route, runnerProvenance: evidence.runnerProvenance }), /rejected a required read-only inspection command/);
     }
   });

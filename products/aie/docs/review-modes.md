@@ -26,6 +26,14 @@ Executor runs the reviews. The gate starts a model CLI per lane in a fresh read-
 
 Choose this mode when you want Executor to run the lane batch itself, including failover to a second host.
 
+### Selected and executed routes
+
+Each accepted isolated lane records both the route selected before execution and the route that produced the evidence. The selected route identifies the configured host, model, effort, and tier. The executed route keeps requested, transport-resolved, and host-reported model identities separate, and records the transport that ran the lane.
+
+A configured run shows one route. A fallback shows the executed route first, followed by the selected route, a stable reason code and safe explanation, and any route or model substitutions. An unpinned model is shown as `host default (not reported)` unless the host reports the actual model. A fallback to the implementation host is marked as degraded reviewer separation.
+
+This route appears in local evidence, trusted host provenance, provider markers and readback, consolidated round summaries, and `aie pr view` JSON. Human output uses the same values. Publisher identity is reported separately because the account that sends a review is not the host that computed it. A same-head rerun with a different route replaces stale provider-visible provenance.
+
 ## See the active mode
 
 `aie doctor` prints one review-mode line. The line includes:

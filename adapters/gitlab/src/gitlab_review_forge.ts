@@ -6,6 +6,10 @@ import {
   normalizeProviderSource,
   normalizeReviewFinding,
   normalizeReviewItem,
+  parseReviewRouteProvenance,
+  reviewRouteFingerprint,
+  renderLaneReviewBody,
+  GITLAB_REVIEW_RENDER_PROFILE,
   type Action,
   type ActionPlan,
   type ActionResult,
@@ -230,7 +234,7 @@ function reviewRequestBody(handle: string, head: string, requestText: string): s
 
 function laneRunId(input: ReviewLaneReviewPublishInput): string {
   return createHash("sha256")
-    .update(JSON.stringify({ head: input.headSha, lane: input.lane, issueNumber: input.issueNumber, prNumber: input.prNumber }))
+    .update(JSON.stringify({ head: input.headSha, lane: input.lane, issueNumber: input.issueNumber, prNumber: input.prNumber, route: reviewRouteFingerprint(input.route) }))
     .digest("hex")
     .slice(0, 16);
 }
@@ -285,19 +289,16 @@ function truncatePublishedCompleteness(value: string): string {
 }
 
 function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: string; runId: string; bodyFindingCount: number } {
-  const findings = input.findings.map(finding => {
-    if (typeof finding === "string") return redact(finding);
-    const normalized = normalizeReviewFinding(finding);
-    const confidence = typeof normalized.confidence === "number" ? ` (confidence ${normalized.confidence.toFixed(2)})` : "";
-    return `${redact(normalized.message)}${confidence}`;
-  });
+  const findings = input.findings.map((finding, index) => typeof finding === "string"
+    ? normalizeReviewFinding({ id: `legacy-${index + 1}`, severity: input.recommendation === "request-changes" ? "blocking" : "advisory", message: redact(finding) })
+    : normalizeReviewFinding(finding));
   const runId = laneRunId(input);
   const summary = redact(input.summary);
   // The digest covers the rendered finding text (including confidence) and
   // the withheld counts, so a rescore or synthesis-accounting change
   // republishes instead of skip-matching on stale note content.
   const findingDigest = createHash("sha256")
-    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null, withheld: input.withheld ?? null }))
+    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null, withheld: input.withheld ?? null, route: reviewRouteFingerprint(input.route) }))
     .digest("hex")
     .slice(0, 16);
   const metadata: GitLabMetadata = {
@@ -312,6 +313,7 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
     host: input.host,
+    route: input.route,
     recommendation: input.recommendation,
     status: input.status,
     summary,
@@ -320,19 +322,30 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     inlineCommentCount: 0,
     findingDigest,
   };
-  const withheld = input.withheld;
-  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
-  const body = [
-    metadataLine(metadata),
-    `QUBE ${redact(input.lane)} review: ${input.recommendation}`,
-    summary,
-    ...findings.map(finding => `- ${finding}`),
-    withheldTotal > 0
-      ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld!.duplicates} cross-lane duplicate(s), ${withheld!.offDiff} outside the current diff, ${withheld!.byCap} beyond the advisory cap; see local evidence.`
-      : "",
-    input.completeness && input.completeness.trim() !== "" ? `Completeness self-check: ${truncatePublishedCompleteness(input.completeness)}` : "",
-    input.evidencePath ? `Evidence: ${redact(input.evidencePath)}` : "",
-  ].filter(line => line !== "").join("\n");
+  const marker = metadataLine(metadata);
+  const body = renderLaneReviewBody({
+    marker,
+    lane: {
+      laneId: input.lane,
+      status: input.status,
+      recommendation: input.recommendation,
+      summary,
+      findings,
+      evidenceHeadSha: input.headSha,
+      carriedForwardFromHeadSha: null,
+      origin: "local",
+      withheld: input.withheld,
+      host: input.host,
+      route: input.route,
+      profile: input.profile,
+      evidencePath: input.evidencePath ?? undefined,
+    },
+    bodyFindings: findings,
+    inlineCount: 0,
+    transport: "issue-comment",
+    headSha: input.headSha,
+    completeness: input.completeness ? truncatePublishedCompleteness(input.completeness) : null,
+  }, { ...GITLAB_REVIEW_RENDER_PROFILE, sanitizeText: redact }).body;
   return { body, marker: JSON.stringify(metadata), runId, bodyFindingCount: findings.length };
 }
 
@@ -794,17 +807,22 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     const planned = laneBody(input);
     const plannedMetadata = JSON.parse(planned.marker) as GitLabMetadata;
     const records = Array.isArray(trustedMetadata.trustedLaneReviews) ? trustedMetadata.trustedLaneReviews : [];
-    return records.some(record => record !== null && typeof record === "object" && !Array.isArray(record)
-      && record.superseded !== true
-      && record.head === input.headSha
-      && record.lane === input.lane
-      && record.round === input.round
-      && record.runId === runId
-      && record.recommendation === input.recommendation
-      && record.status === input.status
-      && record.summary === redact(input.summary)
-      && record.findingDigest === plannedMetadata.findingDigest
-      && record.stale !== true);
+    return records.some(record => {
+      if (record === null || typeof record !== "object" || Array.isArray(record)) return false;
+      const route = parseReviewRouteProvenance(record.route);
+      if (!route) return false;
+      return record.superseded !== true
+        && record.head === input.headSha
+        && record.lane === input.lane
+        && record.round === input.round
+        && record.runId === runId
+        && record.recommendation === input.recommendation
+        && record.status === input.status
+        && record.summary === redact(input.summary)
+        && reviewRouteFingerprint(route) === reviewRouteFingerprint(input.route)
+        && record.findingDigest === plannedMetadata.findingDigest
+        && record.stale !== true;
+    });
   }
 
   async loadReviewDiffIndex(prNumber: number): Promise<ReviewDiffIndex | null> {
@@ -1333,7 +1351,7 @@ function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedM
     reviewRequests: [],
     trustedMarkerAuthor: input.trustedMarkerAuthor,
     comments: syntheticComments,
-    trustedLaneReviews: laneReviews,
+    trustedLaneReviews: jsonValue(laneReviews),
     reviewRequestMarkers: requestMarkers,
     gitlabReviewers: (input.mr.reviewers ?? []).map(userName),
     unavailable: input.unavailable,
@@ -1346,7 +1364,7 @@ function trustedLaneReviewMetadata(input: { notes: GitLabNote[]; trustedMarkerAu
     provider: "gitlab",
     headRefOid: input.head,
     trustedMarkerAuthor: input.trustedMarkerAuthor,
-    trustedLaneReviews: trustedLaneReviews(input),
+    trustedLaneReviews: jsonValue(trustedLaneReviews(input)),
   };
 }
 
@@ -1354,6 +1372,8 @@ function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: s
   return input.notes.flatMap(note => {
     const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
     if (parsed?.kind !== "lane-review" || !parsed.lane || !parsed.runId || !parsed.recommendation || !parsed.status || !parsed.summary) return [];
+    const route = parseReviewRouteProvenance(parsed.route, redact);
+    if (!route || route.executed.host !== redact(parsed.host ?? "")) return [];
     // A marker must bind to this merge request: a foreign or missing PR
     // number can never be consumed as this merge request's review history.
     if (parsed.prNumber !== input.prNumber) return [];
@@ -1368,6 +1388,7 @@ function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: s
       issueNumber: parsed.issueNumber ?? 0,
       prNumber: parsed.prNumber ?? input.prNumber,
       host: parsed.host ?? "",
+      route,
       recommendation: parsed.recommendation,
       status: parsed.status,
       summary: parsed.summary,

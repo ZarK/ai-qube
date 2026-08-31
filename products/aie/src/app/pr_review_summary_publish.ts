@@ -123,7 +123,7 @@ export interface PrReviewSummaryPublishOptions {
   exec?: PrGateExec;
   expectedLanes?: readonly LocalReviewLaneId[];
   /** Expected lanes whose current-head evidence is a trusted-provider reuse marker with no local evidence file. */
-  providerReuseLanes?: readonly LocalReviewLaneId[];
+  providerReuseRoutes?: readonly { lane: LocalReviewLaneId; route: import('@tjalve/qube-core').ReviewRouteProvenance }[];
   /** Owner/name used for file deep links in the round summary. */
   repository?: ReviewRepositoryRef;
   /** Paths changed by this PR head; see PrReviewPublishOptions.changedPaths for the same null/undefined/[] semantics. */
@@ -190,8 +190,8 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     throw new Error(`publish round review summary failed. Likely cause: the expected lane set names unknown lane id(s) ${unknownLaneIds.join(', ')}. Next action: pass only configured review lane ids.`);
   }
 
-  const providerReuseLaneSet = new Set<LocalReviewLaneId>(options.providerReuseLanes ?? []);
-  const { lanes: validatedLanes, missing } = loadValidatedRoundLanes(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds, providerReuseLaneSet);
+  const providerReuseRouteMap = new Map((options.providerReuseRoutes ?? []).map(entry => [entry.lane, entry.route] as const));
+  const { lanes: validatedLanes, missing } = loadValidatedRoundLanes(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds, providerReuseRouteMap);
   if (missing.length > 0) {
     throw new Error(`publish round review summary failed. Likely cause: local review lane evidence is missing or invalid for ${missing.join(', ')}. Next action: rerun the missing lane reviews for the current head, then republish the round summary.`);
   }
@@ -226,8 +226,9 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
       origin: lane.origin,
       withheld: { duplicates: plan?.withheldDuplicates ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
       host: lane.host,
-      model: lane.model,
-      effort: lane.effort,
+      model: lane.route.executed.reportedModel ?? lane.route.executed.transportModel ?? lane.route.executed.requestedModel,
+      effort: lane.route.executed.effort,
+      route: lane.route,
       profile: lane.profile,
       evidencePath: publishedEvidencePath(repoRoot, lane.path),
     };
@@ -261,11 +262,12 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     lane: lane.laneId,
     expectedLanes: expectedLaneIds,
     round,
-    profile: 'local-focused',
+    profile: lane.profile,
     runId: `${round}:${lane.laneId}`,
     issueNumber,
     prNumber: options.prNumber,
-    host: 'local-host',
+    host: lane.route.executed.host,
+    route: lane.route,
     recommendation: lane.recommendation,
     status: lane.status,
     summary: lane.summary || `${lane.laneId} ${lane.status}`,

@@ -647,7 +647,7 @@ While a review session lock exists, do not run git restore, git checkout, git re
 
 Provider-visible pull request reviews and comments are the human audit trail for merge guidance. The main session treats your result as untrusted input. It validates the lane, current head, output schema, prompt hash, and fresh-context provenance. The main session writes evidence and provenance and publishes provider feedback only after validation succeeds.
 
-Include runnerProvenance in the returned result. Set runnerKind to local-host, host to the harness that spawned you, freshContext to true, promptOnly to false, and headSha to the current PR head. Include promptStackHash and this subagent task, session, or thread id when the host exposes them.
+Include runnerProvenance in the returned result. Set runnerKind to local-host, host to the harness that spawned you, freshContext to true, promptOnly to false, and headSha to the current PR head. Include promptStackHash, a complete route object that separately records selected and executed Review routes, and this subagent task, session, or thread id when the host exposes one.
 
 Return exactly one JSON lane result for the requested PR head. Return no markdown fence and no text outside the JSON object. Do not approve stale evidence, missing current-head checks, malformed evidence, unresolved high or critical findings, or prompt-only output.`;
 

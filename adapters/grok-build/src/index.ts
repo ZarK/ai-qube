@@ -260,10 +260,12 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
   const records = parseGrokEnvelopeRecords(stdout.trim());
   const objects: string[] = [];
   let sessionId: string | null = null;
+  let reportedModel: string | undefined;
   let usage: Record<string, unknown> | undefined;
   for (const record of records) {
     if (typeof record.sessionId === "string") sessionId = record.sessionId;
     else if (typeof record.session_id === "string") sessionId = record.session_id;
+    if (typeof record.model === "string" && record.model.trim() !== "") reportedModel = record.model.trim();
     usage = readGrokUsage(record.usage)
       ?? readGrokUsage(record.tokenUsage)
       ?? readGrokUsage(record.tokens)
@@ -278,6 +280,7 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
     text: objects[objects.length - 1]!,
     transientTexts: objects.slice(0, -1),
     sessionId,
+    ...(reportedModel ? { reportedModel } : {}),
     ...(usage ? { usage } : {}),
   };
 }

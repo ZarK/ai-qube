@@ -12,6 +12,7 @@ import { redact } from '../redact.js';
 import { laneEvidencePath, mkdirTrustedStoreSync, normalizeExternalLane, writeReviewFileGuarded, type LaneEvidence } from './local_review_runner_support.js';
 import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
+import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 
 export type { ModelHostExecutable } from './review_host_adapters.js';
 
@@ -141,10 +142,12 @@ export function windowsPowerShellRouteEnvironment(
 
 export interface ModelReviewRunInput {
   plan: ModelReviewRoutePlan;
+  selectedPlan: ModelReviewRoutePlan;
   /** Exact transport model value bound by the current route probe. */
   transportModel?: string | null;
   transport?: string | null;
-  fallbackReason?: string | null;
+  routeReasonCode?: string | null;
+  implementationHost?: string | null;
   repoRoot: string;
   lane: LocalReviewLaneId;
   issueNumber: number;
@@ -985,14 +988,18 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       promptStackHash: input.promptStackHash,
       headSha: input.headSha,
       providerPublishStatus: null,
-      model: input.plan.model,
-      transport: input.transport ?? null,
-      transportModel: input.transportModel ?? input.plan.model,
-      effort: input.plan.effort,
+      route: buildReviewRouteProvenance({
+        selected: input.selectedPlan,
+        executed: input.plan,
+        source: input.routeSource ?? 'configured',
+        reasonCode: input.routeReasonCode ?? null,
+        transport: input.transport ?? null,
+        transportModel: input.transportModel ?? null,
+        reportedModel: parsedHostOutput.reportedModel ?? null,
+        implementationHost: input.implementationHost ?? null,
+      }),
       isolation: 'read-only',
       invocationId,
-      routeSource: input.routeSource ?? 'configured',
-      fallbackReason: input.fallbackReason ?? null,
     };
     if ('transientTexts' in parsedHostOutput) {
       const transientTexts = parsedHostOutput.transientTexts;

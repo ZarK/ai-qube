@@ -13,6 +13,7 @@ import {
   type ReviewLaneRenderInput,
   type ReviewPublishTransport,
   type ReviewRepositoryRef,
+  type ReviewRouteProvenance,
   type ReviewRoundDeltaInput,
   partitionReviewFindings,
 } from '@tjalve/qube-core';
@@ -36,6 +37,7 @@ export interface RoundSummaryLaneInput {
   readonly host?: string;
   readonly model?: string | null;
   readonly effort?: string | null;
+  readonly route?: ReviewRouteProvenance;
   readonly profile?: string;
   readonly evidencePath?: string;
 }
@@ -254,12 +256,13 @@ function findingDigestEntry(anchor: FindingAnchor): unknown {
   };
 }
 
-export function computeRoundFindingDigest(inline: readonly FindingAnchor[], unanchored: readonly FindingAnchor[], preconditions: readonly string[]): string {
+export function computeRoundFindingDigest(inline: readonly FindingAnchor[], unanchored: readonly FindingAnchor[], preconditions: readonly string[], routes: readonly (ReviewRouteProvenance | undefined)[] = []): string {
   return createHash('sha256')
     .update(JSON.stringify({
       inline: inline.map(findingDigestEntry),
       unanchored: unanchored.map(findingDigestEntry),
       preconditions,
+      routes,
     }))
     .digest('hex')
     .slice(0, 16);
@@ -281,6 +284,7 @@ function toLaneRenderInput(lane: RoundSummaryLaneInput): ReviewLaneRenderInput {
     host: lane.host,
     model: lane.model,
     effort: lane.effort,
+    route: lane.route,
     profile: lane.profile,
     evidencePath: lane.evidencePath,
   };
@@ -315,7 +319,7 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
   const rankedUnanchored = rankFindingAnchors(unanchored, input.expectedLanes);
   const allBlocking = [...rankedInline.blocking, ...rankedUnanchored.blocking];
   const allAdvisory = [...rankedInline.advisory, ...rankedUnanchored.advisory];
-  const findingDigest = computeRoundFindingDigest(inline, unanchored, preconditions);
+  const findingDigest = computeRoundFindingDigest(inline, unanchored, preconditions, input.lanes.map(lane => lane.route));
   const transport = options.transport ?? input.transport ?? (options.publisherDowngradeReason ? 'issue-comment' : 'review-api');
   const profile = options.profile === 'gitlab'
     ? { ...GITLAB_REVIEW_RENDER_PROFILE, sanitizeText }

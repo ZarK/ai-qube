@@ -158,6 +158,23 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
       status: "needs-work",
       recommendation: "request-changes",
       host: "codex",
+      route: {
+        source: "configured",
+        selected: { host: "codex", model: "conformance-model", effort: "high", tier: "review" },
+        executed: {
+          host: "codex",
+          requestedModel: "conformance-model",
+          transportModel: null,
+          reportedModel: null,
+          modelSource: "configured",
+          effort: "high",
+          tier: "review",
+          transport: "exec",
+        },
+        reason: null,
+        substitutions: [],
+        degradedReviewerSeparation: false,
+      },
       issueNumber: 1,
       summary: "Conformance dry-run publish payload.",
       findings: [

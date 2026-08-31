@@ -391,6 +391,9 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.equal(result.laneReviews[0].inlineCommentCount, 2);
     assert.equal(result.laneReviews[0].bodyFindingCount, 1);
     assert.equal(result.laneReviews[0].reviewUrl, 'https://github.com/example/repo/pull/12#pullrequestreview-2');
+    assert.equal(result.laneReviews[0].route.selected.host, 'codex');
+    assert.equal(result.laneReviews[0].route.executed.modelSource, 'configured');
+    assert.match(formatPrView(result), /selected=Codex \/ gpt-test-review; executed=Codex \/ gpt-test-review \(configured request\); source=configured/);
   });
 
   it('surfaces the current provider-visible round summary pointer in PR view JSON and text', async () => {

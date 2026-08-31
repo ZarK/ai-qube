@@ -11,6 +11,8 @@ import {
   normalizeReviewItem,
   normalizeReviewFinding,
   partitionReviewFindings,
+  parseReviewRouteProvenance,
+  reviewRouteFingerprint,
   type Action,
   type ActionPlan,
   type ActionResult,
@@ -25,6 +27,7 @@ import {
   type ReviewConversation,
   type ReviewFinding,
   type ReviewFindingSide,
+  type ReviewRouteProvenance,
   type ReviewForgeCapabilities,
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
@@ -349,6 +352,7 @@ interface LaneReviewMetadata {
   issueNumber: number;
   prNumber: number;
   host: string;
+  route: ReviewRouteProvenance;
   recommendation: GitHubLocalReviewRecommendation;
   status: string;
   summary: string;
@@ -381,6 +385,7 @@ export interface GitHubLaneReviewPublishInput {
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
   host: string;
+  route: ReviewRouteProvenance;
   issueNumber: number;
   summary: string;
   findings: Array<ReviewFinding | string>;
@@ -782,6 +787,8 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
     if (typeof issueNumber !== 'number' || !Number.isSafeInteger(issueNumber) || issueNumber <= 0) return null;
     if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
     if (typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
+    const route = parseReviewRouteProvenance(parsed.route, redact);
+    if (!route || route.executed.host !== redact(parsed.host)) return null;
     if (parsed.recommendation !== 'approve' && parsed.recommendation !== 'request-changes' && parsed.recommendation !== 'pending' && parsed.recommendation !== 'inconclusive') return null;
     if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
     if (typeof parsed.summary !== 'string' || parsed.summary.trim() === '') return null;
@@ -798,6 +805,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       issueNumber,
       prNumber,
       host: redact(parsed.host),
+      route,
       recommendation: parsed.recommendation,
       status: redact(parsed.status),
       summary: redact(parsed.summary),
@@ -921,6 +929,7 @@ function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
       expectedLanes: expectedLaneNames(input),
       issueNumber: input.issueNumber,
       prNumber: input.prNumber,
+      route: reviewRouteFingerprint(input.route),
     }))
     .digest('hex')
     .slice(0, 16);
@@ -932,7 +941,7 @@ function normalizeLaneFindings(input: GitHubLaneReviewPublishInput): ReviewFindi
     : normalizeReviewFinding(finding));
 }
 
-function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined, withheld: GitHubLaneReviewPublishInput['withheld']): string {
+function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined, withheld: GitHubLaneReviewPublishInput['withheld'], route: ReviewRouteProvenance): string {
   return createHash('sha256')
     .update(JSON.stringify({
       findings: findings.map(finding => ({
@@ -950,6 +959,7 @@ function findingDigest(findings: readonly ReviewFinding[], completeness: string 
       // Withheld counts render in the published body, so a synthesis change
       // that only moves counts must republish instead of skip-matching.
       withheld: withheld ?? null,
+      route: reviewRouteFingerprint(route),
     }))
     .digest('hex')
     .slice(0, 16);
@@ -964,7 +974,7 @@ function laneReviewBody(
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
-  const digest = findingDigest(allFindings, input.completeness, input.withheld);
+  const digest = findingDigest(allFindings, input.completeness, input.withheld, input.route);
   const bodyFindings = bodyFindingsInput ?? allFindings;
   const inline = publishKind === 'issue-comment' ? 'issue-comment' : 'review-api';
   const metadata: LaneReviewMetadata = {
@@ -978,6 +988,7 @@ function laneReviewBody(
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
     host: input.host,
+    route: input.route,
     recommendation: input.recommendation,
     status: input.status,
     summary,
@@ -1005,6 +1016,7 @@ function laneReviewBody(
       origin: 'local',
       withheld: input.withheld,
       host: input.host,
+      route: input.route,
       profile: input.profile,
       evidencePath: input.evidencePath ?? undefined,
     },
@@ -1037,12 +1049,14 @@ function issueCommentIdFromUrl(url: string | null | undefined): string | null {
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
-  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness, input.withheld);
+  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness, input.withheld, input.route);
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
     if (review.superseded === true) return false;
     if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
+    const route = parseReviewRouteProvenance(review.route);
+    if (!route) return false;
     return review.head === input.headSha
       && review.lane === input.lane
       && Array.isArray(review.expectedLanes)
@@ -1052,6 +1066,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
       && review.recommendation === input.recommendation
       && review.status === input.status
       && review.summary === sanitizePublishedText(input.summary)
+      && reviewRouteFingerprint(route) === reviewRouteFingerprint(input.route)
       && review.findingDigest === expectedFindingDigest;
   });
 }
@@ -1073,6 +1088,7 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       issueNumber: metadata.issueNumber,
       prNumber: metadata.prNumber,
       host: metadata.host,
+      route: metadata.route as unknown as JsonObject,
       recommendation: metadata.recommendation,
       status: metadata.status,
       summary: metadata.summary,
