@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isGrokSessionEndReason, parseGrokStopPayload } from "@tjalve/qube-adapter-grok-build";
+import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
 
 import type { AiuConfig, AiuHost } from "./config.js";
 import { loadAiuConfig } from "./config.js";
@@ -9,6 +9,7 @@ import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./promp
 import { createAiuTrustedStateEnvelope, type AiuHostSessionState, type AiuTrustedStateEnvelope } from "./state.js";
 import { runAiuTrustedStateAdapter, type AiuTrustedStateAdapterResult } from "./trusted_adapter.js";
 import { decideAiuWhipContinuation, readAiuWhipState } from "./whip.js";
+import { decodeAiuContinuationEvent, getAiuContinuationAdapter } from "./continuation_adapters.js";
 
 export interface AiuHookStopOptions {
   readonly tool: Extract<AiuHost, "codex" | "claude-code" | "grok-build">;
@@ -38,19 +39,6 @@ export interface AiuHookStopDiagnostic {
   readonly message: string;
 }
 
-interface HookPayload {
-  readonly cwd?: string;
-  readonly hook_event_name?: string;
-  readonly session_id?: string;
-  readonly stop_hook_active?: boolean;
-  readonly transcript_path?: string | null;
-  readonly turn_id?: string;
-  readonly permission_mode?: string;
-  readonly model?: string;
-  readonly last_assistant_message?: string | null;
-  readonly reason?: string;
-}
-
 const MAX_DIAGNOSTIC_LENGTH = 240;
 const MAX_DIAGNOSTIC_LINES = 8;
 
@@ -65,13 +53,13 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  if (options.tool === "grok-build" && isGrokSessionEndReason(parsed.payload.reason)) {
+  if (parsed.payload.sessionEnd === true) {
     return allow(options, inputBytes, "session-end-stop", [
-      diagnostic("info", "session-end-stop", "Grok Build reported a session-end Stop; continuation is not applied."),
+      diagnostic("info", "session-end-stop", `${options.tool} reported a session-end Stop; continuation is not applied.`),
     ]);
   }
 
-  if (parsed.payload.stop_hook_active === true) {
+  if (parsed.payload.stopHookActive === true) {
     return allow(options, inputBytes, "stop-hook-already-active", [
       diagnostic("info", "stop-hook-already-active", "Host reported that a stop hook continuation is already active."),
     ]);
@@ -128,11 +116,6 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     );
   }
 
-  const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
-  if (activationDiagnostic) {
-    warningDiagnostics.push(activationDiagnostic);
-  }
-
   const states = [
     ...adapterResults.flatMap((result) => result.ok ? result.states : []),
     hostSessionEnvelope(options.tool, parsed.payload, observedAt),
@@ -165,15 +148,22 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     return allow(options, inputBytes, decision.reasonCodes[0] ?? decision.kind, diagnostics, decision, prompt);
   }
 
+  const encoded = getAiuContinuationAdapter(options.tool).encodeResponse({ decision: "block", prompt: prompt.body, sessionId: parsed.payload.sessionId, cwd });
+  if (!encoded.ok || !isHookStopStdoutJson(encoded.response)) {
+    return allow(options, inputBytes, "invalid-host-response", [
+      ...diagnostics,
+      diagnostic("error", "invalid-host-response", encoded.ok ? "Continuation adapter produced an invalid Stop-hook response." : encoded.error),
+    ], decision, prompt);
+  }
+  const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
+  if (activationDiagnostic) diagnostics.push(activationDiagnostic);
+
   return Object.freeze({
     tool: options.tool,
     decision: "block" as const,
     reason: decision.reasonCodes[0] ?? decision.kind,
     inputBytes,
-    stdoutJson: Object.freeze({
-      decision: "block" as const,
-      reason: prompt.body,
-    }),
+    stdoutJson: Object.freeze(encoded.response),
     stderr: formatDiagnostics(diagnostics),
     diagnostics: Object.freeze(diagnostics),
     continuationDecision: decision,
@@ -188,11 +178,12 @@ function recordStopHookActivation(
   observedAt: string,
 ): AiuHookStopDiagnostic | undefined {
   try {
+    const evidence = getAiuContinuationAdapter(host).declaration.activationEvidence;
     writeAiuHostActivation(resolveAiuContinuationPaths(repoRoot, config), {
       schemaVersion: 1,
       host,
-      delivery: "stdout",
-      event: "stop-hook",
+      delivery: evidence.delivery,
+      event: evidence.event,
       trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
       observedAt,
     });
@@ -287,7 +278,7 @@ function normalizePath(value: string): string {
 function parseHookPayload(
   tool: AiuHookStopOptions["tool"],
   stdin: string,
-): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "empty-hook-input" | "malformed-hook-input"; readonly error: string } {
+): { readonly ok: true; readonly payload: ContinuationDecodedEvent } | { readonly ok: false; readonly code: "empty-hook-input" | "malformed-hook-input"; readonly error: string } {
   const trimmed = stdin.trim();
   if (trimmed.length === 0) {
     return { ok: false, code: "empty-hook-input", error: "Stop hook input is empty." };
@@ -297,12 +288,11 @@ function parseHookPayload(
     if (!isRecord(parsed)) {
       return { ok: false, code: "malformed-hook-input", error: "Stop hook input must be a JSON object." };
     }
-    if (tool === "grok-build") {
-      const grok = parseGrokStopPayload(parsed);
-      if (!grok.ok) return { ok: false, code: "malformed-hook-input", error: grok.error };
-      return { ok: true, payload: grok.payload };
-    }
-    return parseClaudeStopPayload(parsed);
+    const adapter = getAiuContinuationAdapter(tool);
+    const decoded = decodeAiuContinuationEvent(tool, { surface: adapter.declaration.nativeSurfaces[0]!.id, version: null, event: parsed });
+    return decoded.ok
+      ? { ok: true, payload: decoded.event }
+      : { ok: false, code: "malformed-hook-input", error: decoded.error };
   } catch (error) {
     return {
       ok: false,
@@ -310,49 +300,6 @@ function parseHookPayload(
       error: `Stop hook input was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-}
-
-function parseClaudeStopPayload(parsed: Record<string, unknown>): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "malformed-hook-input"; readonly error: string } {
-  const validationError = validateClaudeHookPayloadShape(parsed);
-  if (validationError) {
-    return { ok: false, code: "malformed-hook-input", error: validationError };
-  }
-  return {
-    ok: true,
-    payload: Object.freeze({
-      cwd: readString(parsed.cwd),
-      hook_event_name: readString(parsed.hook_event_name),
-      session_id: readString(parsed.session_id),
-      stop_hook_active: readBoolean(parsed.stop_hook_active),
-      transcript_path: readNullableString(parsed.transcript_path),
-      turn_id: readString(parsed.turn_id),
-      permission_mode: readString(parsed.permission_mode),
-      model: readString(parsed.model),
-      last_assistant_message: readNullableString(parsed.last_assistant_message),
-    }),
-  };
-}
-
-function validateClaudeHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
-  const requiredStrings = ["cwd", "hook_event_name", "session_id", "turn_id", "permission_mode", "model"] as const;
-  for (const key of requiredStrings) {
-    if (typeof parsed[key] !== "string" || parsed[key].length === 0) {
-      return `${key} must be a non-empty string.`;
-    }
-  }
-  if (parsed.hook_event_name !== "Stop") {
-    return "Unsupported hook event; expected Stop.";
-  }
-  if (typeof parsed.stop_hook_active !== "boolean") {
-    return "stop_hook_active must be a boolean.";
-  }
-  if (!isOptionalNullableString(parsed.transcript_path)) {
-    return "transcript_path must be a string or null.";
-  }
-  if (!isOptionalNullableString(parsed.last_assistant_message)) {
-    return "last_assistant_message must be a string or null.";
-  }
-  return undefined;
 }
 
 function stopHookPolicyBlocker(config: AiuConfig, tool: AiuHookStopOptions["tool"]): string | undefined {
@@ -388,8 +335,8 @@ function policyBlockerMessage(code: string, tool: AiuHookStopOptions["tool"]): s
   return code;
 }
 
-function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: HookPayload, observedAt: string): AiuTrustedStateEnvelope<AiuHostSessionState> {
-  const active = payload.stop_hook_active === true;
+function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: ContinuationDecodedEvent, observedAt: string): AiuTrustedStateEnvelope<AiuHostSessionState> {
+  const active = payload.stopHookActive === true;
   return createAiuTrustedStateEnvelope({
     sourceId: `${tool}-hook`,
     command: {
@@ -399,7 +346,7 @@ function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: HookPayl
     observedAt,
     trustLevel: "advisory",
     capabilities: {
-      sessionState: payload.session_id ? "supported" : "unknown",
+      sessionState: payload.sessionId ? "supported" : "unknown",
       promptDelivery: "supported",
     },
     freshness: {
@@ -410,7 +357,7 @@ function hostSessionEnvelope(tool: AiuHookStopOptions["tool"], payload: HookPayl
       kind: "host-session",
       status: active ? "fail" : "pass",
       hostId: tool,
-      ...(payload.session_id ? { sessionId: payload.session_id } : {}),
+      ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
       sessionStatus: active ? "busy" : "idle",
       canPrompt: active ? false : true,
       summary: `${tool} stop hook payload`,
@@ -490,27 +437,12 @@ function stateDiagnostics(state: AiuTrustedStateEnvelope): readonly AiuHookStopD
   return state.diagnostics.map((item) => diagnostic(item.severity, `trusted-state-${item.kind}`, `${state.sourceId}: ${item.message}`));
 }
 
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function readNullableString(value: unknown): string | null | undefined {
-  if (value === null) return null;
-  return readString(value);
-}
-
-function isNullableString(value: unknown): boolean {
-  return value === null || typeof value === "string";
-}
-
-function isOptionalNullableString(value: unknown): boolean {
-  return value === undefined || isNullableString(value);
-}
-
-function readBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isHookStopStdoutJson(value: unknown): value is AiuHookStopStdoutJson {
+  if (!isRecord(value)) return false;
+  if (Object.keys(value).length === 0) return true;
+  return value.decision === "block" && typeof value.reason === "string" && value.reason.trim().length > 0;
 }

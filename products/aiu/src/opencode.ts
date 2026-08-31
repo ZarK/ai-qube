@@ -27,6 +27,8 @@ import {
 } from "./state.js";
 import { runAiuTrustedStateAdapter } from "./trusted_adapter.js";
 import { decideAiuWhipContinuation, readAiuWhipState } from "./whip.js";
+import { decodeAiuContinuationEvent, getAiuContinuationAdapter } from "./continuation_adapters.js";
+import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
 
 export interface AiuOpenCodeEvent {
   readonly type: string;
@@ -147,14 +149,6 @@ export type AiuOpenCodeServerPlugin = (
   options?: unknown,
 ) => Promise<AiuOpenCodeServerPluginHooks>;
 
-const AIU_OPENCODE_RELEVANT_EVENTS = new Set([
-  "idle",
-  "session.idle",
-  "session.status",
-  "session-idle",
-  "session-status",
-]);
-
 export function createAiuOpenCodePlugin(options: AiuOpenCodePluginOptions = {}): AiuOpenCodePlugin {
   const before = composeAiuOpenCodeHandlers(options.before ?? []);
   const after = composeAiuOpenCodeHandlers(options.after ?? []);
@@ -199,7 +193,8 @@ export function createAiuOpenCodeServerPlugin(
 export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, context: AiuOpenCodeContext = {}): Promise<AiuOpenCodeHandlerResult> {
   const normalizedContext = withDefaultContext(context);
   const observedAt = normalizedContext.observedAt ?? new Date().toISOString();
-  if (!isRelevantOpenCodeEvent(event.type)) {
+  const decoded = decodeAiuContinuationEvent("opencode", { surface: "plugin-event", version: null, event });
+  if (!decoded.ok) {
     return Object.freeze({
       handled: false,
       metadata: Object.freeze({
@@ -210,7 +205,7 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     });
   }
 
-  const host = buildAiuOpenCodeHostSession(event);
+  const host = buildAiuOpenCodeHostSession(decoded.event);
   const paths = resolveAiuContinuationPaths(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
   const activationSuppressions: string[] = normalizedContext.deliverPrompt === undefined ? ["host-delivery-unavailable"] : [];
   if (host.suppressions.length > 0) {
@@ -394,8 +389,8 @@ function recordOpenCodeActivation(
     writeAiuHostActivation(paths, {
       schemaVersion: 1,
       host: "opencode",
-      delivery: "host",
-      event: "plugin-event",
+      delivery: getAiuContinuationAdapter("opencode").declaration.activationEvidence.delivery,
+      event: getAiuContinuationAdapter("opencode").declaration.activationEvidence.event,
       trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
       observedAt,
     });
@@ -428,41 +423,18 @@ function withDefaultContext(context: AiuOpenCodeContext): AiuOpenCodeResolvedCon
   });
 }
 
-function isRelevantOpenCodeEvent(type: string): boolean {
-  return AIU_OPENCODE_RELEVANT_EVENTS.has(normalizeEventToken(type));
-}
-
-function buildAiuOpenCodeHostSession(event: AiuOpenCodeEvent): AiuOpenCodeHostSessionSnapshot {
-  const payload = isRecord(event.payload) ? event.payload : {};
-  const session = isRecord(payload.session) ? payload.session : {};
-  const selectedSession = isRecord(payload.selectedSession) ? payload.selectedSession : {};
-  const sessionId = readString(payload.sessionID) ?? readString(payload.sessionId) ?? readString(session.id) ?? readString(payload.id);
-  const selectedSessionId = readString(payload.selectedSessionID) ?? readString(payload.selectedSessionId) ?? readString(selectedSession.id) ?? readString(payload.currentSessionId);
-  const suppressions: string[] = [];
-  const eventType = normalizeEventToken(event.type);
-  const eventStatus = readOpenCodeStatus(payload.status) ?? readOpenCodeStatus(session.status);
-  const statusBusy = statusIsBusy(eventStatus);
-  const helperRole = readString(session.role);
-  const helperSession = readBoolean(payload.helperSession) ?? readBoolean(payload.isHelperSession) ?? readBoolean(session.helper) ?? (helperRole ? helperRole === "helper" : undefined);
-  const userActive = readBoolean(payload.userActive) ?? readBoolean(payload.typing) ?? readBoolean(payload.tuiActive) ?? (eventType.includes("tui") ? true : undefined);
-  const todoActive = readBoolean(payload.todoActive) ?? (eventType.includes("todo") ? readBoolean(payload.active) ?? true : undefined);
-  const busy = readBoolean(payload.busy) ?? readBoolean(payload.isBusy) ?? statusBusy ?? (eventType.includes("message") ? true : undefined);
-  const selectedConflict = sessionId !== undefined && selectedSessionId !== undefined && sessionId !== selectedSessionId;
-
-  if (helperSession) suppressions.push("helper-session");
-  if (busy) suppressions.push("session-busy");
-  if ((eventType === "session.status" || eventType === "session-status") && statusBusy === undefined) suppressions.push("session-status-not-idle");
-  if (selectedConflict) suppressions.push("selected-session-conflict");
-  if (userActive) suppressions.push("user-active");
-  if (todoActive) suppressions.push("todo-active");
-
+function buildAiuOpenCodeHostSession(event: ContinuationDecodedEvent): AiuOpenCodeHostSessionSnapshot {
+  const suppressions = [...(event.suppressions ?? [])];
+  const helperSession = suppressions.includes("helper-session") ? true : undefined;
+  const userActive = suppressions.includes("user-active") ? true : undefined;
+  const todoActive = suppressions.includes("todo-active") ? true : undefined;
   const canPrompt = suppressions.length === 0;
   const state: AiuHostSessionState = Object.freeze({
     kind: "host-session",
     status: "pass",
     hostId: "opencode",
-    ...(sessionId ? { sessionId } : {}),
-    ...(selectedSessionId ? { selectedSessionId } : {}),
+    ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+    ...(event.selectedSessionId ? { selectedSessionId: event.selectedSessionId } : {}),
     helperSession,
     userActive,
     todoActive,
@@ -618,21 +590,27 @@ function createAiuOpenCodeClientDeliverer(
   const command = client?.session?.command;
   if (!command) return undefined;
   return async (_prompt, event) => {
-    const host = buildAiuOpenCodeHostSession(event).state;
+    const decoded = decodeAiuContinuationEvent("opencode", { surface: "plugin-event", version: null, event });
+    if (!decoded.ok) return Object.freeze({ delivered: false, reason: decoded.code });
+    const host = buildAiuOpenCodeHostSession(decoded.event).state;
     const targetSessionId = host.selectedSessionId ?? host.sessionId;
     if (!targetSessionId) {
       return Object.freeze({ delivered: false, reason: "missing-target-session" });
     }
-    const response = await command.call(client.session, {
-      path: { id: targetSessionId },
-      body: { command: "make-it-so", arguments: "" },
-      ...(cwd ? { query: { directory: cwd } } : {}),
-    });
+    const encoded = getAiuContinuationAdapter("opencode").encodeResponse({ decision: "deliver", sessionId: targetSessionId, cwd });
+    if (!encoded.ok || !isOpenCodeCommandRequest(encoded.response)) return Object.freeze({ delivered: false, reason: "invalid-host-response" });
+    const response = await command.call(client.session, encoded.response);
     if (isRecord(response) && response.error !== undefined && response.error !== null) {
       return Object.freeze({ delivered: false, reason: "command-rejected" });
     }
     return Object.freeze({ delivered: true, targetSessionId });
   };
+}
+
+function isOpenCodeCommandRequest(value: unknown): value is Parameters<NonNullable<NonNullable<AiuOpenCodeServerClient["session"]>["command"]>>[0] {
+  if (!isRecord(value) || !isRecord(value.path) || !isRecord(value.body)) return false;
+  return typeof value.path.id === "string" && value.body.command === "make-it-so" && value.body.arguments === ""
+    && (value.query === undefined || (isRecord(value.query) && typeof value.query.directory === "string"));
 }
 
 function normalizeDeliveryResult(result: unknown): AiuOpenCodePromptDelivery {

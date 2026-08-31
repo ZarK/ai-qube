@@ -132,3 +132,5 @@ export const claudeCodeHostProfile = defineAgentHostProfile({
     instruction: "Use Claude Code subagents only for bounded support work; keep issue workflow todos in the main session.",
   }),
 } satisfies AgentHostProfile);
+
+export { claudeCodeContinuationAdapter, claudeCodeContinuationDeclaration } from "./continuation.js";

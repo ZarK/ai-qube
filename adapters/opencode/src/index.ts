@@ -145,3 +145,5 @@ export const opencodeHostProfile = defineAgentHostProfile({
     instruction: "Use OpenCode subagents for bounded support work. Keep issue workflow tasks in the main session.",
   }),
 } satisfies AgentHostProfile);
+
+export { opencodeContinuationAdapter, opencodeContinuationDeclaration } from "./continuation.js";

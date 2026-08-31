@@ -1,10 +1,8 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { redactStructuredValue, redactText } from "@tjalve/qube-cli/redaction";
-import { grokBuildStopHookFile } from "@tjalve/qube-adapter-grok-build";
 
 import {
-  AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH,
   getAiuPackageAssetPaths,
   getAiuPackageRoot,
   getAiuPackageVersion,
@@ -22,7 +20,7 @@ import {
   resolveAiuContinuationPaths,
   resolveAiuHostActivationPath,
 } from "./continuation_store.js";
-import { inspectGrokFolderTrust } from "./grok_trust.js";
+import { getAiuContinuationAdapter } from "./continuation_adapters.js";
 import { resolveTrustedCommandExecutable } from "./trusted_adapter.js";
 import {
   evaluateAiuHostRuntimePolicy,
@@ -220,8 +218,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
     ...checkStatePaths(paths),
     ...checkHostFiles(configLoad),
     ...checkHostEntrypoints(configLoad),
-    ...checkOpenCodePluginPackage(configLoad),
-    ...checkGrokProjectHookTrust(configLoad),
+    ...checkHostNativeProbes(configLoad),
     ...checkHostContinuationProbes(hostProbes),
     ...checkTrustedCommands(paths),
     ...checkTrustedCommandCompatibility(configLoad),
@@ -498,7 +495,8 @@ function checkHostFiles(configLoad: AiuConfigLoadResult): readonly AiuDoctorChec
 function checkHostEntrypoints(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
   return getAiuHostCapabilityProfiles(configLoad.config.hosts.enabled).flatMap((profile) =>
     profile.managedFiles.flatMap((file) => {
-      const expectedMarker = packageBackedEntrypointMarker(profile.tool, file.relativePath);
+      if (file.role !== "entrypoint") return [];
+      const expectedMarker = packageBackedEntrypointMarker(file.content);
       if (!expectedMarker) {
         return [];
       }
@@ -525,116 +523,32 @@ function checkHostEntrypoints(configLoad: AiuConfigLoadResult): readonly AiuDoct
   );
 }
 
-function packageBackedEntrypointMarker(host: AiuHost, relativePath: string): string | undefined {
-  if (host === "opencode" && relativePath.endsWith(path.join(".opencode", "plugins", "ai-umpire-continuation.ts"))) {
-    return "@tjalve/aiu/opencode";
-  }
-  if (host === "codex" && relativePath.endsWith("hooks.json")) {
-    return `pnpm exec aiu hook-stop --tool ${host}`;
-  }
-  if (host === "claude-code" && relativePath.endsWith(path.join(".claude", "settings.json"))) {
-    return `pnpm exec aiu hook-stop --tool ${host}`;
-  }
-  const grokHookPath = grokBuildStopHookFile.relativePath;
-  if (host === "grok-build" && relativePath.replaceAll("\\", "/").endsWith(grokHookPath)) {
-    return `pnpm exec aiu hook-stop --tool ${host}`;
-  }
-  return undefined;
+function packageBackedEntrypointMarker(content: string): string | undefined {
+  const packageImport = content.match(/@tjalve\/aiu\/opencode/u)?.[0];
+  if (packageImport) return packageImport;
+  return content.match(/pnpm exec aiu hook-stop --tool [a-z-]+/u)?.[0];
 }
 
-function checkOpenCodePluginPackage(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
-  if (!configLoad.config.hosts.enabled.includes("opencode")) {
-    return [];
-  }
-  const manifestPath = path.join(configLoad.repoRoot, AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH);
-  if (!existsSync(manifestPath)) {
-    return [
-      check("opencode-plugin-package-manifest", "host", "error", "opencode-plugin-package-manifest-missing", "OpenCode cannot load AI Umpire because .opencode/package.json is missing.", manifestPath, "Run aiu init --tool opencode, install the declared package, then rerun aiu doctor --json."),
-    ];
-  }
-
-  let manifest: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
-    if (!isRecord(parsed)) throw new Error("manifest is not a JSON object");
-    manifest = parsed;
-  } catch (error) {
-    return [
-      check("opencode-plugin-package-manifest", "host", "error", "opencode-plugin-package-manifest-invalid", `OpenCode cannot load AI Umpire because .opencode/package.json is invalid: ${error instanceof Error ? error.message : String(error)}`, manifestPath, "Fix .opencode/package.json, rerun aiu init --tool opencode, then rerun aiu doctor --json."),
-    ];
-  }
-
-  const expectedVersion = getAiuPackageVersion();
-  const dependencies = isRecord(manifest.dependencies) ? manifest.dependencies : undefined;
-  if (dependencies?.["@tjalve/aiu"] !== expectedVersion) {
-    return [
-      check("opencode-plugin-package-version", "host", "error", "opencode-plugin-package-version-mismatch", `OpenCode requires the exact @tjalve/aiu package version ${expectedVersion} in .opencode/package.json.`, manifestPath, "Run aiu init --tool opencode, install the exact declared package, then rerun aiu doctor --json."),
-    ];
-  }
-
-  const installedPackage = resolveOpenCodeAiuPackage(manifestPath);
-  if (installedPackage === undefined) {
-    return [
-      check("opencode-plugin-package-resolution", "host", "error", "opencode-plugin-package-unresolved", "OpenCode cannot resolve @tjalve/aiu/opencode from its project package manifest.", manifestPath, "Install the exact dependencies declared in .opencode/package.json, then rerun aiu doctor --json."),
-    ];
-  }
-
-  if (installedPackage.version !== expectedVersion) {
-    return [
-      check("opencode-plugin-package-resolution", "host", "error", "opencode-plugin-package-installed-version-mismatch", `OpenCode resolved @tjalve/aiu ${installedPackage.version}, but ${expectedVersion} is required.`, manifestPath, "Install the exact dependencies declared in .opencode/package.json, then rerun aiu doctor --json."),
-    ];
-  }
-
-  return [
-    check("opencode-plugin-package-resolution", "host", "ok", "opencode-plugin-package-resolved", `OpenCode resolves the exact @tjalve/aiu ${expectedVersion} package entrypoint.`, manifestPath, "Continue using the package-backed OpenCode plugin."),
-  ];
-}
-
-function resolveOpenCodeAiuPackage(manifestPath: string): { readonly version: string } | undefined {
-  let directory = path.dirname(manifestPath);
-  while (true) {
-    const packageManifestPath = path.join(directory, "node_modules", "@tjalve", "aiu", "package.json");
-    if (existsSync(packageManifestPath)) {
-      try {
-        const installed = JSON.parse(readFileSync(packageManifestPath, "utf8")) as unknown;
-        if (isRecord(installed)
-          && installed.name === "@tjalve/aiu"
-          && typeof installed.version === "string"
-          && isRecord(installed.exports)
-          && isRecord(installed.exports["./opencode"])
-          && typeof installed.exports["./opencode"].import === "string"
-          && existsSync(path.resolve(path.dirname(packageManifestPath), installed.exports["./opencode"].import))) {
-          return { version: installed.version };
-        }
-      } catch {
-        return undefined;
-      }
-      return undefined;
-    }
-    const parent = path.dirname(directory);
-    if (parent === directory) return undefined;
-    directory = parent;
-  }
-}
-
-function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
-  if (!configLoad.config.hosts.enabled.includes("grok-build")) {
-    return [];
-  }
-  const relativePath = grokBuildStopHookFile.relativePath;
-  const absolutePath = path.join(configLoad.repoRoot, relativePath);
-  if (!existsSync(absolutePath)) {
-    return [];
-  }
-  const trust = inspectGrokFolderTrust(configLoad.repoRoot);
-  if (trust.trusted) {
-    return [
-      check("grok-hook-trusted", "host", "ok", "grok-hook-trusted", "Grok Build project Stop hook is present and the folder is trusted.", trust.trustFile, "Continue using the trusted project hook."),
-    ];
-  }
-  return [
-    check("grok-hook-untrusted", "host", "warning", "grok-hook-untrusted", "Grok Build project Stop hook is present but the folder is not trusted. Untrusted project hooks do not run.", trust.trustFile, "Run /hooks-trust in Grok Build, or start with --trust, then rerun aiu doctor --json."),
-  ];
+function checkHostNativeProbes(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
+  return configLoad.config.hosts.enabled.flatMap((host) => {
+    const adapter = getAiuContinuationAdapter(host);
+    const result = adapter.probe({
+      surface: adapter.declaration.nativeSurfaces[0]!.id,
+      version: null,
+      repoRoot: configLoad.repoRoot,
+      packageVersions: { "@tjalve/aiu": getAiuPackageVersion() },
+    });
+    if (!result.code) return [];
+    return [check(
+      `host-native-probe-${host}`,
+      "host",
+      result.status === "ready" ? "ok" : result.severity ?? "error",
+      result.code,
+      result.reason,
+      result.path,
+      result.nextAction ?? "Review the host continuation adapter diagnostic.",
+    )];
+  });
 }
 
 function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly AiuHostContinuationProbe[] {
@@ -676,8 +590,15 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
     if (!managedHostFilesAreCurrent(configLoad.repoRoot, profile.managedFiles)) {
       return hostProbe(base, "unavailable", "none", false, `${host} managed integration files are missing or contain an invalid QUBE-owned entry.`, `Review the file diagnostics, then run aiu init --tool ${host}.`);
     }
-    if (host === "grok-build" && !inspectGrokFolderTrust(configLoad.repoRoot).trusted) {
-      return hostProbe(base, "unverified", "none", false, "Grok Build has not trusted the managed project Stop hook.", "Run /hooks-trust in Grok Build, trigger one Stop event, then rerun aiu doctor --json.");
+    const continuationAdapter = getAiuContinuationAdapter(host);
+    const nativeProbe = continuationAdapter.probe({
+      surface: continuationAdapter.declaration.nativeSurfaces[0]!.id,
+      version: null,
+      repoRoot: configLoad.repoRoot,
+      packageVersions: { "@tjalve/aiu": getAiuPackageVersion() },
+    });
+    if (nativeProbe.status === "blocked" && nativeProbe.severity === "warning") {
+      return hostProbe(base, "unverified", "none", false, nativeProbe.reason, nativeProbe.nextAction ?? "Review the host continuation adapter diagnostic.");
     }
 
     const trustedCommands = resolveTrustedCommandPaths(configLoad);

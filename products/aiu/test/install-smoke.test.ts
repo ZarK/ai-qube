@@ -138,6 +138,13 @@ describe("packed tarball install smoke", () => {
         await readFile(path.join(installedPackageRoot, "package.json"), "utf8"),
       ) as { version: string };
       assert.equal(installedManifest.version, packedPackage.manifest.version, packedPackage.name);
+      if (packedPackage.name.includes("qube-adapter-")) {
+        const installedAdapter = await import(pathToFileURL(path.join(installedPackageRoot, "dist", "index.js")).href) as Record<string, unknown>;
+        const continuationExport = Object.entries(installedAdapter).find(([name]) => name.endsWith("ContinuationAdapter"))?.[1] as { declaration?: { hostId?: string }; decodeEvent?: unknown; renderManagedAssets?: unknown } | undefined;
+        assert.ok(continuationExport, `${packedPackage.name} must pack its continuation adapter export`);
+        assert.equal(typeof continuationExport.decodeEvent, "function", packedPackage.name);
+        assert.equal(typeof continuationExport.renderManagedAssets, "function", packedPackage.name);
+      }
     }
     const installedDoctor = await import(pathToFileURL(path.join(installedAiuRoot, "dist", "src", "doctor.js")).href) as {
       runAiuDoctor(options: { cwd: string }): { checks: Array<{ kind: string; status: string }> };

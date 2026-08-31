@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
+import { opencodeContinuationAdapter, opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
 
 describe("opencode adapter", () => {
   it("exposes one canonical OpenCode host profile", () => {
@@ -67,5 +67,20 @@ describe("opencode adapter", () => {
     assert.deepEqual(models, ["anthropic/claude-sonnet-4", "openai/gpt-5.6-luna-high"]);
     assert.deepEqual(calls, [["node", ["opencode-script.js", "models"]]]);
     assert.equal(calls[0][1].includes("--refresh"), false);
+  });
+
+  it("owns OpenCode continuation events, assets, and selected-session delivery", () => {
+    assert.deepEqual(opencodeContinuationAdapter.declaration.triggerEvents, ["session.idle", "session.status", "idle", "session-idle", "session-status"]);
+    assert.equal(JSON.stringify(opencodeContinuationAdapter.declaration).toLowerCase().includes("paseo"), false);
+    const decoded = opencodeContinuationAdapter.decodeEvent({ type: "session.idle", payload: { sessionId: "s1", selectedSessionId: "s1" } });
+    assert.equal(decoded.ok, true);
+    assert.equal(decoded.event.sessionId, "s1");
+    const encoded = opencodeContinuationAdapter.encodeResponse({ decision: "deliver", sessionId: "s1", cwd: "/repo" });
+    assert.equal(encoded.ok, true);
+    assert.deepEqual(encoded.response, { path: { id: "s1" }, body: { command: "make-it-so", arguments: "" }, query: { directory: "/repo" } });
+    assert.equal(opencodeContinuationAdapter.encodeResponse({ decision: "deliver", sessionId: "s1" }).ok, false);
+    const assets = opencodeContinuationAdapter.renderManagedAssets({ packageVersions: { "@tjalve/aiu": "1.2.3" } });
+    assert.equal(assets.length, 2);
+    assert.match(assets.find((asset) => asset.id === "package-dependency").content, /"@tjalve\/aiu": "1.2.3"/);
   });
 });
