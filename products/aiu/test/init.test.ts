@@ -438,7 +438,7 @@ describe("init planner", () => {
             matcher: "first",
             hooks: [
               { type: "command", command: "echo before" },
-              { type: "command", command: managedCommand, timeout: 1 },
+              { type: "command", command: "pnpm exec aiu hook-stop --tool codex", timeout: 1 },
             ],
           },
           { hooks: [{ type: "command", command: managedCommand }] },
@@ -506,6 +506,38 @@ describe("init planner", () => {
       assert.match(findFile(parsed, file).reason ?? "", /will not replace/, tool);
       assert.equal(await readFile(sharedPath, "utf8"), "{not-json\n", tool);
       assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false, tool);
+    }
+  });
+
+  it("does not replace malformed shared managed-entry containers", async () => {
+    const cases = [
+      {
+        tool: "codex",
+        file: path.join(".agents", "plugins", "marketplace.json"),
+        content: JSON.stringify({ plugins: {} }),
+      },
+      {
+        tool: "claude-code",
+        file: path.join(".claude", "settings.json"),
+        content: JSON.stringify({ hooks: { Stop: [{ hooks: {} }] } }),
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const target = await createRepoRoot();
+      const sharedPath = path.join(target, testCase.file);
+      await mkdir(path.dirname(sharedPath), { recursive: true });
+      await writeFile(sharedPath, testCase.content, "utf8");
+
+      const result = await runCli(target, ["init", "--tool", testCase.tool, "--force", "--json"]);
+      const parsed = JSON.parse(result.stdout) as InitEnvelope;
+
+      assert.equal(result.exitCode, 3, testCase.tool);
+      assert.equal(parsed.ok, false, testCase.tool);
+      assert.equal(parsed.error?.kind, "init-conflict", testCase.tool);
+      assert.equal(findFile(parsed, testCase.file).operation, "conflict", testCase.tool);
+      assert.match(findFile(parsed, testCase.file).reason ?? "", /will not replace|must use JSON object and array shapes/, testCase.tool);
+      assert.equal(await readFile(sharedPath, "utf8"), testCase.content, testCase.tool);
     }
   });
 
