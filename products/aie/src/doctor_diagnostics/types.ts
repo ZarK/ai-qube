@@ -2,6 +2,7 @@ import type { GateKind, GateStage, ValidationError } from '../config/index.js';
 import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, MilestoneSummary, PlanningStatus, PullRequestSummary } from '../repo/index.js';
 import type { GateStatusResult } from '../gates/index.js';
 import type { WorkflowReadinessDiagnostics } from './workflow_readiness.js';
+import type { AgentHostCapabilityProfile, AgentHostReadinessReport } from '@tjalve/qube-core';
 import type { ReviewModelHostId } from '../core/policy.js';
 import type { RepositoryPrerequisites } from '../core/repo_state.js';
 import type { GitHubReadiness } from '../providers/github_adapter_exports.js';
@@ -258,6 +259,8 @@ export interface GateReadinessDiagnostics {
       missingTools: string[];
       host: ReviewModelHostId;
       hosts: Record<ReviewModelHostId, {
+        declaredProfile: AgentHostCapabilityProfile;
+        readiness: AgentHostReadinessReport;
         independentReviewer: boolean;
         freshContext: boolean;
         promptOnly: boolean;
@@ -285,6 +288,7 @@ export interface GateReadinessDiagnostics {
   reviewPreflight: {
     enabled: boolean;
     readiness: DoctorReadinessStatus;
+    hostReadiness: AgentHostReadinessReport[];
     checks: {
       disk: {
         readiness: DoctorReadinessStatus;

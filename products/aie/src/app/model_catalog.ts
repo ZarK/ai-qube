@@ -1,5 +1,5 @@
 import { REVIEW_MODEL_HOST_IDS, type ReviewModelHostId, type ReviewModelsPolicy } from '../core/policy.js';
-import { resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
+import { getAgentHostCapabilityProfile, resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
 import { getAgentHostProfileSync } from '../agent_host_adapters.js';
 import { isRegisteredReviewHost, type ReviewHostProbeCommandRunner } from './review_host_adapters.js';
 import { resolveModelHostExecutableSync, resolveWindowsNodeShimSync, type ModelHostExecutable } from './model_review_runner.js';
@@ -79,12 +79,21 @@ export function listHostModels(
     };
   }
   const discovery = profile.modelDiscovery;
-  if (discovery.support === 'unsupported') {
+  const declaredDiscovery = getAgentHostCapabilityProfile(host).capabilities['model-catalog'];
+  if (declaredDiscovery.support === 'unsupported') {
     return {
       host,
       status: 'unavailable',
       models: [],
-      diagnostic: `${discovery.description} ${discovery.nextAction}`,
+      diagnostic: `${declaredDiscovery.description} ${declaredDiscovery.nextAction}`,
+    };
+  }
+  if (discovery.support === 'unsupported') {
+    return {
+      host,
+      status: 'blocked',
+      models: [],
+      diagnostic: `${host} adapter runtime is missing the model-catalog function required by its canonical profile. Reinstall this exact QUBE release.`,
     };
   }
   let executable: string;
@@ -107,7 +116,7 @@ export function listHostModels(
   try {
     const models = discovery.listModels({ executable, prefixArgs, runCommand });
     if (models === null) return { host, status: 'unavailable', models: [], diagnostic: discovery.description };
-    return { host, status: 'ready', models: [...models], diagnostic: discovery.support === 'experimental' ? discovery.description : null };
+    return { host, status: 'ready', models: [...models], diagnostic: declaredDiscovery.support === 'experimental' ? declaredDiscovery.description : null };
   } catch (error: unknown) {
     return {
       host,

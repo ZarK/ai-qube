@@ -1,5 +1,5 @@
 import { grokBuildRouteRunnerPath } from '@tjalve/qube-adapter-grok-build';
-import { AGENT_HOST_REGISTRATIONS } from '@tjalve/qube-core';
+import { AGENT_HOST_REGISTRATIONS, getAgentHostCapabilityProfile } from '@tjalve/qube-core';
 import { Config } from './config/index.js';
 import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
 
@@ -95,7 +95,7 @@ function renderNativeReviewHarnessGuidance(config: Config, hosts: readonly Agent
     return ` Configured native review harnesses: ${labels.join(', ')}. Their installed profiles report native local review as unsupported. Do not assign native lanes until a supported harness is configured.`;
   }
   const unavailable = hosts
-    .filter(host => config.localReviewAgents.includes(host.id) && host.review.local.support === 'unsupported')
+    .filter(host => config.localReviewAgents.includes(host.id) && getAgentHostCapabilityProfile(host.id).capabilities['review-host-guided'].support === 'unsupported')
     .map(host => host.displayName);
   const unavailableText = unavailable.length === 0
     ? ''
@@ -106,7 +106,7 @@ function renderNativeReviewHarnessGuidance(config: Config, hosts: readonly Agent
 function nativeReviewUnavailable(config: Config, hosts: readonly AgentHostProfile[]): boolean {
   const selectedProfiles = hosts.filter(host => config.localReviewAgents.includes(host.id));
   return selectedProfiles.length === config.localReviewAgents.length
-    && selectedProfiles.every(host => host.review.local.support === 'unsupported');
+    && selectedProfiles.every(host => getAgentHostCapabilityProfile(host.id).capabilities['review-host-guided'].support === 'unsupported');
 }
 
 function renderNativeReviewWorkflow(config: Config, hosts: readonly AgentHostProfile[], prGate: string, workspaceRunner: string | null): string {
@@ -370,22 +370,30 @@ function renderModelRoutingLines(config: Config): string[] {
 function renderHostCapabilityLines(config: Config, hosts: AgentHostProfile[]): string[] {
   const routedReview = routedLocalReviewEnabled(config);
   return hosts.map(host => {
+    const declared = getAgentHostCapabilityProfile(host.id);
+    const task = declared.capabilities['task-write'];
+    const subagents = declared.capabilities['subagent-invoke'];
+    const localReview = declared.capabilities['review-host-guided'];
+    const isolatedReview = declared.capabilities['review-isolated'];
+    const stopHook = declared.capabilities['continuation-stop-hook'];
+    const selectedSession = declared.capabilities['continuation-selected-session-delivery'];
+    const continuation = selectedSession.support !== 'unsupported' ? selectedSession : stopHook;
+    const delivery = selectedSession.support !== 'unsupported' ? 'host' : stopHook.support !== 'unsupported' ? 'stdout' : 'none';
     const todoTools = host.taskList.tools.map(tool => `\`${tool}\``).join(', ') || 'visible checklist';
     const nativeReviewConfigured = !routedReview
       && localReviewEnabled(config)
       && config.localReviewAgents.includes(host.id)
-      && host.review.local.support !== 'unsupported';
+      && localReview.support !== 'unsupported';
     const nativeAssets = nativeReviewConfigured
       ? `; installed agents ${host.review.local.agents.map(target => `\`${target.path}\``).join(', ')}`
       : '';
-    const continuation = host.umpire.continuation;
     const routedText = routedReview
       ? ' Routed isolated review is run by QUBE; do not spawn native review subagents for routed lanes.'
       : '';
     const catalogText = nativeReviewConfigured && host.review.local.agents.length > 1
       ? ` Economy review catalog agents available to this host: ${ECONOMY_REVIEW_CATALOG.map(agent => agent.name).join(', ')} (read-only delegation helpers for large reads).`
       : '';
-    return `${host.displayName}: instructions \`${host.instructionTarget.path}\`; Make It So ${host.makeItSo.kind} \`${host.makeItSo.path}\`, invoked as \`${host.makeItSo.invocation}\`; task list ${host.taskList.support} (${todoTools}); subagents ${host.subagents.support}; native review ${host.review.local.support}${nativeAssets}; isolated review ${host.review.isolated.support}; Umpire continuation ${continuation.support} (${continuation.delivery}); trust approval ${host.trust.required ? 'required' : 'not required'}.${routedText}${catalogText}`;
+    return `${host.displayName}: instructions \`${host.instructionTarget.path}\`; Make It So ${host.makeItSo.kind} \`${host.makeItSo.path}\`, invoked as \`${host.makeItSo.invocation}\`; task list ${task.support} (${todoTools}); subagents ${subagents.support}; native review ${localReview.support}${nativeAssets}; isolated review ${isolatedReview.support}; Umpire continuation ${continuation.support} (${delivery}); trust approval ${declared.capabilities['repository-trust'].support !== 'unsupported' ? 'required' : 'not required'}.${routedText}${catalogText}`;
   });
 }
 

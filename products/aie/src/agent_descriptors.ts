@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENT_HOST_IDS, type AgentHostProfile } from '@tjalve/qube-core';
+import { AGENT_HOST_IDS, getAgentHostCapabilityProfile, type AgentHostProfile } from '@tjalve/qube-core';
 import { getAgentHostProfileSync } from './agent_host_adapters.js';
 import type { LocalReviewTrust } from './local_review_evidence.js';
 import { redact } from './redact.js';
@@ -120,11 +120,12 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROMPT_ROOT = join(PACKAGE_ROOT, 'prompts');
 
 function agentToolHost(profile: AgentHostProfile): AgentToolHost {
-  const localReview = profile.review.local.support !== 'unsupported';
+  const declared = getAgentHostCapabilityProfile(profile.id);
+  const localReview = declared.capabilities['review-host-guided'].support !== 'unsupported';
   return {
     id: profile.id,
     name: `${profile.displayName} host prompt`,
-    canRun: profile.subagents.support !== 'unsupported',
+    canRun: declared.capabilities['subagent-invoke'].support !== 'unsupported',
     canComment: false,
     canInline: false,
     canUseTools: true,

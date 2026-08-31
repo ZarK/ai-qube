@@ -29,6 +29,8 @@ import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "
 import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
 import {
   AGENT_HOST_IDS,
+  getAgentHostCapabilityProfile,
+  observeAgentHostReadiness,
   QUBE_INIT_LAYER_CONTEXT_ENV,
   qubeCommandSurfaceContracts,
   resolveExecutable,
@@ -37,7 +39,7 @@ import {
 
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 import { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
-import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
+import { componentsWithHostReadiness, executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
 import {
   applyUmpireHostProbes,
   composeHostToolkitManifests,
@@ -1093,7 +1095,7 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   const args = [...input];
   if (args[0] === "components") {
     if (args.includes("--json")) {
-      return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents })}\n`, stderr: "" };
+      return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: componentsWithHostReadiness() })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderComponents(), stderr: "" };
   }
@@ -1178,7 +1180,7 @@ function createQubeCli(environment: CliEnvironment) {
     commands: [
       createRuntimeCommand(componentsCommand, ({ flags }) => {
         if (flags.json === true) {
-          return { json: { components: qubeComponents } };
+          return { json: { components: componentsWithHostReadiness() } };
         }
         return { stdout: renderComponents() };
       }),
@@ -1750,7 +1752,7 @@ function explicitGuidedReviewError(flags: Readonly<Record<string, unknown>>, inh
   if (!(AGENT_HOST_IDS as readonly string[]).includes(primary)) return undefined;
   if (mode === "host") {
     if (harness && harness !== primary) return `Primary-harness review must use ${primary}.`;
-    if (getAgentHostProfileSync(primary as AgentHostId).review.local.support === "unsupported") {
+    if (getAgentHostCapabilityProfile(primary as AgentHostId).capabilities["review-host-guided"].support === "unsupported") {
       return `${primary} does not support native review subagents.`;
     }
     return undefined;
@@ -1760,7 +1762,7 @@ function explicitGuidedReviewError(flags: Readonly<Record<string, unknown>>, inh
   if (harness === primary) return "Isolated review must use an agent harness other than the primary harness.";
   if (!hosts.includes(harness)) return `Isolated review harness ${harness} is not in the selected agent harnesses.`;
   if (!(AGENT_HOST_IDS as readonly string[]).includes(harness)) return undefined;
-  if (getAgentHostProfileSync(harness as AgentHostId).review.isolated.support === "unsupported") {
+  if (getAgentHostCapabilityProfile(harness as AgentHostId).capabilities["review-isolated"].support === "unsupported") {
     return `${harness} does not support isolated review.`;
   }
   return undefined;
@@ -1929,7 +1931,7 @@ function guidedModelCapability(
   listings: Map<AgentHostId, ReturnType<typeof listHostModels>>,
 ): GuidedReviewModelCapability {
   const profile = getAgentHostProfileSync(host);
-  if (profile.modelDiscovery.support === "unsupported") {
+  if (getAgentHostCapabilityProfile(host).capabilities["model-catalog"].support === "unsupported") {
     return Object.freeze({
       kind: "unpinned",
       label: "Harness default (not pinned)",
@@ -1967,14 +1969,15 @@ function createGuidedInitCapabilities(input: {
   )));
   const agentHarnesses: readonly GuidedHarnessChoice[] = Object.freeze(executorHostSurfaces.map(option => {
     const profile = getAgentHostProfileSync(option.id as AgentHostId);
+    const declared = getAgentHostCapabilityProfile(profile.id);
     const availableForSeparateReview = installedReviewHosts.has(profile.id);
     return Object.freeze({
       value: profile.id,
       label: profile.displayName,
       description: `${profile.displayName} uses ${profile.makeItSo.invocation} to start QUBE.`,
       recommended: option.default,
-      canRunPrimaryReview: profile.review.local.support !== "unsupported",
-      canRunSeparateReview: availableForSeparateReview && profile.review.isolated.support !== "unsupported",
+      canRunPrimaryReview: declared.capabilities["review-host-guided"].support !== "unsupported",
+      canRunSeparateReview: availableForSeparateReview && declared.capabilities["review-isolated"].support !== "unsupported",
       reviewModels: guidedModelCapability(profile.id, input.modelHost, input.modelListings),
     });
   }));
@@ -3290,12 +3293,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   } else if (setup.review.mode === "host") {
     if (requestedResolvedReviewHarness && requestedResolvedReviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
     else if (reviewHarness !== primaryHarness) reviewError = `Primary-harness review must use ${primaryHarness}.`;
-    else if (getAgentHostProfileSync(primaryHarness as AgentHostId).review.local.support === "unsupported") reviewError = `${primaryHarness} does not support native review subagents.`;
+    else if (getAgentHostCapabilityProfile(primaryHarness as AgentHostId).capabilities["review-host-guided"].support === "unsupported") reviewError = `${primaryHarness} does not support native review subagents.`;
   } else if (setup.review.mode === "isolated") {
     if (!reviewHarness) reviewError = "Isolated review requires another selected agent harness.";
     else if (reviewHarness === primaryHarness) reviewError = "Isolated review must use an agent harness other than the primary harness.";
     else if (!setup.hosts.includes(reviewHarness)) reviewError = `Isolated review harness ${reviewHarness} is not in the selected agent harnesses.`;
-    else if (getAgentHostProfileSync(reviewHarness as AgentHostId).review.isolated.support === "unsupported") reviewError = `${reviewHarness} does not support isolated review.`;
+    else if (getAgentHostCapabilityProfile(reviewHarness as AgentHostId).capabilities["review-isolated"].support === "unsupported") reviewError = `${reviewHarness} does not support isolated review.`;
   }
   if (reviewError) {
     const nextAction = "Correct the Review selection, then rerun qube init.";
@@ -3503,6 +3506,13 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     prerequisiteReadiness: repositoryReadinessSummary(prerequisites),
     ...(scope === "repository" ? { target: targetPath } : {}),
     resolved: setup,
+    harnessReadiness: Object.freeze(setup.hosts
+      .filter((host): host is AgentHostId => (AGENT_HOST_IDS as readonly string[]).includes(host))
+      .map((host) => observeAgentHostReadiness(
+        getAgentHostCapabilityProfile(host),
+        new Date().toISOString(),
+        (command) => resolveExecutable(command, { env: environment.env }),
+      ))),
     sources: resolved.sources,
     deviations: resolved.deviations,
     components: planInvocations.map((invocation, index) => planRow(invocation, planResults[index]!)),
@@ -6841,7 +6851,10 @@ function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieI
   const mapped = mapSelectedInitTools(hosts);
   if (mapped.size === 0) return [];
   const tools = AIE_INIT_HOST_TOOLS.filter(tool =>
-    mapped.has(tool) && getAgentHostProfileSync(tool).umpire.continuation.support !== "unsupported"
+    mapped.has(tool) && (
+      getAgentHostCapabilityProfile(tool).capabilities["continuation-stop-hook"].support !== "unsupported"
+      || getAgentHostCapabilityProfile(tool).capabilities["continuation-idle-event"].support !== "unsupported"
+    )
   );
   if (tools.length === 0) return [];
   return Object.freeze([tools.join(",") as AieInitTool]);

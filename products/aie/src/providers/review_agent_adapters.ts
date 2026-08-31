@@ -1,4 +1,4 @@
-import { AGENT_HOST_REGISTRATIONS, type AgentHostProfile } from '@tjalve/qube-core';
+import { AGENT_HOST_REGISTRATIONS, getAgentHostCapabilityProfile, type AgentHostProfile } from '@tjalve/qube-core';
 import { getAllAgentHostProfiles } from '../agent_host_adapters.js';
 
 export interface ReviewAgentAdapterDescriptor {
@@ -43,7 +43,7 @@ function descriptorFromHostProfile(profile: AgentHostProfile): ReviewAgentAdapte
     name: profile.displayName,
     trigger: 'local-host',
     externalService: false,
-    summary: profile.review.local.description,
+    summary: getAgentHostCapabilityProfile(profile.id).capabilities['review-host-guided'].description,
     forgeId: profile.id,
     forgeAffinity: Object.freeze(['local']),
     packageName: AGENT_HOST_REGISTRATIONS[profile.id].packageName,
@@ -107,7 +107,7 @@ function normalizeHandle(handle: string): string {
 async function installedHostReviewAgents(): Promise<ReviewAgentAdapterDescriptor[]> {
   const profiles = await getAllAgentHostProfiles();
   return profiles
-    .filter(profile => profile.review.local.support !== 'unsupported')
+    .filter(profile => getAgentHostCapabilityProfile(profile.id).capabilities['review-host-guided'].support !== 'unsupported')
     .map(descriptorFromHostProfile);
 }
 

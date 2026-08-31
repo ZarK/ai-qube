@@ -19,6 +19,7 @@ export {
 } from './core/model_routing.js';
 export { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
 export { listHostModels } from './app/model_catalog.js';
+export { observeAgentHostReadiness } from '@tjalve/qube-core';
 export { listInitExternalReviewers } from './init/review_selections.js';
 export { isMissingAdapterPackage } from './missing_adapter_package.js';
 export type {

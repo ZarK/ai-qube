@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import { existsSync, statfsSync } from 'fs';
 import { join, relative } from 'path';
+import { AGENT_HOST_IDS, getAgentHostCapabilityProfile, observeAgentHostReadiness, type AgentHostId } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { plannedReviewRouteChains, plannedReviewRouteTargets, selectProbedReviewRoute } from '../app/local_review_runner.js';
 import type { LocalReviewLaneId } from '../local_review_evidence.js';
@@ -32,6 +33,7 @@ function disabledPreflight(): ReviewPreflightDiagnostics {
   return {
     enabled: false,
     readiness: 'disabled',
+    hostReadiness: [],
     checks: {
       disk: { readiness: 'disabled', freeBytes: null, thresholdBytes: LOW_DISK_THRESHOLD_BYTES, nextAction: null },
       dist: { readiness: 'disabled', path: 'products/aie/dist/bin/run.js', present: false, nextAction: null },
@@ -223,9 +225,16 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
     };
   }
 
+  const selectedHosts = new Set<AgentHostId>();
+  for (const host of [...config.localReviewAgents, ...routeTargets.map((target) => target.host)]) {
+    if (AGENT_HOST_IDS.includes(host as AgentHostId)) selectedHosts.add(host as AgentHostId);
+  }
+  const hostReadiness = [...selectedHosts].map((host) => observeAgentHostReadiness(getAgentHostCapabilityProfile(host)));
+
   return {
     enabled: true,
     readiness: overallStatus([disk.readiness, dist.readiness, gitObjects.readiness, githubReviewAuth.readiness, ...(routeProbes.readiness === 'disabled' ? [] : [routeProbes.readiness])]),
+    hostReadiness,
     checks: { disk, dist, gitObjects, githubReviewAuth, routeProbes },
     nextActions,
   };

@@ -1,4 +1,4 @@
-import { getAgentHostProfileSync } from '../agent_host_adapters.js';
+import { getAgentHostCapabilityProfile } from '@tjalve/qube-core';
 import type { HostModelListing } from '../app/model_catalog.js';
 import type { ReviewModelHostId, ReviewModelsPolicy } from '../core/policy.js';
 import { REVIEW_MODEL_HOST_IDS } from '../core/policy.js';
@@ -84,7 +84,7 @@ export function resolveInitLocalReviewers(
       errors.push(`Local review agent "${host}" is not installed for this init run.`);
       continue;
     }
-    if (getAgentHostProfileSync(host).review.local.support === 'unsupported') {
+    if (getAgentHostCapabilityProfile(host).capabilities['review-host-guided'].support === 'unsupported') {
       errors.push(`Local review agent "${host}" does not support native review subagents.`);
       continue;
     }
@@ -121,7 +121,7 @@ export function resolveInitIsolatedReviewer(
       warnings: Object.freeze([]),
     };
   }
-  if (getAgentHostProfileSync(host).review.isolated.support === 'unsupported') {
+  if (getAgentHostCapabilityProfile(host).capabilities['review-isolated'].support === 'unsupported') {
     return {
       values: null,
       errors: Object.freeze([`Isolated review agent "${host}" does not support isolated review.`]),

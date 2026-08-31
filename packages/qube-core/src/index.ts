@@ -164,6 +164,37 @@ export {
   defineAgentHostProfile,
 } from "./agent_host.js";
 export type {
+  AgentHostCapabilityDescriptor,
+  AgentHostCapabilityId,
+  AgentHostCapabilityProfile,
+  AgentHostCommandReadiness,
+  AgentHostCommandRequirement,
+  AgentHostReadinessFact,
+  AgentHostReadinessFactId,
+  AgentHostReadinessProbe,
+  AgentHostReadinessReport,
+  AgentHostReadinessState,
+  AgentHostSurface,
+  AgentHostSurfaceDescriptor,
+} from "./agent_host_capability.js";
+export {
+  AGENT_HOST_CAPABILITY_IDS,
+  AGENT_HOST_CAPABILITY_PROFILES,
+  AGENT_HOST_COMMAND_REQUIREMENTS,
+  AGENT_HOST_PROFILE_VERSION,
+  AGENT_HOST_READINESS_FACT_IDS,
+  AGENT_HOST_READINESS_STATES,
+  AGENT_HOST_READINESS_VERSION,
+  AGENT_HOST_SURFACES,
+  commandRequirement,
+  defineAgentHostCapabilityProfile,
+  defineAgentHostReadinessReport,
+  evaluateAgentHostCommandReadiness,
+  getAgentHostCapabilityProfile,
+  observeAgentHostReadiness,
+  runBoundedAgentHostReadinessProbe,
+} from "./agent_host_capability.js";
+export type {
   EvidenceSource,
   EvidenceTrust,
   GateDefinition,

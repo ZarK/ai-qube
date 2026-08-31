@@ -7,8 +7,10 @@ import { getAgentHostProfileSync, getAgentHostProfiles } from "@tjalve/aie";
 import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
 import {
   AGENT_HOST_IDS,
+  getAgentHostCapabilityProfile,
   defineAgentHostProfile,
   type AgentHostCapability,
+  type AgentHostCapabilityDescriptor,
   type AgentHostCapabilitySupport,
   type AgentHostContinuationDelivery,
   type AgentHostId,
@@ -53,10 +55,10 @@ export function defaultReviewSelection(hosts: readonly string[]): {
 } {
   const primary = hosts[0];
   const isolatedHarness = hosts.find(host => (
-    host !== primary && isToolkitHostId(host) && getAgentHostProfileSync(host).review.isolated.support !== "unsupported"
+    host !== primary && isToolkitHostId(host) && getAgentHostCapabilityProfile(host).capabilities["review-isolated"].support !== "unsupported"
   ));
   if (isolatedHarness) return Object.freeze({ mode: "isolated", harness: isolatedHarness });
-  if (primary && isToolkitHostId(primary) && getAgentHostProfileSync(primary).review.local.support !== "unsupported") {
+  if (primary && isToolkitHostId(primary) && getAgentHostCapabilityProfile(primary).capabilities["review-host-guided"].support !== "unsupported") {
     return Object.freeze({ mode: "host", harness: primary });
   }
   return Object.freeze({ mode: "external" });
@@ -217,7 +219,7 @@ function asset(
   });
 }
 
-function capabilitySummary(capability: AgentHostCapability): ToolkitCapability {
+function capabilitySummary(capability: AgentHostCapability | AgentHostCapabilityDescriptor): ToolkitCapability {
   return Object.freeze({
     support: capability.support,
     description: capability.description,
@@ -226,33 +228,45 @@ function capabilitySummary(capability: AgentHostCapability): ToolkitCapability {
 }
 
 function hostCapabilities(profile: AgentHostProfile): ToolkitHostCapabilities {
+  const declared = getAgentHostCapabilityProfile(profile.id);
+  const task = declared.capabilities["task-write"];
+  const subagents = declared.capabilities["subagent-invoke"];
+  const localReview = declared.capabilities["review-host-guided"];
+  const isolatedReview = declared.capabilities["review-isolated"];
+  const modelCatalog = declared.capabilities["model-catalog"];
+  const stopHook = declared.capabilities["continuation-stop-hook"];
+  const selectedSession = declared.capabilities["continuation-selected-session-delivery"];
+  const continuation = selectedSession.support !== "unsupported" ? selectedSession : stopHook;
+  const delivery: AgentHostContinuationDelivery = selectedSession.support !== "unsupported"
+    ? "host"
+    : stopHook.support !== "unsupported" ? "stdout" : "none";
   const umpireProbe = profile.umpire.probe.support === "unsupported"
     ? Object.freeze({ ...capabilitySummary(profile.umpire.probe), command: Object.freeze([]) })
     : Object.freeze({ ...capabilitySummary(profile.umpire.probe), command: Object.freeze([...profile.umpire.probe.command]) });
-  const continuationState = profile.umpire.continuation.support === "unsupported" ? "unavailable" : "unverified";
+  const continuationState = continuation.support === "unsupported" ? "unavailable" : "unverified";
   return Object.freeze({
     taskList: Object.freeze({
-      ...capabilitySummary(profile.taskList),
+      ...capabilitySummary(task),
       tools: Object.freeze([...profile.taskList.tools]),
     }),
-    subagents: capabilitySummary(profile.subagents),
+    subagents: capabilitySummary(subagents),
     review: Object.freeze({
       local: Object.freeze({
-        ...capabilitySummary(profile.review.local),
-        freshContext: profile.review.local.freshContext,
-        readOnly: profile.review.local.readOnly,
+        ...capabilitySummary(localReview),
+        freshContext: localReview.support !== "unsupported",
+        readOnly: declared.capabilities["sandbox-read-only"].support !== "unsupported",
       }),
       isolated: Object.freeze({
-        ...capabilitySummary(profile.review.isolated),
-        freshContext: profile.review.isolated.freshContext,
-        readOnly: profile.review.isolated.readOnly,
+        ...capabilitySummary(isolatedReview),
+        freshContext: isolatedReview.support !== "unsupported",
+        readOnly: isolatedReview.support !== "unsupported" && declared.capabilities["sandbox-read-only"].support !== "unsupported",
       }),
     }),
-    modelDiscovery: capabilitySummary(profile.modelDiscovery),
+    modelDiscovery: capabilitySummary(modelCatalog),
     umpire: Object.freeze({
       continuation: Object.freeze({
-        ...capabilitySummary(profile.umpire.continuation),
-        delivery: profile.umpire.continuation.delivery,
+        ...capabilitySummary(continuation),
+        delivery,
         effectiveDelivery: "none",
         state: continuationState,
         currentIssueRecovery: false,
@@ -260,14 +274,15 @@ function hostCapabilities(profile: AgentHostProfile): ToolkitHostCapabilities {
       probe: umpireProbe,
     }),
     trust: Object.freeze({
-      required: profile.trust.required,
-      description: profile.trust.description,
+      required: declared.capabilities["repository-trust"].support !== "unsupported",
+      description: declared.capabilities["repository-trust"].description,
       actions: Object.freeze([...profile.trust.actions]),
     }),
   });
 }
 
 function assetsForProfile(profile: AgentHostProfile): readonly ToolkitAsset[] {
+  const declared = getAgentHostCapabilityProfile(profile.id);
   const assets: ToolkitAsset[] = [
     asset(profile.instructionTarget.id, "instruction", "aie", profile.instructionTarget.description, {
       path: profile.instructionTarget.path,
@@ -280,8 +295,8 @@ function assetsForProfile(profile: AgentHostProfile): readonly ToolkitAsset[] {
   for (const target of profile.review.local.agents) {
     assets.push(asset(target.id, "subagent", "aie", target.description, { path: target.path, required: false }));
   }
-  const continuationRequired = profile.umpire.continuation.support !== "unsupported"
-    && profile.umpire.continuation.currentIssueRecovery;
+  const continuationRequired = declared.capabilities["continuation-stop-hook"].support !== "unsupported"
+    || declared.capabilities["continuation-idle-event"].support !== "unsupported";
   for (const action of profile.trust.actions) {
     if (action.kind !== "review-files") continue;
     action.paths.forEach((assetPath, index) => {
