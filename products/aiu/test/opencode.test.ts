@@ -83,6 +83,7 @@ describe("OpenCode continuation runtime", () => {
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "busy" } } } });
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "retry" } } } });
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "unknown" } } } });
+    await hooks.event({ event: { type: "session-status", properties: { sessionID: "ses_status", status: { type: "unknown" } } } });
     await hooks.event({ event: { type: "plugin.added", properties: { sessionID: "ses_status" } } });
     await hooks.event({ event: { type: "message.updated", properties: { sessionID: "ses_status" } } });
     assert.equal(requests.length, 0);

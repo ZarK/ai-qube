@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { getAiuResolvedPaths, runAiuDoctor } from "../dist/src/doctor.js";
+import { getAiuPackageVersion } from "../dist/src/assets.js";
 import { getDefaultAiuConfig } from "../dist/src/config.js";
 import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "../dist/src/continuation_store.js";
 import { getAiuHostCapabilityProfile } from "../dist/src/host_policy.js";
@@ -141,6 +142,43 @@ describe("doctor diagnostics", () => {
 
     assert.equal(report.status, "error");
     assert.equal(packageCheck?.status, "error");
+  });
+
+  it("does not skip a nearer invalid OpenCode plugin package for a valid parent package", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["opencode"],
+        modes: { opencode: ["continue", "repair", "wait", "stop"] },
+      },
+    });
+    await writeManagedHostFiles(repoRoot, "opencode");
+
+    const packageVersion = getAiuPackageVersion();
+    const parentPackageRoot = path.join(repoRoot, "node_modules", "@tjalve", "aiu");
+    await mkdir(path.join(parentPackageRoot, "dist", "src"), { recursive: true });
+    await writeFile(path.join(parentPackageRoot, "package.json"), JSON.stringify({
+      name: "@tjalve/aiu",
+      version: packageVersion,
+      exports: { "./opencode": { import: "./dist/src/opencode.js" } },
+    }), "utf8");
+    await writeFile(path.join(parentPackageRoot, "dist", "src", "opencode.js"), "export {};\n", "utf8");
+
+    const nearerPackageRoot = path.join(repoRoot, ".opencode", "node_modules", "@tjalve", "aiu");
+    await mkdir(nearerPackageRoot, { recursive: true });
+    await writeFile(path.join(nearerPackageRoot, "package.json"), JSON.stringify({
+      name: "@tjalve/aiu",
+      version: packageVersion,
+      exports: { "./opencode": { import: "./missing-opencode.js" } },
+    }), "utf8");
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+    const packageCheck = report.checks.find((check) => check.kind === "opencode-plugin-package-unresolved");
+
+    assert.equal(report.status, "error");
+    assert.equal(packageCheck?.status, "error");
+    assert.equal(report.checks.some((check) => check.kind === "opencode-plugin-package-resolved"), false);
   });
 
   it("reports unmanaged host entrypoints that do not delegate to the package runtime", async () => {

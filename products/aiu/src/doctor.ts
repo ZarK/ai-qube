@@ -601,6 +601,7 @@ function resolveOpenCodeAiuPackage(manifestPath: string): { readonly version: st
       } catch {
         return undefined;
       }
+      return undefined;
     }
     const parent = path.dirname(directory);
     if (parent === directory) return undefined;

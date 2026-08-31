@@ -451,7 +451,7 @@ function buildAiuOpenCodeHostSession(event: AiuOpenCodeEvent): AiuOpenCodeHostSe
 
   if (helperSession) suppressions.push("helper-session");
   if (busy) suppressions.push("session-busy");
-  if (event.type === "session.status" && statusBusy === undefined) suppressions.push("session-status-not-idle");
+  if ((eventType === "session.status" || eventType === "session-status") && statusBusy === undefined) suppressions.push("session-status-not-idle");
   if (selectedConflict) suppressions.push("selected-session-conflict");
   if (userActive) suppressions.push("user-active");
   if (todoActive) suppressions.push("todo-active");
