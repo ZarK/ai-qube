@@ -206,20 +206,37 @@ describe("doctor diagnostics", () => {
 
   it("reports an installed manifest without a resolvable OpenCode plugin package as not ready", async () => {
     const repoRoot = await createRepoRoot();
+    const trustedStateCommands = {
+      work: { argv: [process.execPath, "--version"] as [string, ...string[]] },
+    };
     await writeConfig(repoRoot, {
       version: 1,
       hosts: {
         enabled: ["opencode"],
         modes: { opencode: ["continue", "repair", "wait", "stop"] },
       },
+      trustedStateCommands,
     });
     await writeManagedHostFiles(repoRoot, "opencode");
+    const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
+    writeAiuHostActivation(paths, {
+      schemaVersion: 1,
+      host: "opencode",
+      delivery: "host",
+      event: "plugin-event",
+      trustedStateFingerprint: createAiuTrustedStateFingerprint(trustedStateCommands),
+      observedAt: "2026-08-20T12:00:00.000Z",
+    });
 
     const report = runAiuDoctor({ cwd: repoRoot });
     const packageCheck = report.checks.find((check) => check.kind === "opencode-plugin-package-unresolved");
+    const hostProbe = report.hostProbes.find((probe) => probe.host === "opencode");
 
     assert.equal(report.status, "error");
     assert.equal(packageCheck?.status, "error");
+    assert.equal(hostProbe?.state, "unavailable");
+    assert.equal(hostProbe?.currentIssueRecovery, false);
+    assert.equal(report.checks.some((check) => check.kind === "host-continuation-active"), false);
   });
 
   it("does not skip a nearer invalid OpenCode plugin package for a valid parent package", async () => {
@@ -346,6 +363,7 @@ describe("doctor diagnostics", () => {
     for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
+    await writeResolvableOpenCodePackage(repoRoot);
     await addUnrelatedSharedEntries(repoRoot);
     await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
     const previousHome = process.env.GROK_HOME;
@@ -373,6 +391,7 @@ describe("doctor diagnostics", () => {
     for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
+    await writeResolvableOpenCodePackage(repoRoot);
     await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
     const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
     const observedAt = "2026-08-20T12:00:00.000Z";
@@ -755,6 +774,17 @@ async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, file.content, "utf8");
   }
+}
+
+async function writeResolvableOpenCodePackage(repoRoot: string): Promise<void> {
+  const packageRoot = path.join(repoRoot, ".opencode", "node_modules", "@tjalve", "aiu");
+  await mkdir(path.join(packageRoot, "dist", "src"), { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
+    name: "@tjalve/aiu",
+    version: getAiuPackageVersion(),
+    exports: { "./opencode": { import: "./dist/src/opencode.js" } },
+  }), "utf8");
+  await writeFile(path.join(packageRoot, "dist", "src", "opencode.js"), "export {};\n", "utf8");
 }
 
 async function addUnrelatedSharedEntries(repoRoot: string): Promise<void> {

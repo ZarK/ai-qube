@@ -710,32 +710,6 @@ function safeAppendContinuationLog(paths: AiuContinuationPaths, entry: Parameter
   }
 }
 
-function statusIsBusy(status: string | undefined): boolean | undefined {
-  if (!status) return undefined;
-  const normalized = normalizeEventToken(status);
-  if (["busy", "retry", "running", "working", "typing"].includes(normalized)) return true;
-  if (["idle", "waiting", "stopped"].includes(normalized)) return false;
-  return undefined;
-}
-
-function readOpenCodeStatus(value: unknown): string | undefined {
-  if (typeof value === "string") return readString(value);
-  if (!isRecord(value)) return undefined;
-  return readString(value.type) ?? readString(value.status) ?? readString(value.state);
-}
-
-function normalizeEventToken(value: string): string {
-  return value.trim().replace(/([a-z])([A-Z])/g, "$1-$2").replace(/[_\s:]+/g, "-").toLowerCase();
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function readBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

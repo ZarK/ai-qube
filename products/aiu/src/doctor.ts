@@ -597,8 +597,15 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
       repoRoot: configLoad.repoRoot,
       packageVersions: { "@tjalve/aiu": getAiuPackageVersion() },
     });
-    if (nativeProbe.status === "blocked" && nativeProbe.severity === "warning") {
-      return hostProbe(base, "unverified", "none", false, nativeProbe.reason, nativeProbe.nextAction ?? "Review the host continuation adapter diagnostic.");
+    if (nativeProbe.status === "blocked") {
+      return hostProbe(
+        base,
+        nativeProbe.severity === "warning" ? "unverified" : "unavailable",
+        "none",
+        false,
+        nativeProbe.reason,
+        nativeProbe.nextAction ?? "Review the host continuation adapter diagnostic.",
+      );
     }
 
     const trustedCommands = resolveTrustedCommandPaths(configLoad);
@@ -846,34 +853,6 @@ function findExistingDirectoryAncestor(targetPath: string): string {
   return current;
 }
 
-function canAccess(targetPath: string, mode: number): boolean {
-  try {
-    accessSync(targetPath, mode);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isExecutableFile(targetPath: string): boolean {
-  try {
-    const stat = statSync(targetPath);
-    if (!stat.isFile()) {
-      return false;
-    }
-    if (process.platform !== "win32") {
-      return canAccess(targetPath, constants.X_OK);
-    }
-    const executableExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-      .split(";")
-      .map((extension) => extension.trim().toUpperCase())
-      .filter((extension) => extension.length > 0);
-    return executableExtensions.includes(path.extname(targetPath).toUpperCase());
-  } catch {
-    return false;
-  }
-}
-
 function portablePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
@@ -884,8 +863,4 @@ function displayConfigPath(repoRoot: string, selectedPath: string): string {
     return portablePath(selectedPath);
   }
   return portablePath(relativePath);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

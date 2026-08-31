@@ -1,11 +1,12 @@
 import path from "node:path";
+import { opencodeContinuationDeclaration } from "@tjalve/qube-adapter-opencode";
 
 import { getAiuPackageRoot } from "./package_metadata.js";
 
 export { getAiuPackageRoot, getAiuPackageVersion } from "./package_metadata.js";
 
-export const AIU_PLUGIN_WRAPPER_RELATIVE_PATH = ".opencode/plugins/ai-umpire-continuation.ts";
-export const AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH = ".opencode/package.json";
+export const AIU_PLUGIN_WRAPPER_RELATIVE_PATH = continuationAssetPath("plugin-wrapper");
+export const AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH = continuationAssetPath("package-dependency");
 
 export interface AiuPackageAssetPaths {
   packageRoot: string;
@@ -17,4 +18,10 @@ export function getAiuPackageAssetPaths(): AiuPackageAssetPaths {
     packageRoot: getAiuPackageRoot(),
     pluginWrapperRelativePath: AIU_PLUGIN_WRAPPER_RELATIVE_PATH,
   };
+}
+
+function continuationAssetPath(assetId: string): string {
+  const asset = opencodeContinuationDeclaration.managedAssets.find((candidate) => candidate.id === assetId);
+  if (!asset) throw new TypeError(`OpenCode continuation asset ${assetId} is not declared.`);
+  return asset.relativePath;
 }

@@ -97,11 +97,13 @@ describe("runtime architecture boundaries", () => {
     const managedFiles = moduleByName(modules, "managed_host_file");
     const hostPolicy = moduleByName(modules, "host_policy");
     const doctor = moduleByName(modules, "doctor");
+    const assets = moduleByName(modules, "assets");
 
     assert.doesNotMatch(hookStop.source, /parse(?:Claude|Codex|Grok)StopPayload|options\.tool\s*===/u);
     assert.doesNotMatch(managedFiles.source, /opencode-package-dependency|codex-marketplace-plugin|claude-stop-hook/u);
     assert.doesNotMatch(hostPolicy.source, /ai-umpire-continuation\.ts|\.codex-plugin|\.claude[\\/]settings/u);
     assert.doesNotMatch(doctor.source, /\.opencode[\\/]|\.codex-plugin|\.claude[\\/]settings|host\s*===\s*["'](?:opencode|codex|claude-code|grok-build)/u);
+    assert.doesNotMatch(assets.source, /\.opencode[\\/]|ai-umpire-continuation\.ts/u);
     for (const module of modules) assert.doesNotMatch(module.source, /\bpaseo\b/iu, `${module.name} must not add launcher-specific continuation behavior`);
   });
 

@@ -75,6 +75,11 @@ describe("opencode adapter", () => {
     const decoded = opencodeContinuationAdapter.decodeEvent({ type: "session.idle", payload: { sessionId: "s1", selectedSessionId: "s1" } });
     assert.equal(decoded.ok, true);
     assert.equal(decoded.event.sessionId, "s1");
+    assert.equal(opencodeContinuationAdapter.decodeEvent(null).code, "malformed-event");
+    assert.equal(opencodeContinuationAdapter.decodeEvent({ type: "workspace.ready" }).code, "unsupported-event");
+    const incompatibleSurface = opencodeContinuationAdapter.probe({ surface: "stop-hook", version: null });
+    assert.equal(incompatibleSurface.status, "blocked");
+    assert.match(incompatibleSurface.reason, /Unsupported continuation surface/);
     const encoded = opencodeContinuationAdapter.encodeResponse({ decision: "deliver", sessionId: "s1", cwd: "/repo" });
     assert.equal(encoded.ok, true);
     assert.deepEqual(encoded.response, { path: { id: "s1" }, body: { command: "make-it-so", arguments: "" }, query: { directory: "/repo" } });

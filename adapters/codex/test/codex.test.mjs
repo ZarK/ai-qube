@@ -16,6 +16,7 @@ describe("codex adapter", () => {
     assert.equal(decoded.event.sessionId, "codex-1");
     assert.deepEqual(codexContinuationAdapter.encodeResponse({ decision: "block", prompt: "Continue." }).response, { decision: "block", reason: "Continue." });
     assert.equal(codexContinuationAdapter.decodeEvent({ ...payload, hookEventName: "stop", hook_event_name: undefined }).ok, false);
+    assert.equal(codexContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
   });
   it("exposes the codex host profile", () => {
     assert.equal(codexHostProfile.id, "codex");

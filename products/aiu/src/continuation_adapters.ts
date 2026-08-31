@@ -61,6 +61,6 @@ export function decodeAiuContinuationEvent(
 ): ContinuationDecodeResult {
   const adapter = getAiuContinuationAdapter(host);
   const probe = adapter.probe({ surface: input.surface, version: input.version });
-  if (probe.status === "blocked") return Object.freeze({ ok: false, code: "malformed-event", error: probe.reason });
+  if (probe.status === "blocked") return Object.freeze({ ok: false, code: "unsupported-event", error: probe.reason });
   return adapter.decodeEvent(input.event);
 }

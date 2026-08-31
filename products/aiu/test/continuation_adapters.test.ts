@@ -35,6 +35,7 @@ describe("AI Umpire continuation adapter registry", () => {
       event: { type: "session.idle", payload: { sessionId: "s1" } },
     });
     assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "unsupported-event");
     assert.match(rejected.error, /Unsupported continuation surface/);
   });
 });

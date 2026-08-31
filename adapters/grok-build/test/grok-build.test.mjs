@@ -128,5 +128,6 @@ describe("grok-build adapter", () => {
     assert.equal(decoded.ok, true);
     assert.equal(decoded.event.sessionEnd, true);
     assert.deepEqual(adapter.grokBuildContinuationAdapter.encodeResponse({ decision: "block", prompt: "Continue." }).response, { decision: "block", reason: "Continue." });
+    assert.equal(adapter.grokBuildContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
   });
 });

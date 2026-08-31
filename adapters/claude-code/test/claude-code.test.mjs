@@ -11,6 +11,7 @@ describe("claude-code adapter", () => {
     assert.equal(decoded.event.sessionId, "claude-1");
     assert.deepEqual(claudeCodeContinuationAdapter.encodeResponse({ decision: "allow" }).response, {});
     assert.equal(claudeCodeContinuationAdapter.decodeEvent({ ...payload, hook_event_name: "PreToolUse" }).ok, false);
+    assert.equal(claudeCodeContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
   });
   it("exposes one canonical Claude Code host profile", () => {
     assert.equal(claudeCodeHostProfile.id, "claude-code");
