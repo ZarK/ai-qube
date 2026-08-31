@@ -202,9 +202,7 @@ export function buildAiuContinuationState(input: {
   readonly previous?: AiuContinuationState;
   readonly nativeDelivery?: boolean;
 }): AiuContinuationState {
-  const nativeLoopCount = input.nativeDelivery === true
-    ? continuesNativeLoop(input.previous, input) ? input.previous!.nativeLoopCount + 1 : 1
-    : 0;
+  const nativeLoopCount = calculateAiuNativeLoopCount(input.previous, input);
   return Object.freeze({
     schemaVersion: 2 as const,
     deliveryState: "reserved" as const,
@@ -320,7 +318,7 @@ export function continuationPromptTargetsSameItem(state: AiuContinuationState | 
   if (!hasDeliveredPrompt || !state?.selectedItem || !prompt.selectedItem) {
     return false;
   }
-  return state.mode === prompt.decisionKind
+  return state.decisionKind === prompt.decisionKind
     && state.selectedItem.kind === prompt.selectedItem.kind
     && state.selectedItem.id === prompt.selectedItem.id
     && state.selectedItem.sourceId === prompt.selectedItem.sourceId;
@@ -339,6 +337,19 @@ export function continuationTargetsSession(
 
 export function persistedLastPromptAt(state: AiuContinuationState | undefined): string | undefined {
   return state?.lastPromptAt ?? (state?.deliveryState === "emitted" ? state.pendingPromptAt : undefined);
+}
+
+export function calculateAiuNativeLoopCount(
+  previous: AiuContinuationState | undefined,
+  input: {
+    readonly ownerSessionId?: string;
+    readonly targetSessionId?: string;
+    readonly decision: AiuContinuationDecision;
+    readonly nativeDelivery?: boolean;
+  },
+): number {
+  if (input.nativeDelivery !== true) return 0;
+  return continuesNativeLoop(previous, input) ? previous!.nativeLoopCount + 1 : 1;
 }
 
 export function createAiuDecisionId(input: {

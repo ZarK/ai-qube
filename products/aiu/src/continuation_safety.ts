@@ -3,6 +3,7 @@ import {
   acquireAiuContinuationLock,
   appendAiuContinuationLog,
   buildAiuContinuationState,
+  calculateAiuNativeLoopCount,
   continuationPromptIsDuplicate,
   continuationPromptOwnedByOtherSession,
   continuationPromptTargetsSameItem,
@@ -136,13 +137,7 @@ export function continuationSafetyCooldownActive(transaction: AiuContinuationSaf
 
 export function continuationSafetyImmediateSuppressions(transaction: AiuContinuationSafetyTransaction): readonly string[] {
   if (transaction.input.recursionActive === true) return Object.freeze(["stop-hook-already-active"]);
-  const state = transaction.state;
-  if (state
-    && state.deliveryState === "emitted"
-    && state.pendingPromptFingerprint
-    && state.ownerSessionId
-    && transaction.input.sessionId
-    && state.ownerSessionId !== transaction.input.sessionId) {
+  if (continuationPromptOwnedByOtherSession(transaction.state, transaction.input.sessionId)) {
     return Object.freeze(["prompt-owned-by-other-session"]);
   }
   if (continuationSafetyCooldownActive(transaction)) return Object.freeze(["wait-cooldown-active"]);
@@ -163,7 +158,12 @@ export function reserveAiuContinuation(
     ...(continuationPromptTargetsSameItem(state, prompt) ? ["duplicate-prompt-target"] : []),
     ...(continuationTargetsSession(state, sessionTarget) ? ["duplicate-session-target"] : []),
   ];
-  const nextLoopCount = nextNativeLoopCount(state, input, decision);
+  const nextLoopCount = calculateAiuNativeLoopCount(state, {
+    ...(input.sessionId ? { ownerSessionId: input.sessionId } : {}),
+    ...(sessionTarget ? { targetSessionId: sessionTarget } : {}),
+    decision,
+    nativeDelivery: input.nativeDelivery,
+  });
   if (input.nativeDelivery && nextLoopCount > input.config.continuation.nativeLoopLimit) {
     suppressions.push("native-loop-limit-exhausted");
   }
@@ -237,25 +237,6 @@ function canConsumePriorEmission(
   const emittedAt = Date.parse(state.updatedAt);
   const evidenceAt = Date.parse(input.observedAt);
   return Number.isFinite(emittedAt) && Number.isFinite(evidenceAt) && evidenceAt > emittedAt;
-}
-
-function nextNativeLoopCount(
-  state: AiuContinuationState | undefined,
-  input: AiuContinuationSafetyInput,
-  decision: AiuContinuationDecision,
-): number {
-  if (!input.nativeDelivery || !state || state.deliveryState === "reserved" || state.nativeLoopCount <= 0) {
-    return input.nativeDelivery ? 1 : 0;
-  }
-  const stateSession = state.targetSessionId ?? state.ownerSessionId;
-  const inputSession = input.targetSessionId ?? input.sessionId;
-  if (!stateSession || stateSession !== inputSession) return 1;
-  const previous = state.selectedItem;
-  const next = decision.selectedItem;
-  if (!previous || !next) return previous === next ? state.nativeLoopCount + 1 : 1;
-  return previous.kind === next.kind && previous.id === next.id && previous.sourceId === next.sourceId
-    ? state.nativeLoopCount + 1
-    : 1;
 }
 
 function lifecycleLog(
