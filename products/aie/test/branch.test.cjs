@@ -94,6 +94,24 @@ describe('branch service', () => {
     assert.equal(state.dirty.dirty, false);
   });
 
+  it('does not report missing or stale remote base state when freshness is not required', async () => {
+    const repo = makeGitRepo();
+    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: repo, stdio: 'ignore' });
+    const { createLocalGitRepositoryProvider } = require('../dist/providers/local/local_git_provider.js');
+    const { configToExecutorPolicy } = require('../dist/config_policy.js');
+    const config = getDefaults();
+    config.requireBaseBranchFreshness = false;
+
+    const state = await createLocalGitRepositoryProvider({ cwd: repo }).inspect(configToExecutorPolicy(config), { offline: true });
+
+    assert.equal(state.prerequisites.checks.find(check => check.id === 'base-ref').status, 'ready');
+    assert.equal(state.baseRef.revision, headRevision(repo));
+    assert.equal(state.baseRef.remoteRevision, null);
+    assert.equal(state.baseRef.upToDate, undefined);
+    assert.equal(state.baseRef.error, null);
+    assert.equal(state.warnings.some(warning => /base branch|base ref/i.test(warning)), false);
+  });
+
   it('reports staged, modified, and deleted paths in typed repository state', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'delete-me.txt'), 'delete me\n');

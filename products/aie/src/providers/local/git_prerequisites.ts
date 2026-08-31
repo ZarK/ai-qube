@@ -94,20 +94,25 @@ function platformInstallAction(): { detectedPlatform: string; action: string } {
 
 function defaultGit(args: string[], options: GitRunOptions): GitRunResult {
   const env = options.env ? { ...process.env, ...options.env } : process.env;
-  const result = spawnSync('git', args, {
-    cwd: options.cwd,
-    encoding: 'utf8',
-    env,
-    timeout: options.timeoutMs,
-    windowsHide: true,
-  });
-  const spawnError = result.error as (Error & { code?: string }) | undefined;
-  return {
-    args,
-    exitCode: result.status ?? (spawnError?.code === 'ENOENT' ? 127 : 1),
-    stdout: result.stdout ?? '',
-    stderr: spawnError?.message ?? result.stderr ?? '',
-  };
+  try {
+    const result = spawnSync('git', args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      env,
+      timeout: options.timeoutMs,
+      windowsHide: true,
+    });
+    const spawnError = result.error as (Error & { code?: string }) | undefined;
+    return {
+      args,
+      exitCode: result.status ?? (spawnError?.code === 'ENOENT' ? 127 : 1),
+      stdout: result.stdout ?? '',
+      stderr: spawnError?.message ?? result.stderr ?? '',
+    };
+  } catch (error: unknown) {
+    const failure = error as Error & { code?: string };
+    return { args, exitCode: failure.code === 'ENOENT' ? 127 : 1, stdout: '', stderr: failure.message };
+  }
 }
 
 async function invoke(git: GitExec | undefined, args: string[], options: GitRunOptions): Promise<GitRunResult> {
@@ -288,7 +293,9 @@ export async function evaluateGitPrerequisites(options: EvaluateGitPrerequisites
   const branchName = branch.exitCode === 0 ? branch.stdout.trim() : '';
   rows.push(branchName
     ? check('branch', WORKFLOW_STAGES, 'ready', null, `The current branch is ${branchName}.`, null, GIT_SETUP_URL, { detached: false, branch: branchName })
-    : check('branch', WORKFLOW_STAGES, headReady ? 'needs-action' : 'ready', headReady ? 'detached-head' : null, headReady ? 'HEAD is detached.' : 'The unborn repository has a named initial branch.', headReady ? 'Switch to a named branch before starting issue work.' : null, GIT_SETUP_URL, { detached: headReady, branch: branchName || options.policy.branch.baseBranch }));
+    : headReady
+      ? check('branch', WORKFLOW_STAGES, 'needs-action', 'detached-head', 'HEAD is detached.', 'Switch to a named branch before starting issue work.', GIT_SETUP_URL, { detached: true, branch: null })
+      : check('branch', WORKFLOW_STAGES, 'unverified', null, 'The unborn repository initial branch could not be confirmed.', 'Create or switch to a named initial branch before starting issue work.', GIT_SETUP_URL, { detached: null, branch: null }));
 
   const gitDir = await invoke(options.git, ['rev-parse', '--git-dir'], { cwd: root });
   const commonDir = await invoke(options.git, ['rev-parse', '--git-common-dir'], { cwd: root });

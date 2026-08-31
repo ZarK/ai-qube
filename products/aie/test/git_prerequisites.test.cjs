@@ -173,6 +173,7 @@ describe('Git repository prerequisites', () => {
       'config --includes --show-origin --show-scope --get user.name': { exitCode: 1, stdout: '', stderr: '' },
       'config --includes --show-origin --show-scope --get user.email': { exitCode: 1, stdout: '', stderr: '' },
       'rev-parse --verify HEAD': { exitCode: 1, stdout: '', stderr: 'Needed a single revision' },
+      'branch --show-current': { exitCode: 0, stdout: '', stderr: '' },
       'remote get-url --all origin': { exitCode: 2, stdout: '', stderr: 'No such remote' },
       'remote -v': { exitCode: 0, stdout: '', stderr: '' },
       'rev-parse --verify main': { exitCode: 1, stdout: '', stderr: '' },
@@ -184,6 +185,8 @@ describe('Git repository prerequisites', () => {
     assert.equal(prerequisiteCheck(result, 'identity-name').reasonCode, 'identity-name-missing');
     assert.equal(prerequisiteCheck(result, 'identity-email').reasonCode, 'identity-email-missing');
     assert.equal(prerequisiteCheck(result, 'head').reasonCode, 'head-missing');
+    assert.equal(prerequisiteCheck(result, 'branch').status, 'unverified');
+    assert.equal(prerequisiteCheck(result, 'branch').safeDetails.branch, null);
     assert.equal(prerequisiteCheck(result, 'remote').reasonCode, 'remote-missing');
     assert.equal(runner.calls.some(call => call.args[0] === 'config' && call.args.includes('--add')), false);
   });

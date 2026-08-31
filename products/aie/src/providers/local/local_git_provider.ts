@@ -88,12 +88,12 @@ export function inspectBaseRef(policy: ExecutorPolicy, root: string | null): Rep
   if (!root) return { name: baseRef.baseBranch, kind: 'branch', revision: null, remoteRevision: undefined, upToDate: false, error: 'Not inside a git repository' };
   const local = runGitSync(['rev-parse', '--verify', baseRef.baseBranch], root);
   const remote = runGitSync(['rev-parse', '--verify', `${baseRef.baseRemote}/${baseRef.baseBranch}`], root);
-  if (local.exitCode !== 0 || remote.exitCode !== 0) {
+  if (local.exitCode !== 0 || policy.branch.requireFreshBase && remote.exitCode !== 0) {
     return { name: baseRef.baseBranch, kind: 'branch', revision: null, remoteRevision: undefined, upToDate: false, error: local.stderr.trim() || remote.stderr.trim() || 'Base ref is not resolved.' };
   }
   const localRevision = trimOutput(local);
-  const remoteRevision = trimOutput(remote);
-  return { name: baseRef.baseBranch, kind: 'branch', revision: localRevision, remoteRevision, upToDate: localRevision === remoteRevision };
+  const remoteRevision = remote.exitCode === 0 ? trimOutput(remote) : undefined;
+  return { name: baseRef.baseBranch, kind: 'branch', revision: localRevision, remoteRevision, upToDate: policy.branch.requireFreshBase ? localRevision === remoteRevision : undefined, error: undefined };
 }
 
 async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null, git?: GitExec, observed?: (args: string[]) => GitRunResult | undefined): Promise<RepoState['baseRef']> {
@@ -113,7 +113,7 @@ async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null
   const remoteArgs = ['rev-parse', '--verify', `${baseRef.baseRemote}/${baseRef.baseBranch}`];
   const local = observed?.(localArgs) ?? await runGit(localArgs, root, git);
   const remote = observed?.(remoteArgs) ?? await runGit(remoteArgs, root, git);
-  if (local.exitCode !== 0 || remote.exitCode !== 0) {
+  if (local.exitCode !== 0 || policy.branch.requireFreshBase && remote.exitCode !== 0) {
     const cause = redactGitError(local.stderr.trim() || remote.stderr.trim() || 'The configured local or remote base branch ref could not be resolved.');
     return {
       name: baseRef.baseBranch,
@@ -126,14 +126,14 @@ async function inspectBaseRefWithGit(policy: ExecutorPolicy, root: string | null
     };
   }
   const localRevision = trimOutput(local);
-  const remoteRevision = trimOutput(remote);
+  const remoteRevision = remote.exitCode === 0 ? trimOutput(remote) : null;
   return {
     name: baseRef.baseBranch,
     kind: 'branch',
     revision: localRevision,
     remoteName: baseRef.baseRemote,
     remoteRevision,
-    upToDate: localRevision === remoteRevision,
+    upToDate: policy.branch.requireFreshBase ? localRevision === remoteRevision : undefined,
     error: null,
   };
 }

@@ -824,6 +824,7 @@ describe("qube composer CLI", () => {
     createQualityDoctorShim(packageRoot);
     createWorkflowDoctorShim(packageRoot);
     const failingCommand = path.join(packageRoot, "node_modules", ".bin", process.platform === "win32" ? "aie.cmd" : "aie");
+    unlinkSync(failingCommand);
     writeFileSync(failingCommand, process.platform === "win32"
       ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b 3\r\n"
       : "#!/bin/sh\nprintf '%s\\n' '{\"workflowReadiness\":{\"stages\":[]}}'\nexit 3\n", "utf8");
