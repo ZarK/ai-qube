@@ -82,6 +82,7 @@ const {
   alignLocalEvidencePromptHashes,
   applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
+const { makePng } = require('./support/png_fixture.cjs');
 
 describe('PR body service', { concurrency: 4 }, () => {
   it('emits concise PR view state with sanitized feedback', async () => {
@@ -420,9 +421,21 @@ describe('PR body service', { concurrency: 4 }, () => {
     mkdirSync(screenshotsDirectory, { recursive: true });
     writeFileSync(join(repo, '.qube', 'aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
     writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'oracle found no blockers' }));
-    writeFileSync(join(auditDirectory, 'browser-observation.md'), 'opened the real running app with agent-browser\n');
-    writeFileSync(join(auditDirectory, 'notes.md'), 'audited running app visual state\n');
-    writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
+    const screenshot = makePng();
+    const screenshotSha = createHash('sha256').update(screenshot).digest('hex');
+    writeFileSync(join(screenshotsDirectory, 'settings.png'), screenshot);
+    const headSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const state = {
+      id: 'settings', name: 'Settings', url: 'http://localhost:3000/settings', viewport: { width: 1280, height: 800 },
+      actions: [{ type: 'navigate', description: 'Opened settings.' }, { type: 'click', description: 'Saved settings.' }, { type: 'inspect', description: 'Inspected the visible result.' }],
+      visibleOutcome: 'The settings state was visible.', screenshot: { path: 'screenshots/settings.png', sha256: screenshotSha }, findings: [], blockers: [],
+    };
+    const inspected = new Set(['initial-load', 'changed-interaction']);
+    writeFileSync(join(auditDirectory, 'audit.json'), `${JSON.stringify({
+      version: 1, outcome: 'passed', headSha, targetUrl: 'http://localhost:3000/settings', browser: { name: 'agent-browser', sessionId: 'session-1' },
+      surfaces: [{ name: 'Settings', changedFlow: 'Save settings', interactionRequired: true, states: [state], matrix: ['initial-load', 'changed-interaction', 'affected-states', 'keyboard-accessibility', 'responsive-layout', 'user-visible-failures'].map(row => ({ row, status: inspected.has(row) ? 'inspected' : 'not-applicable', stateIds: inspected.has(row) ? ['settings'] : [], reason: inspected.has(row) ? null : `${row} was not affected.` })) }],
+      findings: [], blockers: [],
+    })}\n`);
     const config = getDefaults();
     config.reviewAgents = ['@copilot', 'review-bot'];
     config.gates = [
@@ -459,7 +472,7 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.match(result.body, /Closes #93/);
     assert.match(result.body, /passed: unit/);
     assert.match(result.body, /missing: pack/);
-    assert.match(result.body, /Manual UI audit: visual-analysis-recorded/);
+    assert.match(result.body, /Manual UI audit: passed/);
     assert.match(result.body, /Review-agent gate: passed/);
     assert.match(result.body, /PR reviewer @copilot/);
     assert.match(result.body, /PR reviewer @review-bot/);

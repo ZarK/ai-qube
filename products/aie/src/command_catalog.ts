@@ -235,7 +235,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'audit ui',
-    description: 'Plan, prepare, and check local manual UI audit evidence without uploading screenshots or claiming unverified pass/fail.',
+    description: 'Plan, prepare, and validate a typed current-head browser-observed UI audit with local PNG evidence.',
     args: ['issue'],
     flags: AUDIT_UI_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: AUDIT_UI_FLAG_DETAILS,
