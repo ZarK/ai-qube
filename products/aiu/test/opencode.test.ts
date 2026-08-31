@@ -17,7 +17,7 @@ after(async () => {
 });
 
 describe("OpenCode continuation runtime", () => {
-  it("delivers through the installed server plugin client for OpenCode sessionID events", async () => {
+  it("runs the managed command through the installed server plugin client for OpenCode sessionID events", async () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-"));
     tempContinuationRoots.add(target);
     await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
@@ -30,28 +30,88 @@ describe("OpenCode continuation runtime", () => {
       },
     } satisfies AiuConfig;
     await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
-    const requests: Array<{ readonly path: { readonly id: string }; readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] }; readonly query?: { readonly directory: string } }> = [];
+    const requests: Array<{ readonly sessionID: string; readonly command: string }> = [];
+    let promptCalls = 0;
     const serverPlugin = createAiuOpenCodeServerPlugin({
       loadTrustedStates: () => [workQueueEnvelope({ readyItems: [workItem("65", "Server delivery")] })],
     });
-    const hooks = await serverPlugin({
-      directory: target,
-      client: {
-        session: {
-          promptAsync: async (request) => {
-            requests.push(request);
-          },
+    const client = {
+      session: {
+        command: async (request: { readonly sessionID: string; readonly command: string }) => {
+          requests.push(request);
+        },
+        promptAsync: async () => {
+          promptCalls += 1;
         },
       },
+    };
+    const hooks = await serverPlugin({
+      directory: target,
+      client,
     });
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_server" } } });
 
     assert.equal(requests.length, 1);
-    assert.equal(requests[0]?.path.id, "ses_server");
-    assert.equal(requests[0]?.query?.directory, target);
-    assert.match(requests[0]?.body.parts[0]?.text ?? "", /Start ready work/);
+    assert.deepEqual(requests[0], { sessionID: "ses_server", command: "make-it-so" });
+    assert.equal(promptCalls, 0);
     assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(target, config), "opencode")?.event, "plugin-event");
+  });
+
+  it("runs one same-session command for current idle status and ignores non-idle events", async () => {
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-status-"));
+    tempContinuationRoots.add(target);
+    await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+    const config = {
+      ...opencodeConfig(),
+      paths: {
+        stateDir: ".qube/aiu/state",
+        lockDir: ".qube/aiu/locks",
+        logDir: ".qube/aiu/logs",
+      },
+    } satisfies AiuConfig;
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
+    const requests: Array<{ readonly sessionID: string; readonly command: string }> = [];
+    const serverPlugin = createAiuOpenCodeServerPlugin({
+      loadTrustedStates: () => [workQueueEnvelope({ readyItems: [workItem("664", "OpenCode continuation")] })],
+    });
+    const hooks = await serverPlugin({
+      directory: target,
+      client: { session: { command: async (request) => { requests.push(request); } } },
+    });
+
+    await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "busy" } } } });
+    await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "retry" } } } });
+    await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "unknown" } } } });
+    await hooks.event({ event: { type: "plugin.added", properties: { sessionID: "ses_status" } } });
+    await hooks.event({ event: { type: "message.updated", properties: { sessionID: "ses_status" } } });
+    assert.equal(requests.length, 0);
+
+    await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "idle" } } } });
+    await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_status", status: { type: "idle" } } } });
+
+    assert.deepEqual(requests, [{ sessionID: "ses_status", command: "make-it-so" }]);
+  });
+
+  it("does not run a command when an idle event has no session id", async () => {
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-missing-session-"));
+    tempContinuationRoots.add(target);
+    await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+    const config = opencodeConfig();
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config));
+    let commandCalls = 0;
+    const serverPlugin = createAiuOpenCodeServerPlugin({
+      loadTrustedStates: () => [workQueueEnvelope({ readyItems: [workItem("664", "OpenCode continuation")] })],
+    });
+    const hooks = await serverPlugin({
+      directory: target,
+      client: { session: { command: async () => { commandCalls += 1; } } },
+    });
+
+    await hooks.event({ event: { type: "session.idle", properties: {} } });
+
+    assert.equal(commandCalls, 0);
+    assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(target, config), "opencode"), undefined);
   });
 
   it("delivers rendered prompts for idle continue decisions", async () => {
@@ -80,7 +140,7 @@ describe("OpenCode continuation runtime", () => {
     assert.equal(delivered.length, 1);
   });
 
-  it("does not report host activation when OpenCode prompt delivery is unavailable", async () => {
+  it("does not report host activation when OpenCode command delivery is unavailable", async () => {
     const config = opencodeConfig();
     const result = await runAiuOpenCodeContinuation(
       { type: "session.idle", payload: { sessionId: "ses_no_delivery", selectedSessionId: "ses_no_delivery" } },

@@ -172,15 +172,20 @@ export function executeAiuTrustedCommand(
 
   return new Promise((resolve) => {
     const [commandName, ...commandArgs] = descriptor.argv;
-    const resolved = resolveTrustedCommandExecutable(commandName, descriptor.cwd ?? options.cwd) ?? commandName;
+    const executionEnv = options.env ?? process.env;
+    const resolved = resolveTrustedCommandExecutable(commandName, descriptor.cwd ?? options.cwd, executionEnv) ?? commandName;
     const useWindowsCmd = process.platform === "win32" && /\.(cmd|bat)$/iu.test(resolved);
-    const executable = useWindowsCmd ? (process.env.ComSpec ?? "cmd.exe") : resolved;
-    const args = useWindowsCmd ? ["/d", "/s", "/c", resolved, ...commandArgs] : commandArgs;
+    const executable = useWindowsCmd
+      ? executionEnv.ComSpec ?? executionEnv.COMSPEC ?? process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe"
+      : resolved;
+    const commandLine = [quoteWindowsCmdArg(resolved), ...commandArgs.map(quoteWindowsCmdArg)].join(" ");
+    const args = useWindowsCmd ? ["/d", "/s", "/c", `"${commandLine}"`] : commandArgs;
     const child = spawn(executable, args, {
       cwd: descriptor.cwd ?? options.cwd,
-      env: options.env,
+      env: executionEnv,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsVerbatimArguments: useWindowsCmd,
     });
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -862,33 +867,33 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-export function resolveTrustedCommandExecutable(executable: string, cwd?: string): string | undefined {
+export function resolveTrustedCommandExecutable(executable: string, cwd?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (isAbsolute(executable)) {
-    return isWindowsAwareExecutable(executable) ? executable : undefined;
+    return isWindowsAwareExecutable(executable, env) ? executable : undefined;
   }
-  const names = windowsCommandNames(executable);
+  const names = windowsCommandNames(executable, env);
   if (executable.includes("/") || executable.includes("\\")) {
     const base = cwd ?? process.cwd();
-    return names.map((name) => join(base, name)).find((candidate) => isWindowsAwareExecutable(candidate));
+    return names.map((name) => join(base, name)).find((candidate) => isWindowsAwareExecutable(candidate, env));
   }
-  return (process.env.PATH ?? "").split(delimiter).filter(Boolean).flatMap((entry) => names.map((name) => join(entry, name))).find((candidate) => isWindowsAwareExecutable(candidate));
+  return (env.PATH ?? "").split(delimiter).filter(Boolean).flatMap((entry) => names.map((name) => join(entry, name))).find((candidate) => isWindowsAwareExecutable(candidate, env));
 }
 
-function windowsCommandNames(executable: string): readonly string[] {
+function windowsCommandNames(executable: string, env: NodeJS.ProcessEnv): readonly string[] {
   if (process.platform !== "win32" || extname(executable) !== "") return [executable];
-  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+  const extensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .map((extension) => extension.trim())
     .filter((extension) => extension.length > 0);
   return [executable, ...extensions.map((extension) => `${executable}${extension}`)];
 }
 
-function isWindowsAwareExecutable(targetPath: string): boolean {
+function isWindowsAwareExecutable(targetPath: string, env: NodeJS.ProcessEnv): boolean {
   try {
     const stat = statSync(targetPath);
     if (!stat.isFile()) return false;
     if (process.platform !== "win32") return true;
-    const executableExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    const executableExtensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
       .split(";")
       .map((extension) => extension.trim().toUpperCase())
       .filter((extension) => extension.length > 0);
@@ -896,4 +901,9 @@ function isWindowsAwareExecutable(targetPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function quoteWindowsCmdArg(value: string): string {
+  if (!/[\s"]/u.test(value)) return value;
+  return `"${value.replace(/"/gu, '""')}"`;
 }

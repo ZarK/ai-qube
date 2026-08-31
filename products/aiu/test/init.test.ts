@@ -37,11 +37,12 @@ describe("init planner", () => {
     assert.equal(parsed.command, "init");
     assert.equal(parsed.init.dryRun, true);
     assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.equal(parsed.init.files.length, 7);
+    assert.equal(parsed.init.files.length, 8);
     assert.equal(parsed.init.config.operation, "create");
     assert.equal(parsed.init.recommendedNextCommand, "aiu config --json");
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
     assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
+    assert.equal(existsSync(path.join(target, ".opencode", "package.json")), false);
   });
 
   it("keeps repository config absent when user-global config already matches the plan", async () => {
@@ -118,10 +119,14 @@ describe("init planner", () => {
       assert.equal(config.hosts.stopHookBlocking[tool], tool !== "opencode", tool);
 
       if (tool === "opencode") {
-        assert.match(
-          await readFile(path.join(target, file), "utf8"),
-          /createAiuOpenCodeServerPlugin/,
-        );
+        const wrapper = await readFile(path.join(target, file), "utf8");
+        const packageManifest = JSON.parse(await readFile(path.join(target, ".opencode", "package.json"), "utf8")) as {
+          dependencies: Record<string, string>;
+        };
+        const aiuManifest = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
+        assert.match(wrapper, /export const AiuUmpireContinuation = createAiuOpenCodeServerPlugin\(\)/);
+        assert.doesNotMatch(wrapper, /export default/);
+        assert.equal(packageManifest.dependencies["@tjalve/aiu"], aiuManifest.version);
       } else if (tool === "codex") {
         const hooks = JSON.parse(await readFile(path.join(target, file), "utf8")) as {
           Stop: Array<{ hooks: Array<{ command: string; type: string }> }>;
@@ -168,6 +173,7 @@ describe("init planner", () => {
       parsed.init.files.map((file) => file.relativePath),
       [
         path.join(".opencode", "plugins", "ai-umpire-continuation.ts"),
+        path.join(".opencode", "package.json"),
         path.join(".claude", "settings.json"),
       ],
     );
@@ -199,6 +205,52 @@ describe("init planner", () => {
     assert.equal(secondPlan.init.config.operation, "skip");
     assert.ok(secondPlan.init.files.every((file) => file.operation === "skip"));
     assert.deepEqual(config.hosts.enabled, firstPlan.init.tools);
+  });
+
+  it("merges the exact AIU dependency into an existing OpenCode package manifest", async () => {
+    const target = await createRepoRoot();
+    const manifestPath = path.join(target, ".opencode", "package.json");
+    await writeJson(manifestPath, {
+      private: true,
+      scripts: { check: "node check.mjs" },
+      dependencies: {
+        "@tjalve/aiu": "0.0.1",
+        "other-package": "1.2.3",
+      },
+    });
+
+    const result = await runCli(target, ["init", "--tool", "opencode", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      private: boolean;
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+    };
+    const aiuManifest = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
+    const manifestAction = parsed.init.files.find((file) => file.relativePath === path.join(".opencode", "package.json"));
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(manifestAction?.operation, "update");
+    assert.equal(manifest.private, true);
+    assert.equal(manifest.scripts.check, "node check.mjs");
+    assert.equal(manifest.dependencies["other-package"], "1.2.3");
+    assert.equal(manifest.dependencies["@tjalve/aiu"], aiuManifest.version);
+  });
+
+  it("fails closed when the OpenCode package dependencies field is malformed", async () => {
+    const target = await createRepoRoot();
+    const manifestPath = path.join(target, ".opencode", "package.json");
+    await writeJson(manifestPath, { dependencies: [] });
+
+    const result = await runCli(target, ["init", "--tool", "opencode", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const manifestAction = parsed.init.files.find((file) => file.relativePath === path.join(".opencode", "package.json"));
+
+    assert.equal(result.exitCode, 3);
+    assert.equal(parsed.init.ok, false);
+    assert.equal(manifestAction?.operation, "conflict");
+    assert.match(manifestAction?.reason ?? "", /dependencies value is not a JSON object/);
+    assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
   });
 
   it("uses the selected harness subset as the exact enabled set", async () => {
@@ -431,6 +483,7 @@ describe("init planner", () => {
 
   it("does not replace malformed shared JSON when --force is provided", async () => {
     const cases = [
+      { tool: "opencode", file: path.join(".opencode", "package.json") },
       { tool: "codex", file: path.join(".agents", "plugins", "marketplace.json") },
       { tool: "claude-code", file: path.join(".claude", "settings.json") },
     ];

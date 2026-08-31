@@ -24,6 +24,6 @@ export const customizedWorkPrompt = renderAiuPromptSection({
 
 const beforeUmpire: AiuOpenCodeHandler = async (_event, _context, next) => next();
 
-export default createAiuOpenCodeServerPlugin({
+export const AiuUmpireExtension = createAiuOpenCodeServerPlugin({
   before: [beforeUmpire],
 });

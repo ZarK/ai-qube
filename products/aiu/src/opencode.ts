@@ -113,13 +113,9 @@ export interface AiuOpenCodeServerPluginInput {
 
 export interface AiuOpenCodeServerClient {
   readonly session?: {
-    readonly       promptAsync?: (input: {
-      readonly path: { readonly id: string };
-      readonly body: { readonly parts: readonly [{ readonly type: "text"; readonly text: string }] };
-      readonly query?: { readonly directory: string };
-      readonly sessionID?: string;
-      readonly directory?: string;
-      readonly parts?: readonly [{ readonly type: "text"; readonly text: string }];
+    readonly command?: (input: {
+      readonly sessionID: string;
+      readonly command: "make-it-so";
     }) => Promise<unknown>;
   };
 }
@@ -259,12 +255,6 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     }
     const { states, adapterErrors } = await collectTrustedStates(event, normalizedContext, host.state);
     const trustedStateWasRead = states.some((state) => state.sourceId !== "opencode") && adapterErrors.length === 0;
-    if (trustedStateWasRead && normalizedContext.deliverPrompt !== undefined) {
-      const activationSuppression = recordOpenCodeActivation(paths, observedAt, normalizedContext.config);
-      if (activationSuppression) {
-        activationSuppressions.push(activationSuppression);
-      }
-    }
     const whipRead = readAiuWhipState(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
     const whipDecision = decideAiuWhipContinuation({
       config: normalizedContext.config,
@@ -337,6 +327,10 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     const delivery = await deliverAiuOpenCodePrompt(prompt, event, normalizedContext);
     const suppressions = delivery.delivered ? [...baseSuppressions] : [...baseSuppressions, delivery.reason ?? "prompt-delivery-failed"];
     if (delivery.delivered) {
+      if (trustedStateWasRead) {
+        const activationSuppression = recordOpenCodeActivation(paths, observedAt, normalizedContext.config);
+        if (activationSuppression) suppressions.push(activationSuppression);
+      }
       try {
         writeAiuContinuationState(paths, buildAiuContinuationState({
           observedAt,
@@ -441,15 +435,18 @@ function buildAiuOpenCodeHostSession(event: AiuOpenCodeEvent): AiuOpenCodeHostSe
   const selectedSessionId = readString(payload.selectedSessionID) ?? readString(payload.selectedSessionId) ?? readString(selectedSession.id) ?? readString(payload.currentSessionId);
   const suppressions: string[] = [];
   const eventType = normalizeEventToken(event.type);
+  const eventStatus = readOpenCodeStatus(payload.status) ?? readOpenCodeStatus(session.status);
+  const statusBusy = statusIsBusy(eventStatus);
   const helperRole = readString(session.role);
   const helperSession = readBoolean(payload.helperSession) ?? readBoolean(payload.isHelperSession) ?? readBoolean(session.helper) ?? (helperRole ? helperRole === "helper" : undefined);
   const userActive = readBoolean(payload.userActive) ?? readBoolean(payload.typing) ?? readBoolean(payload.tuiActive) ?? (eventType.includes("tui") ? true : undefined);
   const todoActive = readBoolean(payload.todoActive) ?? (eventType.includes("todo") ? readBoolean(payload.active) ?? true : undefined);
-  const busy = readBoolean(payload.busy) ?? readBoolean(payload.isBusy) ?? statusIsBusy(readString(payload.status) ?? readString(session.status)) ?? (eventType.includes("message") ? true : undefined);
+  const busy = readBoolean(payload.busy) ?? readBoolean(payload.isBusy) ?? statusBusy ?? (eventType.includes("message") ? true : undefined);
   const selectedConflict = sessionId !== undefined && selectedSessionId !== undefined && sessionId !== selectedSessionId;
 
   if (helperSession) suppressions.push("helper-session");
   if (busy) suppressions.push("session-busy");
+  if (event.type === "session.status" && statusBusy === undefined) suppressions.push("session-status-not-idle");
   if (selectedConflict) suppressions.push("selected-session-conflict");
   if (userActive) suppressions.push("user-active");
   if (todoActive) suppressions.push("todo-active");
@@ -611,24 +608,19 @@ async function deliverAiuOpenCodePrompt(
 
 function createAiuOpenCodeClientDeliverer(
   client: AiuOpenCodeServerClient | undefined,
-  cwd: string | undefined,
+  _cwd: string | undefined,
 ): AiuOpenCodePromptDeliverer | undefined {
-  const promptAsync = client?.session?.promptAsync;
-  if (!promptAsync) return undefined;
-  return async (prompt, event) => {
+  const command = client?.session?.command;
+  if (!command) return undefined;
+  return async (_prompt, event) => {
     const host = buildAiuOpenCodeHostSession(event).state;
     const targetSessionId = host.selectedSessionId ?? host.sessionId;
     if (!targetSessionId) {
       return Object.freeze({ delivered: false, reason: "missing-target-session" });
     }
-    const parts = [{ type: "text" as const, text: prompt.body }] as const;
-    await promptAsync.call(client.session, {
-      path: { id: targetSessionId },
-      body: { parts },
-      ...(cwd ? { query: { directory: cwd } } : {}),
+    await command.call(client.session, {
       sessionID: targetSessionId,
-      ...(cwd ? { directory: cwd } : {}),
-      parts,
+      command: "make-it-so",
     });
     return Object.freeze({ delivered: true, targetSessionId });
   };
@@ -734,9 +726,15 @@ function safeAppendContinuationLog(paths: AiuContinuationPaths, entry: Parameter
 function statusIsBusy(status: string | undefined): boolean | undefined {
   if (!status) return undefined;
   const normalized = normalizeEventToken(status);
-  if (["busy", "running", "working", "typing"].includes(normalized)) return true;
+  if (["busy", "retry", "running", "working", "typing"].includes(normalized)) return true;
   if (["idle", "waiting", "stopped"].includes(normalized)) return false;
   return undefined;
+}
+
+function readOpenCodeStatus(value: unknown): string | undefined {
+  if (typeof value === "string") return readString(value);
+  if (!isRecord(value)) return undefined;
+  return readString(value.type) ?? readString(value.status) ?? readString(value.state);
 }
 
 function normalizeEventToken(value: string): string {

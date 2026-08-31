@@ -36,6 +36,10 @@ describe("opencode adapter", () => {
     assert.equal(opencodeHostProfile.umpire.continuation.currentIssueRecovery, true);
     assert.deepEqual(opencodeHostProfile.umpire.probe.command, ["qube", "aiu", "doctor", "--json"]);
     assert.equal(opencodeHostProfile.trust.required, true);
+    assert.deepEqual(opencodeHostProfile.trust.actions[0]?.paths, [
+      ".opencode/package.json",
+      ".opencode/plugins/ai-umpire-continuation.ts",
+    ]);
   });
 
   it("discovers live OpenCode models without refreshing the remote catalog", () => {

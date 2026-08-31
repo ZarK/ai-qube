@@ -104,6 +104,45 @@ describe("doctor diagnostics", () => {
     assert.ok(entrypointChecks.some((check) => check.path?.endsWith(path.join(".claude", "settings.json"))));
   });
 
+  it("reports wrapper-only OpenCode setup as not ready", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["opencode"],
+        modes: { opencode: ["continue", "repair", "wait", "stop"] },
+      },
+    });
+    const wrapper = getAiuHostCapabilityProfile("opencode").managedFiles.find((file) => file.relativePath.endsWith("ai-umpire-continuation.ts"));
+    assert.ok(wrapper);
+    await mkdir(path.dirname(path.join(repoRoot, wrapper.relativePath)), { recursive: true });
+    await writeFile(path.join(repoRoot, wrapper.relativePath), wrapper.content, "utf8");
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+    const packageCheck = report.checks.find((check) => check.kind === "opencode-plugin-package-manifest-missing");
+
+    assert.equal(report.status, "error");
+    assert.equal(packageCheck?.status, "error");
+  });
+
+  it("reports an installed manifest without a resolvable OpenCode plugin package as not ready", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["opencode"],
+        modes: { opencode: ["continue", "repair", "wait", "stop"] },
+      },
+    });
+    await writeManagedHostFiles(repoRoot, "opencode");
+
+    const report = runAiuDoctor({ cwd: repoRoot });
+    const packageCheck = report.checks.find((check) => check.kind === "opencode-plugin-package-unresolved");
+
+    assert.equal(report.status, "error");
+    assert.equal(packageCheck?.status, "error");
+  });
+
   it("reports unmanaged host entrypoints that do not delegate to the package runtime", async () => {
     const repoRoot = await createRepoRoot();
     const hookPath = path.join(repoRoot, "plugins", "ai-umpire", "hooks", "hooks.json");

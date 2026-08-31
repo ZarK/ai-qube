@@ -7,6 +7,7 @@ import { opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
 import { AGENT_HOST_CAPABILITY_SUPPORT, type AgentHostCapabilitySupport, type AgentHostProfile } from "@tjalve/qube-core";
 
 import type { AiuContinuationMode, AiuHost, AiuHostCapabilityName, AiuHostsConfig } from "./config.js";
+import { getAiuPackageVersion } from "./package_metadata.js";
 
 export const AIU_HOST_SUPPORT_LEVELS = AGENT_HOST_CAPABILITY_SUPPORT;
 export const AIU_HOST_CAPABILITY_SUPPORT = ["supported", "experimental", "disabled", "unsupported", "unknown"] as const;
@@ -25,7 +26,7 @@ export type AiuManagedHostFile = AiuHostFile & (
   | { readonly ownership: "dedicated" }
   | {
       readonly ownership: "shared";
-      readonly managedEntry: "codex-marketplace-plugin" | "claude-stop-hook";
+      readonly managedEntry: "opencode-package-dependency" | "codex-marketplace-plugin" | "claude-stop-hook";
     }
 );
 
@@ -104,9 +105,20 @@ const HOST_MANAGED_FILES = Object.freeze({
         "// Compose custom behavior outside this package-managed file.",
         "import { createAiuOpenCodeServerPlugin } from \"@tjalve/aiu/opencode\";",
         "",
-        "export default createAiuOpenCodeServerPlugin();",
+        "export const AiuUmpireContinuation = createAiuOpenCodeServerPlugin();",
         "",
       ].join("\n"),
+    }),
+    Object.freeze({
+      relativePath: path.join(".opencode", "package.json"),
+      description: "OpenCode project plugin package manifest.",
+      ownership: "shared",
+      managedEntry: "opencode-package-dependency",
+      content: stableJson({
+        dependencies: {
+          "@tjalve/aiu": getAiuPackageVersion(),
+        },
+      }),
     }),
   ]),
   codex: Object.freeze([

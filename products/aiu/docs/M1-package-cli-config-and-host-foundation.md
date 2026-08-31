@@ -124,7 +124,7 @@ Trusted state commands are represented as validated `argv` arrays. Runtime shell
 
 `--dry-run --json` emits the same plan shape and writes nothing.
 
-OpenCode installation writes a package-backed plugin wrapper. Codex and Claude Code installation write stop-hook configuration that calls the package-backed `aiu` command. Host files must be updated safely and preserve unrelated user-authored config.
+OpenCode installation writes a shared `.opencode/package.json` with the exact AIU dependency and a named package-backed plugin wrapper. Codex and Claude Code installation write stop-hook configuration that calls the package-backed `aiu` command. Host files must be updated safely and preserve unrelated user-authored config.
 
 Existing managed files that differ from planned content are conflicts by default. `--force` is required before init replaces them.
 

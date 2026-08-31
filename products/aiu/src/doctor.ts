@@ -3,7 +3,12 @@ import path from "node:path";
 import { redactStructuredValue, redactText } from "@tjalve/qube-cli/redaction";
 import { grokBuildStopHookFile } from "@tjalve/qube-adapter-grok-build";
 
-import { getAiuPackageAssetPaths, getAiuPackageRoot } from "./assets.js";
+import {
+  AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH,
+  getAiuPackageAssetPaths,
+  getAiuPackageRoot,
+  getAiuPackageVersion,
+} from "./assets.js";
 import {
   type AiuConfigLoadResult,
   type AiuContinuationMode,
@@ -25,6 +30,7 @@ import {
   getAiuHostCapabilityProfiles,
   type AiuHostPromptDelivery,
   type AiuHostSupportLevel,
+  type AiuManagedHostFile,
 } from "./host_policy.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
 
@@ -213,6 +219,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
     ...checkStatePaths(paths),
     ...checkHostFiles(configLoad),
     ...checkHostEntrypoints(configLoad),
+    ...checkOpenCodePluginPackage(configLoad),
     ...checkGrokProjectHookTrust(configLoad),
     ...checkHostContinuationProbes(hostProbes),
     ...checkTrustedCommands(paths),
@@ -469,7 +476,7 @@ function checkHostFiles(configLoad: AiuConfigLoadResult): readonly AiuDoctorChec
       }
       try {
         const existing = readFileSync(absolutePath, "utf8");
-        if (normalizeText(existing) === normalizeText(file.content)) {
+        if (managedHostFileIsCurrent(existing, file)) {
           return check(`host-${profile.tool}-${file.relativePath}`, "host", "ok", "host-file-managed", `${profile.tool} managed host file matches package content.`, absolutePath, "Continue using the managed host file.");
         }
         return check(`host-${profile.tool}-${file.relativePath}`, "host", "warning", "host-file-unmanaged", `${profile.tool} host file exists but differs from package-managed content.`, absolutePath, "Review the file and rerun aiu init --force only if replacement is intentional.");
@@ -525,6 +532,80 @@ function packageBackedEntrypointMarker(host: AiuHost, relativePath: string): str
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
   return undefined;
+}
+
+function checkOpenCodePluginPackage(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
+  if (!configLoad.config.hosts.enabled.includes("opencode")) {
+    return [];
+  }
+  const manifestPath = path.join(configLoad.repoRoot, AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH);
+  if (!existsSync(manifestPath)) {
+    return [
+      check("opencode-plugin-package-manifest", "host", "error", "opencode-plugin-package-manifest-missing", "OpenCode cannot load AI Umpire because .opencode/package.json is missing.", manifestPath, "Run aiu init --tool opencode, install the declared package, then rerun aiu doctor --json."),
+    ];
+  }
+
+  let manifest: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+    if (!isRecord(parsed)) throw new Error("manifest is not a JSON object");
+    manifest = parsed;
+  } catch (error) {
+    return [
+      check("opencode-plugin-package-manifest", "host", "error", "opencode-plugin-package-manifest-invalid", `OpenCode cannot load AI Umpire because .opencode/package.json is invalid: ${error instanceof Error ? error.message : String(error)}`, manifestPath, "Fix .opencode/package.json, rerun aiu init --tool opencode, then rerun aiu doctor --json."),
+    ];
+  }
+
+  const expectedVersion = getAiuPackageVersion();
+  const dependencies = isRecord(manifest.dependencies) ? manifest.dependencies : undefined;
+  if (dependencies?.["@tjalve/aiu"] !== expectedVersion) {
+    return [
+      check("opencode-plugin-package-version", "host", "error", "opencode-plugin-package-version-mismatch", `OpenCode requires the exact @tjalve/aiu package version ${expectedVersion} in .opencode/package.json.`, manifestPath, "Run aiu init --tool opencode, install the exact declared package, then rerun aiu doctor --json."),
+    ];
+  }
+
+  const installedPackage = resolveOpenCodeAiuPackage(manifestPath);
+  if (installedPackage === undefined) {
+    return [
+      check("opencode-plugin-package-resolution", "host", "error", "opencode-plugin-package-unresolved", "OpenCode cannot resolve @tjalve/aiu/opencode from its project package manifest.", manifestPath, "Install the exact dependencies declared in .opencode/package.json, then rerun aiu doctor --json."),
+    ];
+  }
+
+  if (installedPackage.version !== expectedVersion) {
+    return [
+      check("opencode-plugin-package-resolution", "host", "error", "opencode-plugin-package-installed-version-mismatch", `OpenCode resolved @tjalve/aiu ${installedPackage.version}, but ${expectedVersion} is required.`, manifestPath, "Install the exact dependencies declared in .opencode/package.json, then rerun aiu doctor --json."),
+    ];
+  }
+
+  return [
+    check("opencode-plugin-package-resolution", "host", "ok", "opencode-plugin-package-resolved", `OpenCode resolves the exact @tjalve/aiu ${expectedVersion} package entrypoint.`, manifestPath, "Continue using the package-backed OpenCode plugin."),
+  ];
+}
+
+function resolveOpenCodeAiuPackage(manifestPath: string): { readonly version: string } | undefined {
+  let directory = path.dirname(manifestPath);
+  while (true) {
+    const packageManifestPath = path.join(directory, "node_modules", "@tjalve", "aiu", "package.json");
+    if (existsSync(packageManifestPath)) {
+      try {
+        const installed = JSON.parse(readFileSync(packageManifestPath, "utf8")) as unknown;
+        if (isRecord(installed)
+          && installed.name === "@tjalve/aiu"
+          && typeof installed.version === "string"
+          && isRecord(installed.exports)
+          && isRecord(installed.exports["./opencode"])
+          && typeof installed.exports["./opencode"].import === "string"
+          && existsSync(path.resolve(path.dirname(packageManifestPath), installed.exports["./opencode"].import))) {
+          return { version: installed.version };
+        }
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
 }
 
 function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
@@ -624,14 +705,30 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
   }));
 }
 
-function managedHostFilesAreCurrent(repoRoot: string, files: readonly { readonly relativePath: string; readonly content: string }[]): boolean {
+function managedHostFilesAreCurrent(repoRoot: string, files: readonly AiuManagedHostFile[]): boolean {
   return files.length > 0 && files.every((file) => {
     try {
-      return normalizeText(readFileSync(path.join(repoRoot, file.relativePath), "utf8")) === normalizeText(file.content);
+      return managedHostFileIsCurrent(readFileSync(path.join(repoRoot, file.relativePath), "utf8"), file);
     } catch {
       return false;
     }
   });
+}
+
+function managedHostFileIsCurrent(existing: string, file: AiuManagedHostFile): boolean {
+  if (file.relativePath.replaceAll("\\", "/") !== AIU_OPENCODE_PACKAGE_MANIFEST_RELATIVE_PATH) {
+    return normalizeText(existing) === normalizeText(file.content);
+  }
+  try {
+    const existingManifest = JSON.parse(existing) as unknown;
+    const expectedManifest = JSON.parse(file.content) as unknown;
+    if (!isRecord(existingManifest) || !isRecord(expectedManifest)) return false;
+    const existingDependencies = isRecord(existingManifest.dependencies) ? existingManifest.dependencies : undefined;
+    const expectedDependencies = isRecord(expectedManifest.dependencies) ? expectedManifest.dependencies : undefined;
+    return existingDependencies?.["@tjalve/aiu"] === expectedDependencies?.["@tjalve/aiu"];
+  } catch {
+    return false;
+  }
 }
 
 function hostProbe(
@@ -849,4 +946,8 @@ function displayConfigPath(repoRoot: string, selectedPath: string): string {
 
 function normalizeText(value: string): string {
   return value.replace(/\r\n/g, "\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
