@@ -114,9 +114,16 @@ export interface AiuOpenCodeServerPluginInput {
 export interface AiuOpenCodeServerClient {
   readonly session?: {
     readonly command?: (input: {
-      readonly sessionID: string;
-      readonly command: "make-it-so";
-      readonly arguments: string;
+      readonly path: {
+        readonly id: string;
+      };
+      readonly body: {
+        readonly command: "make-it-so";
+        readonly arguments: string;
+      };
+      readonly query?: {
+        readonly directory: string;
+      };
     }) => Promise<unknown>;
   };
 }
@@ -606,7 +613,7 @@ async function deliverAiuOpenCodePrompt(
 
 function createAiuOpenCodeClientDeliverer(
   client: AiuOpenCodeServerClient | undefined,
-  _cwd: string | undefined,
+  cwd: string | undefined,
 ): AiuOpenCodePromptDeliverer | undefined {
   const command = client?.session?.command;
   if (!command) return undefined;
@@ -617,9 +624,9 @@ function createAiuOpenCodeClientDeliverer(
       return Object.freeze({ delivered: false, reason: "missing-target-session" });
     }
     const response = await command.call(client.session, {
-      sessionID: targetSessionId,
-      command: "make-it-so",
-      arguments: "",
+      path: { id: targetSessionId },
+      body: { command: "make-it-so", arguments: "" },
+      ...(cwd ? { query: { directory: cwd } } : {}),
     });
     if (isRecord(response) && response.error !== undefined && response.error !== null) {
       return Object.freeze({ delivered: false, reason: "command-rejected" });
