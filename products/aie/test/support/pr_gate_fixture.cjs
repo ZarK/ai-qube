@@ -184,7 +184,7 @@ function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendat
     runId,
     issueNumber,
     prNumber,
-    host: 'codex',
+    host: route.executed.host,
     route,
     recommendation,
     status,
@@ -244,12 +244,12 @@ function withPromptStackProvenance(provenance, promptStack) {
   return { ...provenance, promptStackHash: promptStackHash(promptStack) };
 }
 
-function testReviewRoute(host) {
-  const model = host === 'codex' ? 'gpt-test-review' : null;
+function testReviewRoute(host, configuredModel, effort = null, tier = 'review') {
+  const model = configuredModel === undefined ? (host === 'codex' ? 'gpt-test-review' : null) : configuredModel;
   return {
     source: 'configured',
-    selected: { host, model, effort: null, tier: 'review' },
-    executed: { host, requestedModel: model, transportModel: null, reportedModel: null, modelSource: model ? 'configured' : 'host-default', effort: null, tier: 'review', transport: host === 'local-command' ? 'command' : 'exec' },
+    selected: { host, model, effort, tier },
+    executed: { host, requestedModel: model, transportModel: null, reportedModel: null, modelSource: model ? 'configured' : 'host-default', effort, tier, transport: host === 'local-command' ? 'command' : 'exec' },
     reason: null,
     substitutions: [],
     degradedReviewerSeparation: false,

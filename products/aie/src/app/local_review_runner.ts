@@ -514,14 +514,17 @@ function hostSubagentSummary(host: ReviewModelHostId, lane: LocalReviewLaneId, i
 function reuseLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, linkedIssueNumbers: readonly number[], riskCardFragments: readonly string[], route: ModelReviewRoutePlan | null): LocalReviewLaneRun | null {
   if (existsSync(path)) {
     const localLane = readCurrentHeadLaneEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
-    if (localLane && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
+    const selectedRoute = localLane?.runnerProvenance?.route?.selected;
+    const routeMatches = route === null || (selectedRoute !== undefined && sameReviewRouteIdentity(route, selectedRoute));
+    if (localLane && routeMatches && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
       const summary = `Existing current-head lane evidence (${localLane.status}) reused; no reviewer execution required.`;
       return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)), evidenceSource: 'local' };
     }
     return null;
   }
   const providerLane = acceptedProviderLane(input.providerLaneReuse, lane, issueNumber);
-  if (providerLane) {
+  const providerRouteMatches = route === null || (providerLane !== null && sameReviewRouteIdentity(route, providerLane.route.selected));
+  if (providerLane && providerRouteMatches) {
     const summary = `Trusted provider current-head review reused (${providerLane.recommendation}/${providerLane.status}); no reviewer execution required and no local evidence was fabricated.`;
     return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, false, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)), evidenceSource: 'trusted-provider' };
   }
