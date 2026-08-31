@@ -257,7 +257,7 @@
             "effort": "medium"
           },
           "cursor": {
-            "model": "cursor-grok-4.6-high",
+            "model": "cursor-grok-4.6-high-fast",
             "effort": null
           }
         },
