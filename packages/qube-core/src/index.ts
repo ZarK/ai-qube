@@ -22,6 +22,24 @@ export {
 } from "./autoresearch.js";
 export type { JsonObject, JsonValue } from "./json_value.js";
 export type {
+  DurableConfigSource,
+  LayeredConfigField,
+  InitLayerContext,
+  LayeredConfigLayer,
+  LayeredConfigSource,
+  LayeredValueComparison,
+  ResolvedLayeredFields,
+} from "./layered_config.js";
+export {
+  LAYERED_CONFIG_SOURCES,
+  QUBE_INIT_LAYER_CONTEXT_ENV,
+  projectSparseFieldIds,
+  readInitLayerContext,
+  resolveLayeredFields,
+  sameLayeredValue,
+  serializeInitLayerContext,
+} from "./layered_config.js";
+export type {
   ExecutableLookup,
   ExecutableLookupReason,
   ExecutableLookupStatus,
@@ -311,6 +329,8 @@ export type QubeCommandClassification =
 export type QubePathClassification =
   | "shared QUBE namespace"
   | "standalone product config"
+  | "repository configuration"
+  | "machine-local and user-global configuration"
   | "standalone product state"
   | "generated host integration"
   | "implementation-time workflow policy"
@@ -784,18 +804,53 @@ export const qubePathContracts = [
     writePolicy: "Bootstrap writes its local planning session state here. Runtime state is not committed.",
   },
   {
-    owner: "quality",
-    pathPattern: ".qube/aiq/config.json, .qube/aiq/progress.json, and .qube/aiq/out/",
-    classification: "standalone product config",
+    owner: "bootstrap",
+    pathPattern: "aib.config.json",
+    classification: "repository configuration",
     committed: true,
-    writePolicy: "Quality writes repository configuration and progress under its QUBE namespace and keeps generated output below the same namespace.",
+    writePolicy: "Bootstrap stores only repository settings that differ from explicit user-global settings.",
+  },
+  {
+    owner: "bootstrap",
+    pathPattern: "aib.config.local.json and ~/.qube/aib/config.json",
+    classification: "machine-local and user-global configuration",
+    committed: false,
+    writePolicy: "Bootstrap reads these higher and lower configuration layers without copying them into repository configuration.",
+  },
+  {
+    owner: "quality",
+    pathPattern: ".qube/aiq/config.json",
+    classification: "repository configuration",
+    committed: true,
+    writePolicy: "Quality stores only repository settings that differ from explicit user-global settings.",
+  },
+  {
+    owner: "quality",
+    pathPattern: ".qube/aiq/config.local.json and ~/.qube/aiq/config.json",
+    classification: "machine-local and user-global configuration",
+    committed: false,
+    writePolicy: "Quality reads these layers without flattening them into tracked repository configuration.",
+  },
+  {
+    owner: "quality",
+    pathPattern: ".qube/aiq/progress.json and .qube/aiq/out/",
+    classification: "standalone product state",
+    committed: false,
+    writePolicy: "Quality keeps progress and generated reports repository- or machine-owned; they are not configuration layers.",
   },
   {
     owner: "umpire",
     pathPattern: ".qube/aiu/config.json",
     classification: "standalone product config",
     committed: true,
-    writePolicy: "Umpire writes repository continuation policy only to this canonical config path.",
+    writePolicy: "Umpire stores only repository continuation settings that differ from explicit user-global settings.",
+  },
+  {
+    owner: "umpire",
+    pathPattern: ".qube/aiu/config.local.json and ~/.qube/aiu/config.json",
+    classification: "machine-local and user-global configuration",
+    committed: false,
+    writePolicy: "Umpire reads these layers without flattening them into tracked repository configuration.",
   },
   {
     owner: "umpire",
@@ -806,10 +861,24 @@ export const qubePathContracts = [
   },
   {
     owner: "executor",
-    pathPattern: ".qube/aie/config.json, .qube/aie/gates/, .qube/aie/reviews/, and .qube/aie/runs/",
-    classification: "standalone product config",
+    pathPattern: ".qube/aie/config.json",
+    classification: "repository configuration",
     committed: true,
-    writePolicy: "Executor writes repository policy and runtime evidence only below its QUBE namespace.",
+    writePolicy: "Executor stores only repository policy that differs from explicit user-global settings or is inherently repository-specific.",
+  },
+  {
+    owner: "executor",
+    pathPattern: ".qube/aie/config.local.json and ~/.qube/aie/config.json",
+    classification: "machine-local and user-global configuration",
+    committed: false,
+    writePolicy: "Executor reads these layers without flattening them into tracked repository configuration.",
+  },
+  {
+    owner: "executor",
+    pathPattern: ".qube/aie/gates/, .qube/aie/reviews/, and .qube/aie/runs/",
+    classification: "standalone product state",
+    committed: false,
+    writePolicy: "Executor keeps gates, reviews, and run evidence repository- or machine-owned; they are not configuration layers.",
   },
 ] as const satisfies readonly QubePathContract[];
 

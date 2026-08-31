@@ -399,7 +399,7 @@ function sourceState(options: RunReviewSetupOptions, values: SetupValues): Pick<
   for (const [key, field] of fields) if (values[key] !== undefined && sources[field] === undefined) sources[field] = options.scope === 'global' ? 'user-global' : (options.publisherSource ?? 'repository');
   const observed = Object.values(sources);
   const publisherSource: ReviewPublisherConfigSource = observed.includes('explicit') ? 'explicit'
-    : observed.includes('repository-overlay') ? 'repository-overlay'
+    : observed.includes('machine-local') ? 'machine-local'
       : observed.includes('repository') ? 'repository'
         : observed.includes('user-global') ? 'user-global' : 'default';
   return { publisherSource, publisherFieldSources: Object.freeze(sources) };

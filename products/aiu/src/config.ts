@@ -1,9 +1,14 @@
 import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
+
+import type { LayeredConfigSource } from "@tjalve/qube-core";
 
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
 
 export const AIU_CONFIG_FILENAME = ".qube/aiu/config.json";
+export const AIU_MACHINE_CONFIG_FILENAME = ".qube/aiu/config.local.json";
+export const AIU_USER_CONFIG_FILENAME = ".qube/aiu/config.json";
 export const AIU_CONFIG_SCHEMA_VERSION = 1;
 export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as const;
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
@@ -115,11 +120,14 @@ export interface AiuConfigDiagnostic {
   readonly path: string;
   readonly message: string;
   readonly suggestedNextAction: string;
+  readonly source?: Exclude<LayeredConfigSource, "detected" | "default" | "derived">;
+  readonly sourcePath?: string;
 }
 
 export interface LoadAiuConfigOptions {
   readonly cwd?: string;
   readonly configPath?: string;
+  readonly homeDirectory?: string;
 }
 
 export interface AiuConfigLoadResult {
@@ -130,6 +138,22 @@ export interface AiuConfigLoadResult {
   readonly defaultsUsed: boolean;
   readonly config: AiuConfig;
   readonly diagnostics: readonly AiuConfigDiagnostic[];
+  readonly sources?: Readonly<Record<string, LayeredConfigSource>>;
+  readonly derivedFrom?: Readonly<Record<string, readonly string[]>>;
+  readonly layers?: {
+    readonly userGlobalPath: string;
+    readonly userGlobalFound: boolean;
+    readonly repositoryPath: string;
+    readonly repositoryFound: boolean;
+    readonly machineLocalPath: string;
+    readonly machineLocalFound: boolean;
+    readonly explicitPath?: string;
+    readonly explicitFound: boolean;
+  };
+  readonly repositoryConfig?: Readonly<Record<string, unknown>>;
+  readonly userGlobalConfig?: Readonly<Record<string, unknown>>;
+  readonly userGlobalBaseConfig?: AiuConfig;
+  readonly repositoryBaseConfig?: AiuConfig;
 }
 
 const DEFAULT_CONFIG: AiuConfig = Object.freeze({
@@ -190,31 +214,53 @@ export function getDefaultAiuConfig(): AiuConfig {
 export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoadResult {
   const repoRoot = findRepositoryRoot(path.resolve(options.cwd ?? process.cwd()));
   const diagnostics: AiuConfigDiagnostic[] = [];
-  const selectedPath = options.configPath
-    ? path.resolve(repoRoot, options.configPath)
-    : path.join(repoRoot, AIU_CONFIG_FILENAME);
-  const configPathSafe = validateRepositoryConfigPath(repoRoot, selectedPath, diagnostics);
-  const found = configPathSafe && existsSync(selectedPath);
-  let rawConfig: unknown = {};
+  const repositoryPath = path.join(repoRoot, AIU_CONFIG_FILENAME);
+  const machineLocalPath = path.join(repoRoot, AIU_MACHINE_CONFIG_FILENAME);
+  const userGlobalPath = path.join(resolveAiuHome(options.homeDirectory), AIU_USER_CONFIG_FILENAME);
+  const explicitPath = options.configPath ? path.resolve(repoRoot, options.configPath) : undefined;
+  const requestedPath = explicitPath ?? repositoryPath;
+  const repositorySafe = validateRepositoryConfigPath(repoRoot, repositoryPath, diagnostics);
+  const machineLocalSafe = validateRepositoryConfigPath(repoRoot, machineLocalPath, diagnostics);
+  const explicitSafe = explicitPath === undefined || validateRepositoryConfigPath(repoRoot, explicitPath, diagnostics);
+  const userGlobal = readAiuConfigLayer("user-global", userGlobalPath, diagnostics);
+  const repository = repositorySafe
+    ? readAiuConfigLayer("repository", repositoryPath, diagnostics)
+    : emptyAiuConfigLayer(repositoryPath);
+  const machineLocal = machineLocalSafe
+    ? readAiuConfigLayer("machine-local", machineLocalPath, diagnostics)
+    : emptyAiuConfigLayer(machineLocalPath);
+  const explicit = explicitPath !== undefined && explicitSafe && !samePath(explicitPath, repositoryPath) && !samePath(explicitPath, machineLocalPath)
+    ? readAiuConfigLayer("explicit", explicitPath, diagnostics)
+    : emptyAiuConfigLayer(explicitPath ?? requestedPath);
 
-  if (found) {
-    try {
-      rawConfig = JSON.parse(readFileSync(selectedPath, "utf8")) as unknown;
-    } catch (error) {
-      diagnostics.push(
-        diagnostic(
-          "invalid-json",
-          "$",
-          `Could not parse ${displayConfigPath(repoRoot, selectedPath)}: ${error instanceof Error ? error.message : String(error)}`,
-          "Fix the JSON syntax before running Umpire commands.",
-        ),
-      );
-      rawConfig = {};
-    }
-  }
+  validateAiuPartialLayer("user-global", userGlobal, repoRoot, diagnostics);
+  validateAiuPartialLayer("repository", repository, repoRoot, diagnostics);
+  validateAiuPartialLayer("machine-local", machineLocal, repoRoot, diagnostics);
+  if (explicitPath !== undefined) validateAiuPartialLayer("explicit", explicit, repoRoot, diagnostics);
 
-  const normalized = normalizeAiuConfig(rawConfig, repoRoot);
+  const userGlobalNormalized = normalizeAiuConfig(userGlobal.value, repoRoot);
+  const repositoryRaw = deepMergeConfig(userGlobal.value, repository.value);
+  const repositoryNormalized = normalizeAiuConfig(repositoryRaw, repoRoot);
+  const effectiveRaw = deepMergeConfig(repositoryRaw, machineLocal.value, explicit.value);
+  const normalized = normalizeAiuConfig(effectiveRaw, repoRoot);
+  diagnostics.push(...repositoryNormalized.diagnostics.map(item => scopedDiagnostic(item, "repository", repositoryPath)));
   diagnostics.push(...normalized.diagnostics);
+  const found = userGlobal.found || repository.found || machineLocal.found || explicit.found;
+  const selectedPath = explicitPath
+    ?? (machineLocal.found
+      ? machineLocalPath
+      : repository.found
+        ? repositoryPath
+        : userGlobal.found
+          ? userGlobalPath
+          : repositoryPath);
+  const sourceLayers = [
+    { source: "explicit" as const, raw: explicit.value },
+    { source: "machine-local" as const, raw: machineLocal.value },
+    { source: "repository" as const, raw: repository.value },
+    { source: "user-global" as const, raw: userGlobal.value },
+  ];
+  const attribution = attributeAiuConfigSources(normalized.config, sourceLayers);
 
   return Object.freeze({
     ok: diagnostics.every((item) => item.severity !== "error"),
@@ -224,7 +270,157 @@ export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoad
     defaultsUsed: !found,
     config: normalized.config,
     diagnostics: Object.freeze(diagnostics),
+    sources: attribution.sources,
+    derivedFrom: attribution.derivedFrom,
+    layers: Object.freeze({
+      userGlobalPath,
+      userGlobalFound: userGlobal.found,
+      repositoryPath,
+      repositoryFound: repository.found,
+      machineLocalPath,
+      machineLocalFound: machineLocal.found,
+      ...(explicitPath === undefined ? {} : { explicitPath }),
+      explicitFound: explicit.found,
+    }),
+    repositoryConfig: Object.freeze(repository.value),
+    userGlobalConfig: Object.freeze(userGlobal.value),
+    userGlobalBaseConfig: userGlobalNormalized.config,
+    repositoryBaseConfig: repositoryNormalized.config,
   });
+}
+
+interface AiuRawConfigLayer {
+  readonly path: string;
+  readonly found: boolean;
+  readonly value: Readonly<Record<string, unknown>>;
+}
+
+function resolveAiuHome(homeDirectory?: string): string {
+  return path.resolve(homeDirectory ?? process.env.USERPROFILE ?? process.env.HOME ?? homedir());
+}
+
+function emptyAiuConfigLayer(filePath: string): AiuRawConfigLayer {
+  return { path: filePath, found: false, value: Object.freeze({}) };
+}
+
+function readAiuConfigLayer(
+  source: "explicit" | "machine-local" | "repository" | "user-global",
+  filePath: string,
+  diagnostics: AiuConfigDiagnostic[],
+): AiuRawConfigLayer {
+  if (!existsSync(filePath)) return emptyAiuConfigLayer(filePath);
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+    if (!isRecord(parsed)) {
+      diagnostics.push(scopedDiagnostic(
+        diagnostic("config-not-object", "$", "Config root must be a JSON object.", "Replace the file with an object that matches schema version 1."),
+        source,
+        filePath,
+      ));
+      return { path: filePath, found: true, value: Object.freeze({}) };
+    }
+    return { path: filePath, found: true, value: Object.freeze(parsed) };
+  } catch (error) {
+    diagnostics.push(scopedDiagnostic(
+      diagnostic(
+        "invalid-json",
+        "$",
+        `Could not parse config: ${error instanceof Error ? error.message : String(error)}`,
+        "Fix the JSON syntax before running Umpire commands.",
+      ),
+      source,
+      filePath,
+    ));
+    return { path: filePath, found: true, value: Object.freeze({}) };
+  }
+}
+
+function validateAiuPartialLayer(
+  source: "explicit" | "machine-local" | "repository" | "user-global",
+  layer: AiuRawConfigLayer,
+  repoRoot: string,
+  diagnostics: AiuConfigDiagnostic[],
+): void {
+  if (!layer.found) return;
+  const normalized = normalizeAiuConfig(deepMergeConfig(configToRaw(DEFAULT_CONFIG), layer.value), repoRoot);
+  diagnostics.push(...normalized.diagnostics.map(item => scopedDiagnostic(item, source, layer.path)));
+}
+
+function scopedDiagnostic(
+  item: AiuConfigDiagnostic,
+  source: "explicit" | "machine-local" | "repository" | "user-global",
+  sourcePath: string,
+): AiuConfigDiagnostic {
+  return Object.freeze({
+    ...item,
+    message: `${source} config ${sourcePath.replace(/\\/gu, "/")}: ${item.message}`,
+    source,
+    sourcePath,
+  });
+}
+
+function deepMergeConfig(...layers: readonly Readonly<Record<string, unknown>>[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const layer of layers) mergeRecord(merged, layer);
+  return merged;
+}
+
+function mergeRecord(target: Record<string, unknown>, source: Readonly<Record<string, unknown>>): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (isRecord(value)) {
+      const current = isRecord(target[key]) ? target[key] as Record<string, unknown> : {};
+      target[key] = current;
+      mergeRecord(current, value);
+    } else {
+      target[key] = Array.isArray(value) ? value.map(cloneUnknown) : value;
+    }
+  }
+}
+
+function cloneUnknown(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneUnknown);
+  if (isRecord(value)) return deepMergeConfig(value);
+  return value;
+}
+
+function configToRaw(config: AiuConfig): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
+}
+
+function samePath(left: string, right: string): boolean {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+}
+
+function attributeAiuConfigSources(
+  config: AiuConfig,
+  layers: readonly { readonly source: "explicit" | "machine-local" | "repository" | "user-global"; readonly raw: Readonly<Record<string, unknown>> }[],
+): { readonly sources: Readonly<Record<string, LayeredConfigSource>>; readonly derivedFrom: Readonly<Record<string, readonly string[]>> } {
+  const sources: Record<string, LayeredConfigSource> = {};
+  for (const fieldPath of collectLeafPaths(config)) {
+    sources[fieldPath] = layers.find(layer => readRawPath(layer.raw, fieldPath) !== undefined)?.source ?? "default";
+  }
+  const derivedFrom: Record<string, readonly string[]> = {
+    "planning.enabled": Object.freeze(["postIssueScope"]),
+    "quality.enabled": Object.freeze(["postIssueScope"]),
+    "whip.enabled": Object.freeze(["postIssueScope"]),
+    "whip.usePackageDefaults": Object.freeze(["postIssueScope"]),
+  };
+  for (const fieldPath of Object.keys(derivedFrom)) sources[fieldPath] = "derived";
+  return { sources: Object.freeze(sources), derivedFrom: Object.freeze(derivedFrom) };
+}
+
+function collectLeafPaths(value: unknown, prefix = ""): string[] {
+  if (Array.isArray(value) || !isRecord(value)) return prefix === "" ? [] : [prefix];
+  return Object.entries(value).flatMap(([key, entry]) => collectLeafPaths(entry, prefix === "" ? key : `${prefix}.${key}`));
+}
+
+function readRawPath(raw: Readonly<Record<string, unknown>>, fieldPath: string): unknown {
+  let current: unknown = raw;
+  for (const part of fieldPath.split(".")) {
+    if (!isRecord(current) || !Object.hasOwn(current, part)) return undefined;
+    current = current[part];
+  }
+  return current;
 }
 
 export function formatConfigDiagnostics(diagnostics: readonly AiuConfigDiagnostic[]): string {

@@ -149,6 +149,67 @@ describe("public QUBE init output", () => {
     assert.match(output, /Persistent values changed: yes\./u);
     assert.doesNotMatch(output, /Start a new|make-it-so/u);
   });
+
+  it("renders a narrow source table and an edit path without color", () => {
+    const output = renderInitOutput({
+      scope: "repository",
+      mode: "plan",
+      changed: false,
+      answers: [],
+      configuration: {
+        scope: "repository",
+        action: "inherit",
+        fields: [
+          {
+            id: "quality.stages",
+            userGlobal: { present: true, value: ["unit", "build"] },
+            repository: { present: true, value: ["unit"] },
+            effective: { value: ["unit", "build"], source: "user-global" },
+            planned: { repositoryAction: "remove", effectiveValue: ["unit", "build"], source: "user-global" },
+          },
+          {
+            id: "review.harness",
+            userGlobal: { present: false },
+            repository: { present: false },
+            effective: { value: "codex", source: "derived", derivedFrom: ["review.mode", "hosts"] },
+            planned: { repositoryAction: "keep", effectiveValue: "codex", source: "derived", derivedFrom: ["review.mode", "hosts"] },
+          },
+        ],
+      },
+    });
+
+    assert.match(output, /Setup scope: This repository/u);
+    assert.match(output, /User-global setup: Found/u);
+    assert.match(output, /Review or customize this repository/u);
+    assert.match(output, /Inherit all user-global settings/u);
+    assert.match(output, /Configuration action: inherit/u);
+    assert.match(output, /- quality\.stages\n  User-global: unit, build\n  Repository: unit\n  Effective: unit, build\n  Source: user-global\n  Plan: remove/u);
+    assert.match(output, /Source: derived from review\.mode, hosts/u);
+    assert.doesNotMatch(output, /\u001b\[/u);
+  });
+
+  it("recommends completing repository setup when user-global fields are missing", () => {
+    const output = renderInitOutput({
+      scope: "repository",
+      mode: "plan",
+      changed: true,
+      answers: [],
+      configuration: {
+        scope: "repository",
+        action: "edit",
+        fields: [{
+          id: "quality.stages",
+          userGlobal: { present: false },
+          repository: { present: false },
+          effective: { value: ["unit"], source: "repository" },
+          planned: { repositoryAction: "add", effectiveValue: ["unit"], source: "repository" },
+        }],
+      },
+    });
+
+    assert.match(output, /Complete repository setup \(recommended\)/u);
+    assert.doesNotMatch(output, /Use user-global setup \(recommended\)/u);
+  });
 });
 
 describe("public QUBE init failures", () => {

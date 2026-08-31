@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "./cli-test-support.js";
 describe("CLI foundation", () => {
-  it("initializes canonical config and progress files with aiq config", async () => {
+  it("initializes progress without copying default config into the repository", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-config-init-"));
     tempDirs.push(tempDir);
     const stdout = new MemoryOutput();
@@ -31,13 +31,11 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "config.json"));
     expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "progress.json"));
 
-    const config = JSON.parse(
-      await readFile(path.join(tempDir, ".qube", "aiq", "config.json"), "utf8"),
-    ) as { version: number };
+    await expect(readFile(path.join(tempDir, ".qube", "aiq", "config.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
     const progress = JSON.parse(
       await readFile(path.join(tempDir, ".qube", "aiq", "progress.json"), "utf8"),
     ) as { current_stage: number; disabled: number[]; last_run: string | null; order: number[] };
-    expect(config).toEqual({ version: 1 });
     expect(progress).toEqual({
       current_stage: 1,
       disabled: [],

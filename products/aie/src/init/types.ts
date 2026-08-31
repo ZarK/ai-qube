@@ -4,7 +4,7 @@ import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewLanePolicy, ReviewM
 import type { InitTool } from '../init_content.js';
 
 export type InitActionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';
-export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'unchanged' | 'blocked';
+export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'remove' | 'unchanged' | 'blocked';
 export interface InitAction {
   id: string;
   path: string;

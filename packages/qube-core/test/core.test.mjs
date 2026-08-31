@@ -423,6 +423,12 @@ describe("qube core contracts", () => {
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiq/config.json")));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/aiu/config.json" && entry.committed === true));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiu/state") && entry.committed === false));
+    for (const product of ["aib", "aie", "aiq", "aiu"]) {
+      assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(`~/.qube/${product}/config.json`) && entry.committed === false));
+    }
+    for (const product of ["aie", "aiq", "aiu"]) {
+      assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(`.qube/${product}/config.local.json`) && entry.committed === false));
+    }
     assert.ok(qubePathContracts.every((entry) => typeof entry.writePolicy === "string" && entry.writePolicy.length > 0));
     assert.ok(qubePathContracts.every((entry) => !("migrationPolicy" in entry)));
   });

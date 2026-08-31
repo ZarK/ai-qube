@@ -2,6 +2,7 @@ export const LOCAL_RUNTIME_GITIGNORE_RULES = [
   '.qube/aie/reviews/',
   '.qube/aie/gates/',
   '.qube/aie/runs/',
+  '.qube/aie/config.local.json',
   '.qube/aiq/out/',
   '.qube/aiq/progress.json',
 ] as const;

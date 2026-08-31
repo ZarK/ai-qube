@@ -25,8 +25,38 @@ qube init <target> --git-init
 Global initialization reads and writes only user-global settings. It does not
 require Git, inspect repository files, or run repository component setup.
 Repository initialization uses the current directory when no target is given.
-It inherits user-global choices and writes repository-specific choices and
-managed assets.
+It inherits user-global settings. It stores only repository settings that have
+a different value. It can also create or update repository integration assets
+that the selected harness requires. These assets are not configuration copies.
+
+QUBE resolves each independent setting in this order:
+
+1. An explicit config path or supported command override.
+2. A machine-local overlay.
+3. A repository setting.
+4. A user-global setting.
+5. A detected value, when detection is supported for that setting.
+6. The QUBE default.
+
+QUBE applies dependency rules after it resolves the independent settings. It
+reports the source of each effective value. A derived value also names the
+setting that controls it.
+
+Repository setup shows the user-global value, the stored repository value, the
+effective value, its source, and the planned repository action. A complete
+user-global setup does not require `.qube/init.json` or a copied product config.
+Use either of these commands to remove repository overrides:
+
+```sh
+qube init --inherit quality.stages
+qube init --inherit-all
+```
+
+`--inherit` accepts a comma-separated field list and can be repeated by command
+surfaces that preserve repeated options. `--inherit-all` removes all composer
+repository settings. QUBE then recomputes effective values from the remaining
+layers. A selection option and an inherit action for the same field conflict.
+Inheritance actions are not valid with `qube init --global`.
 
 When a repository target is not in Git, interactive setup asks whether to
 initialize Git. Non-interactive mutation requires `--git-init`. A dry run
@@ -39,8 +69,9 @@ one exact npm or pnpm command for the detected package placement, and tells you
 to rerun `qube init`.
 
 The guided flow has eight steps. Review details appear only when they apply.
-QUBE skips a step when the repository already supplies one valid answer or when
-the step does not apply. Before each question, QUBE explains the choice, gives a
+QUBE keeps a valid effective answer unless you choose to review that setting.
+The repository summary always gives an edit path, including when all values are
+inherited. Before each edited question, QUBE explains the choice, gives a
 recommendation, and links to the applicable section in this guide.
 
 QUBE initializes the complete system. Bootstrap prepares planning. Executor
@@ -52,9 +83,10 @@ continuation hooks. The selected agent harness decides what runs. It also
 controls repository trust, account authentication, permissions, agent sessions,
 and model access. QUBE cannot bypass these controls.
 
-On a rerun, QUBE preselects the current values and keeps valid custom choices.
-It asks only for a missing or conflicting required value. If all values already
-match, the rerun makes no changes and prints only a short no-change result.
+On a rerun, QUBE preselects a valid repository override. If no repository value
+exists, it recommends the user-global value. QUBE asks only for a selected,
+missing, or conflicting required value. A normalized no-change run performs no
+configuration write.
 
 Use `--yes` or `--defaults` to accept the same recommended values without
 prompts. Use `--json` to get the resolved answers and the reason for each

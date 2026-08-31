@@ -24,7 +24,7 @@ describe("AIQ setup contract", () => {
     const repoDir = await createTempRepo("aiq-setup-repeat-");
     const dryRun = await planAiqSetup({ cwd: repoDir, dryRun: true, stages: ["typecheck"] });
 
-    expect(dryRun.config.operation).toBe("create");
+    expect(dryRun.config.operation).toBe("skip");
     expect(dryRun.progress.operation).toBe("create");
     await applyAiqSetupPlan(dryRun);
     await expect(access(dryRun.config.path)).rejects.toMatchObject({ code: "ENOENT" });
@@ -33,17 +33,16 @@ describe("AIQ setup contract", () => {
     const first = await applyAiqSetupPlan(
       await planAiqSetup({ cwd: repoDir, stages: ["typecheck"] }),
     );
-    const firstConfig = await readFile(first.config.path, "utf8");
     const firstProgress = await readFile(first.progress.path, "utf8");
     const second = await applyAiqSetupPlan(
       await planAiqSetup({ cwd: repoDir, stages: ["typecheck"] }),
     );
 
-    expect(first.config.operation).toBe("create");
+    expect(first.config.operation).toBe("skip");
     expect(first.progress.operation).toBe("create");
     expect(second.config.operation).toBe("skip");
     expect(second.progress.operation).toBe("skip");
-    expect(await readFile(second.config.path, "utf8")).toBe(firstConfig);
+    await expect(access(second.config.path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(second.progress.path, "utf8")).toBe(firstProgress);
   });
 

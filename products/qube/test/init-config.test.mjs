@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 import {
   configForQubeScope,
+  describeQubeInitFields,
   parseQubeInitConfig,
   readInitRecord,
   readQubeInitConfig,
@@ -61,8 +62,8 @@ describe("QUBE init configuration", () => {
     assert.equal(resolved.config.review.mode, "external");
     assert.deepEqual(resolved.config.review.externalReviewers, ["coderabbit"]);
     assert.equal(resolved.config.review.publisher, "github-app");
-    assert.equal(resolved.sources.hosts, "repo");
-    assert.equal(resolved.sources.workProviders, "global");
+    assert.equal(resolved.sources.hosts, "repository");
+    assert.equal(resolved.sources.workProviders, "user-global");
     assert.equal(resolved.sources.ciProviders, "detected");
     assert.equal(resolved.sources["review.publisher"], "explicit");
   });
@@ -91,6 +92,73 @@ describe("QUBE init configuration", () => {
     });
   });
 
+  it("projects repository overrides by semantic value instead of answer source", () => {
+    const userGlobal = {
+      ...defaults,
+      workProviders: ["github", "gitlab"],
+      quality: { stages: ["unit", "security"] },
+      review: { ...defaults.review, models: ["codex:review"] },
+    };
+    const resolved = resolveQubeInitConfig({
+      defaults,
+      globalConfig: userGlobal,
+      repoConfig: {
+        version: 1,
+        workProviders: ["gitlab", "github"],
+        quality: { stages: ["security", "unit"] },
+        review: { models: [] },
+        continuousShipping: false,
+        mcp: { optIn: false },
+      },
+      explicit: {
+        version: 1,
+        hosts: ["codex"],
+        ciProviders: ["github"],
+      },
+    });
+
+    const projectedRepository = configForQubeScope(resolved, "repo", userGlobal);
+    assert.deepEqual(projectedRepository, {
+      version: 1,
+      continuousShipping: false,
+      review: { models: [] },
+    });
+    const fields = describeQubeInitFields({
+      userGlobal,
+      repository: {
+        version: 1,
+        workProviders: ["gitlab", "github"],
+        continuousShipping: false,
+      },
+      resolved,
+      projectedRepository,
+    });
+    assert.deepEqual(fields.find(field => field.id === "workProviders").planned, {
+      repositoryAction: "remove",
+      effectiveValue: ["gitlab", "github"],
+      source: "user-global",
+    });
+    assert.deepEqual(fields.find(field => field.id === "continuousShipping").planned, {
+      repositoryAction: "keep",
+      effectiveValue: false,
+      source: "repository",
+    });
+    assert.deepEqual(fields.find(field => field.id === "review.harness").effective.derivedFrom, ["review.mode", "hosts"]);
+  });
+
+  it("removes a redundant full repository file and preserves neighboring content", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-init-remove-"));
+    const filePath = repoQubeConfigPath(root);
+    const neighborPath = path.join(root, ".qube", "state.json");
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(neighborPath, "state sentinel\n", "utf8");
+    assert.equal(writeQubeInitConfig(filePath, defaults), "create");
+    assert.equal(writeQubeInitConfig(filePath, { version: 1 }), "remove");
+    assert.equal(existsSync(filePath), false);
+    assert.equal(readFileSync(neighborPath, "utf8"), "state sentinel\n");
+    assert.equal(writeQubeInitConfig(filePath, { version: 1 }), "skip");
+  });
+
   it("falls through to default reviewers when a higher scope switches review mode", () => {
     const resolved = resolveQubeInitConfig({
       defaults,
@@ -100,7 +168,7 @@ describe("QUBE init configuration", () => {
 
     assert.equal(resolved.config.review.mode, "external");
     assert.deepEqual(resolved.config.review.externalReviewers, ["coderabbit"]);
-    assert.equal(resolved.sources["review.mode"], "repo");
+    assert.equal(resolved.sources["review.mode"], "repository");
     assert.equal(resolved.sources["review.externalReviewers"], "default");
   });
 
@@ -134,8 +202,8 @@ describe("QUBE init configuration", () => {
     });
 
     assert.equal(resolved.config.review.harness, "claude-code");
-    assert.equal(resolved.sources.hosts, "global");
-    assert.equal(resolved.sources["review.harness"], "global");
+    assert.equal(resolved.sources.hosts, "user-global");
+    assert.equal(resolved.sources["review.harness"], "derived");
     const repoConfig = configForQubeScope(resolved, "repo");
     assert.equal(Object.hasOwn(repoConfig, "hosts"), false);
     assert.equal(Object.hasOwn(repoConfig, "review"), false);
@@ -154,7 +222,7 @@ describe("QUBE init configuration", () => {
     });
 
     assert.equal(resolved.config.review.harness, "codex");
-    assert.equal(resolved.sources.hosts, "repo");
+    assert.equal(resolved.sources.hosts, "repository");
     assert.equal(resolved.sources["review.harness"], "derived");
     assert.equal(Object.hasOwn(configForQubeScope(resolved, "repo"), "review"), false);
     const nextGlobal = configForQubeScope(resolved, "global", globalConfig);
@@ -180,9 +248,9 @@ describe("QUBE init configuration", () => {
 
     assert.equal(firstRepo.config.review.mode, "isolated");
     assert.equal(firstRepo.config.review.harness, "grok-build");
-    assert.equal(firstRepo.sources["review.mode"], "repo");
-    assert.equal(firstRepo.sources["review.harness"], "repo");
-    assert.equal(firstRepo.sources["review.externalReviewers"], "repo");
+    assert.equal(firstRepo.sources["review.mode"], "derived");
+    assert.equal(firstRepo.sources["review.harness"], "derived");
+    assert.equal(firstRepo.sources["review.externalReviewers"], "derived");
 
     const globalConfig = configForQubeScope(firstRepo, "global");
     assert.equal(Object.hasOwn(globalConfig, "hosts"), false);
@@ -207,8 +275,8 @@ describe("QUBE init configuration", () => {
 
     assert.equal(secondRepo.config.review.mode, "host");
     assert.equal(secondRepo.config.review.harness, "codex");
-    assert.equal(secondRepo.sources["review.mode"], "repo");
-    assert.equal(secondRepo.sources["review.harness"], "repo");
+    assert.equal(secondRepo.sources["review.mode"], "derived");
+    assert.equal(secondRepo.sources["review.harness"], "derived");
   });
 
   it("removes review fields that conflict with an explicit global mode change", () => {

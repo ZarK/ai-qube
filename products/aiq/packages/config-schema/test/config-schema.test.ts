@@ -123,12 +123,12 @@ describe("config schema", () => {
     const result = await initializeAiqProjectConfig(repoDir);
 
     expect(result).toEqual({
-      configCreated: true,
+      configCreated: false,
       configPath: path.join(repoDir, ".qube", "aiq", "config.json"),
       progressCreated: true,
       progressPath: path.join(repoDir, ".qube", "aiq", "progress.json"),
     });
-    expect(JSON.parse(await readFile(result.configPath, "utf8"))).toEqual({ version: 1 });
+    await expect(readFile(result.configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(JSON.parse(await readFile(result.progressPath, "utf8"))).toEqual(defaultProgressState);
   });
 

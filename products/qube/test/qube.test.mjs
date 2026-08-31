@@ -124,7 +124,7 @@ function createInitComponentShim(root, componentId, options = {}) {
     "const config = JSON.parse(readFileSync(" + JSON.stringify(configPath) + ", \"utf8\"));",
     "const args = process.argv.slice(2);",
     "const phase = args[0] === \"labels\" ? \"labels\" : args[0] === \"review\" && args[1] === \"doctor\" ? \"reviewDoctor\" : args[0] === \"doctor\" ? \"doctor\" : args.includes(\"--dry-run\") ? \"plan\" : \"apply\";",
-    "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify({ component, phase, args, cwd: process.cwd() }) + \"\\n\");",
+    "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify({ component, phase, args, cwd: process.cwd(), layerContext: process.env.QUBE_INIT_LAYER_CONTEXT ? JSON.parse(process.env.QUBE_INIT_LAYER_CONTEXT) : null }) + \"\\n\");",
     "let payload = { ...config[phase] };",
     "if (config.stateful && phase !== \"plan\" && payload.ok === true) {",
     "  const suffix = phase === \"labels\" ? \"-labels\" : \"\";",
@@ -521,7 +521,7 @@ describe("qube composer CLI", () => {
     assert.ok(["ready", "degraded", "unavailable", "unconfigured"].includes(parsed.readiness));
     assert.equal(typeof parsed.nextAction, "string");
     assert.equal(typeof parsed.probe, "object");
-    assert.ok(["repository-overlay", "repository", "user-global", "default"].includes(parsed.publisherSource));
+    assert.ok(["machine-local", "repository", "user-global", "default"].includes(parsed.publisherSource));
     assert.equal(typeof parsed.publisherFieldSources, "object");
   });
 
@@ -659,6 +659,8 @@ describe("qube composer CLI", () => {
     const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.configuration.status, "valid");
+    assert.equal(parsed.configuration.fields.find(field => field.id === "hosts").effective.source, "repository");
     assert.equal(parsed.connectionStatus, "unverified");
     assert.deepEqual(parsed.connections.connections.map(connection => [connection.adapterId, connection.status]), [["github", "unverified"]]);
     assert.equal(parsed.connections.connections[0].readOnly, true);
@@ -669,8 +671,31 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.permutation.ci.kind, "github");
     assert.ok(parsed.permutation.work.capabilities.some(item => item.id === "listOpenWork"));
     const human = runCli(["doctor", "--offline"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    assert.match(human.stdout, /Effective configuration:/);
+    assert.match(human.stdout, /- hosts: cursor \(repository\)/);
     assert.match(human.stdout, /Provider permutation:/);
     assert.match(human.stdout, /- work: github/);
+  });
+
+  it("fails doctor on an invalid composer source with scope, path, field, and one recovery action", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-invalid-composer-doctor-"));
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-invalid-composer-quality-"));
+    createQualityDoctorShim(qualityRoot);
+    mkdirSync(path.join(cwd, ".qube"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "init.json"), '{"version":1,"unknownField":true}\n', "utf8");
+
+    const result = runCli(["doctor", "--offline", "--json"], {
+      cwd,
+      env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot, USERPROFILE: cwd, HOME: cwd },
+    });
+    assert.notEqual(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.configuration.status, "invalid");
+    assert.match(parsed.configuration.error, /repository QUBE config is invalid/u);
+    assert.match(parsed.configuration.error, /\.qube[\\/]init\.json/u);
+    assert.match(parsed.configuration.error, /unknownField/u);
+    assert.equal(parsed.configuration.nextAction, "Correct the invalid source configuration, then rerun `qube doctor`.");
   });
 
   it("reports per-role capability summaries for curated provider permutations", () => {
@@ -2185,6 +2210,89 @@ describe("qube init orchestrator", () => {
     assert.equal(plan.plan.git.operation, "initialize");
   });
 
+  it("validates repository inheritance actions before probes or writes", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-inherit-syntax-"));
+    mkdirSync(path.join(cwd, "untouched"));
+    const env = initEnv(mkdtempSync(path.join(tmpdir(), "qube-init-inherit-root-")), { PATH: "", Path: "" });
+    const cases = [
+      { args: ["init", ".", "--inherit", "unknown.field", "--json"], error: /Unknown repository setting/u },
+      { args: ["init", ".", "--inherit", "quality.stages", "--quality-stage", "unit", "--json"], error: /conflicts with --quality-stage/u },
+      { args: ["init", ".", "--inherit", "hosts", "--inherit-all", "--json"], error: /--inherit-all conflicts with --inherit/u },
+      { args: ["init", "--global", "--inherit-all", "--json"], error: /apply only to repository initialization/u },
+    ];
+    for (const testCase of cases) {
+      const result = runCli(testCase.args, { cwd, env });
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(JSON.parse(result.stdout).error, testCase.error);
+      assert.deepEqual(readdirSync(cwd, { recursive: true }).map(String).sort(), ["untouched"]);
+    }
+  });
+
+  it("plans and applies per-field inheritance without writing unrelated repository content", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-inherit-field-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-inherit-field-cwd-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot, {
+      aie: { stateful: true },
+      aib: { stateful: true },
+      aiq: { stateful: true },
+      aiu: { stateful: true },
+    });
+    initializeRepository(cwd);
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({
+      review: { mode: "external", externalReviewers: ["coderabbit"], publisher: "user" },
+    }));
+    writeInitSetup(repoQubeConfigPath(cwd), { version: 1, quality: { stages: ["build"] } });
+    mkdirSync(path.join(cwd, ".qube"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "keep.txt"), "keep\n", "utf8");
+
+    const dryRun = runCli(["init", ".", "--inherit", "quality.stages", "--dry-run", "--json"], { cwd, env });
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    const planned = JSON.parse(dryRun.stdout);
+    assert.equal(planned.configuration.action, "inherit");
+    assert.equal(planned.plan.config.operation, "remove");
+    const quality = planned.configuration.fields.find(field => field.id === "quality.stages");
+    assert.equal(quality.repository.present, true);
+    assert.equal(quality.planned.repositoryAction, "remove");
+    assert.equal(quality.planned.source, "user-global");
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), true);
+
+    const applied = runCli(["init", ".", "--inherit", "quality.stages", "--json"], { cwd, env });
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.equal(JSON.parse(applied.stdout).configuration.action, "inherit");
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    assert.equal(readFileSync(path.join(cwd, ".qube", "keep.txt"), "utf8"), "keep\n");
+
+    const noOp = runCli(["init", ".", "--inherit", "quality.stages", "--dry-run", "--json"], { cwd, env });
+    assert.equal(noOp.status, 0, noOp.stderr);
+    assert.equal(JSON.parse(noOp.stdout).plan.config.operation, "skip");
+  });
+
+  it("plans inherit-all as one sparse repository removal", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-inherit-all-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-inherit-all-cwd-"));
+    const env = initEnv(packageRoot);
+    createInitShims(packageRoot);
+    initializeRepository(cwd);
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({
+      review: { mode: "external", externalReviewers: ["coderabbit"], publisher: "user" },
+    }));
+    writeInitSetup(repoQubeConfigPath(cwd), {
+      version: 1,
+      hosts: ["cursor"],
+      continuousShipping: false,
+      review: { mode: "host", harness: "cursor" },
+    });
+
+    const result = runCli(["init", ".", "--inherit-all", "--dry-run", "--json"], { cwd, env });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.configuration.action, "inherit-all");
+    assert.equal(payload.plan.config.operation, "remove");
+    assert.equal(payload.configuration.fields.filter(field => field.planned.repositoryAction === "remove").length >= 3, true);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), true);
+  });
+
   it("applies and reruns global initialization without Git or repository inspection", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-global-no-git-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-global-no-git-cwd-"));
@@ -2211,6 +2319,41 @@ describe("qube init orchestrator", () => {
     assert.equal(secondPayload.changed, false);
     assert.equal(secondPayload.plan.config.operation, "skip");
     assert.deepEqual(readInitCalls(packageRoot), []);
+  });
+
+  it("plans a real inherited-only repository without composer or product configuration copies", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-real-inherited-cwd-"));
+    const isolatedHome = mkdtempSync(path.join(tmpdir(), "qube-init-real-inherited-home-"));
+    initializeRepository(cwd);
+    writeInitSetup(userQubeConfigPath(isolatedHome), completeInitSetup({
+      review: { mode: "external", externalReviewers: ["coderabbit"], publisher: "user" },
+    }));
+    const env = initEnv(packageRoot, { USERPROFILE: isolatedHome, HOME: isolatedHome });
+
+    const result = runCli(["init", ".", "--dry-run", "--json"], { cwd, env });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.plan.config.operation, "skip");
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    const copiedConfigActions = payload.plan.components.flatMap(component => component.actions ?? []).filter(action => {
+      if (!action || typeof action !== "object" || !["create", "update", "update-config"].includes(action.operation)) return false;
+      const actionPath = action.path ?? action.relativePath ?? action.absolutePath;
+      return typeof actionPath === "string" && /(?:aib\.config|\.qube[\\/](?:aie|aiq|aiu)[\\/]config)\.json$/u.test(actionPath);
+    });
+    assert.deepEqual(copiedConfigActions, []);
+
+    const applied = runCli(["init", ".", "--json"], { cwd, env });
+    assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`);
+    for (const configPath of [
+      repoQubeConfigPath(cwd),
+      path.join(cwd, "aib.config.json"),
+      path.join(cwd, ".qube", "aie", "config.json"),
+      path.join(cwd, ".qube", "aiq", "config.json"),
+      path.join(cwd, ".qube", "aiu", "config.json"),
+    ]) {
+      assert.equal(existsSync(configPath), false, configPath);
+    }
+    assert.equal(existsSync(path.join(cwd, "AGENTS.md")), true);
   });
 
   it("keeps package placement independent from global and repository configuration scope", () => {
@@ -2450,8 +2593,8 @@ describe("qube init orchestrator", () => {
     assert.equal(parsed.plan.resolved.review.harness, "codex");
     assert.equal(parsed.plan.resolved.review.publisher, "github-app");
     const saved = JSON.parse(readFileSync(userQubeConfigPath(env.USERPROFILE), "utf8"));
-    assert.equal(saved.review.mode, "host");
-    assert.equal(saved.review.harness, "codex");
+    assert.equal(saved.review.mode, undefined);
+    assert.equal(saved.review.harness, undefined);
     assert.equal(saved.review.publisher, "github-app");
     assert.equal(saved.review.externalReviewers, undefined);
     assert.deepEqual(JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8")).review, {
@@ -2528,7 +2671,6 @@ describe("qube init orchestrator", () => {
     assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")).review, {
       mode: "external",
       externalReviewers: ["coderabbit"],
-      models: [],
     });
     const firstConfig = readFileSync(configPath, "utf8");
 
@@ -2818,6 +2960,12 @@ describe("qube init orchestrator", () => {
     );
     assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build");
     assert.equal(optionValue(rows.get("aiu").args, "--post-issue-scope"), "ready");
+    const calls = readInitCalls(packageRoot);
+    assert.equal(calls.length, 4);
+    assert.ok(calls.every(call => call.layerContext?.selectedScope === "repository"));
+    assert.ok(calls.every(call => JSON.stringify(call.layerContext) === JSON.stringify(calls[0].layerContext)));
+    assert.deepEqual(calls[0].layerContext.effective.hosts, ["cursor", "grok-build", "codex"]);
+    assert.equal(calls[0].layerContext.sources["review.harness"], "explicit");
   });
 
   it("plans Umpire for Cursor with an explicit unsupported-host value", () => {
@@ -2930,7 +3078,7 @@ describe("qube init orchestrator", () => {
     assert.equal(saved.review.mode, "external");
     assert.deepEqual(saved.review.externalReviewers, ["coderabbit"]);
     assert.equal(saved.review.publisher, "user");
-    assert.deepEqual(saved.review.models, []);
+    assert.equal(saved.review.models, undefined);
     assert.equal(saved.review.harness, undefined);
   });
 

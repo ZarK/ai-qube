@@ -8,10 +8,18 @@ import { afterEach, describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { getDefaultAiuConfig, loadAiuConfig } from "../dist/src/config.js";
+import { applyAiuInitPlan, planAiuInit } from "../dist/src/init.js";
+
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const aiuBin = path.join(repoRoot, "dist/src/bin/aiu.js");
 const tempRoots: string[] = [];
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
 
 describe("init planner", () => {
   afterEach(async () => {
@@ -34,6 +42,43 @@ describe("init planner", () => {
     assert.equal(parsed.init.recommendedNextCommand, "aiu config --json");
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
     assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
+  });
+
+  it("keeps repository config absent when user-global config already matches the plan", async () => {
+    const target = await createRepoRoot();
+    const userHome = await mkdtemp(path.join(tmpdir(), "aiu-init-home-"));
+    tempRoots.push(userHome);
+    const defaults = getDefaultAiuConfig();
+    await writeJson(path.join(userHome, ".qube", "aiu", "config.json"), {
+      ...defaults,
+      trustedStateCommands: {
+        work: {
+          argv: ["qube", "aie", "status", "--json"],
+          timeoutMs: defaults.timeouts.commandMs,
+          maxOutputBytes: 1_048_576,
+        },
+      },
+    });
+
+    const plan = planAiuInit({ cwd: target, homeDirectory: userHome, tool: "none", postIssueScope: "ready" });
+    assert.equal(plan.config.operation, "skip");
+    applyAiuInitPlan(plan);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+  });
+
+  it("does not copy machine-local values into repository config", async () => {
+    const target = await createRepoRoot();
+    await writeJson(path.join(target, ".qube", "aiu", "config.local.json"), {
+      version: 1,
+      cooldowns: { promptMs: 123_456 },
+    });
+
+    const plan = planAiuInit({ cwd: target, tool: "none", postIssueScope: "ready" });
+    const applied = applyAiuInitPlan(plan);
+    assert.equal(applied.ok, true);
+    const repository = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as Record<string, unknown>;
+    assert.equal(repository.cooldowns, undefined);
+    assert.equal(loadAiuConfig({ cwd: target }).config.cooldowns.promptMs, 123_456);
   });
 
   it("applies non-interactive host defaults for each selected tool", async () => {
@@ -184,24 +229,24 @@ describe("init planner", () => {
       const result = await runCli(target, ["init", "--tool", "none", "--post-issue-scope", expected.scope, "--json"]);
       const parsed = JSON.parse(result.stdout) as InitEnvelope;
       const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
-        postIssueScope: string;
-        hosts: { enabled: string[] };
-        planning: { enabled: boolean };
-        quality: { enabled: boolean };
-        whip: { enabled: boolean; usePackageDefaults: boolean };
+        postIssueScope?: string;
+        hosts?: { enabled: string[] };
       };
+      const effective = loadAiuConfig({ cwd: target }).config;
 
       assert.equal(result.exitCode, 0, expected.scope);
       assert.equal(parsed.init.postIssueScope, expected.scope);
       assert.deepEqual(parsed.init.tools, []);
       assert.deepEqual(parsed.init.files, []);
       assert.equal(parsed.init.hostProfiles.length, 0);
-      assert.deepEqual(config.hosts.enabled, []);
-      assert.equal(config.postIssueScope, expected.scope);
-      assert.equal(config.planning.enabled, false);
-      assert.equal(config.quality.enabled, expected.quality);
-      assert.equal(config.whip.enabled, expected.whip);
-      assert.equal(config.whip.usePackageDefaults, expected.packageDefaults);
+      assert.equal(config.hosts, undefined);
+      assert.deepEqual(effective.hosts.enabled, []);
+      assert.equal(config.postIssueScope, expected.scope === "ready" ? undefined : expected.scope);
+      assert.equal(effective.postIssueScope, expected.scope);
+      assert.equal(effective.planning.enabled, false);
+      assert.equal(effective.quality.enabled, expected.quality);
+      assert.equal(effective.whip.enabled, expected.whip);
+      assert.equal(effective.whip.usePackageDefaults, expected.packageDefaults);
       assert.equal(existsSync(path.join(target, ".opencode")), false);
       assert.equal(existsSync(path.join(target, ".claude")), false);
       assert.equal(existsSync(path.join(target, ".grok")), false);
@@ -232,20 +277,19 @@ describe("init planner", () => {
     const config = JSON.parse(await readFile(configPath, "utf8")) as {
       postIssueScope: string;
       teamSetting: string;
-      planning: { enabled: boolean };
-      quality: { enabled: boolean };
-      whip: { enabled: boolean; usePackageDefaults: boolean; tasks: Array<{ id: string }> };
+      whip: { tasks: Array<{ id: string }> };
     };
+    const effective = loadAiuConfig({ cwd: target }).config;
 
     assert.equal(result.exitCode, 0);
     assert.equal(parsed.init.postIssueScope, "custom");
     assert.equal(parsed.init.config.operation, "update");
     assert.equal(config.teamSetting, "preserve");
     assert.equal(config.postIssueScope, "custom");
-    assert.equal(config.planning.enabled, false);
-    assert.equal(config.quality.enabled, false);
-    assert.equal(config.whip.enabled, true);
-    assert.equal(config.whip.usePackageDefaults, false);
+    assert.equal(effective.planning.enabled, false);
+    assert.equal(effective.quality.enabled, false);
+    assert.equal(effective.whip.enabled, true);
+    assert.equal(effective.whip.usePackageDefaults, false);
     assert.deepEqual(config.whip.tasks.map((task) => task.id), ["research-cycle"]);
   });
 

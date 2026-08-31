@@ -14,6 +14,8 @@ import type { SetupGuidanceCommand, VerboseToolRunDetail } from "./types.js";
 export interface ConfigCommandOutput {
   config: unknown;
   configPath?: string;
+  configPaths?: readonly string[];
+  sources?: Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">>;
   progress: unknown;
   progressPath: string;
   progressSource: "defaults" | "file";
@@ -45,6 +47,8 @@ export interface DoctorCheckOutput {
 export interface DoctorCommandOutput {
   checks: DoctorCheckOutput[];
   configPath?: string;
+  configPaths?: readonly string[];
+  sources?: Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">>;
   cwd: string;
   detectedTech: string[];
   ok: boolean;
@@ -268,6 +272,7 @@ export function formatDoctorOutput(format: OutputFormat, output: DoctorCommandOu
   return [
     "AIQ doctor",
     `Config: ${output.configPath ?? "defaults"}`,
+    `Layers: ${output.configPaths?.join(", ") || "defaults"}`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
     `Profile: ${output.profile}`,
     `Stages: ${output.stages.join(", ")}`,
@@ -509,9 +514,15 @@ export function formatConfigOutput(format: OutputFormat, output: ConfigCommandOu
   }
 
   const configPath = output.configPath ?? "defaults";
+  const sourceCounts = Object.entries(output.sources ?? {}).reduce<Record<string, number>>((counts, [, source]) => {
+    counts[source] = (counts[source] ?? 0) + 1;
+    return counts;
+  }, {});
   return [
     "AIQ config",
     `Config: ${configPath}`,
+    `Layers: ${output.configPaths?.join(", ") || "defaults"}`,
+    `Sources: ${Object.entries(sourceCounts).map(([source, count]) => `${count} ${source}`).join(", ") || "defaults"}`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
     `Current stage: ${formatProgressStage(output.progress)}`,
     `Profile: ${output.profile}`,

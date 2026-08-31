@@ -3,7 +3,7 @@ const { writeFileSync, mkdtempSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
-const { configToFileShape, formatUserReviewPublisherFile, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, parseUserReviewPublisherFile, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, formatUserReviewPublisherFile, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, parseUserReviewPublisherFile, userConfigPath, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
 
 function defaultFile() {
   return configToFileShape(getDefaults());
@@ -920,6 +920,82 @@ describe('config validation', () => {
     assert.deepEqual(result.config.providers.review.publisher, { mode: 'user' });
     assert.equal(result.publisherSource, 'repository');
     assert.deepEqual(result.publisherFieldSources, { mode: 'repository' });
+  });
+
+  it('resolves full user-global config with sparse repository and machine-local layers', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-layer-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-layer-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    const global = defaultFile();
+    global.policy.audit.manualUiAudit = false;
+    global.policy.branch.baseBranch = 'trunk';
+    writeFileSync(userConfigPath(home), `${JSON.stringify(global, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), JSON.stringify({ version: 1, policy: { audit: { manualUiAudit: true } } }));
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), JSON.stringify({ policy: { branch: { baseBranch: 'machine' } } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.manualUiAudit, true);
+    assert.equal(result.config.baseBranch, 'machine');
+    assert.equal(result.fieldSources['policy.audit.manualUiAudit'], 'repository');
+    assert.equal(result.fieldSources['policy.branch.baseBranch'], 'machine-local');
+    assert.equal(result.fieldSources['policy.branch.naming'], 'user-global');
+    assert.equal(result.layers.repository.policy.audit.manualUiAudit, true);
+    assert.equal(result.layers.machineLocal.policy.branch.baseBranch, 'machine');
+  });
+
+  it('accepts an absent repository config and observes changed user-global values', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-global-only-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-global-only-home-'));
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    const global = defaultFile();
+    global.policy.branch.baseBranch = 'first';
+    writeFileSync(userConfigPath(home), `${JSON.stringify(global, null, 2)}\n`);
+    assert.equal((await loadConfigFile(repo, { homeDirectory: home })).config.baseBranch, 'first');
+
+    global.policy.branch.baseBranch = 'second';
+    writeFileSync(userConfigPath(home), `${JSON.stringify(global, null, 2)}\n`);
+    const changed = await loadConfigFile(repo, { homeDirectory: home });
+    assert.equal(changed.ok, true, JSON.stringify(changed.errors));
+    assert.equal(changed.config.baseBranch, 'second');
+    assert.equal(changed.fieldSources['policy.branch.baseBranch'], 'user-global');
+    assert.equal(changed.layers.repository, null);
+  });
+
+  it('fails an invalid lower layer even when a repository value would hide it', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-invalid-global-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-invalid-global-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    mkdirSync(join(home, '.qube', 'aie'), { recursive: true });
+    writeFileSync(userConfigPath(home), JSON.stringify({ version: 1, policy: { audit: { manualUiAudit: 'yes' } } }));
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), JSON.stringify({ version: 1, policy: { audit: { manualUiAudit: false } } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errors[0].scope, 'user-global');
+    assert.equal(result.errors[0].field, 'policy.audit.manualUiAudit');
+    assert.equal(result.errors[0].sourcePath, userConfigPath(home).replace(/\\/g, '/'));
+    assert.match(result.errors[0].reason, /must be a boolean/);
+    assert.match(result.errors[0].nextAction, /then rerun the command/);
+  });
+
+  it('keeps machine-local values out of repository and user-global source layers', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-machine-only-repo-'));
+    const home = mkdtempSync(join(tmpdir(), 'aie-machine-only-home-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), JSON.stringify({ policy: { audit: { evidenceRoot: '.private/evidence' } } }));
+
+    const result = await loadConfigFile(repo, { homeDirectory: home });
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.uiAuditEvidenceRoot, '.private/evidence');
+    assert.equal(result.fieldSources['policy.audit.evidenceRoot'], 'machine-local');
+    assert.equal(result.layers.repository, null);
+    assert.equal(result.layers.userGlobal, null);
+    assert.equal(result.layers.machineLocal.policy.audit.evidenceRoot, '.private/evidence');
   });
 });
 

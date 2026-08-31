@@ -653,7 +653,7 @@ export async function probeHostToolkits(options: ProbeHostToolkitOptions): Promi
   const recommendations: string[] = [];
   for (const host of hosts) {
     if (host.status === "missing") {
-      recommendations.push(`${host.reason} Run \`qube init . --host ${host.host}\` to install the missing files.`);
+      recommendations.push(`${host.reason} Run \`qube init\` to apply the effective setup.`);
     }
   }
   for (const cli of cliDependencies) {

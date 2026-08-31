@@ -19,6 +19,7 @@ export interface DoctorDiagnostics {
   configPresent: boolean;
   configValid: boolean;
   configErrors?: ValidationError[];
+  configSources?: Readonly<Record<string, string>>;
   baseBranch?: string;
   baseRemote?: string;
   labelsOk: boolean;

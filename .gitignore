@@ -7,6 +7,9 @@ dist/
 # Local Executor config overlay - never commit publisher credentials or paths.
 .qube/aie/config.local.json
 aie.config.local.json
+aib.config.local.json
+.qube/aiq/config.local.json
+.qube/aiu/config.local.json
 
 # Local Executor and AIQ runtime files.
 .qube/aie/reviews/

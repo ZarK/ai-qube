@@ -56,7 +56,9 @@ export const aibCli = createCli({
     createCommand(initCommand, ({ args, flags }) => {
       let loadedConfig;
       try {
-        loadedConfig = loadAibConfig(typeof flags.config === "string" ? flags.config : undefined);
+        loadedConfig = loadAibConfig(typeof flags.config === "string" ? flags.config : undefined, {
+          startDir: typeof args.target === "string" ? args.target : ".",
+        });
       } catch (error) {
         throw createCliError({
           command: "init",
@@ -81,9 +83,14 @@ export const aibCli = createCli({
             }
           }
         : loadedConfig.config;
+      const fieldSources = {
+        ...loadedConfig.fieldSources,
+        ...(agentHost ? { "agent.host": "explicit" as const } : {}),
+        ...(agentSurfaces ? { "agent.surfaces": "explicit" as const } : {}),
+      };
       const plan = createInitPlan({
         target: typeof args.target === "string" ? args.target : undefined,
-        loadedConfig: { ...loadedConfig, config },
+        loadedConfig: { ...loadedConfig, config, fieldSources },
         idea: typeof flags.idea === "string" ? flags.idea : undefined
       });
 
@@ -110,6 +117,10 @@ export const aibCli = createCli({
           target: result.target,
           configPath: result.configPath,
           config: result.config,
+          configuration: {
+            fieldSources: result.configFieldSources,
+            layers: result.configLayerPaths,
+          },
           statePath: result.sessionPath,
           sessionPath: result.sessionPath,
           actions: result.actions,

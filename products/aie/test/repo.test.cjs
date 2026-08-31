@@ -60,7 +60,7 @@ const prListArgs = ['pr', 'list', '--state', 'open', '--json', 'number,title,aut
 const milestoneArgs = ['api', 'repos/example/repo/milestones', '--method', 'GET', '-F', 'state=all', '-F', 'per_page=100'];
 
 describe('repo prime service', () => {
-  it('builds a dry-run plan without mutating GitHub or local config', async () => {
+  it('builds a dry-run plan without mutating GitHub or repository configuration', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'docs'));
     writeFileSync(join(repo, 'AGENTS.md'), 'instructions\n');

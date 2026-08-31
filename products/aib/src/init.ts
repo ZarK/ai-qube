@@ -36,6 +36,8 @@ export interface InitPlan {
   readonly target: string;
   readonly configPath?: string;
   readonly config: AibConfig;
+  readonly configFieldSources: LoadedAibConfig["fieldSources"];
+  readonly configLayerPaths: LoadedAibConfig["layers"]["paths"];
   readonly idea?: string;
   readonly sessionPath: string;
   readonly state: BootstrapState;
@@ -88,6 +90,8 @@ export function createInitPlan(input: {
     target,
     ...(input.loadedConfig.path ? { configPath: input.loadedConfig.path } : {}),
     config,
+    configFieldSources: input.loadedConfig.fieldSources,
+    configLayerPaths: input.loadedConfig.layers.paths,
     ...(input.idea ? { idea: input.idea } : {}),
     sessionPath,
     state: plannedSession.state,
@@ -117,6 +121,14 @@ export function applyInitPlan(plan: InitPlan): AppliedInitPlan {
     loadedConfig: {
       ...(plan.configPath ? { path: plan.configPath } : {}),
       config: plan.config,
+      fieldSources: plan.configFieldSources,
+      layers: {
+        explicit: null,
+        machineLocal: null,
+        repository: null,
+        userGlobal: null,
+        paths: plan.configLayerPaths,
+      },
     },
     idea: plan.idea,
   });

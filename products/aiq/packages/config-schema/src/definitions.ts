@@ -214,6 +214,23 @@ export interface AiqConfigFile {
 export interface LoadedAiqConfig {
   config?: AiqConfigFile;
   path?: string;
+  effectiveConfig?: AiqConfig;
+  effectivePath?: string;
+  userGlobalConfig?: AiqConfigFile;
+  machineLocalConfig?: AiqConfigFile;
+  sources?: Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">>;
+  layers?: {
+    readonly userGlobalPath: string;
+    readonly userGlobalFound: boolean;
+    readonly repositoryPath: string;
+    readonly repositoryFound: boolean;
+    readonly machineLocalPath: string;
+    readonly machineLocalFound: boolean;
+  };
+}
+
+export interface LoadAiqConfigOptions {
+  readonly homeDirectory?: string;
 }
 
 export interface AiqProgressState {
@@ -255,6 +272,7 @@ export interface InitializedAiqProjectConfig {
 
 export interface ResolveAiqConfigOptions {
   cwd?: string;
+  homeDirectory?: string;
   stages?: readonly AiqStageId[];
   profile?: AiqProfileName;
   surface: AiqSurfaceId;
@@ -272,6 +290,8 @@ export interface ResolvedAiqConfig {
   profile: AiqProfileName;
   publishDiagnostics: boolean;
   source: "defaults" | "file";
+  sources?: Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">>;
+  configPaths?: readonly string[];
   surface: AiqSurfaceId;
 }
 

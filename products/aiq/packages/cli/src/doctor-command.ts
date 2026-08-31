@@ -119,6 +119,8 @@ async function createDoctorCommandOutput(
   return {
     checks,
     ...(resolvedConfig.configPath === undefined ? {} : { configPath: resolvedConfig.configPath }),
+    ...(resolvedConfig.configPaths === undefined ? {} : { configPaths: resolvedConfig.configPaths }),
+    ...(resolvedConfig.sources === undefined ? {} : { sources: resolvedConfig.sources }),
     cwd: resolvedConfig.cwd,
     detectedTech: formatDetectedLanguages(detectedLanguages),
     ok: checks.every((check) => check.ok),
