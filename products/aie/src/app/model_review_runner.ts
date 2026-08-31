@@ -141,6 +141,10 @@ export function windowsPowerShellRouteEnvironment(
 
 export interface ModelReviewRunInput {
   plan: ModelReviewRoutePlan;
+  /** Exact transport model value bound by the current route probe. */
+  transportModel?: string | null;
+  transport?: string | null;
+  fallbackReason?: string | null;
   repoRoot: string;
   lane: LocalReviewLaneId;
   issueNumber: number;
@@ -552,6 +556,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
   const context: ReviewHostInvocationContext = {
     repoRoot: input.repoRoot,
     model: input.plan.model,
+    transportModel: input.transportModel,
     effort: input.plan.effort,
     maxTurns: input.plan.maxTurns,
     prompt,
@@ -760,6 +765,12 @@ function failureReason(result: ModelRouteProcessResult): { reasonCode: string; e
     };
   }
   const diagnostic = sanitizedDiagnostic(result.stderr);
+  if (/Cursor model compatibility failed:/i.test(result.stderr)) {
+    return {
+      reasonCode: 'model-route-model-unsupported',
+      error: diagnostic || 'The selected Cursor model is not compatible with the active execution transport. Rerun init or doctor and select a compatible model.',
+    };
+  }
   if (/auth|login|credential|unauthor/i.test(result.stderr)) return { reasonCode: 'model-route-authentication', error: 'Model review route is not authenticated. Authenticate the configured host outside QUBE, then rerun.' };
   if (/model.*(?:not found|unknown|unavailable|invalid)/i.test(result.stderr)) return { reasonCode: 'model-route-model-unavailable', error: 'Configured review model is unavailable for this host. Refresh the host model list and update trusted review config.' };
   return { reasonCode: 'model-route-process-failed', error: `Model review route exited with code ${result.exitCode}.${diagnostic ? ` Diagnostic: ${diagnostic}` : ''}` };
@@ -975,10 +986,13 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       headSha: input.headSha,
       providerPublishStatus: null,
       model: input.plan.model,
+      transport: input.transport ?? null,
+      transportModel: input.transportModel ?? input.plan.model,
       effort: input.plan.effort,
       isolation: 'read-only',
       invocationId,
       routeSource: input.routeSource ?? 'configured',
+      fallbackReason: input.fallbackReason ?? null,
     };
     if ('transientTexts' in parsedHostOutput) {
       const transientTexts = parsedHostOutput.transientTexts;

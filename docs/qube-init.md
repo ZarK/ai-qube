@@ -388,9 +388,12 @@ models that the applicable harness can list from the signed-in account.
 ## 8. Review publisher and model guidance
 
 When the selected harness provides a live model catalog, QUBE offers only the
-exact model IDs in that catalog. It recommends the first entry because the
-catalog does not include comparable price or quality data. Check the harness
-for current price and model details. Normal setup has no free-text model field.
+model IDs that the active review transport can execute with the same model,
+reasoning effort, and speed. For example, native Windows Cursor review uses
+ACP. QUBE omits a Cursor CLI model when ACP cannot preserve its exact
+semantics. It recommends the first compatible entry because the catalog does
+not include comparable price or quality data. Check the harness for current
+price and model details. Normal setup has no free-text model field.
 If the harness does not support model discovery, QUBE leaves Review unpinned.
 If a supported catalog is blocked or unavailable, setup stops and gives the
 next action.

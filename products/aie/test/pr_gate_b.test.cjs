@@ -128,6 +128,51 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.deepEqual([...executablesUsed], ['probe-resolved-grok'], 'execution must spawn exactly the probe-resolved executable');
   });
 
+  it('shows the exact Cursor transport binding in dry-run output', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'cursor', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.cursor = { model: 'cursor-grok-4.6-high-fast', effort: null };
+    let probeCalls = 0;
+    const routeProbe = (host, model) => {
+      probeCalls += 1;
+      return {
+        host,
+        model,
+        status: 'ready',
+        executable: 'cursor-runner',
+        version: '2026.08.11-build',
+        modelListed: true,
+        diagnostic: null,
+        reasonCode: null,
+        transport: 'acp',
+        resolvedModel: 'grok-4.6[effort=high,fast=true]',
+        availableModels: ['cursor-grok-4.6-high-fast'],
+        resolved: { executable: 'node.exe', prefixArgs: ['cursor-acp-runner.js', '--'] },
+      };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      dryRun: true,
+      exec: makePrExec({ prViews: [cleanLocalPr()] }).exec,
+      routeProbe,
+    });
+
+    const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route?.host === 'cursor');
+    assert.ok(routedLanes.length >= 3);
+    assert.equal(probeCalls, 1, 'one distinct Cursor display model is probed once for the dry-run batch');
+    assert.ok(routedLanes.every(lane => lane.status === 'planned'));
+    assert.ok(routedLanes.every(lane => lane.route.model === 'cursor-grok-4.6-high-fast'));
+    assert.ok(routedLanes.every(lane => lane.routeProbe.transport === 'acp'));
+    assert.ok(routedLanes.every(lane => lane.routeProbe.resolvedModel === 'grok-4.6[effort=high,fast=true]'));
+  });
+
   it('uses a ready fallback immediately when the preferred readiness probe is blocked', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -172,7 +217,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
       return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: events.join('\n') };
     };
     const routeProbe = (host, model) => (host === 'grok-build'
-      ? { host, model, status: 'blocked', executable: null, version: null, modelListed: null, resolved: null, diagnostic: 'The grok CLI is not resolvable. Install and authenticate the grok CLI on PATH before running routed review lanes.' }
+      ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, resolved: null, diagnostic: 'The configured model is incompatible with its execution transport.', reasonCode: 'model-route-model-unsupported', transport: 'acp', resolvedModel: null, availableModels: ['grok-4.6-high-fast'] }
       : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null, resolved: 'codex-probe' });
     const gateOptions = { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHead: async () => 'abc123' };
 
@@ -185,6 +230,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
       assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
       assert.equal(evidence.runnerProvenance.host, 'codex');
+      assert.equal(evidence.runnerProvenance.fallbackReason, 'model-route-model-unsupported');
+      assert.match(lane.route.substitution, /model-route-model-unsupported/);
     }
   });
 

@@ -626,6 +626,46 @@ describe('model review runner', () => {
     assert.equal(existsSync(capturedPromptPath), false);
   });
 
+  it('executes the exact probed Cursor transport model and records fallback provenance', { skip: process.platform !== 'win32' }, async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-transport-'));
+    let capturedArgs = null;
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      fallbackReason: 'model-route-model-unsupported',
+      plan: {
+        ...reviewInput(repoRoot, 'cursor').plan,
+        model: 'cursor-grok-4.6-high-fast',
+        substitution: 'The preferred Cursor model is incompatible with ACP; used the compatible Cursor route.',
+      },
+      resolveExecutable: async () => 'cursor.exe',
+      runProcess: async invocation => {
+        capturedArgs = invocation.args;
+        return {
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          stdinDelivered: true,
+          stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(laneResult()), session_id: 'cursor-session' }),
+        };
+      },
+    });
+
+    assert.equal(result.error, null);
+    assert.deepEqual(capturedArgs.slice(0, 5), [
+      '--acp-review',
+      '--model',
+      'grok-4.6[effort=high,fast=true]',
+      '--requested-model',
+      'cursor-grok-4.6-high-fast',
+    ]);
+    assert.equal(result.evidence.runnerProvenance.model, 'cursor-grok-4.6-high-fast');
+    assert.equal(result.evidence.runnerProvenance.transport, 'acp');
+    assert.equal(result.evidence.runnerProvenance.transportModel, 'grok-4.6[effort=high,fast=true]');
+    assert.equal(result.evidence.runnerProvenance.fallbackReason, 'model-route-model-unsupported');
+  });
+
   it('redacts model-derived evidence before persistence or publication', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-redact-'));
     const token = (...parts) => parts.join('');
@@ -992,6 +1032,23 @@ describe('model review runner', () => {
       runProcess: async () => ({ exitCode: 2, stderr: 'configured model is unavailable', stdout: '', timedOut: false, stdinDelivered: true }),
     });
     assert.equal(rejectedModel.reasonCode, 'model-route-model-unavailable');
+
+    const cursorMismatch = await runModelReview({
+      ...reviewInput(repoRoot, 'cursor'),
+      transport: 'acp',
+      transportModel: 'grok-4.6[effort=high,fast=true]',
+      plan: { ...reviewInput(repoRoot, 'cursor').plan, model: 'cursor-grok-4.6-high-fast' },
+      resolveExecutable: async () => 'cursor.exe',
+      runProcess: async () => ({
+        exitCode: 1,
+        stderr: 'Cursor model compatibility failed: requested cursor-grok-4.6-high-fast; transport acp; probed value unavailable.',
+        stdout: '',
+        timedOut: false,
+        stdinDelivered: true,
+      }),
+    });
+    assert.equal(cursorMismatch.reasonCode, 'model-route-model-unsupported');
+    assert.match(cursorMismatch.error, /Cursor model compatibility failed/);
 
     const nonZero = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),

@@ -27,6 +27,7 @@ export interface ReviewHostParsedEnvelope {
 export interface ReviewHostInvocationContext {
   repoRoot: string;
   model: string | null;
+  transportModel?: string | null;
   effort: ReviewModelEffort | null;
   maxTurns: number;
   prompt: string;
@@ -55,6 +56,10 @@ export interface ReviewHostProbeResult {
   status: 'ready' | 'blocked';
   modelListed: boolean | null;
   diagnostic: string | null;
+  reasonCode?: string | null;
+  transport?: string | null;
+  resolvedModel?: string | null;
+  availableModels?: readonly string[];
 }
 
 export interface ReviewHostAdapter {
