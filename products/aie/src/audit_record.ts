@@ -166,6 +166,7 @@ function parseState(value: unknown, location: string, reasons: UiAuditReason[]):
     reason(reasons, 'malformed-state', `${location} must be an object.`);
     return null;
   }
+  const reasonCountBeforeState = reasons.length;
   rejectUnknownKeys(value, ['id', 'name', 'url', 'viewport', 'actions', 'visibleOutcome', 'screenshot', 'findings', 'blockers'], location, reasons);
   const viewport = value.viewport;
   const screenshot = value.screenshot;
@@ -188,7 +189,7 @@ function parseState(value: unknown, location: string, reasons: UiAuditReason[]):
   if (!isRecord(screenshot) || !nonEmptyString(screenshot.path) || !SCREENSHOT_PATTERN.test(screenshot.path) || !nonEmptyString(screenshot.sha256) || !SHA_PATTERN.test(screenshot.sha256.toLowerCase())) reason(reasons, 'invalid-screenshot-reference', `${location} must reference a canonical screenshots/*.png path and SHA-256.`);
   else rejectUnknownKeys(screenshot, ['path', 'sha256'], `${location}.screenshot`, reasons);
   if (!stringArray(value.findings) || !stringArray(value.blockers)) reason(reasons, 'malformed-state', `${location} findings and blockers must be string arrays.`);
-  if (reasons.some(item => item.message.startsWith(`${location} `) || item.message.startsWith(`${location}.`))) return null;
+  if (reasons.length > reasonCountBeforeState) return null;
   return {
     id: String(value.id).trim(),
     name: String(value.name).trim(),

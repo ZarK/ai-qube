@@ -246,7 +246,9 @@ function readEvidence(directory: string, issueNumber: number, headSha: string | 
     reportedOutcome: evaluation.reportedOutcome,
     reasons: evaluation.reasons,
     stale: evaluation.stale,
-    missing: evaluation.reasons.map(item => item.message),
+    missing: evaluation.reasons
+      .filter(item => item.code.startsWith('missing-') || item.code === 'current-head-unavailable')
+      .map(item => item.message),
   });
 }
 

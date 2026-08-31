@@ -141,6 +141,7 @@ describe('manual UI audit model focused tests cover every negative case above', 
     assert.equal(checked.evidence.verified, false);
     assert.equal(checked.evidence.screenshotCount, 0);
     assert.ok(checked.evidence.reasons.some(item => item.code === 'missing-audit-record'));
+    assert.deepEqual(checked.evidence.missing, ['Create audit.json with a browser-observed audit outcome.']);
     assert.match(checked.nextAction, /audit\.json/);
     assert.equal(manualUiAuditReadiness(checked, true).pending.length, 1);
   });
@@ -226,6 +227,7 @@ describe('manual UI audit model focused tests cover every negative case above', 
     assert.equal(checked.evidence.stale, true);
     assert.ok(checked.evidence.reasons.some(item => item.code === 'stale-audit-head'));
     assert.ok(checked.evidence.reasons.some(item => item.code === 'screenshot-hash-mismatch'));
+    assert.deepEqual(checked.evidence.missing, []);
   });
 
   it('rejects malformed records and unsupported fields instead of normalizing them', () => {
@@ -252,6 +254,7 @@ describe('manual UI audit model focused tests cover every negative case above', 
     assert.equal(checked.evidence.outcome, 'failed');
     assert.ok(checked.evidence.reasons.some(item => item.code === 'visible-audit-finding'));
     assert.equal(checked.evidence.gateEvidence.result, 'failed');
+    assert.deepEqual(checked.evidence.missing, []);
     assert.match(manualUiAuditReadiness(checked, true).blockers[0].message, /failed with browser-observed visible findings/);
   });
 
