@@ -19,8 +19,8 @@ function makeGitRepo() {
   return cloneGitRepo('configured', 'aie-doctor-');
 }
 
-function binRun(args, cwd = process.cwd()) {
-  return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
+function binRun(args, cwd = process.cwd(), env = process.env) {
+  return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8', env });
 }
 
 const readyGitHubReadiness = Object.freeze({
@@ -877,10 +877,34 @@ describe('doctor diagnostics', () => {
 
   it('keeps local prerequisite failures in offline diagnostics and skips only transport', () => {
     const repo = makeGitRepo();
-    const result = binRun(['doctor', '--offline', '--json'], repo);
+    const fixtureBin = mkdtempSync(join(tmpdir(), 'aie-offline-gh-'));
+    const ghMarker = join(fixtureBin, 'gh-called.txt');
+    const windows = process.platform === 'win32';
+    const ghPath = join(fixtureBin, windows ? 'gh.cmd' : 'gh');
+    writeFileSync(
+      ghPath,
+      windows
+        ? '@echo off\r\n>>"%AIE_TEST_GH_MARKER%" echo called\r\nexit /b 99\r\n'
+        : '#!/bin/sh\nprintf "called\\n" >> "$AIE_TEST_GH_MARKER"\nexit 99\n',
+    );
+    if (!windows) chmodSync(ghPath, 0o755);
+    const pathValue = [fixtureBin, process.env.PATH ?? ''].join(delimiter);
+    const env = {
+      ...process.env,
+      PATH: pathValue,
+      AIE_TEST_GH_MARKER: ghMarker,
+    };
+    if (windows) env.Path = pathValue;
+    const result = binRun(['doctor', '--offline', '--json'], repo, env);
+    assert.notEqual(result.stdout.trim(), '', result.stderr);
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(result.status, 1);
+    assert.equal(existsSync(ghMarker), false);
+    assert.equal(parsed.githubReadiness.status, 'unverified');
+    assert.equal(parsed.githubReadiness.cliVersion, null);
+    assert.equal(parsed.labelsError, 'Offline mode skipped every GitHub CLI and provider probe.');
+    assert.equal(parsed.queueError, 'Offline mode skipped every GitHub CLI and provider probe.');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'head').reasonCode, 'head-missing');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote').reasonCode, 'remote-missing');
     assert.equal(parsed.prerequisites.checks.find(check => check.id === 'remote-transport').status, 'unverified');

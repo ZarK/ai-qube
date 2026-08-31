@@ -71,7 +71,7 @@ class DoctorDiagnosticsBuilder {
     const nodeStatus = this.checkNodeVersion();
     const branch = repository.activeRef?.name ?? 'unknown';
     const isWorktree = repository.worktree.linked;
-    const githubUsable = githubReadiness.status === 'ready' || githubReadiness.status === 'unverified';
+    const githubUsable = this.hasUsableGitHubConnection(githubReadiness);
     const labelStatus = effectiveConfig.providers.work.kind !== 'github'
       ? this.notRequiredLabels()
       : githubUsable
@@ -433,8 +433,13 @@ class DoctorDiagnosticsBuilder {
     if (readiness.status === 'not-required') return { available: true, authenticated: true };
     return {
       available: readiness.reasonCode !== 'missing-cli',
-      authenticated: readiness.status === 'ready' || readiness.status === 'unverified',
+      authenticated: this.hasUsableGitHubConnection(readiness),
     };
+  }
+
+  private hasUsableGitHubConnection(readiness: GitHubReadiness): boolean {
+    return readiness.status === 'ready'
+      || (readiness.status === 'unverified' && Boolean(readiness.cliVersion && readiness.host && readiness.repository));
   }
 
   private notRequiredLabels(): { ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError?: string } {
