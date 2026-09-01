@@ -32,7 +32,7 @@ Host-local review uses fresh subagents inside the selected harness and can use t
 
 The serialized profile keeps the following dimensions separate: task read and write; subagent invocation; host-guided and isolated review; model catalog and model-bound invocation; Stop hooks, idle events, selected-session delivery, and wait behavior; session targeting and resume; process restart; authentication; repository trust; read-only sandboxing; and permission approval. A direct prompt or Stop hook does not imply wait, selected-session, resume, or restart support.
 
-OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Umpire reports these integrations as unverified until it observes a valid event. Cursor has no Umpire continuation asset, so Umpire setup records no continuation delivery for Cursor and does not claim support.
+OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Run `qube aiu verify --tool <host> --json` to test the native allow and continue paths in a disposable repository. The command warns before model use and records active evidence only after the harness consumes a continuation response and completes the next turn. Grok Build remains experimental. Cursor has no Umpire continuation asset, so Umpire setup records no continuation delivery for Cursor and does not claim support.
 
 ## Runtime readiness
 

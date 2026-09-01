@@ -6,6 +6,12 @@ const require = createRequire(import.meta.url);
 const adapter = require("../dist/index.js");
 
 describe("grok-build adapter", () => {
+  it("builds the native continuation verification invocation", () => {
+    assert.deepEqual(adapter.buildGrokBuildVerifyInvocation({ root: "/repo", prompt: "verify", model: "grok-test" }), {
+      args: ["--cwd", "/repo", "--single", "verify", "--output-format", "streaming-json", "--permission-mode", "dontAsk", "--no-subagents", "--disable-web-search", "--model", "grok-test"],
+    });
+  });
+
   it("depends only on core and exports the canonical host profile", () => {
     const manifest = require("../package.json");
     assert.deepEqual(Object.keys(manifest.dependencies), ["@tjalve/qube-core"]);

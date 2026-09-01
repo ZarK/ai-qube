@@ -1,7 +1,7 @@
 import { defineCommand, defineExample, defineFlag } from "@tjalve/qube-cli/metadata";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 
-import { AIU_CONFIG_FILENAME, AIU_POST_ISSUE_SCOPES } from "./config.js";
+import { AIU_CONFIG_FILENAME, AIU_HOSTS, AIU_POST_ISSUE_SCOPES } from "./config.js";
 import { AIU_INIT_TOOLS } from "./init.js";
 
 const jsonFlag = defineFlag({
@@ -616,6 +616,64 @@ export const hookStopCommand = defineCommand({
   ],
 });
 
+export const verifyCommand = defineCommand({
+  kind: "command",
+  name: "verify",
+  description: "Run an explicit, bounded native continuation lifecycle verification.",
+  flags: [
+    jsonFlag,
+    defineFlag({
+      name: "tool",
+      description: "Agent harness to verify through its registered native continuation adapter.",
+      type: "option",
+      options: AIU_HOSTS,
+      required: true,
+    }),
+    defineFlag({
+      name: "model",
+      description: "Use an explicit harness model. OpenCode otherwise selects a listed free model.",
+      type: "string",
+    }),
+    defineFlag({
+      name: "timeout",
+      description: "Bound each native lifecycle scenario in milliseconds.",
+      type: "integer",
+      defaultValue: 180000,
+    }),
+  ],
+  examples: [
+    defineExample({
+      description: "Verify OpenCode with a listed free model and render stable JSON.",
+      command: "aiu verify --tool opencode --json",
+    }),
+    defineExample({
+      description: "Verify Codex with an explicit model selection.",
+      command: "aiu verify --tool codex --model gpt-5.4-mini --json",
+    }),
+  ],
+  output: { formats: ["human", "json"], defaultFormat: "human" },
+  interactions: {
+    json: true,
+    dryRun: { supported: false, reason: "Verification is already explicit and must observe a real native lifecycle." },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false,
+  },
+  mutation: { categories: ["local-files"] },
+  errors: [
+    { kind: "missing-executable", description: "The selected harness executable is unavailable." },
+    { kind: "unsupported-version", description: "The selected harness version is outside the maintained continuation contract." },
+    { kind: "authentication-missing", description: "The selected harness has no usable authentication state." },
+    { kind: "trust-prerequisite-unmet", description: "The selected harness did not accept the disposable repository integration." },
+    { kind: "native-response-invalid", description: "The native harness response did not prove the required lifecycle." },
+  ],
+  exitCodes: [
+    { code: 0, category: "success", description: "Both native lifecycle scenarios passed and compatible evidence was recorded." },
+    { code: 2, category: "usage", description: "Command usage was invalid." },
+    { code: 1, category: "validation", description: "Verification was blocked, failed, timed out, or aborted." },
+  ],
+});
+
 export const whipCommand = defineCommand({
   kind: "command",
   name: "whip",
@@ -767,5 +825,5 @@ export const whipCommand = defineCommand({
 });
 
 export const AIU_COMMAND_REGISTRY = createCommandRegistry({
-  commands: [configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, whipCommand],
+  commands: [configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, verifyCommand, whipCommand],
 });

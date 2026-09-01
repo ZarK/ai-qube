@@ -18,7 +18,7 @@ import {
   loadAiuConfig,
   type AiuPostIssueScope,
 } from "./config.js";
-import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, whipCommand } from "./command_registry.js";
+import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, pathsCommand, statusCommand, verifyCommand, whipCommand } from "./command_registry.js";
 import { AIU_DECISION_MODES, AIU_DECISION_PROMPT_KINDS } from "./decision.js";
 import { formatAiuDoctorReport, formatAiuPaths, getAiuResolvedPaths, runAiuDoctor } from "./doctor.js";
 import { AIU_HOST_CAPABILITY_SUPPORT, AIU_HOST_SUPPORT_LEVELS, getAllAiuHostCapabilityProfiles } from "./host_policy.js";
@@ -36,6 +36,7 @@ import {
   AIU_TRUST_LEVELS,
 } from "./state.js";
 import { AIU_TRUSTED_ADAPTER_ERROR_CODES } from "./trusted_adapter.js";
+import { runAiuVerify } from "./verify.js";
 import { AIU_WHIP_ERROR_CODES, AIU_WHIP_STATE_SCHEMA_VERSION, AIU_WHIP_TASK_SOURCES, AIU_WHIP_TASK_STATUSES, formatAiuWhipReport, runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
 
 interface PackageJson {
@@ -191,6 +192,34 @@ export const aiuCli = createCli({
         stderr: result.stderr,
       };
     }),
+    createCommand(verifyCommand, async (context) => {
+      const tool = readVerifyTool(context.flags.tool);
+      if (tool === undefined) return { stderr: `Invalid --tool value: ${String(context.flags.tool)}\n`, exitCode: 2 };
+      const model = typeof context.flags.model === "string" ? context.flags.model : undefined;
+      const timeoutMs = typeof context.flags.timeout === "number" ? context.flags.timeout : undefined;
+      if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+        return { stderr: "Invalid --timeout value: expected a positive number of milliseconds.\n", exitCode: 2 };
+      }
+      const report = await runAiuVerify({
+        tool,
+        ...(model ? { model } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        onWarning: (warning) => process.stderr.write(`Warning: ${warning}\n`),
+      });
+      const human = [
+        `Verification: ${report.tool} ${report.status}`,
+        `Reason: ${report.reasonCode}`,
+        `Observed: ${report.observedAt}`,
+        report.discovery ? `Harness: ${report.discovery.executableIdentity} ${report.discovery.harnessVersion}` : undefined,
+        report.discovery?.model ? `Model: ${report.discovery.model}` : undefined,
+        `Next: ${report.nextAction}`,
+      ].filter((line): line is string => line !== undefined).join("\n");
+      return {
+        human,
+        json: { verification: report },
+        exitCode: report.status === "passed" ? 0 : 1,
+      };
+    }),
     createCommand(whipCommand, (context) => {
       const configPath = typeof context.flags.config === "string" ? context.flags.config : undefined;
       const configLoad = loadAiuConfig(configPath ? { configPath } : {});
@@ -334,6 +363,15 @@ export const aiuCli = createCli({
             maxLogEntryBytes: 8192,
           },
         },
+        verification: {
+          schemaVersion: 1,
+          contractVersion: 1,
+          command: "aiu verify --tool <host> --json",
+          tools: AIU_HOSTS,
+          statuses: ["passed", "blocked", "failed", "aborted"],
+          evidenceEventState: "consumed",
+          evidenceFields: ["contractVersion", "harnessVersion", "surface", "packedArtifactDigest", "managedAssetDigest", "relevantConfigDigest", "trustedStateFingerprint", "eventState", "sessionId", "observedAt"],
+        },
         promptRendering: {
           fingerprintInputs: ["decisionKind", "selectedItem", "reasonCodes", "sourceTimestamps", "body"],
           customizableSections: ["work", "planning", "quality", "whip"],
@@ -450,6 +488,12 @@ export const aiuCli = createCli({
 
 function readHookStopTool(value: unknown): "codex" | "claude-code" | "grok-build" | undefined {
   return value === "codex" || value === "claude-code" || value === "grok-build" ? value : undefined;
+}
+
+function readVerifyTool(value: unknown): (typeof AIU_HOSTS)[number] | undefined {
+  return typeof value === "string" && AIU_HOSTS.includes(value as (typeof AIU_HOSTS)[number])
+    ? value as (typeof AIU_HOSTS)[number]
+    : undefined;
 }
 
 function readWhipAction(value: unknown): AiuWhipReport["action"] | undefined {

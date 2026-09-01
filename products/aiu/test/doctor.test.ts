@@ -6,10 +6,11 @@ import { afterEach, describe, it } from "node:test";
 
 import { getAiuResolvedPaths, runAiuDoctor } from "../dist/src/doctor.js";
 import { getAiuPackageVersion } from "../dist/src/assets.js";
-import { getDefaultAiuConfig } from "../dist/src/config.js";
+import { getDefaultAiuConfig, loadAiuConfig, type AiuHost } from "../dist/src/config.js";
 import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "../dist/src/continuation_store.js";
 import { getAiuHostCapabilityProfile } from "../dist/src/host_policy.js";
 import { inspectGrokFolderTrust } from "../dist/src/grok_trust.js";
+import { createAiuManagedAssetDigest, createAiuRelevantConfigDigest } from "../dist/src/verify.js";
 
 const tempRoots: string[] = [];
 
@@ -218,16 +219,6 @@ describe("doctor diagnostics", () => {
       trustedStateCommands,
     });
     await writeManagedHostFiles(repoRoot, "opencode");
-    const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
-    writeAiuHostActivation(paths, {
-      schemaVersion: 1,
-      host: "opencode",
-      delivery: "host",
-      event: "plugin-event",
-      trustedStateFingerprint: createAiuTrustedStateFingerprint(trustedStateCommands),
-      observedAt: "2026-08-20T12:00:00.000Z",
-    });
-
     const report = runAiuDoctor({ cwd: repoRoot });
     const packageCheck = report.checks.find((check) => check.kind === "opencode-plugin-package-unresolved");
     const hostProbe = report.hostProbes.find((probe) => probe.host === "opencode");
@@ -359,7 +350,7 @@ describe("doctor diagnostics", () => {
   it("does not claim effective continuation before a managed host integration runs", async () => {
     const repoRoot = await createRepoRoot();
     const grokHome = await createTempRoot("aiu-grok-home-probe-unverified-");
-    const trustedStateFingerprint = await writeContinuationHostConfig(repoRoot);
+    await writeContinuationHostConfig(repoRoot);
     for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
@@ -387,7 +378,7 @@ describe("doctor diagnostics", () => {
   it("reports effective current-issue recovery only after each managed integration runs", async () => {
     const repoRoot = await createRepoRoot();
     const grokHome = await createTempRoot("aiu-grok-home-probe-active-");
-    const trustedStateFingerprint = await writeContinuationHostConfig(repoRoot);
+    await writeContinuationHostConfig(repoRoot);
     for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
@@ -395,14 +386,12 @@ describe("doctor diagnostics", () => {
     await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
     const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
     const observedAt = "2026-08-20T12:00:00.000Z";
-    for (const host of ["codex", "claude-code", "grok-build"] as const) {
-      writeAiuHostActivation(paths, { schemaVersion: 1, host, delivery: "stdout", event: "stop-hook", trustedStateFingerprint, observedAt });
-    }
-    writeAiuHostActivation(paths, { schemaVersion: 1, host: "opencode", delivery: "host", event: "plugin-event", trustedStateFingerprint, observedAt });
+    for (const host of ["codex", "claude-code", "grok-build"] as const) writeCompatibleActivation(repoRoot, paths, host, observedAt);
+    writeCompatibleActivation(repoRoot, paths, "opencode", observedAt);
     const previousHome = process.env.GROK_HOME;
     process.env.GROK_HOME = grokHome;
     try {
-      const report = runAiuDoctor({ cwd: repoRoot });
+      const report = runAiuDoctor({ cwd: repoRoot, harnessVersions: verificationHarnessVersions });
 
       assert.equal(report.hostProbes.every((probe) => probe.state === "active"), true);
       assert.equal(report.hostProbes.every((probe) => probe.currentIssueRecovery), true);
@@ -434,14 +423,7 @@ describe("doctor diagnostics", () => {
     });
     await writeManagedHostFiles(repoRoot, "codex");
     const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
-    writeAiuHostActivation(paths, {
-      schemaVersion: 1,
-      host: "codex",
-      delivery: "stdout",
-      event: "stop-hook",
-      trustedStateFingerprint: createAiuTrustedStateFingerprint(trustedStateCommands),
-      observedAt: "2026-08-20T12:00:00.000Z",
-    });
+    writeCompatibleActivation(repoRoot, paths, "codex", "2026-08-20T12:00:00.000Z");
 
     const report = runAiuDoctor({ cwd: repoRoot });
     const probe = report.hostProbes.find((item) => item.host === "codex");
@@ -470,21 +452,18 @@ describe("doctor diagnostics", () => {
     });
     await writeManagedHostFiles(repoRoot, "codex");
     const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
+    const currentConfig = loadAiuConfig({ cwd: repoRoot }).config;
     writeAiuHostActivation(paths, {
-      schemaVersion: 1,
-      host: "codex",
-      delivery: "stdout",
-      event: "stop-hook",
+      ...compatibleActivation(repoRoot, currentConfig, "codex", "2026-08-20T12:00:00.000Z"),
       trustedStateFingerprint: createAiuTrustedStateFingerprint(previousCommands),
-      observedAt: "2026-08-20T12:00:00.000Z",
     });
 
-    const report = runAiuDoctor({ cwd: repoRoot });
+    const report = runAiuDoctor({ cwd: repoRoot, harnessVersions: verificationHarnessVersions });
     const probe = report.hostProbes.find((item) => item.host === "codex");
 
     assert.equal(probe?.state, "unverified");
     assert.equal(probe?.currentIssueRecovery, false);
-    assert.match(probe?.reason ?? "", /current trusted state command configuration/);
+    assert.match(probe?.reason ?? "", /stale or incompatible/);
   });
 
   it("does not treat a missing trust file as a trusted Grok project hook", async () => {
@@ -756,6 +735,42 @@ async function writeContinuationHostConfig(repoRoot: string): Promise<string> {
     trustedStateCommands,
   });
   return createAiuTrustedStateFingerprint(trustedStateCommands);
+}
+
+const verificationHarnessVersions: Readonly<Record<AiuHost, string>> = Object.freeze({
+  opencode: "1.18.25",
+  codex: "0.147.0",
+  "claude-code": "2.0.0",
+  "grok-build": "1.0.13",
+});
+
+function writeCompatibleActivation(
+  repoRoot: string,
+  paths: ReturnType<typeof resolveAiuContinuationPaths>,
+  host: AiuHost,
+  observedAt: string,
+): void {
+  writeAiuHostActivation(paths, compatibleActivation(repoRoot, loadAiuConfig({ cwd: repoRoot }).config, host, observedAt));
+}
+
+function compatibleActivation(repoRoot: string, config: ReturnType<typeof getDefaultAiuConfig>, host: AiuHost, observedAt: string) {
+  const isOpenCode = host === "opencode";
+  return {
+    schemaVersion: 2 as const,
+    contractVersion: 1 as const,
+    host,
+    delivery: isOpenCode ? "host" as const : "stdout" as const,
+    event: isOpenCode ? "plugin-event" as const : "stop-hook" as const,
+    eventState: "consumed" as const,
+    harnessVersion: verificationHarnessVersions[host],
+    surface: isOpenCode ? "plugin-event" : "stop-hook",
+    packedArtifactDigest: "1".repeat(64),
+    managedAssetDigest: createAiuManagedAssetDigest(host, repoRoot),
+    relevantConfigDigest: createAiuRelevantConfigDigest(config, host),
+    trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
+    sessionId: `${host}-session`,
+    observedAt,
+  };
 }
 
 async function readText(pathValue: string): Promise<string> {

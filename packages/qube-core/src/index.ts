@@ -855,7 +855,7 @@ export const qubeCommandSurfaceContracts = [
   {
     productId: "umpire",
     packageName: "@tjalve/aiu",
-    commandPattern: "aiu config|doctor|status|paths|init|hook-stop|whip",
+    commandPattern: "aiu config|doctor|status|paths|init|verify|hook-stop|whip",
     classification: "qube-facing workflow command",
     qubeFacing: true,
     schemaRequired: true,

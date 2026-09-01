@@ -19,7 +19,7 @@ const skillAsset = Object.freeze({ id: "skill", relativePath: "plugins/ai-umpire
 export const codexContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "codex",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: "0.147.0", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["Stop"]),
   delivery: Object.freeze({ method: "stdout-json", sessionScope: "current-session" }),
   umpireModes: Object.freeze(["continue", "repair", "stop"]),
@@ -28,6 +28,12 @@ export const codexContinuationDeclaration = defineContinuationDeclaration({
   activationEvidence: Object.freeze({ event: "stop-hook", delivery: "stdout", requiresSessionId: true }),
   currentIssueRecovery: true,
 });
+
+export function buildCodexVerifyInvocation(input: { readonly root: string; readonly prompt: string; readonly model?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["exec", "--cd", input.root, "--json", "--ephemeral", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
 
 export const codexContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,

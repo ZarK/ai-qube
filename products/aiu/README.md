@@ -78,13 +78,26 @@ Whip tasks are optional idle maintenance prompts. They are considered only after
 higher-priority continuation work is unavailable, and prompt delivery alone never
 completes a task.
 
+Run native lifecycle verification explicitly after initialization:
+
+```sh
+pnpm exec aiu verify --tool opencode --json
+```
+
+Verification warns before it launches a harness or model. It creates a disposable
+Git repository, installs a packed copy of AIU with lifecycle scripts disabled,
+and checks both the allow and continue paths. OpenCode verification selects a
+listed free model when `--model` is absent. If no free model is listed, the
+command stops and asks for an explicit model. Successful verification records
+compatible consumed-event evidence for `doctor`; normal hook delivery does not.
+
 ## Host Support
 
 | Host | Status | Init target | Notes |
 | --- | --- | --- | --- |
 | OpenCode | Supported | `aiu init --tool opencode` | A named project plugin delegates `/make-it-so` to the exact package version declared in `.opencode/package.json`. |
-| Codex CLI/Desktop | Experimental | `aiu init --tool codex` | Stop-hook behavior must be explicitly trusted and enabled. |
-| Claude Code | Experimental | `aiu init --tool claude-code` | Project settings are preserved on conflict. |
+| Codex CLI/Desktop | Experimental | `aiu init --tool codex` | Stop-hook behavior must be explicitly trusted and verified. |
+| Claude Code | Experimental | `aiu init --tool claude-code` | Project settings are preserved on conflict; continuation must be explicitly verified. |
 | Generic MCP, Git hooks, GitHub Actions | Not a continuation host | none | These are not interactive idle-session continuation surfaces. |
 
 ## Safe Uninstall
@@ -105,6 +118,7 @@ git diffs before deleting host configuration.
 - `doctor`, `paths`, `config`, `status`, and `init --dry-run` are inspection-first commands.
 - AIU does not stage, commit, push, open pull requests, close issues, delete
   files, install package managers, or create provider credentials.
+- AIU does not install, authenticate, trust, restart, or wrap an agent harness.
 - Local `.qube/aiu/` state, locks, and logs are diagnostics, not provider truth.
 - Use `pnpm install --frozen-lockfile --ignore-scripts` for repository
   development and trusted publishing for package releases.

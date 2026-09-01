@@ -3,7 +3,7 @@ import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
 
 import type { AiuConfig, AiuHost } from "./config.js";
 import { loadAiuConfig } from "./config.js";
-import { createAiuTrustedStateFingerprint, resolveAiuContinuationPaths, writeAiuHostActivation } from "./continuation_store.js";
+import { resolveAiuContinuationPaths } from "./continuation_store.js";
 import {
   appendAiuContinuationSafetyLog,
   continuationSafetyCooldownActive,
@@ -248,9 +248,6 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
       ], decision, prompt);
     }
     appendHookDecisionLog(transaction, decision.reasonCodes[0] ?? decision.kind, [], decision, prompt);
-    const activationDiagnostic = recordStopHookActivation(configLoad.repoRoot, configLoad.config, options.tool, observedAt);
-    if (activationDiagnostic) diagnostics.push(activationDiagnostic);
-
     return Object.freeze({
       tool: options.tool,
       decision: "block" as const,
@@ -307,32 +304,6 @@ function appendHookDecisionLog(
     ...(prompt ? { promptFingerprint: prompt.fingerprint } : {}),
     ...(suppressions.length > 0 ? { suppressions } : {}),
   });
-}
-
-function recordStopHookActivation(
-  repoRoot: string,
-  config: AiuConfig,
-  host: AiuHookStopOptions["tool"],
-  observedAt: string,
-): AiuHookStopDiagnostic | undefined {
-  try {
-    const evidence = getAiuContinuationAdapter(host).declaration.activationEvidence;
-    writeAiuHostActivation(resolveAiuContinuationPaths(repoRoot, config), {
-      schemaVersion: 1,
-      host,
-      delivery: evidence.delivery,
-      event: evidence.event,
-      trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
-      observedAt,
-    });
-    return undefined;
-  } catch (error) {
-    return diagnostic(
-      "warning",
-      "host-activation-write-failed",
-      `Umpire could not record ${host} Stop-hook activation: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }
 
 export function formatHookStopJson(result: AiuHookStopResult): string {

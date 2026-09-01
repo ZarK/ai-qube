@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { opencodeContinuationAdapter, opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
+import { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
 
 describe("opencode adapter", () => {
+  it("builds the native continuation verification invocation", () => {
+    assert.deepEqual(buildOpenCodeVerifyInvocation({ root: "/repo", prompt: "verify", model: "opencode/test-free", attachUrl: "http://127.0.0.1:4096" }), {
+      args: ["run", "--attach", "http://127.0.0.1:4096", "--dir", "/repo", "--format", "json", "--print-logs", "--log-level", "INFO", "--model", "opencode/test-free", "verify"],
+    });
+  });
+
   it("exposes one canonical OpenCode host profile", () => {
     assert.equal(opencodeHostProfile.id, "opencode");
     assert.deepEqual(opencodeHostProfile.executables, { names: ["opencode"], windowsNames: ["opencode.exe"] });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildCodexVerifyInvocation,
   codexHostProfile,
   codexContinuationAdapter,
   isolatedReviewHostAdapter,
@@ -9,6 +10,12 @@ import {
 } from "../dist/index.js";
 
 describe("codex adapter", () => {
+  it("builds the native continuation verification invocation", () => {
+    assert.deepEqual(buildCodexVerifyInvocation({ root: "/repo", prompt: "verify", model: "gpt-test" }), {
+      args: ["exec", "--cd", "/repo", "--json", "--ephemeral", "--model", "gpt-test", "verify"],
+    });
+  });
+
   it("owns a dedicated Codex Stop codec", () => {
     const payload = { cwd: "/repo", hook_event_name: "Stop", session_id: "codex-1", turn_id: "t1", permission_mode: "default", model: "gpt", stop_hook_active: false };
     const decoded = codexContinuationAdapter.decodeEvent(payload);

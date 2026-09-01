@@ -733,7 +733,7 @@ const defaultsFlag = defineFlag({
 const initCommand = defineCommand({
   kind: "command",
   name: "init",
-  description: "Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow.",
+  description: "Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. Native continuation verification is optional, explicit, and can incur harness model cost.",
   arguments: [
     defineArgument({
       name: "target",
@@ -849,7 +849,8 @@ const initCommand = defineCommand({
     { description: "Initialize user-global QUBE choices from any directory.", command: "qube init --global" },
     { description: "Initialize the current repository.", command: "qube init" },
     { description: "Initialize an explicit repository target.", command: "qube init <target>" },
-    { description: "Initialize Git and QUBE in a prospective repository target.", command: "qube init <target> --git-init" }
+    { description: "Initialize Git and QUBE in a prospective repository target.", command: "qube init <target> --git-init" },
+    { description: "After init, explicitly verify one native continuation lifecycle; this can use a model or incur cost.", command: "qube aiu verify --tool opencode --json" }
   ],
   interactions: {
     json: true,

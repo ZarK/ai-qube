@@ -469,8 +469,8 @@ async function createFakeComponentTarball(component, root, packDir) {
         "});",
         "const profiles = {",
         "  opencode: profile('opencode', 'OpenCode', 'AGENTS.md', '.opencode/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'supported', umpire: 'supported' }),",
-        "  codex: profile('codex', 'Codex', 'AGENTS.md', '.agents/skills/make-it-so/SKILL.md', 'skill', '$make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'experimental' }),",
-        "  'claude-code': profile('claude-code', 'Claude Code', 'CLAUDE.md', '.claude/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'unsupported', umpire: 'experimental' }),",
+        "  codex: profile('codex', 'Codex', 'AGENTS.md', '.agents/skills/make-it-so/SKILL.md', 'skill', '$make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'supported' }),",
+        "  'claude-code': profile('claude-code', 'Claude Code', 'CLAUDE.md', '.claude/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'unsupported', umpire: 'supported' }),",
         "  'grok-build': profile('grok-build', 'Grok Build', 'AGENTS.md', '.grok/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'experimental' }),",
         "  cursor: profile('cursor', 'Cursor', 'AGENTS.md', '.cursor/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'unsupported', localReview: 'unsupported', isolatedReview: 'supported', models: 'supported', umpire: 'unsupported' }),",
         "};",
@@ -502,6 +502,11 @@ async function createFakeComponentTarball(component, root, packDir) {
       path.join(componentRoot, "index.js"),
       [
         "export const AIU_POST_ISSUE_SCOPES = Object.freeze(['ready', 'standard', 'custom']);",
+        "export function loadAiuConfig({ cwd }) { return { repoRoot: cwd, config: { hosts: { enabled: [] } } }; }",
+        "export function resolveAiuContinuationPaths(repoRoot) { return { stateDir: repoRoot + '/.qube/aiu/state' }; }",
+        "export function readAiuHostActivation() { return undefined; }",
+        "export function readAiuHarnessVersion() { return undefined; }",
+        "export function activationMatchesCurrentConfiguration() { return false; }",
         "",
       ].join("\n")
     );

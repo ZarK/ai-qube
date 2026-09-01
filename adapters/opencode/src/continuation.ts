@@ -30,7 +30,7 @@ const packageAsset = Object.freeze({
 export const opencodeContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "opencode",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "plugin-event", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "plugin-event", minimumVersion: "1.18.25", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["session.idle", "session.status", "idle", "session-idle", "session-status"]),
   delivery: Object.freeze({ method: "host-command", sessionScope: "selected-session" }),
   umpireModes: Object.freeze(["continue", "repair", "wait", "stop"]),
@@ -39,6 +39,12 @@ export const opencodeContinuationDeclaration = defineContinuationDeclaration({
   activationEvidence: Object.freeze({ event: "plugin-event", delivery: "host", requiresSessionId: true }),
   currentIssueRecovery: true,
 });
+
+export function buildOpenCodeVerifyInvocation(input: { readonly root: string; readonly prompt: string; readonly model?: string; readonly attachUrl?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["run", ...(input.attachUrl ? ["--attach", input.attachUrl] : []), "--dir", input.root, "--format", "json", "--print-logs", "--log-level", "INFO", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
 
 export const opencodeContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,

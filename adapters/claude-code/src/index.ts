@@ -133,4 +133,4 @@ export const claudeCodeHostProfile = defineAgentHostProfile({
   }),
 } satisfies AgentHostProfile);
 
-export { claudeCodeContinuationAdapter, claudeCodeContinuationDeclaration } from "./continuation.js";
+export { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeContinuationDeclaration } from "./continuation.js";

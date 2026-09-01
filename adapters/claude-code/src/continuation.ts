@@ -13,7 +13,7 @@ const settingsAsset = Object.freeze({ id: "settings-stop-hook", relativePath: ".
 export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "claude-code",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: "2.0.0", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["Stop"]),
   delivery: Object.freeze({ method: "stdout-json", sessionScope: "current-session" }),
   umpireModes: Object.freeze(["continue", "repair", "stop"]),
@@ -22,6 +22,12 @@ export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
   activationEvidence: Object.freeze({ event: "stop-hook", delivery: "stdout", requiresSessionId: true }),
   currentIssueRecovery: true,
 });
+
+export function buildClaudeCodeVerifyInvocation(input: { readonly prompt: string; readonly model?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
 
 export const claudeCodeContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,

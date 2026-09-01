@@ -62,6 +62,21 @@ qube aiq doctor --format json
 qube aiu status --json
 ```
 
+## Umpire continuation
+
+Codex Umpire continuation uses a managed Stop hook. Review and trust the hook,
+then run the explicit native lifecycle verification:
+
+```sh
+qube aiu verify --tool codex --json
+qube aiu doctor --json
+```
+
+Verification warns before model use. It checks an allow path and a continue path
+in a disposable repository with a packed AIU artifact. QUBE records active
+evidence only when Codex consumes the continuation response and completes the
+next turn. QUBE does not install, authenticate, or trust Codex.
+
 Treat Codex local todos as working memory. Use GitHub issue comments,
 checklists, pull requests, and QUBE evidence files for durable shared state.
 
