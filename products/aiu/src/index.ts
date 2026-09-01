@@ -14,6 +14,7 @@ export {
   initCommand,
   pathsCommand,
   statusCommand,
+  verifyCommand,
   whipCommand,
 } from "./command_registry.js";
 export {
@@ -109,6 +110,16 @@ export {
   runAiuTrustedStateAdapter,
   toAiuTrustedStateCommandRef,
 } from "./trusted_adapter.js";
+export {
+  AIU_VERIFICATION_CONTRACT_VERSION,
+  AIU_VERIFICATION_SCHEMA_VERSION,
+  activationMatchesCurrentConfiguration,
+  assertVerificationPath,
+  createAiuManagedAssetDigest,
+  createAiuRelevantConfigDigest,
+  readAiuHarnessVersion,
+  runAiuVerify,
+} from "./verify.js";
 export {
   AIU_DEFAULT_WHIP_TASKS,
   AIU_WHIP_ERROR_CODES,
@@ -251,6 +262,17 @@ export type {
   AiuTrustedStateAdapterResult,
   AiuTrustedStateParseInput,
 } from "./trusted_adapter.js";
+export type {
+  AiuPreparedVerification,
+  AiuVerificationDiscovery,
+  AiuVerificationReasonCode,
+  AiuVerificationReport,
+  AiuVerificationRuntime,
+  AiuVerificationScenario,
+  AiuVerificationStatus,
+  AiuVerificationWorkspaceSummary,
+  AiuVerifyOptions,
+} from "./verify.js";
 export type {
   AiuWhipContinuationDecision,
   AiuWhipContinuationInput,

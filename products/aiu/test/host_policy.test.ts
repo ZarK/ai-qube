@@ -85,10 +85,10 @@ describe("host runtime policy", () => {
     );
     const experimental = evaluateAiuHostRuntimePolicy(
       {
-        enabled: ["codex"],
+        enabled: ["grok-build"],
         capabilities: {},
-        modes: { codex: ["continue"] },
-        stopHookBlocking: { codex: true },
+        modes: { "grok-build": ["continue"] },
+        stopHookBlocking: { "grok-build": true },
       },
       ["continue", "repair", "wait", "stop"],
     );
@@ -100,10 +100,10 @@ describe("host runtime policy", () => {
   it("falls back to global continuation modes when host modes are not explicit", () => {
     const report = evaluateAiuHostRuntimePolicy(
       {
-        enabled: ["codex"],
+        enabled: ["grok-build"],
         capabilities: {},
         modes: {},
-        stopHookBlocking: { codex: true },
+        stopHookBlocking: { "grok-build": true },
       },
       ["continue", "stop"],
     );
@@ -133,7 +133,7 @@ describe("host runtime policy", () => {
       await writeFile(path.join(repoRoot, ".qube", "aiu", "config.json"), JSON.stringify({
         version: 1,
         hosts: {
-          enabled: ["opencode", "codex"],
+          enabled: ["opencode", "grok-build"],
           capabilities: {
             opencode: {
               promptDelivery: "none",
@@ -141,9 +141,9 @@ describe("host runtime policy", () => {
           },
           modes: {
             opencode: ["continue", "stop"],
-            codex: ["continue"],
+            "grok-build": ["continue"],
           },
-          stopHookBlocking: { codex: true },
+          stopHookBlocking: { "grok-build": true },
         },
       }));
 

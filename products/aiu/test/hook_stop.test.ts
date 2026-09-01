@@ -41,13 +41,6 @@ describe("provider-neutral stop hooks", () => {
       assert.equal(state?.deliveryState, "emitted");
       assert.equal(state?.ownerSessionId, "codex-session");
       assert.equal(state?.nativeLoopCount, 1);
-      const activation = readAiuHostActivation(resolveAiuContinuationPaths(target, getDefaultAiuConfig()), "codex");
-      assert.equal(activation?.schemaVersion, 1);
-      assert.equal(activation?.host, "codex");
-      assert.equal(activation?.delivery, "stdout");
-      assert.equal(activation?.event, "stop-hook");
-      assert.match(activation?.trustedStateFingerprint ?? "", /^[a-f0-9]{64}$/);
-      assert.equal(activation?.observedAt, observedAt);
     } finally {
       await rm(target, { recursive: true, force: true });
     }

@@ -1186,6 +1186,8 @@ describe("qube composer CLI", () => {
       assert.equal(componentRow.continuationSafety.applicable, expected.support.umpire !== "unsupported", host);
       assert.equal(componentRow.continuationSafety.state, expected.support.umpire === "unsupported" ? "not-applicable" : "shared-persistent", host);
       assert.deepEqual(componentRow.continuationSafety.deliveryStates, expected.support.umpire === "unsupported" ? [] : ["reserved", "emitted", "consumed"], host);
+      assert.equal(componentRow.continuationSafety.verification.state, expected.support.umpire === "unsupported" ? "not-applicable" : "missing", host);
+      assert.equal(componentRow.continuationSafety.verification.eventState, "none", host);
 
     }
   });

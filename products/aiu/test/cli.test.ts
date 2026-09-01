@@ -233,7 +233,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.package.name, "@tjalve/aiu");
 
     const commandNames = parsed.commands.map((command) => command.name);
-    assert.deepEqual(commandNames, ["config", "doctor", "hook-stop", "init", "paths", "schema", "status", "whip"]);
+    assert.deepEqual(commandNames, ["config", "doctor", "hook-stop", "init", "paths", "schema", "status", "verify", "whip"]);
 
     const config = parsed.commands.find((command) => command.name === "config");
     assert.ok(config);
@@ -581,6 +581,16 @@ describe("metadata-backed CLI", () => {
     assert.equal(unknownFlag.stdout, "");
     assert.match(unknownFlag.stderr, /Unknown flag: --jsoon/);
     assert.match(unknownFlag.stderr, /Did you mean "--json"/);
+  });
+
+  it("rejects a non-positive verification timeout before harness discovery", async () => {
+    const result = await runCli(["verify", "--tool", "opencode", "--timeout", "0", "--json"]);
+
+    assert.equal(result.exitCode, 2);
+    const parsed = JSON.parse(result.stdout) as { error: { likelyCause: string } };
+    assert.match(parsed.error.likelyCause, /expected a positive number of milliseconds/);
+    assert.equal(result.stderr, "");
+    assert.doesNotMatch(result.stdout, /Verification launches/);
   });
 
 });

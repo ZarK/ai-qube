@@ -18,6 +18,13 @@ import {
   type ConnectionContract,
 } from "@tjalve/qube-core";
 import { getAgentHostProfileSync } from "@tjalve/aie";
+import {
+  activationMatchesCurrentConfiguration,
+  loadAiuConfig,
+  readAiuHarnessVersion,
+  readAiuHostActivation,
+  resolveAiuContinuationPaths,
+} from "@tjalve/aiu";
 
 import { dependencyVersion } from "./package.js";
 
@@ -42,6 +49,12 @@ export interface QubeDiscoveryOption {
     readonly state: "shared-persistent" | "not-applicable";
     readonly deliveryStates: readonly ("reserved" | "emitted" | "consumed")[];
     readonly guards: readonly string[];
+    readonly verification: {
+      readonly state: "compatible" | "missing" | "stale" | "not-applicable";
+      readonly eventState: "consumed" | "none";
+      readonly harnessVersion?: string;
+      readonly observedAt?: string;
+    };
   };
 }
 
@@ -145,17 +158,19 @@ function agentHostOption(profile: AgentHostProfile): QubeDiscoveryOption {
     connection: null,
     declaredProfile,
     continuationSafety: profile.umpire.continuation.delivery === "none"
-      ? Object.freeze({ applicable: false, state: "not-applicable" as const, deliveryStates: Object.freeze([]), guards: Object.freeze([]) })
+      ? Object.freeze({ applicable: false, state: "not-applicable" as const, deliveryStates: Object.freeze([]), guards: Object.freeze([]), verification: Object.freeze({ state: "not-applicable" as const, eventState: "none" as const }) })
       : Object.freeze({
           applicable: true,
           state: "shared-persistent" as const,
           deliveryStates: Object.freeze(["reserved", "emitted", "consumed"] as const),
           guards: Object.freeze(["lock", "ownership", "fingerprint", "target", "cooldown", "recursion", "native-loop-limit"]),
+          verification: Object.freeze({ state: "missing" as const, eventState: "none" as const }),
         }),
   });
 }
 
 export function componentsWithHostReadiness(observedAt = new Date().toISOString()): readonly QubeComponent[] {
+  const cwd = process.cwd();
   return Object.freeze(qubeComponents.map((component) => component.id !== "executor"
     ? component
     : Object.freeze({
@@ -165,9 +180,35 @@ export function componentsWithHostReadiness(observedAt = new Date().toISOString(
         hostSurfaces: Object.freeze(executorHostSurfaces.map((surface) => Object.freeze({
           ...surface,
           readiness: observeAgentHostReadiness(surface.declaredProfile!, observedAt),
+          ...(surface.continuationSafety?.applicable ? {
+            continuationSafety: Object.freeze({
+              ...surface.continuationSafety,
+              verification: observeContinuationVerification(surface.id, cwd),
+            }),
+          } : {}),
         }))),
       }),
     })));
+}
+
+function observeContinuationVerification(host: string, cwd: string): NonNullable<QubeDiscoveryOption["continuationSafety"]>["verification"] {
+  if (host === "cursor") return Object.freeze({ state: "not-applicable", eventState: "none" });
+  try {
+    const configLoad = loadAiuConfig({ cwd });
+    const typedHost = host as Parameters<typeof readAiuHostActivation>[1];
+    const activation = readAiuHostActivation(resolveAiuContinuationPaths(configLoad.repoRoot, configLoad.config), typedHost);
+    if (!activation) return Object.freeze({ state: "missing", eventState: "none" });
+    const harnessVersion = readAiuHarnessVersion(typedHost, configLoad.repoRoot);
+    const compatible = harnessVersion !== undefined && activationMatchesCurrentConfiguration({ activation, config: configLoad.config, repoRoot: configLoad.repoRoot, harnessVersion });
+    return Object.freeze({
+      state: compatible ? "compatible" : "stale",
+      eventState: "consumed",
+      harnessVersion: activation.harnessVersion,
+      observedAt: activation.observedAt,
+    });
+  } catch {
+    return Object.freeze({ state: "missing", eventState: "none" });
+  }
 }
 
 export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freeze(

@@ -30,7 +30,7 @@ const packageAsset = Object.freeze({
 export const opencodeContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "opencode",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "plugin-event", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "plugin-event", minimumVersion: "1.18.25", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["session.idle", "session.status", "idle", "session-idle", "session-status"]),
   delivery: Object.freeze({ method: "host-command", sessionScope: "selected-session" }),
   umpireModes: Object.freeze(["continue", "repair", "wait", "stop"]),

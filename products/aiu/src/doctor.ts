@@ -15,7 +15,6 @@ import {
   loadAiuConfig,
 } from "./config.js";
 import {
-  createAiuTrustedStateFingerprint,
   readAiuHostActivation,
   resolveAiuContinuationPaths,
   resolveAiuHostActivationPath,
@@ -32,12 +31,14 @@ import {
 } from "./host_policy.js";
 import { validateManagedHostFile, type ManagedHostFileValidation } from "./managed_host_file.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
+import { activationMatchesCurrentConfiguration, readAiuHarnessVersion } from "./verify.js";
 
 export type AiuHealthStatus = "ok" | "warning" | "error";
 
 export interface AiuInspectionOptions {
   readonly cwd?: string;
   readonly configPath?: string;
+  readonly harnessVersions?: Readonly<Partial<Record<AiuHost, string>>>;
 }
 
 export interface AiuResolvedPaths {
@@ -206,7 +207,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
   const configLoad = loadAiuConfig(resolveConfigOptions(options));
   const paths = buildAiuResolvedPaths(options, configLoad);
   const packageJson = readPackageJson(paths.package.root);
-  const hostProbes = probeAiuHostContinuations(configLoad);
+  const hostProbes = probeAiuHostContinuations(configLoad, options.harnessVersions);
   const checks = [
     checkNodeVersion(),
     ...checkPackage(paths, packageJson),
@@ -551,7 +552,7 @@ function checkHostNativeProbes(configLoad: AiuConfigLoadResult): readonly AiuDoc
   });
 }
 
-function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly AiuHostContinuationProbe[] {
+function probeAiuHostContinuations(configLoad: AiuConfigLoadResult, harnessVersions?: Readonly<Partial<Record<AiuHost, string>>>): readonly AiuHostContinuationProbe[] {
   const continuationPaths = resolveAiuContinuationPaths(configLoad.repoRoot, configLoad.config);
   const runtimePolicy = evaluateAiuHostRuntimePolicy(configLoad.config.hosts, configLoad.config.continuation.modes);
   return Object.freeze(AIU_HOSTS.map((host) => {
@@ -621,13 +622,13 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
     if (!activation || activation.delivery !== delivery) {
       const trustSteps = profile.trustSteps.join(" ");
       const nextAction = trustSteps
-        ? `${trustSteps} Then start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`
-        : `Start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`;
-      return hostProbe(base, "unverified", "none", false, `${host} managed files are ready, but this integration has not been observed running.`, nextAction);
+        ? `${trustSteps} Then run aiu verify --tool ${host} --json.`
+        : `Run aiu verify --tool ${host} --json.`;
+      return hostProbe(base, "unverified", "none", false, `${host} managed files are ready, but compatible consumed lifecycle evidence is missing.`, nextAction);
     }
-    const trustedStateFingerprint = createAiuTrustedStateFingerprint(configLoad.config.trustedStateCommands);
-    if (activation.trustedStateFingerprint !== trustedStateFingerprint) {
-      return hostProbe(base, "unverified", "none", false, `${host} has not verified the current trusted state command configuration.`, `Start a new ${host} session, let the managed integration handle one event, and rerun aiu doctor --json.`);
+    const harnessVersion = harnessVersions?.[host] ?? readAiuHarnessVersion(host, configLoad.repoRoot);
+    if (!harnessVersion || !activationMatchesCurrentConfiguration({ activation, config: configLoad.config, repoRoot: configLoad.repoRoot, harnessVersion })) {
+      return hostProbe(base, "unverified", "none", false, `${host} verification evidence is stale or incompatible with the current harness, surface, managed assets, config, or trusted state.`, `Run aiu verify --tool ${host} --json.`);
     }
 
     return hostProbe(
@@ -635,7 +636,7 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult): readonly Ai
       "active",
       delivery,
       true,
-      `${host} continuation was observed through the managed ${activation.event === "stop-hook" ? "Stop hook" : "plugin"}.`,
+      `${host} continuation consumed one managed ${activation.event === "stop-hook" ? "Stop-hook" : "plugin"} response and started the verified next turn.`,
       "No action is required.",
       activation.observedAt,
     );

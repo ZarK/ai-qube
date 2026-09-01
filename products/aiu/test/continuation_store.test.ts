@@ -19,16 +19,24 @@ describe("continuation persistence store", () => {
     try {
       const paths = resolveAiuContinuationPaths(target, getDefaultAiuConfig());
       writeAiuHostActivation(paths, {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        contractVersion: 1,
         host: "claude-code",
         delivery: "stdout",
         event: "stop-hook",
+        eventState: "consumed",
+        harnessVersion: "2.0.0",
+        surface: "stop-hook",
+        packedArtifactDigest: "1".repeat(64),
+        managedAssetDigest: "2".repeat(64),
+        relevantConfigDigest: "3".repeat(64),
         trustedStateFingerprint: "0".repeat(64),
+        sessionId: "session-1",
         observedAt: "2026-05-23T12:00:00.000Z",
       });
 
       assert.equal(readAiuHostActivation(paths, "claude-code")?.host, "claude-code");
-      await writeFile(resolveAiuHostActivationPath(paths, "claude-code"), JSON.stringify({ schemaVersion: 1, host: "codex" }), "utf8");
+      await writeFile(resolveAiuHostActivationPath(paths, "claude-code"), JSON.stringify({ schemaVersion: 2, host: "codex" }), "utf8");
       assert.equal(readAiuHostActivation(paths, "claude-code"), undefined);
     } finally {
       await rm(target, { recursive: true, force: true });

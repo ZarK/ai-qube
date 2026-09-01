@@ -16,11 +16,19 @@ export interface AiuContinuationPaths {
 }
 
 export interface AiuHostActivation {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
+  readonly contractVersion: 1;
   readonly host: AiuHost;
   readonly delivery: "host" | "stdout";
   readonly event: "plugin-event" | "stop-hook";
+  readonly eventState: "consumed";
+  readonly harnessVersion: string;
+  readonly surface: string;
+  readonly packedArtifactDigest: string;
+  readonly managedAssetDigest: string;
+  readonly relevantConfigDigest: string;
   readonly trustedStateFingerprint: string;
+  readonly sessionId?: string;
   readonly observedAt: string;
 }
 
@@ -364,24 +372,46 @@ export function createAiuDecisionId(input: {
 
 function normalizeHostActivation(value: unknown, expectedHost: AiuHost): AiuHostActivation | undefined {
   if (!isRecord(value)
-    || value.schemaVersion !== 1
+    || value.schemaVersion !== 2
+    || value.contractVersion !== 1
     || value.host !== expectedHost
     || (value.delivery !== "host" && value.delivery !== "stdout")
     || (value.event !== "plugin-event" && value.event !== "stop-hook")
+    || value.eventState !== "consumed"
+    || typeof value.harnessVersion !== "string"
+    || value.harnessVersion.trim().length === 0
+    || typeof value.surface !== "string"
+    || value.surface.trim().length === 0
+    || !validDigest(value.packedArtifactDigest)
+    || !validDigest(value.managedAssetDigest)
+    || !validDigest(value.relevantConfigDigest)
     || typeof value.trustedStateFingerprint !== "string"
     || !/^[a-f0-9]{64}$/.test(value.trustedStateFingerprint)
+    || (value.sessionId !== undefined && (typeof value.sessionId !== "string" || value.sessionId.trim().length === 0))
     || typeof value.observedAt !== "string"
     || !Number.isFinite(Date.parse(value.observedAt))) {
     return undefined;
   }
   return Object.freeze({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
+    contractVersion: 1 as const,
     host: expectedHost,
     delivery: value.delivery,
     event: value.event,
+    eventState: "consumed" as const,
+    harnessVersion: value.harnessVersion,
+    surface: value.surface,
+    packedArtifactDigest: value.packedArtifactDigest,
+    managedAssetDigest: value.managedAssetDigest,
+    relevantConfigDigest: value.relevantConfigDigest,
     trustedStateFingerprint: value.trustedStateFingerprint,
+    ...(typeof value.sessionId === "string" ? { sessionId: value.sessionId } : {}),
     observedAt: value.observedAt,
   });
+}
+
+function validDigest(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
 function tryCreateLock(lockPath: string, lock: AiuContinuationLock): { readonly created: true } | { readonly created: false; readonly reason: "exists" } {

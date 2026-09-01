@@ -37,15 +37,16 @@ qube aie pr view <pr> --json
 
 ## Umpire continuation
 
-Claude Code Umpire continuation is experimental. QUBE installs a managed Stop hook in `.claude/settings.json`.
+Claude Code Umpire continuation remains experimental until its native lifecycle verification passes. QUBE installs a managed Stop hook in `.claude/settings.json`.
 
-Review the settings change and trust the hook before you rely on continuation. Then run the Umpire probe:
+Review the settings change and trust the hook before you rely on continuation. Then run the explicit native lifecycle verification and inspect the result:
 
 ```sh
+qube aiu verify --tool claude-code --json
 qube aiu doctor --json
 ```
 
-QUBE reports the hook as unverified until the probe observes a valid event. Continuation is effective only after the hook is trusted and the probe succeeds.
+Verification warns before model use. It checks an allow path and a continue path in a disposable repository with a packed AIU artifact. QUBE records active evidence only after Claude Code consumes the continuation response and completes the next turn. QUBE does not install, authenticate, or trust Claude Code.
 
 The Stop hook can help recover current-issue work during Continuous Shipping. It does not replace issue state, pull request checks, or repository policy.
 

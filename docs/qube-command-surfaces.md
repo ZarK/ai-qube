@@ -9,7 +9,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | Command | Description |
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
-| `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. |
+| `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. Native continuation verification is optional, explicit, and can incur harness model cost. |
 | `qube doctor` | Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits. |
 | `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |
@@ -106,4 +106,4 @@ Package-level classification from the core contracts: which package command patt
 | `@tjalve/aie` | `aie queue\|start\|switch\|branch *\|pr *\|complete\|review\|doctor\|schema\|init` | qube-facing workflow command | yes | yes | Executor owns GitHub issue, PR, and review workflow behavior plus host instruction setup. |
 | `@tjalve/aiq` | `aiq run\|check\|plan\|doctor\|setup\|status\|config\|evidence\|schema` | qube-facing workflow command | yes | yes | Quality workflow commands are discoverable by QUBE; mutating or tool-running commands expose dry-run and supply-chain metadata. |
 | `@tjalve/aiq` | `aiq bench\|watch\|serve\|hook install\|ci setup\|ignore write` | standalone package command | no | yes | AIQ benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such. |
-| `@tjalve/aiu` | `aiu config\|doctor\|status\|paths\|init\|hook-stop\|whip` | qube-facing workflow command | yes | yes | Umpire exposes continuation policy, trusted-state, OpenCode host integration, and local whip state commands. |
+| `@tjalve/aiu` | `aiu config\|doctor\|status\|paths\|init\|verify\|hook-stop\|whip` | qube-facing workflow command | yes | yes | Umpire exposes continuation policy, trusted-state, OpenCode host integration, and local whip state commands. |

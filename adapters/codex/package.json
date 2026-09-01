@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-codex",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Codex host capability adapter for QUBE local review runner and instruction integrations.",
   "keywords": [
     "cli",

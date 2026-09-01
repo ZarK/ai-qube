@@ -1,10 +1,8 @@
 import { loadAiuConfig, type AiuConfig } from "./config.js";
 import {
   appendAiuContinuationLog,
-  createAiuTrustedStateFingerprint,
   createAiuDecisionId,
   resolveAiuContinuationPaths,
-  writeAiuHostActivation,
   type AiuContinuationPaths,
   type AiuContinuationState,
 } from "./continuation_store.js";
@@ -236,7 +234,6 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
   try {
     const persisted = transaction.state;
     const { states, adapterErrors } = await collectTrustedStates(event, normalizedContext, host.state);
-    const trustedStateWasRead = states.some((state) => state.sourceId !== "opencode") && adapterErrors.length === 0;
     const whipRead = readAiuWhipState(normalizedContext.cwd ?? process.cwd(), normalizedContext.config);
     const whipDecision = decideAiuWhipContinuation({
       config: normalizedContext.config,
@@ -313,10 +310,6 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     if (delivery.delivered) {
       const emitted = markAiuContinuationDeliveryEmitted(transaction);
       if (!emitted.ok) suppressions.push(emitted.reason);
-      if (trustedStateWasRead) {
-        const activationSuppression = recordOpenCodeActivation(paths, observedAt, normalizedContext.config);
-        if (activationSuppression) suppressions.push(activationSuppression);
-      }
     }
     const logged = safeLogDecision(paths, {
       event,
@@ -345,26 +338,6 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
     });
   } finally {
     releaseAiuContinuationSafety(transaction);
-  }
-}
-
-function recordOpenCodeActivation(
-  paths: AiuContinuationPaths,
-  observedAt: string,
-  config: AiuConfig,
-): "host-activation-write-failed" | undefined {
-  try {
-    writeAiuHostActivation(paths, {
-      schemaVersion: 1,
-      host: "opencode",
-      delivery: getAiuContinuationAdapter("opencode").declaration.activationEvidence.delivery,
-      event: getAiuContinuationAdapter("opencode").declaration.activationEvidence.event,
-      trustedStateFingerprint: createAiuTrustedStateFingerprint(config.trustedStateCommands),
-      observedAt,
-    });
-    return undefined;
-  } catch {
-    return "host-activation-write-failed";
   }
 }
 
@@ -559,12 +532,31 @@ function createAiuOpenCodeClientDeliverer(
     }
     const encoded = getAiuContinuationAdapter("opencode").encodeResponse({ decision: "deliver", sessionId: targetSessionId, cwd });
     if (!encoded.ok || !isOpenCodeCommandRequest(encoded.response)) return Object.freeze({ delivered: false, reason: "invalid-host-response" });
-    const response = await command.call(client.session, encoded.response);
-    if (isRecord(response) && response.error !== undefined && response.error !== null) {
+    const pendingResponse = command.call(client.session, encoded.response);
+    const settlement = await observeImmediateNativeResponse(pendingResponse);
+    if (settlement.state === "rejected") {
       return Object.freeze({ delivered: false, reason: "command-rejected" });
     }
+    if (settlement.state === "settled" && isRecord(settlement.response) && settlement.response.error !== undefined && settlement.response.error !== null) {
+      return Object.freeze({ delivered: false, reason: "command-rejected" });
+    }
+    if (settlement.state === "pending") void pendingResponse.catch(() => undefined);
     return Object.freeze({ delivered: true, targetSessionId });
   };
+}
+
+async function observeImmediateNativeResponse(pendingResponse: Promise<unknown>): Promise<
+  Readonly<{ state: "pending" }>
+  | Readonly<{ state: "rejected" }>
+  | Readonly<{ state: "settled"; response: unknown }>
+> {
+  return Promise.race([
+    pendingResponse.then(
+      (response) => Object.freeze({ state: "settled" as const, response }),
+      () => Object.freeze({ state: "rejected" as const }),
+    ),
+    new Promise<Readonly<{ state: "pending" }>>((resolve) => setImmediate(() => resolve(Object.freeze({ state: "pending" as const })))),
+  ]);
 }
 
 function isOpenCodeCommandRequest(value: unknown): value is Parameters<NonNullable<NonNullable<AiuOpenCodeServerClient["session"]>["command"]>>[0] {

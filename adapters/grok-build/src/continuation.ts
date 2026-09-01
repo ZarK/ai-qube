@@ -17,7 +17,7 @@ const hookAsset = Object.freeze({ id: "stop-hook", relativePath: grokBuildStopHo
 export const grokBuildContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "grok-build",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: "1.0.13", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["stop"]),
   delivery: Object.freeze({ method: "stdout-json", sessionScope: "current-session" }),
   umpireModes: Object.freeze(["continue", "repair", "stop"]),

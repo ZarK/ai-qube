@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-core",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Shared QUBE product, provider, review, and adapter contracts.",
   "keywords": [
     "qube",

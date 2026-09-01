@@ -13,7 +13,7 @@ const settingsAsset = Object.freeze({ id: "settings-stop-hook", relativePath: ".
 export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,
   hostId: "claude-code",
-  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: null, maximumVersionExclusive: null })]),
+  nativeSurfaces: Object.freeze([Object.freeze({ id: "stop-hook", minimumVersion: "2.0.0", maximumVersionExclusive: null })]),
   triggerEvents: Object.freeze(["Stop"]),
   delivery: Object.freeze({ method: "stdout-json", sessionScope: "current-session" }),
   umpireModes: Object.freeze(["continue", "repair", "stop"]),
