@@ -147,4 +147,4 @@ export const codexHostProfile = defineAgentHostProfile({
   }),
 } satisfies AgentHostProfile);
 
-export { codexContinuationAdapter, codexContinuationDeclaration } from "./continuation.js";
+export { buildCodexVerifyInvocation, codexContinuationAdapter, codexContinuationDeclaration } from "./continuation.js";

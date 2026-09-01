@@ -374,5 +374,5 @@ export type {
   GrokBuildStopParseResult,
   GrokBuildStopPayload,
 } from "./stop_hook.js";
-export { grokBuildContinuationAdapter, grokBuildContinuationDeclaration, inspectGrokBuildFolderTrust } from "./continuation.js";
+export { buildGrokBuildVerifyInvocation, grokBuildContinuationAdapter, grokBuildContinuationDeclaration, inspectGrokBuildFolderTrust } from "./continuation.js";
 export type { GrokBuildFolderTrustInspection } from "./continuation.js";

@@ -27,6 +27,20 @@ export const grokBuildContinuationDeclaration = defineContinuationDeclaration({
   currentIssueRecovery: true,
 });
 
+export function buildGrokBuildVerifyInvocation(input: { readonly root: string; readonly prompt: string; readonly model?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze([
+      "--cwd", input.root,
+      "--single", input.prompt,
+      "--output-format", "streaming-json",
+      "--permission-mode", "dontAsk",
+      "--no-subagents",
+      "--disable-web-search",
+      ...(input.model ? ["--model", input.model] : []),
+    ]),
+  });
+}
+
 export const grokBuildContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: grokBuildContinuationDeclaration,

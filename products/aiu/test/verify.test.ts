@@ -85,6 +85,17 @@ describe("native continuation verification", () => {
       const report = await runAiuVerify({ tool: "codex", cwd: repo, runtime: passingRuntime("codex", { allowScenario: allowFailure }) });
       assert.equal(report.reasonCode, "allow-path-continued");
       assert.equal(report.scenarios.length, 1);
+
+      const secret = "Bearer sk-test-1234567890abcdef";
+      const redacted = await runAiuVerify({
+        tool: "codex",
+        cwd: repo,
+        runtime: passingRuntime("codex", {
+          continueScenario: scenario("continue", "continuation-not-consumed", { nativeInvocationObserved: true, diagnostic: secret }),
+        }),
+      });
+      assert.doesNotMatch(redacted.nextAction, /sk-test/);
+      assert.match(redacted.nextAction, /\[REDACTED\]/);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

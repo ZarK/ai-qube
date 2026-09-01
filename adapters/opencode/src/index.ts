@@ -146,4 +146,4 @@ export const opencodeHostProfile = defineAgentHostProfile({
   }),
 } satisfies AgentHostProfile);
 
-export { opencodeContinuationAdapter, opencodeContinuationDeclaration } from "./continuation.js";
+export { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeContinuationDeclaration } from "./continuation.js";

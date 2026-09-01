@@ -29,6 +29,12 @@ export const codexContinuationDeclaration = defineContinuationDeclaration({
   currentIssueRecovery: true,
 });
 
+export function buildCodexVerifyInvocation(input: { readonly root: string; readonly prompt: string; readonly model?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["exec", "--cd", input.root, "--json", "--ephemeral", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
+
 export const codexContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: codexContinuationDeclaration,

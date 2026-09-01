@@ -23,6 +23,12 @@ export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
   currentIssueRecovery: true,
 });
 
+export function buildClaudeCodeVerifyInvocation(input: { readonly prompt: string; readonly model?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
+
 export const claudeCodeContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: claudeCodeContinuationDeclaration,

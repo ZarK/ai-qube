@@ -18,10 +18,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveExecutable } from "@tjalve/qube-core";
+import { redactText } from "@tjalve/qube-cli/redaction";
 
 import { getAiuPackageRoot } from "./assets.js";
 import { type AiuConfig, type AiuHost, loadAiuConfig } from "./config.js";
-import { getAiuContinuationAdapter, getAiuRuntimeHostProfile } from "./continuation_adapters.js";
+import { buildAiuVerifyInvocation, getAiuContinuationAdapter, getAiuRuntimeHostProfile } from "./continuation_adapters.js";
 import {
   createAiuTrustedStateFingerprint,
   readAiuContinuationState,
@@ -237,11 +238,7 @@ export function activationMatchesCurrentConfiguration(input: {
 }
 
 export function readAiuHarnessVersion(host: AiuHost, cwd = process.cwd()): string | undefined {
-  const profile = getAiuRuntimeHostProfile(host);
-  const candidates = process.platform === "win32"
-    ? [...profile.executables.windowsNames, ...profile.executables.names]
-    : [...profile.executables.names];
-  const executable = candidates.map((name) => resolveExecutable(name)).find((candidate) => candidate.status === "found" && candidate.resolvedPath);
+  const { executable } = discoverHarnessExecutable(host);
   if (!executable?.resolvedPath) return undefined;
   const result = runCommand(executable.resolvedPath, ["--version"], cwd, 10_000);
   return result.status === 0 ? parseVersion(`${result.stdout}\n${result.stderr}`) : undefined;
@@ -261,11 +258,7 @@ const defaultAiuVerificationRuntime: AiuVerificationRuntime = Object.freeze({
 });
 
 function discoverHost(input: { readonly tool: AiuHost; readonly cwd: string; readonly model?: string }): AiuVerificationDiscovery | AiuVerificationBlocked {
-  const profile = getAiuRuntimeHostProfile(input.tool);
-  const candidates = process.platform === "win32"
-    ? [...profile.executables.windowsNames, ...profile.executables.names]
-    : [...profile.executables.names];
-  const executable = candidates.map((name) => resolveExecutable(name)).find((candidate) => candidate.status === "found" && candidate.resolvedPath);
+  const { profile, executable } = discoverHarnessExecutable(input.tool);
   if (!executable?.resolvedPath) return blocked("missing-executable", `Install ${profile.displayName} outside QUBE and expose its CLI on PATH.`);
   const versionRun = runCommand(executable.resolvedPath, ["--version"], input.cwd, 10_000);
   const harnessVersion = parseVersion(`${versionRun.stdout}\n${versionRun.stderr}`);
@@ -386,12 +379,12 @@ function runNativeScenario(input: {
   if (input.tool === "opencode") return runOpenCodeScenario(input, paths, token);
   const invocation = harnessInvocation(input.tool, input.discovery, input.workspace.root, token);
   const result = runCommand(input.discovery.executablePath, invocation.args, input.workspace.root, input.timeoutMs, invocation.stdin);
-  if (result.errorCode === "ETIMEDOUT") return failedScenario(input.kind, "native-timeout");
-  if (result.signal) return failedScenario(input.kind, "user-aborted", "aborted");
+  if (result.errorCode === "ETIMEDOUT") return failedInvokedScenario(input.kind, "native-timeout");
+  if (result.signal) return failedInvokedScenario(input.kind, "user-aborted", "aborted");
   if (result.status !== 0) {
     const diagnostic = `${result.stdout}\n${result.stderr}`.toLowerCase();
-    if (/trust|approve|permission/.test(diagnostic)) return failedScenario(input.kind, "trust-prerequisite-unmet");
-    return failedScenario(input.kind, "native-response-invalid");
+    if (/trust|approve|permission/.test(diagnostic)) return failedInvokedScenario(input.kind, "trust-prerequisite-unmet");
+    return failedInvokedScenario(input.kind, "native-response-invalid");
   }
   const state = readAiuContinuationState(paths);
   const marker = readMarker(input.workspace.markerPath, token);
@@ -467,10 +460,8 @@ function runOpenCodeScenario(
 
 function harnessInvocation(tool: AiuHost, discovery: AiuVerificationDiscovery, root: string, token: string, attachUrl?: string): { readonly args: string[]; readonly stdin?: string } {
   const prompt = `Reply with AIU_VERIFY_INITIAL:${token}, then end your turn. If the managed continuation asks you to run a command, run it exactly once.`;
-  if (tool === "opencode") return { args: ["run", ...(attachUrl ? ["--attach", attachUrl] : []), "--dir", root, "--format", "json", "--print-logs", "--log-level", "INFO", ...(discovery.model ? ["--model", discovery.model] : []), prompt] };
-  if (tool === "codex") return { args: ["exec", "--cd", root, "--json", "--ephemeral", ...(discovery.model ? ["--model", discovery.model] : []), prompt] };
-  if (tool === "claude-code") return { args: ["--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", ...(discovery.model ? ["--model", discovery.model] : []), prompt] };
-  return { args: ["--cwd", root, "--single", prompt, "--output-format", "streaming-json", "--permission-mode", "dontAsk", "--no-subagents", "--disable-web-search", ...(discovery.model ? ["--model", discovery.model] : [])] };
+  const invocation = buildAiuVerifyInvocation(tool, { root, prompt, ...(discovery.model ? { model: discovery.model } : {}), ...(attachUrl ? { attachUrl } : {}) });
+  return { args: [...invocation.args], ...(invocation.stdin ? { stdin: invocation.stdin } : {}) };
 }
 
 function startOpenCodeServer(executable: string, root: string, environment: Readonly<Record<string, string>>, timeoutMs: number): { readonly process: ChildProcess; readonly url: string } | undefined {
@@ -621,7 +612,7 @@ function readMarker(markerPath: string, token: string): boolean {
 }
 
 function reportFromBlock(tool: AiuHost, observedAt: string, warning: string, failure: AiuVerificationBlocked, discovery?: AiuVerificationDiscovery, workspace?: AiuPreparedVerification, scenarios: readonly AiuVerificationScenario[] = []): AiuVerificationReport {
-  return Object.freeze({ schemaVersion: 1, contractVersion: 1, tool, status: failure.status, reasonCode: failure.reasonCode, warning, observedAt, ...(discovery ? { discovery } : {}), ...(workspace ? { workspace: workspaceSummary(workspace) } : {}), scenarios: Object.freeze([...scenarios]), nextAction: failure.nextAction });
+  return Object.freeze({ schemaVersion: AIU_VERIFICATION_SCHEMA_VERSION, contractVersion: AIU_VERIFICATION_CONTRACT_VERSION, tool, status: failure.status, reasonCode: failure.reasonCode, warning, observedAt, ...(discovery ? { discovery } : {}), ...(workspace ? { workspace: workspaceSummary(workspace) } : {}), scenarios: Object.freeze([...scenarios]), nextAction: failure.nextAction });
 }
 
 function reportFromScenario(tool: AiuHost, observedAt: string, warning: string, discovery: AiuVerificationDiscovery, workspace: AiuPreparedVerification, scenarios: readonly AiuVerificationScenario[], failure: AiuVerificationScenario): AiuVerificationReport {
@@ -638,7 +629,7 @@ function scenarioNextAction(scenario: AiuVerificationScenario, tool: AiuHost): s
   if (reason === "trust-prerequisite-unmet") return `Approve the disposable ${tool} project through the harness trust surface, then rerun verification. QUBE will not change trust state.`;
   if (reason === "native-timeout") return `Inspect ${tool} responsiveness and rerun with a bounded --timeout after resolving the delay.`;
   if (reason === "user-aborted") return "Rerun the explicit verification command when you want to complete the bounded model-backed check.";
-  if (reason === "continuation-not-consumed") return `Inspect the ${tool} native lifecycle; the managed response remained ${scenario.observedDeliveryState ?? "unobserved"} and did not produce compatible consumed evidence.${scenario.diagnostic ? ` Native diagnostic: ${scenario.diagnostic}` : ""}`;
+  if (reason === "continuation-not-consumed") return `Inspect the ${tool} native lifecycle; the managed response remained ${scenario.observedDeliveryState ?? "unobserved"} and did not produce compatible consumed evidence.${scenario.diagnostic ? ` Native diagnostic: ${redactText(scenario.diagnostic)}` : ""}`;
   return `Inspect the ${tool} native lifecycle output and managed integration logs; hook invocation alone is not accepted as proof.`;
 }
 
@@ -652,6 +643,10 @@ function blocked(reasonCode: AiuVerificationReasonCode, nextAction: string): Aiu
 
 function failedScenario(kind: "continue" | "allow", reasonCode: AiuVerificationReasonCode, status: "failed" | "aborted" = "failed"): AiuVerificationScenario {
   return Object.freeze({ kind, status, reasonCode, nativeInvocationObserved: false, responseConsumed: false, nextTurnObserved: false, continuationCount: 0 });
+}
+
+function failedInvokedScenario(kind: "continue" | "allow", reasonCode: AiuVerificationReasonCode, status: "failed" | "aborted" = "failed"): AiuVerificationScenario {
+  return Object.freeze({ ...failedScenario(kind, reasonCode, status), nativeInvocationObserved: true });
 }
 
 function isBlocked(value: unknown): value is AiuVerificationBlocked {
@@ -771,9 +766,8 @@ function commandFailureSummary(result: { readonly status: number | null; readonl
     .filter(Boolean)
     .filter((line) => !/^npm error A complete log of this run can be found in:/iu.test(line))
     .slice(-6)
-    .join(" ")
-    .replace(/(token|password|secret|authorization)=\S+/giu, "$1=<redacted>");
-  return lines.slice(0, 1000) || `exit ${result.status ?? "unknown"}`;
+    .join(" ");
+  return redactText(lines).slice(0, 1000) || `exit ${result.status ?? "unknown"}`;
 }
 
 function nativeIntegrationDiagnostic(result: { readonly status: number | null; readonly stdout: string; readonly stderr: string }): string {
@@ -783,7 +777,7 @@ function nativeIntegrationDiagnostic(result: { readonly status: number | null; r
     .filter((line) => /(?:plugin|@tjalve\/aiu|error|fail)/iu.test(line))
     .slice(-8)
     .join(" ");
-  return (relevant || commandFailureSummary(result)).slice(0, 1000);
+  return redactText(relevant || commandFailureSummary(result)).slice(0, 1000);
 }
 
 function managedLifecycleDiagnostic(paths: ReturnType<typeof resolveAiuContinuationPaths>, result: { readonly status: number | null; readonly stdout: string; readonly stderr: string }): string {
@@ -793,7 +787,19 @@ function managedLifecycleDiagnostic(paths: ReturnType<typeof resolveAiuContinuat
   } catch {
     managed = "No managed integration log was written.";
   }
-  return `${managed} ${nativeIntegrationDiagnostic(result)}`.slice(0, 1000);
+  return redactText(`${managed} ${nativeIntegrationDiagnostic(result)}`).slice(0, 1000);
+}
+
+function discoverHarnessExecutable(host: AiuHost): {
+  readonly profile: ReturnType<typeof getAiuRuntimeHostProfile>;
+  readonly executable: ReturnType<typeof resolveExecutable> | undefined;
+} {
+  const profile = getAiuRuntimeHostProfile(host);
+  const candidates = process.platform === "win32"
+    ? [...profile.executables.windowsNames, ...profile.executables.names]
+    : [...profile.executables.names];
+  const executable = candidates.map((name) => resolveExecutable(name)).find((candidate) => candidate.status === "found" && candidate.resolvedPath);
+  return { profile, executable };
 }
 
 function quoteCmd(value: string): string {

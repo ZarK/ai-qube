@@ -1,7 +1,7 @@
-import { claudeCodeContinuationAdapter, claudeCodeHostProfile } from "@tjalve/qube-adapter-claude-code";
-import { codexContinuationAdapter, codexHostProfile } from "@tjalve/qube-adapter-codex";
-import { grokBuildContinuationAdapter, grokBuildHostProfile } from "@tjalve/qube-adapter-grok-build";
-import { opencodeContinuationAdapter, opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
+import { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeHostProfile } from "@tjalve/qube-adapter-claude-code";
+import { buildCodexVerifyInvocation, codexContinuationAdapter, codexHostProfile } from "@tjalve/qube-adapter-codex";
+import { buildGrokBuildVerifyInvocation, grokBuildContinuationAdapter, grokBuildHostProfile } from "@tjalve/qube-adapter-grok-build";
+import { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
 import {
   AGENT_HOST_CAPABILITY_PROFILES,
   AGENT_HOST_REGISTRATIONS,
@@ -53,6 +53,16 @@ export function getAiuRuntimeHostProfile(host: AiuContinuationHost): AgentHostPr
   const profile = runtimeProfileRegistry.get(host);
   if (!profile) throw new TypeError(`No runtime host profile is registered for ${host}.`);
   return profile;
+}
+
+export function buildAiuVerifyInvocation(
+  host: AiuContinuationHost,
+  input: { readonly root: string; readonly prompt: string; readonly model?: string; readonly attachUrl?: string },
+): { readonly args: readonly string[]; readonly stdin?: string } {
+  if (host === "opencode") return buildOpenCodeVerifyInvocation(input);
+  if (host === "codex") return buildCodexVerifyInvocation(input);
+  if (host === "claude-code") return buildClaudeCodeVerifyInvocation(input);
+  return buildGrokBuildVerifyInvocation(input);
 }
 
 export function decodeAiuContinuationEvent(

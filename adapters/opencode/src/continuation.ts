@@ -40,6 +40,12 @@ export const opencodeContinuationDeclaration = defineContinuationDeclaration({
   currentIssueRecovery: true,
 });
 
+export function buildOpenCodeVerifyInvocation(input: { readonly root: string; readonly prompt: string; readonly model?: string; readonly attachUrl?: string }): { readonly args: readonly string[] } {
+  return Object.freeze({
+    args: Object.freeze(["run", ...(input.attachUrl ? ["--attach", input.attachUrl] : []), "--dir", input.root, "--format", "json", "--print-logs", "--log-level", "INFO", ...(input.model ? ["--model", input.model] : []), input.prompt]),
+  });
+}
+
 export const opencodeContinuationAdapter = defineContinuationAdapter({
   version: CONTINUATION_ADAPTER_VERSION,
   declaration: opencodeContinuationDeclaration,

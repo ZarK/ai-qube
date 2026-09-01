@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { claudeCodeContinuationAdapter, claudeCodeHostProfile } from "../dist/index.js";
+import { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeHostProfile } from "../dist/index.js";
 
 describe("claude-code adapter", () => {
+  it("builds the native continuation verification invocation", () => {
+    assert.deepEqual(buildClaudeCodeVerifyInvocation({ prompt: "verify", model: "claude-test" }), {
+      args: ["--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk", "--model", "claude-test", "verify"],
+    });
+  });
+
   it("owns a Claude Code Stop codec independent of Codex", () => {
     const payload = { cwd: "/repo", hook_event_name: "Stop", session_id: "claude-1", turn_id: "t1", permission_mode: "default", model: "claude", stop_hook_active: false };
     const decoded = claudeCodeContinuationAdapter.decodeEvent(payload);
