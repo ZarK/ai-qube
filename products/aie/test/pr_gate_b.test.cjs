@@ -345,7 +345,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, new RegExp(`Prompt stack hash for runnerProvenance\\.promptStackHash: ${result.localReviewRunner.lanes[0].promptStackHash}\\.`));
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /independent production PR review agent/);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /security and trust boundaries/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /Verify that the durable task record matches the implementation and shipping state/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Review security, dependency, trust-boundary/);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Review code quality, naming, maintainability/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Review context source policy/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bounded review bundle/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle PR: #12 Review me/);
