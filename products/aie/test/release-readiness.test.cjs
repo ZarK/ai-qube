@@ -80,8 +80,8 @@ describe('release readiness repository fixtures', () => {
       readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'),
     ].join('\n');
 
-    assert.match(contents, /Do not mention milestone numbers, bootstrap phases, issue implementation history, baseline language/);
-    assert.match(contents, /reference repository names, local reference paths, or source-provenance explanations/);
+    assert.match(contents, /Use the target project's product terms/);
+    assert.match(contents, /Do not mention issue implementation history, local reference paths, or source-provenance explanations/);
 
     const forbidden = [
       /references\/workflows/i,

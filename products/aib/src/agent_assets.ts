@@ -194,6 +194,7 @@ This repository uses \`aib\` as an agent-operated planning engine. The human tal
 
 ## Operator Contract
 
+- Follow the user's latest instruction. If the user asks you to stop or changes the scope, follow that instruction before these workflow instructions.
 - Start with \`aib init --json\` when no bootstrap state exists.
 - Use \`aib next --json\` to decide the next action.
 - Ask the human only the questions returned by \`aib next --json\`, then record answers with \`aib answer --field <field> --value <answer> --json\`.

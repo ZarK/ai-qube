@@ -254,6 +254,7 @@ test("init with opencode writes profile-derived planning instructions only", asy
   assert.match(instructions, /agent-operated planning engine/);
   assert.match(instructions, /`aib` state machine/);
   assert.match(instructions, /qube autoresearch --help/);
+  assert.match(instructions, /If the user asks you to stop or changes the scope, follow that instruction before these workflow instructions/);
 });
 
 test("init applies once and an identical rerun writes nothing", async () => {

@@ -89,7 +89,7 @@ export function renderInitFiles(config: Config, profiles: AgentHostProfile[], co
       id: profile.makeItSo.id,
       relativePath: profile.makeItSo.path,
       kind: profile.makeItSo.kind,
-      body: profile.makeItSo.kind === 'skill' ? renderMakeItSoSkill(config) : renderMakeItSoCommand(config),
+      body: profile.makeItSo.kind === 'skill' ? renderMakeItSoSkill(config, profiles) : renderMakeItSoCommand(config, profiles),
       allowAppend: false,
       hosts: [profile.id],
       description: profile.makeItSo.description,
