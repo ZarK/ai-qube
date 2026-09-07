@@ -40,6 +40,18 @@
       "prNumber": 641,
       "headSha": null,
       "recordedAt": "2026-08-20T15:15:20.781Z"
+    },
+    {
+      "id": "learning:544c5089a88f",
+      "disposition": "guidance",
+      "findingId": null,
+      "lane": null,
+      "message": "Read and use the installed asd-ste100 skill before work. Apply it to all plans and communication, including review findings, GitHub comments, PRs, code comments, and commit messages. Give every delegated agent the same instruction. Use short sentences and concrete verbs. Fix concrete bugs and unmet requirements. Style preferences do not block shipping.",
+      "guidance": "Read and use the installed asd-ste100 skill before work. Apply it to all plans and communication, including review findings, GitHub comments, PRs, code comments, and commit messages. Give every delegated agent the same instruction. Use short sentences and concrete verbs. Fix concrete bugs and unmet requirements. Style preferences do not block shipping.",
+      "paths": [],
+      "prNumber": 703,
+      "headSha": null,
+      "recordedAt": "2026-09-07T20:24:03.928Z"
     }
   ]
 }

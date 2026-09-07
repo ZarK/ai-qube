@@ -1,4 +1,5 @@
 import type { Config } from '../config/index.js';
+import { getCriterionIdentity } from '../checklist.js';
 import { runUiAudit, type UiAuditResult } from '../audit.js';
 import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../core/gate_evidence.js';
@@ -343,10 +344,12 @@ function criterionProofLines(issueChecklist: IssueChecklistSummary | null): stri
   if (criteria.length === 0) return [];
   const lines = ['## Criterion-to-proof map', '', 'Fill every entry before opening the PR. Update entries when review fixes move code or tests.'];
   for (const criterion of criteria) {
+    const identity = getCriterionIdentity(issueChecklist!.issue.number, criterion);
     lines.push('');
-    lines.push(`### Criterion ${criterion.index}: ${criterion.text}`);
+    lines.push(`### Criterion ${identity.index}: ${identity.text}`);
+    lines.push(`- Criterion identity: #${identity.issueNumber}:${identity.index}`);
     lines.push('- Implemented at: [UNFILLED: list the file paths and symbols where this behavior lives]');
-    lines.push('- Proven by: [UNFILLED: name the test file and test whose assertions fail if this behavior regresses]');
+    lines.push('- Proven by: [UNFILLED: cite the existing test result, source inspection, or direct observation that establishes this criterion]');
     lines.push('- Negative case: [UNFILLED: name the counterexample test, or state why none applies]');
   }
   lines.push('');

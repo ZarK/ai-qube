@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RepoAffectedResult } from '@tjalve/qube-core';
+import { getCriterionIdentity, type CriterionIdentity } from '../checklist.js';
 import { redact } from '../redact.js';
 import { localReviewEvidenceSha256 } from '../local_review_evidence.js';
 import type { IssueChecklistSummary } from './issue_checklist.js';
@@ -23,7 +24,7 @@ export interface ReviewHeadDigestAcceptance {
   issueNumber: number;
   title: string;
   bodyStatus: ReviewHeadDigestFreshness;
-  items: Array<{ index: number; text: string; checked: boolean }>;
+  items: Array<{ identity: CriterionIdentity; index: number; text: string; checked: boolean }>;
   requirementSections: Array<{ heading: string; text: string }>;
 }
 
@@ -162,7 +163,7 @@ export function buildReviewHeadDigest(input: ReviewHeadDigestInput): ReviewHeadD
         issueNumber: summary.issue.number,
         title: redact(summary.issue.title),
         bodyStatus,
-        items: summary.checklist.items.map(item => ({ index: item.index, text: bounded(item.text, 160), checked: item.checked })),
+        items: summary.checklist.items.map(item => ({ identity: getCriterionIdentity(summary.issue.number, item), index: item.index, text: bounded(item.text, 160), checked: item.checked })),
         requirementSections: bodyStatus === 'current' ? requirementSectionsFromIssueBody(body ?? '') : [],
       };
     })

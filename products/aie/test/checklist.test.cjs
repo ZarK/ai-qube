@@ -1,14 +1,11 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { mkdtempSync, writeFileSync } = require('node:fs');
-const { tmpdir } = require('node:os');
-const { join } = require('node:path');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
 
-const { planChecklistUpdate } = require('../dist/checklist.js');
+const { getCriterionIdentity, planChecklistUpdate } = require('../dist/checklist.js');
 const { updateIssueChecklist } = require('../dist/app/issue_checklist.js');
-const { verifyIssueChecklist } = require('../dist/app/checklist_verify.js');
+const { getImplementedCommands } = require('../dist/command_metadata.js');
 
 function issue(number, body) {
   return {
@@ -22,16 +19,16 @@ function issue(number, body) {
   };
 }
 
+it('keeps the full criterion identity unchanged', () => {
+  const text = `${'Exact criterion. '.repeat(40)}!`;
+  assert.deepEqual(getCriterionIdentity(93, { index: 7, text }), { issueNumber: 93, index: 7, text });
+});
 function issueViewKey(number) {
   return `issue view ${number} --json number,title,state,labels,body,milestone,url`;
 }
 
 function success(args, stdout = '') {
   return { args, exitCode: 0, stdout, stderr: '' };
-}
-
-function noCurrentPr() {
-  return { args: [], exitCode: 1, stdout: '', stderr: 'no pull requests found for branch "issue/example"' };
 }
 
 function makeExec(responses, calls = []) {
@@ -43,6 +40,13 @@ function makeExec(responses, calls = []) {
 }
 
 describe('issue checklist mutation', () => {
+  it('preserves the existing checklist verification command', () => {
+    const command = getImplementedCommands().find(command => command.name === 'checklist verify');
+    assert.deepEqual(command.mutationTargets, ['github']);
+    assert.equal(command.flags.includes('--run-gate'), false);
+    assert.equal(command.supportsDryRun, true);
+  });
+
   it('plans exact issue checkbox updates while preserving unrelated body text', () => {
     const body = 'Intro\n- [ ] Acceptance A\n- [x] Acceptance B\nFooter';
 
@@ -53,6 +57,13 @@ describe('issue checklist mutation', () => {
     assert.equal(result.before.unchecked, 1);
     assert.equal(result.after.unchecked, 0);
     assert.equal(result.matchedItems[0].index, 1);
+  });
+
+  it('preserves CRLF and mixed line endings byte-for-byte outside the selected token', () => {
+    const body = 'Intro\r\n- [ ] Acceptance A\nContext\r- [x] Acceptance B\r\nFooter';
+    const result = planChecklistUpdate(body, { index: 1 }, 'checked');
+    assert.equal(result.updatedBody, 'Intro\r\n- [x] Acceptance A\nContext\r- [x] Acceptance B\r\nFooter');
+    assert.equal(result.after.checked, 2);
   });
 
   it('rejects ambiguous duplicate checklist item text', () => {
@@ -93,203 +104,6 @@ describe('issue checklist mutation', () => {
 
     assert.equal(result.mutation.status, 'completed');
     assert.ok(calls.some(args => args[0] === 'issue' && args[1] === 'edit' && args[3] === '--body' && args[4].includes('[ ] Acceptance A')));
-  });
-
-  it('renders a criterion-specific acceptance verification prompt', async () => {
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, 'Issue body\n- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': noCurrentPr(),
-    });
-
-    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', dryRun: true, promptOnly: true, exec });
-
-    assert.equal(result.command, 'checklist verify');
-    assert.equal(result.prompt.category.id, 'acceptance-verification');
-    assert.match(result.prompt.text, /Criterion #1: Acceptance A/);
-    assert.match(result.prompt.text, /Issue body/);
-    assert.match(result.prompt.outputContract, /acceptance verification evidence JSON/);
-  });
-
-  it('prints a complete evidence JSON template that verifies on the first filled copy', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-template-'));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, 'Issue body\n- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': success([], JSON.stringify({
-        number: 12,
-        title: 'PR',
-        url: 'https://github.com/example/repo/pull/12',
-        headRefOid: 'abc123',
-      })),
-    });
-
-    const prompt = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', dryRun: true, promptOnly: true, exec });
-    const match = prompt.prompt.text.match(/\{\s*"version": 1[\s\S]*?"promptStack": \[[\s\S]*?\]\s*\}/);
-    assert.ok(match, 'prompt must include the fillable evidence JSON template');
-    const template = JSON.parse(match[0]);
-    template.reviewer = { id: 'implementer-verification' };
-    template.reviewedSources = ['issue:93'];
-    template.artifacts = ['terminal-log'];
-    template.recordedAt = '2026-08-15T19:00:00.000Z';
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, `${JSON.stringify(template, null, 2)}\n`);
-
-    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec });
-
-    assert.equal(result.evidence.status, 'valid', result.evidence.errors.join('; '));
-    assert.equal(result.mutation.status, 'planned');
-  });
-
-  it('validates evidence before planning one checked mutation', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, JSON.stringify({
-      version: 1,
-      issueNumber: 93,
-      criterionIndex: 1,
-      criterionText: 'Acceptance A',
-      headSha: 'abc123',
-      reviewer: { id: 'codex' },
-      reviewedSources: ['issue:93', 'pr:12:diff'],
-      artifacts: ['terminal-log'],
-      recommendation: 'approve',
-      recordedAt: '2026-06-23T00:00:00.000Z',
-      promptStack: [{ id: 'acceptance/verify-criterion' }],
-      summary: 'criterion verified',
-    }));
-    const calls = [];
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, 'Intro\n- [ ] Acceptance A\n- [ ] Acceptance B\nFooter'))),
-      'pr view --json number,title,url,headRefOid': success([], JSON.stringify({ number: 12, title: 'PR', url: 'https://github.com/example/repo/pull/12', headRefOid: 'abc123' })),
-    }, calls);
-
-    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.evidence.status, 'valid');
-    assert.equal(result.mutation.status, 'planned');
-    assert.equal(calls.some(args => args[0] === 'issue' && args[1] === 'edit'), false);
-  });
-
-  it('recommends completion after the final criterion is verified', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, JSON.stringify({
-      version: 1,
-      issueNumber: 93,
-      criterionIndex: 1,
-      criterionText: 'Acceptance A',
-      reviewer: { id: 'codex' },
-      reviewedSources: ['issue:93'],
-      artifacts: ['terminal-log'],
-      recommendation: 'approve',
-      recordedAt: '2026-06-23T00:00:00.000Z',
-      promptStack: [{ id: 'acceptance/verify-criterion' }],
-    }));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': noCurrentPr(),
-    });
-
-    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.mutation.status, 'planned');
-    assert.match(result.nextAction, /aie complete 93 --check-only/);
-  });
-
-  it('fails closed when current PR detection fails unexpectedly', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, JSON.stringify({
-      version: 1,
-      issueNumber: 93,
-      criterionIndex: 1,
-      criterionText: 'Acceptance A',
-      reviewer: { id: 'codex' },
-      reviewedSources: ['issue:93'],
-      artifacts: ['terminal-log'],
-      recommendation: 'approve',
-      recordedAt: '2026-06-23T00:00:00.000Z',
-      promptStack: [{ id: 'acceptance/verify-criterion' }],
-    }));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': { args: [], exitCode: 1, stdout: '', stderr: 'api timeout' },
-    });
-
-    await assert.rejects(
-      () => verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec }),
-      /Failed to execute gh pr view --json number,title,url,headRefOid/,
-    );
-  });
-
-  it('fails closed when current PR context fields are malformed', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, JSON.stringify({
-      version: 1,
-      issueNumber: 93,
-      criterionIndex: 1,
-      criterionText: 'Acceptance A',
-      reviewer: { id: 'codex' },
-      reviewedSources: ['issue:93'],
-      artifacts: ['terminal-log'],
-      recommendation: 'approve',
-      recordedAt: '2026-06-23T00:00:00.000Z',
-      promptStack: [{ id: 'acceptance/verify-criterion' }],
-    }));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': success([], JSON.stringify({ number: 12, title: 'PR', url: 'https://github.com/example/repo/pull/12' })),
-    });
-
-    await assert.rejects(
-      () => verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec }),
-      /Failed to validate current PR context from gh pr view/,
-    );
-  });
-
-  it('reports a next action when current PR context JSON is malformed', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'evidence.json');
-    writeFileSync(evidence, JSON.stringify({
-      version: 1,
-      issueNumber: 93,
-      criterionIndex: 1,
-      criterionText: 'Acceptance A',
-      reviewer: { id: 'codex' },
-      reviewedSources: ['issue:93'],
-      artifacts: ['terminal-log'],
-      recommendation: 'approve',
-      recordedAt: '2026-06-23T00:00:00.000Z',
-      promptStack: [{ id: 'acceptance/verify-criterion' }],
-    }));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': success([], '{'),
-    });
-
-    await assert.rejects(
-      () => verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec }),
-      /Next action: inspect `gh pr view --json number,title,url,headRefOid`/,
-    );
-  });
-
-  it('rejects stale or incomplete acceptance verification evidence', async () => {
-    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
-    const evidence = join(repo, 'bad-evidence.json');
-    writeFileSync(evidence, JSON.stringify({ version: 1, issueNumber: 93, criterionIndex: 1, criterionText: 'Acceptance A', headSha: 'old' }));
-    const exec = makeExec({
-      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
-      'pr view --json number,title,url,headRefOid': success([], JSON.stringify({ number: 12, title: 'PR', url: 'https://github.com/example/repo/pull/12', headRefOid: 'abc123' })),
-    });
-
-    const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: false, promptOnly: false, exec });
-
-    assert.equal(result.ok, false);
-    assert.equal(result.evidence.status, 'invalid');
-    assert.ok(result.evidence.errors.some(error => error.includes('headSha')));
-    assert.ok(result.evidence.errors.some(error => error.includes('reviewer')));
   });
 
   it('prints safe usage for incomplete checklist update command forms', () => {

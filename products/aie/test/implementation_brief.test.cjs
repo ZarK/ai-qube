@@ -1,9 +1,11 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { buildImplementationBrief, extractExpectedPaths, formatBriefLines } = require('../dist/brief/index.js');
+const { buildImplementationBrief: buildBrief, extractExpectedPaths, formatBriefLines } = require('../dist/brief/index.js');
 const { getDefaults } = require('../dist/config/index.js');
 const { loadRiskCardCatalog } = require('../dist/risk_cards/index.js');
+
+const buildImplementationBrief = input => buildBrief({ issueNumber: 93, ...input });
 
 function briefConfig() {
   const config = structuredClone(getDefaults());
@@ -136,6 +138,8 @@ describe('implementation brief builder', () => {
     for (const obligation of brief.obligations) {
       assert.ok(obligation.criterion.length <= 240 + ' [truncated]'.length);
       assert.ok(obligation.criterion.endsWith('[truncated]'));
+      assert.equal(obligation.identity.issueNumber, 93);
+      assert.ok(obligation.identity.text.length > obligation.criterion.length);
     }
     assert.ok(brief.matrix);
     assert.equal(brief.matrix.rows.length, 24);

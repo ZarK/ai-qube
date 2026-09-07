@@ -600,7 +600,8 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.match(single.body, /Fill every entry before opening the PR\. Update entries when review fixes move code or tests\./);
     assert.match(single.body, /### Criterion 1: Renders the scaffold for each criterion\./);
     assert.match(single.body, /- Implemented at: \[UNFILLED: list the file paths and symbols where this behavior lives\]/);
-    assert.match(single.body, /- Proven by: \[UNFILLED: name the test file and test whose assertions fail if this behavior regresses\]/);
+    assert.match(single.body, /- Criterion identity: #93:1/);
+    assert.match(single.body, /- Proven by: \[UNFILLED: cite the existing test result, source inspection, or direct observation that establishes this criterion\]/);
     assert.match(single.body, /- Negative case: \[UNFILLED: name the counterexample test, or state why none applies\]/);
     assert.equal((single.body.match(/\[UNFILLED:/g) || []).length, 3);
     const mapIndex = single.body.indexOf('## Criterion-to-proof map');

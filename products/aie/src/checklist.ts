@@ -7,6 +7,16 @@ export interface ChecklistItem {
   checked: boolean;
 }
 
+export interface CriterionIdentity {
+  issueNumber: number;
+  index: number;
+  text: string;
+}
+
+export function getCriterionIdentity(issueNumber: number, criterion: Pick<ChecklistItem, 'index' | 'text'>): CriterionIdentity {
+  return { issueNumber, index: criterion.index, text: criterion.text };
+}
+
 export interface ChecklistSummary {
   total: number;
   checked: number;
@@ -55,7 +65,7 @@ function parseSelector(selector: ChecklistSelector): ChecklistSelector {
 
 export function parseChecklist(body: string): ChecklistSummary {
   const items: ChecklistItem[] = [];
-  for (const [lineIndex, line] of body.split(/\r?\n/).entries()) {
+  for (const [lineIndex, line] of body.split(/\r\n|\r|\n/).entries()) {
     const match = line.match(CHECKLIST_LINE);
     if (match) {
       items.push({
@@ -96,7 +106,9 @@ export function planChecklistUpdate(body: string, selector: ChecklistSelector, s
   const targetIndexes = new Set(matchedItems.map(item => item.index));
   let checklistIndex = 0;
   let changed = false;
-  const lines = body.split(/\r?\n/).map(line => {
+  const tokens = body.split(/(\r\n|\r|\n)/);
+  const updatedBody = tokens.map((line, tokenIndex) => {
+    if (tokenIndex % 2 === 1) return line;
     const match = line.match(CHECKLIST_LINE);
     if (!match) return line;
     checklistIndex += 1;
@@ -104,7 +116,6 @@ export function planChecklistUpdate(body: string, selector: ChecklistSelector, s
     if ((match[2].toLowerCase() === 'x') === (state === 'checked')) return line;
     changed = true;
     return `${match[1]}[${stateToken(state)}]${match[3]}${match[4]}`;
-  });
-  const updatedBody = lines.join('\n');
+  }).join('');
   return { updatedBody, matchedItems, before, after: parseChecklist(updatedBody), changed };
 }

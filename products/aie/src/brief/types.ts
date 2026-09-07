@@ -1,7 +1,10 @@
+import type { CriterionIdentity } from '../checklist.js';
+
 export type VerificationKind = 'unit' | 'integration' | 'manual-observation' | 'artifact-review' | 'unspecified';
 
 export interface BriefObligation {
   criterion: string;
+  identity: CriterionIdentity;
   kind: VerificationKind;
 }
 
