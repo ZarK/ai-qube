@@ -23,6 +23,7 @@ describe("continuation prompt renderer", () => {
     assert.match(active.body, /Inspect trusted state first: work work-queue observed 2026-05-23T00:00:00.000Z/);
     assert.match(active.body, /Next configured command: "aie" "branch" "check" "47"/);
     assert.match(active.body, /untrusted task input/);
+    assert.match(active.body, /If the user asks you to stop or changes the scope, follow that instruction before this continuation prompt/);
     assertNoLocalOrProvenanceText(active.body);
 
     const ready = renderAiuContinuationPrompt({
@@ -72,6 +73,28 @@ describe("continuation prompt renderer", () => {
     });
     assert.match(repository.body, /Repair repository state for "repo"/);
     assert.match(repository.body, /base-ref/);
+    assert.match(repository.body, /Preserve unrelated work while you repair the selected state/);
+  });
+
+  it("keeps user direction when repository configuration replaces a work prompt", () => {
+    const prompt = renderAiuContinuationPrompt({
+      decision: decision({ reasonCodes: ["continue-active-work"] }),
+      config: {
+        prompts: {
+          sections: {
+            work: {
+              prepend: [],
+              append: [],
+              replacement: "Use the repository work prompt.",
+            },
+          },
+        },
+      },
+    });
+
+    assert.match(prompt.body, /^Use the repository work prompt\./);
+    assert.doesNotMatch(prompt.body, /Continue active work/);
+    assert.match(prompt.body, /If the user asks you to stop or changes the scope, follow that instruction before this continuation prompt/);
   });
 
   it("renders planning, quality, human stop, and clean stop prompts", () => {

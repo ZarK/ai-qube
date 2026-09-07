@@ -8,17 +8,17 @@ const { join, posix: pathPosix } = require('node:path');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults, userConfigPath } = require('../dist/config/index.js');
-const { renderAgentInstructions, renderMakeItSoSkill } = require('../dist/init_content.js');
+const { renderAgentInstructions, renderMakeItSoCommand, renderMakeItSoSkill } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
 const { renderManagedSection } = require('../dist/managed_file.js');
 
 const EXPECTED_PR_CADENCE_LINES = [
   'Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.',
   'Blocking findings are limited to: correctness bugs, security or trust risks, broken required CI or checks, and failed acceptance criteria of the active issue. Everything else is advisory.',
-  'Treat non-blocking polish (advisory findings, nits, style preferences) as: fix it in the same pull request when cheap, otherwise drop it, or fold it into an already-queued Ready issue if it genuinely matches that scope. Never open a new GitHub issue to track review or audit leftovers.',
-  'Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this in-PR fix-or-drop disposition; they do not suggest or automate `gh issue create`, and neither should you.',
-  'Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the head. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.',
-  'While a review gate or review lane runs, do not edit files, commit, or move the branch head; isolated lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.',
+  'Treat non-blocking polish as advisory. Fix it in the same pull request when cheap, otherwise drop it or include it in an existing relevant work item. Do not create a new work item for review leftovers.',
+  'Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this fix-or-drop decision.',
+  'Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the code. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.',
+  'While a review gate or review lane runs, do not edit files, commit, or move the branch head. Review lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.',
   'Commit only intentional, issue-scoped changes. Never commit unrelated untracked files that accumulate in the working tree.',
 ];
 
@@ -408,6 +408,9 @@ describe('init service', () => {
     assert.match(agents, /configured work provider is Jira and the configured review provider is GitLab/);
     assert.match(agents, /Configured providers: work Jira, review GitLab, repository local git, CI Jenkins jobs, layout local filesystem/);
     assert.doesNotMatch(agents, /configured work and review provider is GitHub/);
+    const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
+    assert.match(command, /Review mode is external\. Use the configured GitLab workflow/);
+    assert.doesNotMatch(`${agents}\n${command}`, /QUBEReview|qube-review\[bot\]|GitHub App|manual GitHub issue|gh issue create/);
   });
 
   it('infers GitLab review when work is GitLab and review is omitted', async () => {
@@ -426,6 +429,40 @@ describe('init service', () => {
     assert.equal(config.providers.work.kind, 'gitlab');
     assert.equal(config.providers.review.kind, 'gitlab');
     assert.equal(config.providers.ci.kind, 'gitlab');
+  });
+
+  it('renders the selected review mode and GitHub publisher in host entry points', () => {
+    const external = getDefaults();
+    const externalCommand = renderMakeItSoCommand(external);
+    assert.match(externalCommand, /Review mode is external/);
+    assert.match(externalCommand, /GitHub review publisher mode is user/);
+    assert.doesNotMatch(externalCommand, /QUBEReview|qube-review\[bot\]|Review mode is isolated|Review compute remains host-run/);
+
+    const host = getDefaults();
+    host.reviewAdapter = 'local';
+    host.reviewMode = 'host';
+    host.localReviewAgents = ['codex'];
+    const hostCommand = renderMakeItSoCommand(host);
+    assert.match(hostCommand, /Review mode is host/);
+    assert.match(hostCommand, /complete local review focuses/);
+    assert.doesNotMatch(hostCommand, /Review mode is isolated|qube-review\[bot\]/);
+
+    const isolated = getDefaults();
+    isolated.reviewAdapter = 'local';
+    isolated.reviewMode = 'isolated';
+    isolated.providers.review.publisher = { mode: 'github-app', githubApp: { appId: '1', installationId: '2', privateKeyEnv: 'KEY' } };
+    const isolatedCommand = renderMakeItSoCommand(isolated);
+    assert.match(isolatedCommand, /Review mode is isolated/);
+    assert.match(isolatedCommand, /GitHub review publisher mode is github-app/);
+    assert.doesNotMatch(isolatedCommand, /publisher mode is user|qube-review\[bot\]/);
+
+    const token = getDefaults();
+    token.providers.review.publisher = { mode: 'token', token: { env: 'TOKEN' } };
+    assert.match(renderMakeItSoCommand(token), /GitHub review publisher mode is token/);
+
+    const unavailable = getDefaults();
+    unavailable.reviewAgents = [];
+    assert.match(renderMakeItSoCommand(unavailable), /no supported reviewer is configured/);
   });
 
   it('is idempotent after writing managed sections', async () => {
@@ -555,13 +592,17 @@ describe('init service', () => {
     assert.match(agents, /GitHub milestone ordering is enabled/);
     assert.doesNotMatch(agents, /primary checkout, no blocking open pull requests, and a current local base branch/);
     assert.match(agents, /Configured quality gate commands: test \(custom\/pre-pr\): `npm test`/);
-    assert.match(agents, /Configured review agents: review-bot/);
-    assert.match(agents, /Review request text: Please review this policy-sensitive change\./);
+    assert.match(agents, /When shipping is disabled, do not run or publish pull request reviews/);
+    assert.doesNotMatch(agents, /After the pull request exists, run/);
     assert.match(agents, /Naming rules:/);
     assert.match(agents, /follow configured repository pinning policy/);
     assert.doesNotMatch(command, /`upstream\/develop` is current/);
     assert.match(command, /autonomous shipping mode is disabled/);
     assert.doesNotMatch(command, /commit -> push -> pull request/);
+    assert.doesNotMatch(command, /UI audit servers use|agent-browser first/);
+    assert.doesNotMatch(agents, /PR review and merge cadence:/);
+    assert.doesNotMatch(agents, /completion: after merge|next-issue:|audit: run the configured manual UI audit/);
+    assert.match(command, /Stop before commit, push, pull request creation, review publication, merge, completion, or next-issue work/);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), false);
   });
 
@@ -1029,12 +1070,15 @@ describe('init service', () => {
 
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const command = readFileSync(join(repo, '.cursor', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(agents, /Configured native review harnesses: Cursor/);
     assert.match(agents, /profiles report native local review as unsupported/);
     assert.match(agents, /Do not create the review session lock, spawn native review lanes, or publish local evidence/);
     assert.match(agents, /Cursor: .*native review unsupported;/);
     assert.doesNotMatch(agents, /installed agents|Economy review catalog agents available to this host/);
     assert.doesNotMatch(agents, /spawn one fresh-context review subagent per lane through a configured harness/);
+    assert.match(command, /configured native review harness does not support local review/);
+    assert.doesNotMatch(command, /complete local review focuses/);
   });
 
   it('renders full always-loaded workflow instructions with host projections', async () => {
@@ -1070,17 +1114,18 @@ describe('init service', () => {
     assert.match(agents, /Mark exactly one todo item `in_progress`/);
     assert.match(agents, /mark items `completed` immediately after finishing them/);
     assert.match(agents, /Never reach zero pending local todos while ready issue work may remain/);
-    assert.match(agents, /Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record/);
+    assert.match(agents, /Local todos are working memory and continuation state; GitHub work item checklists and comments are the durable shared task record/);
     assert.match(agents, /run `qube aie complete <issue>`/);
     assert.match(agents, /Analysis and discovered work:/);
-    assert.match(agents, /Issue-gated implementation starts only after Executor selects or starts valid GitHub issue work/);
-    assert.match(agents, /manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
-    assert.match(agents, /When explicitly directed to record a confirmed product gap, create or suggest GitHub issue work with clear requirements and acceptance criteria/);
+    assert.match(agents, /Issue-gated implementation starts only after Executor selects or starts a valid GitHub work item/);
+    assert.match(agents, /User-directed analysis, investigation, and queue triage are allowed before implementation starts when the user asks/);
+    assert.match(agents, /Manual GitHub work item creation and suggestion are also allowed/);
+    assert.match(agents, /When the user asks to record a confirmed product gap, create or suggest a GitHub work item with clear requirements and acceptance criteria/);
     assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
-    assert.match(agents, /implementation: read the implementation brief rendered by `qube aie start` and `qube aie view <issue> --json`/);
-    assert.match(agents, /post that plan as a comment on the issue before editing source/);
-    assert.match(agents, /the plan commits you to the full obligation surface before anchoring on an architecture/);
-    assert.match(agents, /Then implement the complete issue scope/);
+    assert.match(agents, /implementation: read the implementation brief from `qube aie start` and `qube aie view <issue> --json`/);
+    assert.match(agents, /Make a short plan for the relevant work and tests/);
+    assert.doesNotMatch(agents, /matrix rows|obligation surface|post that plan/);
+    assert.match(agents, /Implement the complete scope/);
     assert.match(agents, /audit: run the configured manual UI audit/);
     assert.match(agents, /Executor local app runner/);
     assert.match(agents, /prefer repository package scripts/);
@@ -1092,29 +1137,28 @@ describe('init service', () => {
     assert.match(agents, /typed outcome, observations, screenshot hashes, findings, and blockers in audit\.json/);
     assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
     assert.match(agents, /Do not claim UI audit success from CLI JSON, HTTP\/API responses, DOM text, passing tests, notes, filenames, hashes, or status checks/);
-    assert.match(agents, /run `qube aie review gate <issue> --prompt` for review-agent QA when configured or needed/);
     assert.match(agents, /review: use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
-    assert.match(agents, /test: during review-round fixes, run the focused commands selected by `aie gates plan --round fix --changed <path>`/);
-    assert.match(agents, /at the final head run the complete configured gate set before merge/);
-    assert.match(agents, /PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the PR body before opening the pull request and update entries when review fixes move code or tests, open a non-draft, ready-for-review pull request that closes the issue/);
-    assert.match(agents, /merge: address review\/check feedback, loop back to implementation when a gate fails/);
+    assert.match(agents, /test: run focused checks while fixing the issue/);
+    assert.match(agents, /At the final head, run the complete configured gate set before merge/);
+    assert.match(agents, /PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the pull request body, and open a ready pull request that closes the work item/);
+    assert.match(agents, /merge: address blocking feedback and failed checks/);
     assert.match(agents, /completion: after merge, run `qube aie complete <issue>`/);
     assert.match(agents, /pull-base: return to `main` and pull `origin\/main`/);
-    assert.match(agents, /next-issue: inspect the queue, resume active work before starting new work/);
+    assert.match(agents, /next-issue: inspect the queue and start the next ready issue/);
     const completeIndex = agents.indexOf('After merge, run `qube aie complete <issue>`');
-    const baseUpdateIndex = agents.indexOf('return to the configured base branch', completeIndex);
+    const baseUpdateIndex = agents.indexOf('pull-base: return to `main`', completeIndex);
     assert.notEqual(completeIndex, -1);
     assert.notEqual(baseUpdateIndex, -1);
     assert.ok(completeIndex < baseUpdateIndex);
     assert.match(agents, /placeholder command classes, stubs, no-op implementations/);
-    assert.match(agents, /milestone numbers, bootstrap phases, issue implementation history, baseline language/);
-    assert.match(agents, /reference repository names, local reference paths, or source-provenance explanations/);
+    assert.match(agents, /Use the target project's product terms/);
+    assert.match(agents, /issue implementation history, local reference paths, or source-provenance explanations/);
     assert.match(agents, /Use `qube aie pr view <pr> --json`, `qube aie pr gate <pr>`, and `qube aie pr body <issue>` for pull request state/);
-    assert.match(agents, /Avoid raw `gh pr view` comment or review payloads/);
+    assert.match(agents, /Avoid raw provider review or comment payloads/);
     assert.match(agents, /Stop implementation work cleanly and report the exact blocker/);
-    assert.match(agents, /implementation stop conditions do not block explicitly user-directed analysis, investigation, queue triage, or manual GitHub issue creation and issue suggestion/);
+    assert.match(agents, /implementation stop conditions do not block explicitly user-directed analysis, investigation, queue triage, or manual GitHub work item creation and suggestion/);
     assert.match(agents, /repository meta documentation/);
-    assert.match(agents, /Create or edit repository docs only when the active issue explicitly asks/);
+    assert.match(agents, /Update affected product documentation when behavior, commands, or supported workflows change/);
     assert.match(agents, /Do not commit generated build output unless repository policy explicitly allows it/);
     assert.match(agents, /Use exact dependency versions/);
     assert.match(agents, /canonical supply-chain guard/);
@@ -1126,16 +1170,17 @@ describe('init service', () => {
     assert.match(agents, /Stop for explicit user approval when package age, identity, source\/provenance, integrity, or execution risk cannot be verified/);
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
-    assert.match(command, /Repository policy authorizes you to commit, push, create non-draft PRs, run `qube pr gate <pr>` to request QUBEReview, wait for the isolated lane gate, and check status, merge, run `qube complete <issue>`, pull the configured base branch, and continue/);
-    assert.match(command, /Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
-    assert.match(command, /Use `qube pr view <pr> --json`, `qube pr gate <pr>`, and `qube pr body <issue>` for pull request state instead of raw `gh pr view` review or comment payloads/);
+    assert.match(command, /Repository policy authorizes you to commit, push, create non-draft PRs, run `qube pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `qube complete <issue>`, pull the configured base branch, and continue/);
+    assert.match(command, /Analysis, investigation, and queue triage are allowed before implementation starts when the user asks/);
+    assert.match(command, /Use `qube pr view <pr> --json`, `qube pr gate <pr>`, and `qube pr body <issue>` for pull request state instead of raw provider review or comment payloads/);
     assert.match(command, /Use composer `qube` commands/);
     assert.match(command, /`qube aie run start --name ui-audit -- <command>`/);
     assert.match(command, /`qube aie run wait --name ui-audit --url <url> --timeout 30/);
     assert.match(command, /If start fails, run `qube aie run status --name ui-audit` exactly once/);
     assert.match(command, /If start succeeds, run exactly one bounded wait/);
     assert.match(command, /Do not run status after a successful start, retry wait/);
-    assert.match(command, /QUBEReview publishes lane feedback as `qube-review\[bot\]`/);
+    assert.match(command, /Review mode is external/);
+    assert.match(command, /GitHub review publisher mode is user/);
     assert.match(command, /prefer repository package scripts/);
     assert.match(command, /Use agent-browser first for visual UI inspection/);
     assert.match(command, /capture and inspect PNG screenshots/);
@@ -1144,13 +1189,13 @@ describe('init service', () => {
     assert.match(command, /collect `qube aie run status --name ui-audit` logs once/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);
-    assert.match(command, /non-draft, ready-for-review pull request with issue closure -> `qube pr gate <pr>` to request QUBEReview and run isolated lanes/);
-    assert.match(command, /open the non-draft, ready-for-review pull request/);
-    assert.match(command, /merge once repository policy, CI, required tests, and configured gates are satisfied/);
+    assert.match(command, /non-draft, ready-for-review pull request with work item closure -> run `qube pr gate <pr>` to request reviewers, wait for configured review gates, and check status/);
+    assert.match(command, /open the ready pull request/);
+    assert.match(command, /merge when required checks pass and no concrete blocker remains/);
     assert.match(command, /configured gates cannot run/);
-    assert.match(command, /Stop implementation only when/);
-    assert.match(command, /manual GitHub issue creation or issue suggestion may still proceed before implementation starts/);
-    assert.match(command, /Report the exact blocker and the next Executor command or repository action/);
+    assert.match(command, /Stop implementation when/);
+    assert.match(command, /Explicit user-directed analysis and queue triage may still proceed before implementation starts/);
+    assert.match(command, /Report the exact blocker and the next supported action/);
     assert.match(command, /Go\./);
   });
 
@@ -1868,8 +1913,8 @@ describe('init command metadata', () => {
     assert.doesNotMatch(generated, /\breferences\b/i);
     assert.doesNotMatch(generated, new RegExp(['source', 'repository'].join(' '), 'i'));
     assert.doesNotMatch(generated, new RegExp(['planning', 'history'].join(' '), 'i'));
-    assert.match(generated, /Do not mention milestone numbers, bootstrap phases, issue implementation history, baseline language/);
-    assert.match(generated, /reference repository names, local reference paths, or source-provenance explanations/);
+    assert.match(generated, /Use the target project's product terms/);
+    assert.match(generated, /issue implementation history, local reference paths, or source-provenance explanations/);
   });
 });
 
