@@ -335,9 +335,13 @@ describe('model review runner', () => {
       assert.equal(wrongDigest.reasonCode, null);
       assert.equal(wrongDigest.evidence.artifacts[0].sha256, null);
       // Discarding a digest does not bypass the repository-relative path check.
-      const missingArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'missing-review-artifact.md', sha256: digest }] });
+      const missingPath = 'products/aie/docs/M4-init-agent-instructions-and-make-it-so-missing.md';
+      const missingArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: missingPath, sha256: digest }] });
       assert.equal(missingArtifact.evidence, null);
       assert.equal(missingArtifact.reasonCode, 'model-route-contract-mismatch');
+      const missingRaw = JSON.parse(readFileSync(rawPath, 'utf8'));
+      assert.doesNotMatch(missingRaw.stdout, /M4-init-agent-instructions-and-make-it-so-missing/);
+      assert.match(missingRaw.stdout, /\[REDACTED\]\.md/);
     })();
   });
 
@@ -808,6 +812,9 @@ describe('model review runner', () => {
 
   it('redacts model-derived evidence before persistence or publication', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-redact-'));
+    const reviewedPath = 'products/aie/docs/M4-init-agent-instructions-and-make-it-so.md';
+    mkdirSync(dirname(join(repoRoot, reviewedPath)), { recursive: true });
+    writeFileSync(join(repoRoot, reviewedPath), 'Reviewed documentation.\n');
     const token = (...parts) => parts.join('');
     const tokens = [
       token('gh', 'p_', 'abcdefghijklmnopqrstuvwxyz123456'),
@@ -827,9 +834,16 @@ describe('model review runner', () => {
     body.summary = `Summary ${tokens[0]} ${tokens[1]}`;
     body.blockers = [`Blocker ${tokens[2]}`, 'client_secret=lowercase-punctuation_secret-value'];
     body.findings = [{ severity: 'advisory', message: `Message ${tokens[3]}`, suggestion: `Suggestion ${tokens[4]}`, location: { path: `source-${tokens[5]}.ts` } }];
-    body.commands = [`command ${tokens[6]}`];
+    body.artifacts = [
+      { kind: 'source', path: reviewedPath, sha256: null },
+      { kind: 'command', path: `command:inspect ${reviewedPath}`, sha256: null },
+    ];
+    body.commands = [`command ${tokens[6]}`, `cat ${reviewedPath}`];
     body.surfaces = [`surface ${tokens[7]}`];
-    body.contextReviewed = [{ kind: 'diff', source: `source ${tokens[8]}`, trust: 'local-evidence', freshness: 'current' }];
+    body.contextReviewed = [
+      { kind: 'doc', source: reviewedPath, trust: 'local-evidence', freshness: 'current' },
+      { kind: 'diff', source: `source ${tokens[8]}`, trust: 'local-evidence', freshness: 'current' },
+    ];
     body.toolsUsed = ['tool password="lowercase-secret-value"'];
     body.coverage = [{ area: 'code-quality', status: 'finding' }];
     body.completeness = 'Complete -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----';
@@ -846,6 +860,10 @@ describe('model review runner', () => {
     for (const token of tokens) assert.doesNotMatch(serialized, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.doesNotMatch(serialized, /lowercase-secret-value|private-key-material/);
     assert.match(serialized, /\[REDACTED\]/);
+    assert.equal(result.evidence.artifacts[0].path, reviewedPath);
+    assert.match(result.evidence.artifacts[1].path, /\[REDACTED\]\.md/);
+    assert.equal(result.evidence.contextReviewed[0].source, reviewedPath);
+    assert.match(result.evidence.commands[1], /\[REDACTED\]\.md/);
   });
 
   it('accepts a confidence-bearing advisory and preserves confidence into routed evidence', async () => {
