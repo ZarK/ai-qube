@@ -4,9 +4,9 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
-import { redact } from '../redact.js';
+import { redact, redactKnownSecrets } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, laneArtifactViolation, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
 import { parseReviewRouteProvenance, type RepoAffectedResult, type RepoPathSignal, type ReviewFinding } from '@tjalve/qube-core';
@@ -1122,13 +1122,26 @@ function readFindings(value: unknown): ReviewFinding[] {
   return findings;
 }
 
-function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
+function redactReviewPath(path: string, kind: string, repoRoot?: string): string {
+  const knownSecretRedaction = redactKnownSecrets(path);
+  const isRepositoryFile = repoRoot !== undefined
+    && kind !== 'command'
+    && !path.startsWith('command:')
+    && knownSecretRedaction === path
+    && laneArtifactViolation('review', 'inconclusive', [{ kind, path, sha256: null }], repoRoot) === null;
+  return isRepositoryFile ? path : redact(path);
+}
+
+function readArtifacts(value: unknown, repoRoot?: string): LaneEvidence['artifacts'] {
   if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map(item => ({
-    kind: typeof item.kind === 'string' ? redact(item.kind) : 'json',
-    path: typeof item.path === 'string' ? redact(item.path) : '',
-    sha256: typeof item.sha256 === 'string' && item.sha256 !== '' ? item.sha256 : null,
-  }));
+  return value.filter(isRecord).map(item => {
+    const kind = typeof item.kind === 'string' ? redact(item.kind) : 'json';
+    return {
+      kind,
+      path: typeof item.path === 'string' ? redactReviewPath(item.path, kind, repoRoot) : '',
+      sha256: typeof item.sha256 === 'string' && item.sha256 !== '' ? item.sha256 : null,
+    };
+  });
 }
 
 function readLaneId(value: unknown): LocalReviewLaneId | null {
@@ -1151,7 +1164,7 @@ function readRecommendation(value: unknown, status: LocalReviewStatus): LocalRev
   return 'inconclusive';
 }
 
-export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string): LaneEvidence | null {
+export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, repoRoot?: string): LaneEvidence | null {
   if (!isRecord(value)) return null;
   const id = readLaneId(value.lane ?? value.id);
   if (id !== lane) return null;
@@ -1167,7 +1180,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? redact(value.summary.trim()) : `${id} local review completed.`,
     blockers: readStringArray(value.blockers),
     findings: readFindings(value.findings),
-    artifacts: readArtifacts(value.artifacts),
+    artifacts: readArtifacts(value.artifacts, repoRoot),
     commands: readStringArray(value.commands),
     surfaces: readStringArray(value.surfaces),
     // Enum-validate context entries and drop incomplete ones: a missing field is
@@ -1182,7 +1195,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       if (typeof item.freshness !== 'string' || !freshnessValues.includes(item.freshness)) return [];
       return [{
         kind: item.kind as LocalReviewContextReviewed['kind'],
-        source: redact(item.source),
+        source: redactReviewPath(item.source, 'context', repoRoot),
         trust: item.trust as LocalReviewContextReviewed['trust'],
         freshness: item.freshness as LocalReviewContextReviewed['freshness'],
       }];
@@ -1348,7 +1361,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   writeReviewFileGuarded(rawPath, rawBodyText, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   if (result.exitCode !== 0) return null;
   try {
-    const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
+    const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha, repoRoot);
     if (!evidence) return null;
     const rawRelativePath = relative(repoRoot, rawPath).replace(/\\/g, '/');
     return {

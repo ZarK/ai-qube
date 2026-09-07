@@ -545,7 +545,7 @@ async function planManagedFile(input: {
     generatedBody: input.body,
     allowAppend: input.allowAppend,
     force: input.force,
-    commentStyle: input.relativePath.endsWith('.toml') ? 'hash' : 'html',
+    commentStyle: input.kind === 'skill' || input.relativePath.endsWith('.toml') ? 'hash' : 'html',
     conflictPatterns: input.conflictPatterns,
     conflictReason: input.conflictReason,
   });

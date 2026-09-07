@@ -17,13 +17,16 @@ const TOKEN_PATTERNS: RegExp[] = [
 const PRIVATE_KEY_PATTERN = /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g;
 const LABELED_SECRET_PATTERN = /\b(api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token)(\s*[:=]\s*)("[^"]{6,}"|'[^']{6,}'|[^\s,;]{6,})/gi;
 
-export function redact(text: string): string {
+export function redactKnownSecrets(text: string): string {
   let out = text.replace(PRIVATE_KEY_PATTERN, '[REDACTED]');
   for (const pattern of TOKEN_PATTERNS) {
     out = out.replace(pattern, '[REDACTED]');
   }
-  out = out.replace(LABELED_SECRET_PATTERN, (_match, label: string, separator: string) => `${label}${separator}[REDACTED]`);
-  return out.replace(/\b([A-Za-z0-9_-]{40,})\b/g, match => {
+  return out.replace(LABELED_SECRET_PATTERN, (_match, label: string, separator: string) => `${label}${separator}[REDACTED]`);
+}
+
+export function redact(text: string): string {
+  return redactKnownSecrets(text).replace(/\b([A-Za-z0-9_-]{40,})\b/g, match => {
     if (/[A-Z]/.test(match) && /[a-z]/.test(match) && /[0-9]/.test(match)) {
       return '[REDACTED]';
     }

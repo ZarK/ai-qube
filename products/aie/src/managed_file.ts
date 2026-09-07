@@ -73,6 +73,8 @@ interface ParsedSection {
   block: string;
   body: string;
   checksum: string | null;
+  commentStyle: ManagedCommentStyle;
+  frontmatterAtStart: boolean;
 }
 
 function checksum(content: string): string {
@@ -136,12 +138,14 @@ function renderManagedConflictDiff(currentBody: string, renderedBody: string): s
 export function renderManagedSection(generatedBody: string, commentStyle: ManagedCommentStyle = 'html'): string {
   const body = normalizeBody(generatedBody);
   const markers = MANAGED_MARKERS[commentStyle];
+  const frontmatterAtStart = commentStyle === 'hash' && body.startsWith('---\n');
   return [
+    ...(frontmatterAtStart ? ['---'] : []),
     markers.start,
     markers.version,
     markers.tool(readAiePackageVersion()),
     markers.checksum(checksum(normalizeForChecksum(body))),
-    body.trimEnd(),
+    (frontmatterAtStart ? body.slice(4) : body).trimEnd(),
     markers.end,
     '',
   ].join('\n');
@@ -156,28 +160,32 @@ export function readManagedToolVersion(content: string): string | null {
 }
 
 function parseManagedSection(content: string): ParsedSection | null {
-  const candidates = Object.values(MANAGED_MARKERS)
-    .map(markers => ({ markers, start: content.indexOf(markers.start) }))
+  const candidates = Object.entries(MANAGED_MARKERS)
+    .map(([commentStyle, markers]) => ({ commentStyle: commentStyle as ManagedCommentStyle, markers, start: content.indexOf(markers.start) }))
     .filter(candidate => candidate.start >= 0)
     .sort((left, right) => left.start - right.start);
   const candidate = candidates[0];
   if (!candidate) return null;
-  const { markers, start } = candidate;
+  const { commentStyle, markers, start } = candidate;
+  const frontmatterPrefix = content.startsWith('---\r\n') ? '---\r\n' : content.startsWith('---\n') ? '---\n' : null;
+  const frontmatterAtStart = commentStyle === 'hash' && frontmatterPrefix !== null && start === frontmatterPrefix.length;
+  const managedStart = frontmatterAtStart ? 0 : start;
   const endMarkerStart = content.indexOf(markers.end, start + markers.start.length);
   if (endMarkerStart < 0) return null;
   let end = endMarkerStart + markers.end.length;
   if (content.slice(end, end + 2) === '\r\n') end += 2;
   else if (content[end] === '\n') end += 1;
-  const block = content.slice(start, end);
+  const block = content.slice(managedStart, end);
   const inner = content.slice(start + markers.start.length, endMarkerStart);
   const checksumMatch = inner.match(markers.checksumPattern);
-  const body = normalizeBody(inner
+  const managedBody = inner
     .replace(markers.versionPattern, '')
     .replace(markers.toolPattern, '')
     .replace(markers.checksumPattern, '')
     .replace(/^\s*\n/, '')
-    .trimEnd());
-  return { start, end, block, body, checksum: checksumMatch ? checksumMatch[1] : null };
+    .trimEnd();
+  const body = normalizeBody(`${frontmatterAtStart ? '---\n' : ''}${managedBody}`);
+  return { start: managedStart, end, block, body, checksum: checksumMatch ? checksumMatch[1] : null, commentStyle, frontmatterAtStart };
 }
 
 export function hasManagedSection(content: string): boolean {
@@ -202,7 +210,9 @@ function appendSection(content: string, section: string): string {
 }
 
 export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateResult {
-  const section = renderManagedSection(options.generatedBody, options.commentStyle ?? 'html');
+  const commentStyle = options.commentStyle ?? 'html';
+  const section = renderManagedSection(options.generatedBody, commentStyle);
+  const frontmatterAtStart = commentStyle === 'hash' && normalizeBody(options.generatedBody).startsWith('---\n');
   if (options.existingContent === null) {
     return { ok: true, operation: 'create', content: section, managedFound: false, conflict: false, reason: 'File does not exist and will be created.', diff: null };
   }
@@ -221,7 +231,10 @@ export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateR
         diff: renderManagedConflictDiff(parsed.body, normalizeBody(options.generatedBody)),
       };
     }
-    if (checksumMatches && parsed.body === normalizeBody(options.generatedBody)) {
+    if (checksumMatches
+      && parsed.body === normalizeBody(options.generatedBody)
+      && parsed.commentStyle === commentStyle
+      && parsed.frontmatterAtStart === frontmatterAtStart) {
       return { ok: true, operation: 'unchanged', content: options.existingContent, managedFound: true, conflict: false, reason: 'Managed section is already current.', diff: null };
     }
     const content = `${options.existingContent.slice(0, parsed.start)}${section}${options.existingContent.slice(parsed.end)}`;

@@ -516,7 +516,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     candidate.status = 'inconclusive';
     candidate.recommendation = 'inconclusive';
   }
-  return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
+  return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
 }
 
 function normalizeSchemaOptionals(value: unknown): unknown {
