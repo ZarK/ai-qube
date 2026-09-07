@@ -8,7 +8,7 @@ const { join, posix: pathPosix } = require('node:path');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults, userConfigPath } = require('../dist/config/index.js');
-const { renderAgentInstructions } = require('../dist/init_content.js');
+const { renderAgentInstructions, renderMakeItSoSkill } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
 const { renderManagedSection } = require('../dist/managed_file.js');
 
@@ -55,6 +55,20 @@ function cleanConfig() {
 
 function opencodeCommandPath(name) {
   return pathPosix.join('.opencode', 'commands', name);
+}
+
+function parseSkillFrontmatter(content) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(content);
+  assert.ok(match, 'skill must start with YAML frontmatter');
+  const metadata = Object.fromEntries(match[1]
+    .split(/\r?\n/)
+    .filter(line => line.trim() !== '' && !line.startsWith('#'))
+    .map(line => {
+      const separator = line.indexOf(':');
+      assert.ok(separator > 0, `invalid frontmatter line: ${line}`);
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    }));
+  return { metadata, body: content.slice(match[0].length) };
 }
 
 describe('init service', () => {
@@ -210,13 +224,55 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const skill = readFileSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md'), 'utf8');
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assert.match(skill, /Continue repository development/);
-    assert.match(skill, /^name: make-it-so$/m);
+    const parsedSkill = parseSkillFrontmatter(skill);
+    assert.equal(parsedSkill.metadata.name, 'make-it-so');
+    assert.match(parsedSkill.body, /Continue repository development/);
+    assert.match(skill, /^---\n# BEGIN EXECUTOR MANAGED SECTION\n/);
     assert.match(agents, /\.agents\/skills\/make-it-so\/SKILL\.md/);
     assert.match(agents, /invoked as `\$make-it-so`/);
     assert.doesNotMatch(agents, /\.codex\/agents\/qube-review-focus\.toml/);
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
+
+    const second = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(second.ok, true);
+    assert.equal(second.actions.find(action => action.path === pathPosix.join('.agents', 'skills', 'make-it-so', 'SKILL.md')).status, 'skipped');
+    assert.equal(readFileSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md'), 'utf8'), skill);
   });
+
+  it('repairs an unchanged HTML-managed Codex skill', async () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(configToFileShape(config), null, 2)}\n`);
+    const skillPath = join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md');
+    mkdirSync(join(repo, '.agents', 'skills', 'make-it-so'), { recursive: true });
+    writeFileSync(skillPath, renderManagedSection(renderMakeItSoSkill(config), 'html'));
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.equal(result.actions.find(action => action.path === pathPosix.join('.agents', 'skills', 'make-it-so', 'SKILL.md')).operation, 'replace-managed');
+    assert.match(readFileSync(skillPath, 'utf8'), /^---\n# BEGIN EXECUTOR MANAGED SECTION\n/);
+  });
+
+  for (const edit of [
+    { name: 'metadata', apply: skill => skill.replace('name: make-it-so', 'name: custom-skill') },
+    { name: 'body', apply: skill => skill.replace('Continue repository development', 'Continue custom development') },
+  ]) {
+    it(`blocks a user edit to managed skill ${edit.name}`, async () => {
+      const repo = makeGitRepo();
+      const first = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+      assert.equal(first.ok, true);
+      const skillPath = join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md');
+      const editedSkill = edit.apply(readFileSync(skillPath, 'utf8'));
+      writeFileSync(skillPath, editedSkill);
+
+      const blocked = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+      assert.equal(blocked.ok, false);
+      assert.match(blocked.errors.join('\n'), /Managed section was edited outside Executor/);
+      assert.equal(readFileSync(skillPath, 'utf8'), editedSkill);
+    });
+  }
 
   for (const tool of ['codex', 'cursor']) {
     it(`binds fresh default model routing to the selected ${tool} harness`, async () => {
@@ -530,6 +586,8 @@ describe('init service', () => {
 
     const applied = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
     assert.equal(applied.ok, true);
+    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /^<!-- BEGIN EXECUTOR MANAGED SECTION -->\n/);
+    assert.match(readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'), /^<!-- BEGIN EXECUTOR MANAGED SECTION -->\n/);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'make-it-so.md')), true);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), false);
     assert.equal(existsSync(join(repo, '.claude', 'skills', 'make-it-so', 'SKILL.md')), false);
