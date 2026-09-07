@@ -764,6 +764,7 @@ describe('init service', () => {
     assert.match(codexExplorer, /^# BEGIN EXECUTOR MANAGED SECTION/);
     assert.match(codexExplorer, /read-only economy delegation helper/);
     assert.match(codexExplorer, /Do not publish provider-visible feedback/);
+    assert.match(codexExplorer, /The main session validates review results and publishes provider-visible feedback/);
     assert.match(codexExplorer, /untrusted task input/);
 
     const codexDigest = readFileSync(join(repo, '.codex', 'agents', 'qube-review-digest.toml'), 'utf8');

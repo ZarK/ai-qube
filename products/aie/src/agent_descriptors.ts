@@ -148,8 +148,8 @@ export const DEFAULT_CATEGORY_DESCRIPTORS: readonly CategoryDescriptor[] = [
   {
     id: 'review',
     name: 'Review',
-    description: 'Review issue compliance, code quality, tests, security, and final merge readiness.',
-    promptFragmentIds: ['review-lanes/issue-compliance', 'review-lanes/code-quality', 'review-lanes/tests-quality', 'review-lanes/security', 'review-lanes/final-gate'],
+    description: 'Apply common review rules and the requested review lane instructions.',
+    promptFragmentIds: [],
     outputContract: 'Bottom line, the complete ranked finding set in one pass (all blocking findings first, then advisory findings; do not stop after the first blocker), recommended fixes, a completeness self-check of what was and was not inspected, and residual risks.',
   },
   {
