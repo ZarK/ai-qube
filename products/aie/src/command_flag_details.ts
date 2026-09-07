@@ -269,7 +269,6 @@ export const CHECKLIST_VERIFY_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--prompt', type: 'boolean', description: 'Print only the criterion-specific acceptance verification prompt', default: false },
   { name: '--index', type: 'integer', description: '1-based checklist item index to verify' },
   { name: '--evidence', type: 'string', description: 'Path to criterion-specific acceptance verification evidence JSON' },
-  { name: '--run-gate', type: 'string', description: 'Capture an observed run of this enabled, trusted configured gate for test-result proof; never runs in dry-run or prompt-only mode' },
   { name: '--state', type: 'string', description: 'Target checklist state after evidence validation', options: ['checked'], default: 'checked' },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];

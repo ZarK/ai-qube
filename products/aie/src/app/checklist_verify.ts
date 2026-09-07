@@ -2,10 +2,8 @@ import { renderAgentPrompt, type RenderedAgentPrompt } from '../agent_descriptor
 import { getCriterionIdentity, parseChecklist, planChecklistUpdate, type ChecklistItem, type ChecklistState, type ChecklistSummary, type CriterionIdentity } from '../checklist.js';
 import { loadConfigFile, type Config } from '../config/index.js';
 import { getIssue, ghFailureMessage, isGhExecutionError, runGh, type GhExec, type GitHubIssue } from '../providers/github_adapter_exports.js';
-import { prepareCriterionEvidence, verifyPreparedCriterion, type CriterionEvidence, type CriterionEvidenceContext, type ExecutionReference } from './criterion_evidence.js';
-import { captureCriterionExecution } from './criterion_execution.js';
-import { criterionRepository, currentInputDigest, isRecord } from './criterion_inputs.js';
-import { changedReviewPaths, type PrGateExec } from './pr_gate.js';
+import { prepareCriterionEvidence, verifyPreparedCriterion, type CriterionEvidence, type CriterionEvidenceContext } from './criterion_evidence.js';
+import { criterionRepository, isRecord } from './criterion_inputs.js';
 
 export interface ChecklistVerifyIssue { number: number; title: string; state: GitHubIssue['state']; url: string }
 export interface ChecklistVerifyPrContext { number: number; title: string; url: string; headSha: string; body: string }
@@ -32,12 +30,10 @@ export interface ChecklistVerifyOptions {
   index: number | undefined;
   state: ChecklistState;
   evidencePath?: string;
-  runGate?: string;
   dryRun: boolean;
   promptOnly: boolean;
   cwd?: string;
   exec?: GhExec;
-  commandExec?: PrGateExec;
   config?: Config;
 }
 
@@ -87,7 +83,7 @@ export function evidenceJsonTemplate(issue: GitHubIssue, criterion: ChecklistIte
 
 function buildPrompt(issue: GitHubIssue, criterion: ChecklistItem, pr: ChecklistVerifyPrContext | null): ChecklistVerifyPrompt {
   const rendered = renderAgentPrompt({ hostId: 'codex', descriptorId: 'qa-reviewer', categoryId: 'acceptance-verification' });
-  // Acceptance can reuse ordinary inspection and execution evidence. Host review
+  // Acceptance can reuse ordinary inspection and recorded gate evidence. Host review
   // orchestration and independent-review descriptors are not this command's role.
   const promptStack = rendered.promptStack.filter(fragment => fragment.id.startsWith('safety/') || fragment.id === 'acceptance/verify-criterion');
   const outputContract = 'Return acceptance verification evidence JSON for exactly this issue checklist criterion.';
@@ -95,14 +91,13 @@ function buildPrompt(issue: GitHubIssue, criterion: ChecklistItem, pr: Checklist
     ...promptStack.map(fragment => `## ${fragment.id}\n${fragment.text}`),
     `Issue #${issue.number}: ${issue.title}`,
     `Criterion #${criterion.index}: ${criterion.text}`,
-    pr ? `Current PR: #${pr.number}; head ${pr.headSha}` : 'No PR: bind a reproducible current work snapshot.',
-    'Reuse the existing criterion-to-proof entry and evidence appropriate to it. A separate evidence plan, reviewer, or approval is not required.',
-    'Use source-inspection for inspected structural requirements; direct-observation needs an artifact; test-result needs the cited test inputs and an observed execution receipt. Prompted-review must reference an existing trusted issue-compliance review and its exact executed prompt stack.',
-    'List every source, test, configuration, and dependency input needed by the proof with its SHA-256. File citations and descriptive text never prove that a command ran.',
-    'Keep criterionToProof equal to the selected existing PR entry. Before a PR, retain that same Markdown entry in the evidence document.',
-    'Use --dry-run --json to inspect the current relevant-input snapshot. A missing or stale snapshot remains inconclusive and never skips revision validation.',
-    'For test-result proof, set proof.gateName to the suitable configured gate and proof.execution to {path,sha256} for an existing trusted execution receipt. Use --run-gate <name> only when a new observed run of that same gate is needed; dry-run and prompt-only never run commands. The result reports evidence.execution for reuse.',
-    'Evidence timestamps use UTC ISO form YYYY-MM-DDTHH:mm:ss.sssZ. Record the inspected inputs and actual result; never invent execution or independent-review provenance.',
+    pr ? `Current PR: #${pr.number}; head ${pr.headSha}` : 'No PR exists. Record the current Git revision and relevant file hashes.',
+    'If a PR exists, reuse its exact criterion-to-proof entry.',
+    'Choose source inspection, direct observation, an existing gate result, or an existing prompted review.',
+    'For a test result, name the configured gate and include its evidence file as a hashed artifact.',
+    'List every required source, test, configuration, dependency, and observation file with its SHA-256.',
+    'Record the current PR revision or the current work snapshot.',
+    'Record the actual observation and a UTC timestamp. Do not invent execution or review evidence.',
     evidenceJsonTemplate(issue, criterion, pr),
     `Issue body:\n${issue.body}`,
     outputContract,
@@ -116,41 +111,23 @@ async function evidenceConfig(options: ChecklistVerifyOptions): Promise<Config |
   return loaded.config ?? null;
 }
 
-async function inspectProof(options: ChecklistVerifyOptions, identity: CriterionIdentity, pr: ChecklistVerifyPrContext | null, issueText: string): Promise<{ evidence: CriterionEvidence; sha256: string | null; captured?: ExecutionReference; proofKind?: string; repoRoot?: string }> {
+async function inspectProof(options: ChecklistVerifyOptions, identity: CriterionIdentity, pr: ChecklistVerifyPrContext | null): Promise<{ evidence: CriterionEvidence; sha256: string | null; proofKind?: string }> {
   let repository: ReturnType<typeof criterionRepository>;
   try { repository = criterionRepository(options.cwd ?? process.cwd()); }
   catch (error: unknown) {
     const cause = error instanceof Error ? error.message : String(error);
     return {
-      evidence: { path: options.evidencePath ?? null, status: 'inconclusive', recommendation: null, summary: 'The current repository revision could not be reproduced.', errors: [`Current Git snapshot is unavailable: ${cause}`], snapshot: null, execution: null },
+      evidence: { path: options.evidencePath ?? null, status: 'inconclusive', recommendation: null, summary: 'The current repository revision could not be reproduced.', errors: [`Current Git snapshot is unavailable: ${cause}`], snapshot: null },
       sha256: null,
     };
   }
-  let context: CriterionEvidenceContext = { path: options.evidencePath, ...repository, criterion: identity, pr, issueText };
+  const context: CriterionEvidenceContext = { path: options.evidencePath, ...repository, criterion: identity, pr };
   const prepared = prepareCriterionEvidence(context);
   if (prepared.result.errors.length) return { evidence: prepared.result, sha256: prepared.sha256 };
   const proof = prepared.record?.proof;
-  const usesConfig = isRecord(proof) && (proof.kind === 'test-result' || proof.kind === 'prompted-review');
-  const config = usesConfig ? await evidenceConfig(options) : null;
-  if (isRecord(proof) && proof.kind === 'prompted-review' && config) {
-    context = { ...context, changedPaths: await changedReviewPaths(config, repository.repoRoot) };
-  }
-  let captured: ExecutionReference | undefined;
-  if (options.runGate && !options.dryRun && !options.promptOnly) {
-    if (!isRecord(proof) || proof.kind !== 'test-result') prepared.result.errors.push('--run-gate is only applicable to a test-result proof.');
-    else if (options.runGate !== proof.gateName) prepared.result.errors.push('--run-gate must match the configured gate named by this criterion proof.');
-    else if (!config) prepared.result.errors.push('A valid repository configuration is required to capture a configured gate.');
-    else {
-      try {
-        captured = await captureCriterionExecution({ repoRoot: repository.repoRoot, config, gateName: options.runGate, headSha: repository.headSha, inputs: prepared.inputs, readInputDigest: () => currentInputDigest(repository.repoRoot, prepared.inputs), exec: options.commandExec });
-      } catch (error: unknown) {
-        const cause = error instanceof Error ? error.message : String(error);
-        prepared.result.errors.push(`Configured gate execution is inconclusive: ${cause}`);
-      }
-    }
-  }
-  const evidence = verifyPreparedCriterion(prepared, context, config, captured);
-  return { evidence, sha256: prepared.sha256, captured, proofKind: isRecord(proof) && typeof proof.kind === 'string' ? proof.kind : undefined, repoRoot: repository.repoRoot };
+  const config = isRecord(proof) && proof.kind === 'test-result' ? await evidenceConfig(options) : null;
+  const evidence = verifyPreparedCriterion(prepared, context, config);
+  return { evidence, sha256: prepared.sha256, proofKind: isRecord(proof) && typeof proof.kind === 'string' ? proof.kind : undefined };
 }
 
 export async function verifyIssueChecklist(options: ChecklistVerifyOptions): Promise<ChecklistVerifyResult> {
@@ -161,16 +138,14 @@ export async function verifyIssueChecklist(options: ChecklistVerifyOptions): Pro
   const identity = getCriterionIdentity(issue.number, criterion);
   let pr = await currentPrContext(options.cwd, options.exec);
   const prompt = buildPrompt(issue, criterion, pr);
-  let evidence: CriterionEvidence = { path: options.evidencePath ?? null, status: 'missing', recommendation: null, summary: 'Prompt rendered; no proof was validated.', errors: [], snapshot: null, execution: null };
+  let evidence: CriterionEvidence = { path: options.evidencePath ?? null, status: 'missing', recommendation: null, summary: 'Prompt rendered; no proof was validated.', errors: [], snapshot: null };
   let plan: ReturnType<typeof planChecklistUpdate> | null = null;
   if (!options.promptOnly) {
-    const initial = await inspectProof(options, identity, pr, `${issue.title}\n\n${issue.body}`);
+    const initial = await inspectProof(options, identity, pr);
     evidence = initial.evidence;
     if (evidence.status === 'verified') {
       pr = await currentPrContext(options.cwd, options.exec);
-      const usesConfig = initial.proofKind === 'test-result' || initial.proofKind === 'prompted-review';
-      const config = usesConfig ? await evidenceConfig(options) : null;
-      const changedPaths = initial.proofKind === 'prompted-review' && config && initial.repoRoot ? await changedReviewPaths(config, initial.repoRoot) : undefined;
+      const config = initial.proofKind === 'test-result' ? await evidenceConfig(options) : null;
       issue = await getIssue(options.issueNumber, { cwd: options.cwd, exec: options.exec });
       checklist = parseChecklist(issue.body);
       const latest = checklist.items.find(item => item.index === identity.index);
@@ -184,10 +159,10 @@ export async function verifyIssueChecklist(options: ChecklistVerifyOptions): Pro
           evidence = { ...evidence, status: 'inconclusive', summary: 'The current repository revision could not be reproduced.', errors: [`Current Git snapshot is unavailable during final validation: ${cause}`], snapshot: null };
         }
         if (repository) {
-          const context: CriterionEvidenceContext = { path: options.evidencePath, ...repository, criterion: identity, pr, issueText: `${issue.title}\n\n${issue.body}`, changedPaths };
+          const context: CriterionEvidenceContext = { path: options.evidencePath, ...repository, criterion: identity, pr };
           const current = prepareCriterionEvidence(context);
           if (current.sha256 !== initial.sha256) current.result.errors.push('The evidence document changed during verification.');
-          evidence = verifyPreparedCriterion(current, context, config, initial.captured);
+          evidence = verifyPreparedCriterion(current, context, config);
           if (evidence.status === 'verified') plan = planChecklistUpdate(issue.body, { index: identity.index }, 'checked');
         }
       }
@@ -215,7 +190,6 @@ export function formatChecklistVerify(result: ChecklistVerifyResult): string {
     `PR head: ${result.pr?.headSha ?? 'no PR; work snapshot required'}`,
     `Evidence: ${result.evidence.status}; ${result.evidence.summary}`,
     ...result.evidence.errors.map(error => `- ${error}`),
-    ...(result.evidence.execution ? [`Execution receipt: ${result.evidence.execution.path}`] : []),
     `Mutation: ${result.mutation.description}`,
     `Next action: ${result.nextAction}`,
   ].join('\n');

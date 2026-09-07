@@ -13,9 +13,9 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function validTimestamp(value: unknown, now = Date.now()): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)) return false;
   const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value && time <= now;
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 19) === value.slice(0, 19) && time <= now;
 }
 
 export function hashFile(path: string): string {
@@ -68,12 +68,6 @@ export function readCriterionInputs(value: unknown, repoRoot: string, label: str
 
 export function criterionInputDigest(inputs: readonly CriterionInput[]): string {
   return localReviewEvidenceSha256([...inputs].map(input => ({ path: input.path, sha256: input.sha256 })).sort((a, b) => a.path.localeCompare(b.path, 'en')));
-}
-
-export function currentInputDigest(repoRoot: string, inputs: readonly CriterionInput[]): string {
-  const checked = readCriterionInputs(inputs, repoRoot, 'Required inputs');
-  if (checked.errors.length) throw new Error(checked.errors.join(' '));
-  return criterionInputDigest(checked.inputs);
 }
 
 export function buildCriterionSnapshot(repoRoot: string, headSha: string, inputs: readonly CriterionInput[]): CriterionSnapshot {

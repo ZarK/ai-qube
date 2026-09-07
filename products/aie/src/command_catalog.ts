@@ -142,7 +142,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'checklist',
-    description: 'Inspect and evidence-verify durable GitHub issue checklist state used by Executor completion.',
+    description: 'Inspect issue checklists and verify requirements before completion.',
     args: [],
     flags: ['--help'],
     mutationTargets: [],
@@ -165,11 +165,11 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'checklist verify',
-    description: 'Verify exactly one acceptance criterion with suitable current proof before checking it; optionally capture a configured test gate.',
+    description: 'Validate existing evidence before checking one issue requirement.',
     args: ['issue'],
     flags: CHECKLIST_VERIFY_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: CHECKLIST_VERIFY_FLAG_DETAILS,
-    mutationTargets: ['github', 'local-files'],
+    mutationTargets: ['github'],
     supportsJson: true,
     supportsDryRun: true,
     externalServices: ['github'],

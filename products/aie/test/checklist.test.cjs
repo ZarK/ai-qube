@@ -40,10 +40,10 @@ function makeExec(responses, calls = []) {
 }
 
 describe('issue checklist mutation', () => {
-  it('exposes optional gate capture and both mutation targets through CLI discovery', () => {
+  it('preserves the existing checklist verification command', () => {
     const command = getImplementedCommands().find(command => command.name === 'checklist verify');
-    assert.deepEqual(command.mutationTargets, ['github', 'local-files']);
-    assert.equal(command.flags.includes('--run-gate'), true);
+    assert.deepEqual(command.mutationTargets, ['github']);
+    assert.equal(command.flags.includes('--run-gate'), false);
     assert.equal(command.supportsDryRun, true);
   });
 

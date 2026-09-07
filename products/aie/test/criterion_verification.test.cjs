@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -75,7 +75,7 @@ describe('criterion proof verification', () => {
 
   it('renders a reusable criterion-specific template without requiring an independent reviewer', async () => {
     const f = fixture();
-    const result = await f.verify({ promptOnly: true, runGate: 'behavior' });
+    const result = await f.verify({ promptOnly: true });
     assert.equal(result.prompt.category.id, 'acceptance-verification');
     assert.match(result.prompt.text, /Criterion #1:/);
     assert.match(result.prompt.text, /source-inspection/);
@@ -92,6 +92,15 @@ describe('criterion proof verification', () => {
     const result = await f.verify();
     assert.equal(result.evidence.status, 'verified', result.evidence.errors.join('\n'));
     assert.equal(f.writes().length, 1);
+  });
+
+  for (const fraction of ['', '.1', '.1234567']) it(`accepts a valid UTC timestamp with fraction ${JSON.stringify(fraction)}`, async () => {
+    const f = fixture();
+    f.record.recordedAt = `${new Date(Date.now() - 1000).toISOString().slice(0, 19)}${fraction}Z`;
+    f.save();
+    const result = await f.verify({ dryRun: true });
+    assert.equal(result.evidence.status, 'verified', result.evidence.errors.join('\n'));
+    assert.equal(f.writes().length, 0);
   });
 
   it('binds dirty pre-PR inputs to a reproducible snapshot and can reuse them after they are committed', async () => {
@@ -213,7 +222,7 @@ describe('criterion proof verification', () => {
   it('never writes for rejected, inconclusive, dry-run, or prompt-only verification', async () => {
     for (const recommendation of ['request-changes', 'inconclusive']) {
       const f = fixture(); f.record.recommendation = recommendation; f.save();
-      const result = await f.verify({ runGate: 'not-executed' });
+      const result = await f.verify();
       assert.equal(result.ok, false); assert.equal(f.writes().length, 0);
     }
     const f = fixture();
@@ -222,7 +231,7 @@ describe('criterion proof verification', () => {
     assert.equal(f.writes().length, 0);
   });
 
-  it('binds a real behavioral test, reuses its observed result, and refuses completion when required behavior is removed', async () => {
+  it('uses an existing test result and blocks completion when required behavior is removed', async () => {
     const f = fixture();
     const config = getDefaults();
     config.gates = [{ name: 'behavior', kind: 'unit', command: 'node --test behavior.test.cjs', stage: 'pre-pr', required: true, timeoutSeconds: 10, workingDirectory: '.', env: {}, externalService: false }];
@@ -237,12 +246,28 @@ describe('criterion proof verification', () => {
     f.record.revision = { kind: 'pr', headSha: f.head };
     f.record.criterionToProof = map(criterionText, '`behavior.cjs`', 'The assertions in `behavior.test.cjs` require a stop limit of three.');
     f.record.proof.kind = 'test-result'; f.record.proof.gateName = 'behavior'; f.save();
-    let executed = 0;
-    const noRun = await f.verify({ config, dryRun: true, runGate: 'behavior', commandExec: async () => { executed += 1; throw new Error('must not execute'); } });
-    assert.equal(noRun.ok, false); assert.equal(executed, 0);
-    const passed = await f.verify({ config, runGate: 'behavior' });
+    const recordTestResult = () => {
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      const result = spawnSync(process.execPath, ['--test', 'behavior.test.cjs'], { cwd: f.repo, env, encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      const path = '.qube/aie/gates/behavior.json';
+      mkdirSync(join(f.repo, '.qube/aie/gates'), { recursive: true });
+      writeFileSync(join(f.repo, path), JSON.stringify({ status: result.status === 0 ? 'passed' : 'failed', trust: 'agent-reported', recordedAt: new Date().toISOString(), metadata: { headCommit: f.head, exitCode: result.status } }));
+      f.record.artifacts = [input(f.repo, path, 'test-output')];
+      f.record.recordedAt = new Date().toISOString();
+      f.save();
+      return result.status;
+    };
+    const missing = await f.verify({ config });
+    assert.equal(missing.ok, false);
+    assert.equal(f.writes().length, 0);
+    assert.equal(recordTestResult(), 0);
+    const dryRun = await f.verify({ config, dryRun: true });
+    assert.equal(dryRun.mutation.status, 'planned');
+    assert.equal(f.writes().length, 0);
+    const passed = await f.verify({ config });
     assert.equal(passed.ok, true, passed.evidence.errors.join('\n')); assert.equal(f.writes().length, 1);
-    f.record.proof.execution = passed.evidence.execution; f.record.recordedAt = new Date().toISOString(); f.save();
     const repeated = await f.verify({ config });
     assert.equal(repeated.evidence.status, 'verified', repeated.evidence.errors.join('\n')); assert.equal(f.writes().length, 1);
     f.body = f.body.replace('- [x]', '- [ ]');
@@ -250,8 +275,9 @@ describe('criterion proof verification', () => {
     git(f.repo, ['add', 'behavior.cjs']); git(f.repo, ['commit', '-m', 'Remove bounded stop behavior']);
     f.head = git(f.repo, ['rev-parse', 'HEAD']);
     f.record.inputs = [input(f.repo, 'behavior.cjs'), input(f.repo, 'behavior.test.cjs', 'test')];
-    f.record.revision = { kind: 'pr', headSha: f.head }; delete f.record.proof.execution; f.save();
-    const failed = await f.verify({ config, runGate: 'behavior' });
-    assert.equal(failed.ok, false); assert.match(failed.evidence.errors.join('\n'), /did not pass/); assert.equal(f.writes().length, 1);
+    f.record.revision = { kind: 'pr', headSha: f.head };
+    assert.notEqual(recordTestResult(), 0);
+    const failed = await f.verify({ config });
+    assert.equal(failed.ok, false); assert.match(failed.evidence.errors.join('\n'), /pass/); assert.equal(f.writes().length, 1);
   });
 });

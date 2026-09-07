@@ -1,13 +1,12 @@
 import { readFileSync, statSync } from 'node:fs';
+import { isAbsolute, relative } from 'node:path';
 import type { CriterionIdentity } from '../checklist.js';
 import type { Config } from '../config/index.js';
-import { localReviewEvidenceSha256 } from '../local_review_evidence.js';
+import { localReviewEvidenceSha256, readLocalReviewGate } from '../local_review_evidence.js';
+import { buildGateStatus } from '../gates/index.js';
 import { readCriterionProof, type CriterionProofEntry } from './criterion_proof.js';
-import { validateCriterionExecution } from './criterion_execution.js';
-import { buildCriterionSnapshot, criterionInputDigest, evidenceFilePath, hashFile, isRecord, readCriterionInputs, validTimestamp, validateCriterionRevision, type CriterionInput, type CriterionSnapshot } from './criterion_inputs.js';
-import { verifyPromptedReview } from './prompted_review.js';
+import { buildCriterionSnapshot, evidenceFilePath, hashFile, isRecord, readCriterionInputs, validTimestamp, validateCriterionRevision, type CriterionInput, type CriterionSnapshot } from './criterion_inputs.js';
 
-export interface ExecutionReference { path: string; sha256: string }
 export interface CriterionEvidence {
   path: string | null;
   status: 'missing' | 'invalid' | 'inconclusive' | 'rejected' | 'verified';
@@ -15,7 +14,6 @@ export interface CriterionEvidence {
   summary: string;
   errors: string[];
   snapshot: CriterionSnapshot | null;
-  execution: ExecutionReference | null;
 }
 
 export interface PreparedCriterionEvidence {
@@ -23,6 +21,7 @@ export interface PreparedCriterionEvidence {
   record: Record<string, unknown> | null;
   sha256: string | null;
   inputs: CriterionInput[];
+  artifacts: CriterionInput[];
   entry: CriterionProofEntry | null;
 }
 
@@ -32,18 +31,16 @@ export interface CriterionEvidenceContext {
   headSha: string;
   criterion: CriterionIdentity;
   pr: { number: number; headSha: string; body: string } | null;
-  issueText?: string;
-  changedPaths?: readonly string[];
   now?: number;
 }
 
 function initialResult(path?: string): CriterionEvidence {
-  return { path: path ?? null, status: 'missing', recommendation: null, summary: 'No criterion proof was validated.', errors: [], snapshot: null, execution: null };
+  return { path: path ?? null, status: 'missing', recommendation: null, summary: 'No criterion proof was validated.', errors: [], snapshot: null };
 }
 
 export function prepareCriterionEvidence(context: CriterionEvidenceContext): PreparedCriterionEvidence {
   const result = initialResult(context.path);
-  const prepared: PreparedCriterionEvidence = { result, record: null, sha256: null, inputs: [], entry: null };
+  const prepared: PreparedCriterionEvidence = { result, record: null, sha256: null, inputs: [], artifacts: [], entry: null };
   if (!context.path) { result.errors.push('Pass --evidence <path> with criterion-specific proof.'); return prepared; }
   try {
     const fullPath = evidenceFilePath(context.path, context.repoRoot);
@@ -61,6 +58,7 @@ export function prepareCriterionEvidence(context: CriterionEvidenceContext): Pre
     const inputs = readCriterionInputs(record.inputs, context.repoRoot, 'Required inputs');
     const artifacts = readCriterionInputs(record.artifacts, context.repoRoot, 'Observation artifacts', true);
     prepared.inputs = inputs.inputs;
+    prepared.artifacts = artifacts.inputs;
     result.errors.push(...inputs.errors, ...artifacts.errors);
     for (const input of inputs.inputs) if (!['source', 'test', 'config', 'dependency'].includes(input.kind)) result.errors.push(`Unsupported required input kind ${input.kind}.`);
     for (const artifact of artifacts.inputs) if (!['observation', 'test-output', 'review'].includes(artifact.kind)) result.errors.push(`Artifact ${artifact.path} is a required implementation input; bind it in inputs rather than as ${artifact.kind} observation evidence.`);
@@ -85,14 +83,14 @@ export function prepareCriterionEvidence(context: CriterionEvidenceContext): Pre
       if (mapping.entry) {
         if (mapping.entry.citedPaths.length === 0) result.errors.push('The criterion-to-proof entry must cite its supporting source or observation files.');
         const cited = new Set([...inputs.inputs, ...artifacts.inputs].map(input => input.path));
-        for (const path of mapping.entry.citedPaths) if (!cited.has(path)) result.errors.push(`The cited proof input ${path} is missing its required file integrity binding.`);
+        for (const path of mapping.entry.citedPaths) if (!cited.has(path)) result.errors.push(`The cited file ${path} is missing its required hash.`);
         for (const input of inputs.inputs) if (!mapping.entry.citedPaths.includes(input.path) && input.kind !== 'config' && input.kind !== 'dependency') result.errors.push(`Required input ${input.path} is not cited by the criterion-to-proof entry.`);
       }
       if (proof.kind === 'direct-observation' && artifacts.inputs.length === 0) result.errors.push('Direct observation needs at least one current observation artifact.');
       if (proof.kind === 'test-result' && !inputs.inputs.some(input => input.kind === 'test')) result.errors.push('Test-result proof must bind the cited behavioral test as a required input.');
       if (proof.kind === 'test-result' && (typeof proof.gateName !== 'string' || !proof.gateName.trim())) result.errors.push('Test-result proof must name the configured gate whose observed result proves the criterion.');
-      if (proof.kind !== 'prompted-review' && (proof.promptStack !== undefined || proof.review !== undefined)) result.errors.push('Prompt-dependent evidence must use prompted-review and its trusted execution contract.');
-      if (proof.kind !== 'test-result' && proof.execution !== undefined) result.errors.push('A command execution claim must use test-result proof and an observed execution receipt.');
+      if (proof.kind !== 'prompted-review' && (proof.promptStack !== undefined || proof.review !== undefined)) result.errors.push('Review evidence must use prompted-review and reference an existing review result.');
+      if (proof.execution !== undefined || proof.runner !== undefined || proof.reviewer !== undefined) result.errors.push('Proof cannot claim an unverified execution, runner, or reviewer record.');
     }
     if (result.errors.length > 0) { result.errors.push(...revisionErrors); return prepared; }
     if (revisionErrors.length > 0) {
@@ -107,7 +105,7 @@ export function prepareCriterionEvidence(context: CriterionEvidenceContext): Pre
       return prepared;
     }
     result.status = 'inconclusive';
-    result.summary = 'Evidence structure, criterion identity, and current input integrity are valid; proof validation remains.';
+    result.summary = 'The record matches the criterion, revision, and current files. Its result still needs validation.';
     return prepared;
   } catch (error: unknown) {
     result.status = 'invalid';
@@ -116,29 +114,61 @@ export function prepareCriterionEvidence(context: CriterionEvidenceContext): Pre
   }
 }
 
-function executionReference(value: unknown): ExecutionReference | null {
-  return isRecord(value) && typeof value.path === 'string' && typeof value.sha256 === 'string' && /^[a-f0-9]{64}$/.test(value.sha256) ? { path: value.path, sha256: value.sha256 } : null;
+function verifyGateResult(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext, gateName: string, config: Config): { errors: string[]; trust: string | null } {
+  const errors: string[] = [];
+  const matches = buildGateStatus(config, { evidenceRoot: context.repoRoot }).gates.filter(gate => gate.name === gateName);
+  if (matches.length !== 1) return { errors: [`Configured gate ${JSON.stringify(gateName)} was not found exactly once.`], trust: null };
+  const gate = matches[0];
+  if (gate.status !== 'passed' || gate.evidence.stale) errors.push(`Configured gate ${JSON.stringify(gateName)} does not have a current passing result.`);
+  if (gate.trust === 'unverified') errors.push(`Configured gate ${JSON.stringify(gateName)} is unverified; recorded trust is ${gate.trust}.`);
+  const criterionTime = Date.parse(String(prepared.record?.recordedAt));
+  const gateTime = Date.parse(gate.evidence.recordedAt ?? '');
+  if (!Number.isFinite(gateTime) || gateTime > criterionTime) errors.push(`Configured gate ${JSON.stringify(gateName)} must have a valid recordedAt no later than the criterion evidence.`);
+  const revision = prepared.record?.revision;
+  if (!isRecord(revision) || gate.evidence.metadata.headCommit !== revision.headSha) errors.push(`Configured gate ${JSON.stringify(gateName)} does not match the proof revision head.`);
+  const evidencePath = gate.evidence.path
+    ? (isAbsolute(gate.evidence.path) ? relative(context.repoRoot, gate.evidence.path) : gate.evidence.path).replace(/\\/gu, '/')
+    : null;
+  if (!evidencePath || !prepared.artifacts.some(artifact => artifact.path === evidencePath)) errors.push(`Include the result file and its SHA-256 for configured gate ${JSON.stringify(gateName)}.`);
+  return { errors, trust: gate.trust };
 }
 
-export function verifyPreparedCriterion(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext, config: Config | null, captured?: ExecutionReference): CriterionEvidence {
+function verifyPromptedReview(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext): string[] {
+  const proof = prepared.record?.proof;
+  if (!isRecord(proof) || !context.pr || !isRecord(proof.review) || proof.review.lane !== 'issue-compliance') return ['Prompted criterion proof requires an existing current-PR issue-compliance review.'];
+  const stack = proof.promptStack;
+  if (!Array.isArray(stack) || stack.length === 0 || !stack.every(fragment => isRecord(fragment) && typeof fragment.id === 'string' && typeof fragment.sha256 === 'string' && /^[a-f0-9]{64}$/.test(fragment.sha256))) return ['Prompted proof requires the exact reviewed prompt stack IDs and SHA-256 digests.'];
+  const gate = readLocalReviewGate({ repoRoot: context.repoRoot, issueNumbers: [context.criterion.issueNumber], prNumber: context.pr.number, headSha: context.pr.headSha, reviewers: [], required: true, profile: 'local-focused', activeFocuses: ['issue-compliance'] });
+  if (gate.status !== 'passed') return [`Referenced issue-compliance review is not trusted and current: ${gate.summary}`];
+  const lane = gate.evidence.flatMap(evidence => evidence.lanes).find(candidate => candidate.id === 'issue-compliance');
+  if (!lane || lane.runnerProvenance?.runnerKind !== 'local-host' || !lane.runnerProvenance.freshContext || lane.runnerProvenance.promptOnly) return ['Prompted proof requires an executed trusted issue-compliance review.'];
+  if (localReviewEvidenceSha256(stack) !== localReviewEvidenceSha256(lane.promptStack.map(fragment => ({ id: fragment.id, sha256: fragment.sha256 })))) return ['Prompt stack does not match the referenced issue-compliance review.'];
+  if (proof.review.headSha !== context.pr.headSha || proof.review.prNumber !== context.pr.number) return ['Prompted proof reference must match the current PR and head.'];
+  const path = `.qube/aie/reviews/${context.criterion.issueNumber}/${context.pr.number}/${context.pr.headSha}/issue-compliance.json`;
+  const evidenceSha256 = proof.review.evidenceSha256;
+  if (typeof evidenceSha256 !== 'string' || !prepared.artifacts.some(artifact => artifact.path === path && artifact.sha256 === evidenceSha256)) return ['Include the referenced review file and its SHA-256 in artifacts.'];
+  return [];
+}
+
+export function verifyPreparedCriterion(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext, config: Config | null): CriterionEvidence {
   const result = prepared.result;
   if (result.errors.length || !prepared.record || !isRecord(prepared.record.proof)) return result;
   const proof = prepared.record.proof;
+  let trust: string | null = null;
   if (proof.kind === 'test-result') {
-    const reference = captured ?? executionReference(proof.execution);
-    if (!reference) result.errors.push('A test execution is not established. Reference an existing observed execution receipt, or use --run-gate <name> to capture the configured test command.');
-    else if (!config) result.errors.push('The configured test command cannot be verified without valid repository configuration.');
+    if (!config) result.errors.push('The configured gate result cannot be verified without valid repository configuration.');
     else {
-      result.execution = reference;
-      result.errors.push(...validateCriterionExecution({ repoRoot: context.repoRoot, config, reference, expectedGateName: String(proof.gateName), headSha: context.headSha, inputs: prepared.inputs, inputDigest: criterionInputDigest(prepared.inputs), recordedAt: captured ? new Date().toISOString() : String(prepared.record.recordedAt) }));
+      const gate = verifyGateResult(prepared, context, String(proof.gateName), config);
+      result.errors.push(...gate.errors);
+      trust = gate.trust;
     }
-  } else if (proof.kind === 'prompted-review') result.errors.push(...verifyPromptedReview({ record: prepared.record, repoRoot: context.repoRoot, issueNumber: context.criterion.issueNumber, pr: context.pr, issueText: context.issueText, changedPaths: context.changedPaths, config }));
+  } else if (proof.kind === 'prompted-review') result.errors.push(...verifyPromptedReview(prepared, context));
   if (result.errors.length) {
     result.status = 'inconclusive';
     result.summary = 'The supplied proof does not establish this criterion; no checkbox was changed.';
   } else {
     result.status = 'verified';
-    result.summary = `Criterion ${context.criterion.index} has current ${String(proof.kind)} proof tied to its exact identity and required inputs. Source and observation semantics remain the recorded inspection; citations alone are preparation.`;
+    result.summary = `Criterion ${context.criterion.index} has valid ${String(proof.kind)} evidence for the current files.${trust ? ` The gate result is ${trust}.` : ''}`;
   }
   return result;
 }

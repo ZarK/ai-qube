@@ -225,7 +225,6 @@ async function handleChecklistVerify(context: Parameters<RuntimeCommandHandler>[
       index: numberFlag(context, 'index'),
       state: 'checked',
       evidencePath: stringFlag(context, 'evidence'),
-      runGate: stringFlag(context, 'run-gate'),
       dryRun: readBooleanFlag(context, 'dry-run'),
       promptOnly: readBooleanFlag(context, 'prompt'),
     });
