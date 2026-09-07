@@ -33,6 +33,11 @@ describe('agent descriptors and prompt registry', () => {
     assert.ok(first.promptStack.every(fragment => /^[a-f0-9]{64}$/.test(fragment.sha256)));
     assert.ok(first.promptStack.some(fragment => fragment.sourceCategory === 'lane' && fragment.trust === 'policy'));
     assert.match(first.text, /## safety\/repository-policy/);
+    assert.deepEqual(
+      first.orderedFragmentIds.filter(id => id.startsWith('review-lanes/')),
+      ['review-lanes/issue-compliance', 'review-lanes/code-quality'],
+    );
+    assert.ok(!first.orderedFragmentIds.includes('review-lanes/final-gate'));
   });
 
   it('does not expose mutable registry objects to callers', async () => {
@@ -166,6 +171,10 @@ describe('agent descriptors and prompt registry', () => {
         laneIds: [laneId],
         contextLines: [`Review PR #1 for lane ${laneId}.`],
       });
+      assert.deepEqual(
+        rendered.orderedFragmentIds.filter(id => id.startsWith('review-lanes/')),
+        [`review-lanes/${laneId}`],
+      );
       for (let index = 0; index < sectionLabels.length; index += 1) {
         const label = sectionLabels[index];
         const start = rendered.text.indexOf(label);
@@ -176,6 +185,16 @@ describe('agent descriptors and prompt registry', () => {
         assert.match(sectionBody, /(^|\n)- \S/, `${fragment.id} section "${label}" must contain at least one concrete bullet`);
       }
     }
+  });
+
+  it('changes the prompt hashes when the requested lane changes', async () => {
+    const { renderAgentPrompt } = await import('../dist/agent_descriptors.js');
+    const issue = renderAgentPrompt({ hostId: 'codex', descriptorId: 'qa-reviewer', categoryId: 'review', laneIds: ['issue-compliance'] });
+    const quality = renderAgentPrompt({ hostId: 'codex', descriptorId: 'qa-reviewer', categoryId: 'review', laneIds: ['code-quality'] });
+
+    assert.notDeepEqual(issue.hashes, quality.hashes);
+    assert.ok(issue.orderedFragmentIds.includes('safety/repository-policy'));
+    assert.ok(quality.orderedFragmentIds.includes('safety/repository-policy'));
   });
 
   it('includes a read-only low-effort librarian descriptor for economy delegation', async () => {

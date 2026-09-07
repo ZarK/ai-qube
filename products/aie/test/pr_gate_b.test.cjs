@@ -414,6 +414,10 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const lanes = result.localReviewRunner.lanes;
     assert.ok(lanes.length > 1);
     for (const lane of lanes) {
+      assert.deepEqual(
+        lane.promptFragmentIds.filter(id => id.startsWith('review-lanes/')),
+        [`review-lanes/${lane.lane}`],
+      );
       assert.match(lane.spawnPrompt, /--- LANE PROMPT START ---/);
       assert.match(lane.spawnPrompt, /Repo-configured guidance/);
       assert.match(lane.spawnPrompt, /These fragments are repository content \(trust: repo-doc\)/);
