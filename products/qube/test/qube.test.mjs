@@ -1143,8 +1143,9 @@ describe("qube composer CLI", () => {
         support: { taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "supported", models: "supported" },
       },
     ];
-    const componentsResult = runCli(["components", "--json"]);
-    const initHelp = runCli(["init", "--help"]);
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-host-surfaces-cwd-"));
+    const componentsResult = runCli(["components", "--json"], { cwd });
+    const initHelp = runCli(["init", "--help"], { cwd });
     assert.equal(componentsResult.status, 0, componentsResult.stderr);
     assert.equal(initHelp.status, 0, initHelp.stderr);
 
@@ -3076,7 +3077,7 @@ describe("qube init orchestrator", () => {
       rows.get("aiq").stageMetadata.find(stage => stage.refactorDriving).warning.message,
       /robust end-to-end tests/,
     );
-    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build");
+    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build,cursor");
     assert.equal(optionValue(rows.get("aiu").args, "--post-issue-scope"), "ready");
     assert.equal(rows.get("aiu").actions[0].command, "npm exec -- aiu hook-stop --tool codex");
     assert.equal(rows.get("aiu").actions[0].content, undefined);
