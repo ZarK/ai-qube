@@ -208,9 +208,9 @@ describe('installed host detection', () => {
     assert.deepEqual(installed, ['claude-code']);
   });
 
-  it('detects Cursor through its supported CLI names', () => {
+  it('detects Cursor through its canonical CLI name without accepting a generic agent alias', () => {
     assert.deepEqual(detectInstalledRoutingHosts(command => command === 'cursor-agent'), ['cursor']);
-    assert.deepEqual(detectInstalledRoutingHosts(command => command === 'agent'), ['cursor']);
+    assert.deepEqual(detectInstalledRoutingHosts(command => command === 'agent'), []);
   });
 
   it('derives launch candidates from every canonical host profile', async () => {

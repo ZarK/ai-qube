@@ -192,7 +192,6 @@ export function componentsWithHostReadiness(observedAt = new Date().toISOString(
 }
 
 function observeContinuationVerification(host: string, cwd: string): NonNullable<QubeDiscoveryOption["continuationSafety"]>["verification"] {
-  if (host === "cursor") return Object.freeze({ state: "not-applicable", eventState: "none" });
   try {
     const configLoad = loadAiuConfig({ cwd });
     const typedHost = host as Parameters<typeof readAiuHostActivation>[1];

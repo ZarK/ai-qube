@@ -26,13 +26,13 @@ QUBE uses a command asset where the harness supports project commands. Codex use
 | Codex | Supported | Supported | Supported | Supported | Supported | Experimental |
 | Claude Code | Supported | Supported | Supported | Unsupported | Unsupported | Experimental |
 | Grok Build | Unsupported | Supported | Supported | Supported | Supported | Experimental |
-| Cursor | Unsupported | Unsupported | Unsupported | Supported | Supported | Unsupported |
+| Cursor | Unsupported | Unsupported | Unsupported | Supported | Supported | Supported |
 
 Host-local review uses fresh subagents inside the selected harness and can use the same subscription as the main agent. Isolated review starts a separate supported CLI harness in a read-only review session. External review services are configured through Executor and are not agent harness capabilities.
 
 The serialized profile keeps the following dimensions separate: task read and write; subagent invocation; host-guided and isolated review; model catalog and model-bound invocation; Stop hooks, idle events, selected-session delivery, and wait behavior; session targeting and resume; process restart; authentication; repository trust; read-only sandboxing; and permission approval. A direct prompt or Stop hook does not imply wait, selected-session, resume, or restart support.
 
-OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, and Grok Build use managed Stop hooks. Run `qube aiu verify --tool <host> --json` to test the native allow and continue paths in a disposable repository. The command warns before model use and records active evidence only after the harness consumes a continuation response and completes the next turn. Grok Build remains experimental. Cursor has no Umpire continuation asset, so Umpire setup records no continuation delivery for Cursor and does not claim support.
+OpenCode delivers Umpire prompts through its host integration. Codex, Claude Code, Grok Build, and Cursor use managed Stop hooks. Cursor setup merges one finite-loop entry into `.cursor/hooks.json` and preserves unrelated hooks. Run `qube aiu verify --tool <host> --json` to test the native allow and continue paths in a disposable repository. Cursor verification also requires `--model <model-id>` and an interactive terminal with standard input and standard error attached to TTYs. It tests the Cursor CLI project Stop reprompt. It does not assert continuation support in Cursor desktop, cloud, or headless mode. If Cursor requires project trust, the verifier preserves the disposable project and returns its exact `trustApprovalPath`; approve that project through Cursor, then rerun verification. The command warns before model use and records active evidence only after the harness consumes a continuation response and completes the next turn. QUBE does not change Cursor repository trust. Grok Build remains experimental.
 
 ## Runtime readiness
 

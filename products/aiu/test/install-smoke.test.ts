@@ -21,6 +21,7 @@ const runtimePackageRoots = [
   ["@tjalve/qube-adapter-claude-code", path.join(monorepoRoot, "adapters/claude-code")],
   ["@tjalve/qube-adapter-opencode", path.join(monorepoRoot, "adapters/opencode")],
   ["@tjalve/qube-adapter-grok-build", path.join(monorepoRoot, "adapters/grok-build")],
+  ["@tjalve/qube-adapter-cursor", path.join(monorepoRoot, "adapters/cursor")],
 ] as const;
 const tempRoots: string[] = [];
 
@@ -33,6 +34,7 @@ const expectedHostAssets = [
   "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
   ".claude/settings.json",
   ".grok/hooks/ai-umpire.json",
+  ".cursor/hooks.json",
 ] as const;
 
 describe("packed tarball install smoke", () => {
@@ -64,7 +66,7 @@ describe("packed tarball install smoke", () => {
     assert.equal(parsed.command, "init");
     assert.equal(parsed.init.ok, true);
     assert.equal(parsed.init.dryRun, false);
-    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(
       parsed.init.hostProfiles.map((profile) => [profile.tool, profile.supportLevel, profile.currentIssueRecovery]),
       [
@@ -72,6 +74,7 @@ describe("packed tarball install smoke", () => {
         ["codex", "experimental", true],
         ["claude-code", "experimental", true],
         ["grok-build", "experimental", true],
+        ["cursor", "supported", true],
       ],
     );
     assert.deepEqual(parsed.init.files.map((file) => file.relativePath.replaceAll("\\", "/")), expectedHostAssets);
@@ -98,6 +101,10 @@ describe("packed tarball install smoke", () => {
       await readFile(path.join(target, ".grok", "hooks", "ai-umpire.json"), "utf8"),
       /aiu(?:\.cmd)? hook-stop --tool grok-build/,
     );
+    assert.match(
+      await readFile(path.join(target, ".cursor", "hooks.json"), "utf8"),
+      /hook-stop --tool cursor/,
+    );
 
     const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
       hosts: {
@@ -106,9 +113,9 @@ describe("packed tarball install smoke", () => {
         stopHookBlocking: Record<string, boolean>;
       };
     };
-    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(config.hosts.modes.opencode, ["continue", "repair", "wait", "stop"]);
-    for (const host of ["codex", "claude-code", "grok-build"]) {
+    for (const host of ["codex", "claude-code", "grok-build", "cursor"]) {
       assert.deepEqual(config.hosts.modes[host], ["continue", "repair", "stop"], host);
     }
     assert.deepEqual(config.hosts.stopHookBlocking, {
@@ -116,6 +123,7 @@ describe("packed tarball install smoke", () => {
       codex: true,
       "claude-code": true,
       "grok-build": true,
+      cursor: true,
     });
 
     const installedAiuRoot = await realpath(path.join(target, "node_modules", "@tjalve", "aiu"));
@@ -154,7 +162,6 @@ describe("packed tarball install smoke", () => {
       doctor.checks.some((check) => check.kind === "opencode-plugin-package-resolved" && check.status === "ok"),
       JSON.stringify(doctor.checks.filter((check) => check.kind.includes("opencode-plugin-package"))),
     );
-    assert.equal(existsSync(path.join(target, "node_modules", "@tjalve", "qube-adapter-cursor")), false);
   });
 });
 

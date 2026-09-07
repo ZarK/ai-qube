@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -32,6 +33,8 @@ import {
 } from "./continuation_store.js";
 import { getAiuHostCapabilityProfile } from "./host_policy.js";
 import { getAiuPackageVersion } from "./package_metadata.js";
+import { installCursorVerificationObserver, runCursorVerificationScenario } from "./cursor_verify.js";
+import { cursorInteractiveTerminalReady } from "./interactive_process.js";
 
 export const AIU_VERIFICATION_SCHEMA_VERSION = 1 as const;
 export const AIU_VERIFICATION_CONTRACT_VERSION = 1 as const;
@@ -44,6 +47,7 @@ export type AiuVerificationReasonCode =
   | "authentication-missing"
   | "trust-prerequisite-unmet"
   | "model-unavailable"
+  | "terminal-prerequisite-unmet"
   | "packed-artifact-required"
   | "workspace-setup-failed"
   | "native-response-invalid"
@@ -98,6 +102,7 @@ export interface AiuVerificationReport {
   readonly workspace?: AiuVerificationWorkspaceSummary;
   readonly scenarios: readonly AiuVerificationScenario[];
   readonly evidencePath?: string;
+  readonly trustApprovalPath?: string;
   readonly nextAction: string;
 }
 
@@ -134,11 +139,11 @@ export interface AiuVerificationRuntime {
     readonly workspace: AiuPreparedVerification;
     readonly kind: "continue" | "allow";
     readonly timeoutMs: number;
-  }): AiuVerificationScenario;
+  }): AiuVerificationScenario | Promise<AiuVerificationScenario>;
   cleanup(workspace: AiuPreparedVerification): void;
 }
 
-interface AiuVerificationBlocked {
+export interface AiuVerificationBlocked {
   readonly status: "blocked" | "failed" | "aborted";
   readonly reasonCode: AiuVerificationReasonCode;
   readonly nextAction: string;
@@ -159,11 +164,18 @@ export async function runAiuVerify(options: AiuVerifyOptions): Promise<AiuVerifi
 
   const prepared = runtime.prepare({ tool: options.tool, cwd, discovery });
   if (isBlocked(prepared)) return reportFromBlock(options.tool, observedAt, warning, prepared, discovery);
+  let preserveForTrustApproval = false;
   try {
-    const allow = runtime.runScenario({ tool: options.tool, discovery, workspace: prepared, kind: "allow", timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-    if (allow.status !== "passed") return reportFromScenario(options.tool, observedAt, warning, discovery, prepared, [allow], allow);
-    const continuation = runtime.runScenario({ tool: options.tool, discovery, workspace: prepared, kind: "continue", timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-    if (continuation.status !== "passed") return reportFromScenario(options.tool, observedAt, warning, discovery, prepared, [allow, continuation], continuation);
+    const allow = await runtime.runScenario({ tool: options.tool, discovery, workspace: prepared, kind: "allow", timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+    if (allow.status !== "passed") {
+      preserveForTrustApproval = shouldPreserveForTrustApproval(options.tool, allow);
+      return reportFromScenario(options.tool, observedAt, warning, discovery, prepared, [allow], allow);
+    }
+    const continuation = await runtime.runScenario({ tool: options.tool, discovery, workspace: prepared, kind: "continue", timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+    if (continuation.status !== "passed") {
+      preserveForTrustApproval = shouldPreserveForTrustApproval(options.tool, continuation);
+      return reportFromScenario(options.tool, observedAt, warning, discovery, prepared, [allow, continuation], continuation);
+    }
 
     const configLoad = loadAiuConfig({ cwd });
     const evidence = buildActivationEvidence(options.tool, discovery, prepared, continuation, observedAt);
@@ -191,7 +203,7 @@ export async function runAiuVerify(options: AiuVerifyOptions): Promise<AiuVerifi
       nextAction: "Rerun aiu doctor --json to inspect compatible consumed continuation evidence.",
     });
   } finally {
-    runtime.cleanup(prepared);
+    if (!preserveForTrustApproval) runtime.cleanup(prepared);
   }
 }
 
@@ -260,6 +272,10 @@ const defaultAiuVerificationRuntime: AiuVerificationRuntime = Object.freeze({
 function discoverHost(input: { readonly tool: AiuHost; readonly cwd: string; readonly model?: string }): AiuVerificationDiscovery | AiuVerificationBlocked {
   const { profile, executable } = discoverHarnessExecutable(input.tool);
   if (!executable?.resolvedPath) return blocked("missing-executable", `Install ${profile.displayName} outside QUBE and expose its CLI on PATH.`);
+  if (input.tool === "cursor") {
+    const terminal = cursorVerificationTerminalPrerequisite();
+    if (terminal) return terminal;
+  }
   const versionRun = runCommand(executable.resolvedPath, ["--version"], input.cwd, 10_000);
   const harnessVersion = parseVersion(`${versionRun.stdout}\n${versionRun.stderr}`);
   if (versionRun.status !== 0 || !harnessVersion) return blocked("unsupported-version", `Run ${profile.displayName} --version and install a version that matches the adapter contract.`);
@@ -283,7 +299,13 @@ function discoverHost(input: { readonly tool: AiuHost; readonly cwd: string; rea
 }
 
 function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string; readonly discovery: AiuVerificationDiscovery }): AiuPreparedVerification | AiuVerificationBlocked {
-  const root = mkdtempSync(path.join(tmpdir(), "aiu-verify-"));
+  let root: string;
+  try {
+    root = createVerificationWorkspaceRoot(input.tool, input.cwd);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Disposable workspace setup failed";
+    return blocked("workspace-setup-failed", `${reason}. Inspect the preserved verification path, then rerun verification.`);
+  }
   try {
     mkdirSync(path.join(root, "artifacts"), { recursive: true });
     const git = runCommand("git", ["init", "--initial-branch", "main"], root, 20_000);
@@ -312,7 +334,7 @@ function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string;
     const tokenPath = assertInside(root, path.join(root, ".qube", "aiu", "verify-token.txt"));
     const stateScriptPath = assertInside(root, path.join(root, ".qube", "aiu", "verify-state.cjs"));
     const markerScriptPath = assertInside(root, path.join(root, ".qube", "aiu", "verify-next-turn.cjs"));
-    writeFileSync(stateScriptPath, verificationStateScript(), "utf8");
+    writeFileSync(stateScriptPath, verificationStateScript(input.tool), "utf8");
     writeFileSync(markerScriptPath, verificationMarkerScript(), "utf8");
     const verifiedConfig: AiuConfig = Object.freeze({
       ...config,
@@ -341,7 +363,7 @@ function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string;
       }
     }
     const sourceConfig = loadAiuConfig({ cwd: input.cwd }).config;
-    return Object.freeze({
+    const prepared = Object.freeze({
       root,
       aiuEntry,
       modePath,
@@ -354,6 +376,8 @@ function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string;
       trustedStateFingerprint: createAiuTrustedStateFingerprint(sourceConfig.trustedStateCommands),
       config: verifiedConfig,
     });
+    if (input.tool === "cursor") installCursorVerificationObserver(prepared);
+    return prepared;
   } catch (error) {
     rmSync(root, { recursive: true, force: true });
     const reason = error instanceof Error ? error.message : "Disposable workspace setup failed";
@@ -361,13 +385,50 @@ function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string;
   }
 }
 
-function runNativeScenario(input: {
+export function cursorVerificationTerminalPrerequisite(
+  input: Pick<NodeJS.ReadStream, "isTTY"> = process.stdin,
+  diagnostic: Pick<NodeJS.WriteStream, "isTTY"> = process.stderr,
+): AiuVerificationBlocked | undefined {
+  return cursorInteractiveTerminalReady(input, diagnostic)
+    ? undefined
+    : blocked("terminal-prerequisite-unmet", "Run Cursor verification in an interactive terminal with standard input and standard error attached to a TTY.");
+}
+
+export function createVerificationWorkspaceRoot(tool: AiuHost, cwd: string): string {
+  if (tool !== "cursor") return mkdtempSync(path.join(tmpdir(), "aiu-verify-"));
+  const temporaryRoot = realpathSync(tmpdir());
+  const sourceIdentity = digestBytes(Buffer.from(realpathSync(cwd), "utf8"));
+  const root = assertInside(temporaryRoot, path.join(temporaryRoot, `aiu-verify-cursor-${sourceIdentity.slice(0, 16)}`));
+  const markerPath = path.join(root, ".aiu-verification-workspace.json");
+  if (existsSync(root)) {
+    if (lstatSync(root).isSymbolicLink()) throw new Error("The preserved Cursor verification workspace cannot be a symbolic link.");
+    assertInside(temporaryRoot, realpathSync(root));
+    if (!existsSync(markerPath) || lstatSync(markerPath).isSymbolicLink()) {
+      throw new Error("The preserved Cursor verification workspace is missing its ownership marker.");
+    }
+    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as { readonly schemaVersion?: unknown; readonly sourceIdentity?: unknown };
+    if (marker.schemaVersion !== 1 || marker.sourceIdentity !== sourceIdentity) {
+      throw new Error("The preserved Cursor verification workspace has an invalid ownership marker.");
+    }
+    for (const entry of readdirSync(root)) {
+      if (entry === path.basename(markerPath)) continue;
+      const entryPath = assertInside(root, path.join(root, entry));
+      rmSync(entryPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+    return root;
+  }
+  mkdirSync(root, { recursive: false });
+  writeFileSync(markerPath, `${JSON.stringify({ schemaVersion: 1, sourceIdentity })}\n`, "utf8");
+  return root;
+}
+
+async function runNativeScenario(input: {
   readonly tool: AiuHost;
   readonly discovery: AiuVerificationDiscovery;
   readonly workspace: AiuPreparedVerification;
   readonly kind: "continue" | "allow";
   readonly timeoutMs: number;
-}): AiuVerificationScenario {
+}): Promise<AiuVerificationScenario> {
   writeFileSync(input.workspace.modePath, `${input.kind}\n`, "utf8");
   rmSync(input.workspace.markerPath, { force: true });
   const paths = resolveAiuContinuationPaths(input.workspace.root, input.workspace.config);
@@ -377,6 +438,7 @@ function runNativeScenario(input: {
   writeFileSync(input.workspace.tokenPath, `${token}\n`, "utf8");
   if (input.tool === "opencode") writeFileSync(input.workspace.commandPath, verificationCommand(token), "utf8");
   if (input.tool === "opencode") return runOpenCodeScenario(input, paths, token);
+  if (input.tool === "cursor") return runCursorVerificationScenario({ discovery: input.discovery, workspace: input.workspace, kind: input.kind, timeoutMs: input.timeoutMs, token });
   const invocation = harnessInvocation(input.tool, input.discovery, input.workspace.root, token);
   const result = runCommand(input.discovery.executablePath, invocation.args, input.workspace.root, input.timeoutMs, invocation.stdin);
   if (result.errorCode === "ETIMEDOUT") return failedInvokedScenario(input.kind, "native-timeout");
@@ -384,7 +446,7 @@ function runNativeScenario(input: {
   if (result.status !== 0) {
     const diagnostic = `${result.stdout}\n${result.stderr}`.toLowerCase();
     if (/trust|approve|permission/.test(diagnostic)) return failedInvokedScenario(input.kind, "trust-prerequisite-unmet");
-    return failedInvokedScenario(input.kind, "native-response-invalid");
+    return Object.freeze({ ...failedInvokedScenario(input.kind, "native-response-invalid"), diagnostic: nativeIntegrationDiagnostic(result) });
   }
   const state = readAiuContinuationState(paths);
   const marker = readMarker(input.workspace.markerPath, token);
@@ -459,7 +521,9 @@ function runOpenCodeScenario(
 }
 
 function harnessInvocation(tool: AiuHost, discovery: AiuVerificationDiscovery, root: string, token: string, attachUrl?: string): { readonly args: string[]; readonly stdin?: string } {
-  const prompt = `Reply with AIU_VERIFY_INITIAL:${token}, then end your turn. If the managed continuation asks you to run a command, run it exactly once.`;
+  const prompt = tool === "cursor"
+    ? `Reply exactly with AIU_VERIFY_INITIAL:${token}, then end your turn. Do not use tools.`
+    : `Reply with AIU_VERIFY_INITIAL:${token}, then end your turn. If the managed continuation asks you to run a command, run it exactly once.`;
   const invocation = buildAiuVerifyInvocation(tool, { root, prompt, ...(discovery.model ? { model: discovery.model } : {}), ...(attachUrl ? { attachUrl } : {}) });
   return { args: [...invocation.args], ...(invocation.stdin ? { stdin: invocation.stdin } : {}) };
 }
@@ -558,6 +622,17 @@ function authProbe(tool: AiuHost, executable: string, cwd: string): { readonly r
 }
 
 function selectModel(tool: AiuHost, executable: string, cwd: string, requested: string | undefined): { readonly model: string | null } | AiuVerificationBlocked {
+  if (tool === "cursor") {
+    if (!requested) return blocked("model-unavailable", "Pass --model with an explicitly approved Cursor model; verification never inherits the last selected model.");
+    const catalog = runCommand(executable, ["models"], cwd, 20_000);
+    if (catalog.status !== 0) return blocked("authentication-missing", "Run cursor-agent models and fix Cursor authentication before verification.");
+    const models = catalog.stdout.split(/\r?\n/u)
+      .map((line) => /^\s*([A-Za-z0-9][A-Za-z0-9._:/-]*)\s+-\s+/u.exec(line)?.[1])
+      .filter((model): model is string => model !== undefined);
+    return models.includes(requested)
+      ? { model: requested }
+      : blocked("model-unavailable", `Choose a model listed by cursor-agent models; ${requested} is unavailable.`);
+  }
   if (tool !== "opencode") return { model: requested ?? null };
   const catalog = runCommand(executable, ["models"], cwd, 20_000);
   if (catalog.status !== 0) return blocked("authentication-missing", "Run opencode models and fix provider authentication before verification.");
@@ -587,8 +662,11 @@ function buildActivationEvidence(tool: AiuHost, discovery: AiuVerificationDiscov
   });
 }
 
-function verificationStateScript(): string {
-  return `const fs=require("node:fs"),p=require("node:path");const now=new Date().toISOString();const mode=fs.readFileSync(p.join(__dirname,"verify-mode.txt"),"utf8").trim();const active=mode==="continue";process.stdout.write(JSON.stringify({schemaVersion:1,sourceId:"verification",observedAt:now,trustLevel:"trusted",capabilities:{work:"supported"},freshness:{kind:"fresh",observedAt:now},value:{kind:"work-queue",status:"pass",activeItems:active?[{kind:"work-item",status:"pass",id:"verify",title:"Run the verification next-turn command",lifecycle:"active",priority:"high",blockers:[],nextAction:{id:"verify-next-turn",argv:[process.execPath,p.join(__dirname,"verify-next-turn.cjs")]}}]:[],readyItems:[],blockedItems:[],unknownItems:[]}}));\n`;
+function verificationStateScript(tool: AiuHost): string {
+  const nextAction = tool === "cursor"
+    ? ""
+    : `,nextAction:{id:"verify-next-turn",argv:[process.execPath,p.join(__dirname,"verify-next-turn.cjs")]}`;
+  return `const fs=require("node:fs"),p=require("node:path");const now=new Date().toISOString();const mode=fs.readFileSync(p.join(__dirname,"verify-mode.txt"),"utf8").trim();const token=fs.readFileSync(p.join(__dirname,"verify-token.txt"),"utf8").trim();const active=mode==="continue";process.stdout.write(JSON.stringify({schemaVersion:1,sourceId:"verification",observedAt:now,trustLevel:"trusted",capabilities:{work:"supported"},freshness:{kind:"fresh",observedAt:now},value:{kind:"work-queue",status:"pass",activeItems:active?[{kind:"work-item",status:"pass",id:"verify",title:"Reply exactly with AIU_VERIFY_NEXT:"+token+", then end the turn",lifecycle:"active",priority:"high",blockers:[]${nextAction}}]:[],readyItems:[],blockedItems:[],unknownItems:[]}}));\n`;
 }
 
 function verificationMarkerScript(): string {
@@ -612,7 +690,7 @@ function readMarker(markerPath: string, token: string): boolean {
 }
 
 function reportFromBlock(tool: AiuHost, observedAt: string, warning: string, failure: AiuVerificationBlocked, discovery?: AiuVerificationDiscovery, workspace?: AiuPreparedVerification, scenarios: readonly AiuVerificationScenario[] = []): AiuVerificationReport {
-  return Object.freeze({ schemaVersion: AIU_VERIFICATION_SCHEMA_VERSION, contractVersion: AIU_VERIFICATION_CONTRACT_VERSION, tool, status: failure.status, reasonCode: failure.reasonCode, warning, observedAt, ...(discovery ? { discovery } : {}), ...(workspace ? { workspace: workspaceSummary(workspace) } : {}), scenarios: Object.freeze([...scenarios]), nextAction: failure.nextAction });
+  return Object.freeze({ schemaVersion: AIU_VERIFICATION_SCHEMA_VERSION, contractVersion: AIU_VERIFICATION_CONTRACT_VERSION, tool, status: failure.status, reasonCode: failure.reasonCode, warning, observedAt, ...(discovery ? { discovery } : {}), ...(workspace ? { workspace: workspaceSummary(workspace) } : {}), ...(tool === "cursor" && failure.reasonCode === "trust-prerequisite-unmet" && workspace ? { trustApprovalPath: workspace.root } : {}), scenarios: Object.freeze([...scenarios]), nextAction: failure.nextAction });
 }
 
 function reportFromScenario(tool: AiuHost, observedAt: string, warning: string, discovery: AiuVerificationDiscovery, workspace: AiuPreparedVerification, scenarios: readonly AiuVerificationScenario[], failure: AiuVerificationScenario): AiuVerificationReport {
@@ -630,7 +708,11 @@ function scenarioNextAction(scenario: AiuVerificationScenario, tool: AiuHost): s
   if (reason === "native-timeout") return `Inspect ${tool} responsiveness and rerun with a bounded --timeout after resolving the delay.`;
   if (reason === "user-aborted") return "Rerun the explicit verification command when you want to complete the bounded model-backed check.";
   if (reason === "continuation-not-consumed") return `Inspect the ${tool} native lifecycle; the managed response remained ${scenario.observedDeliveryState ?? "unobserved"} and did not produce compatible consumed evidence.${scenario.diagnostic ? ` Native diagnostic: ${redactText(scenario.diagnostic)}` : ""}`;
-  return `Inspect the ${tool} native lifecycle output and managed integration logs; hook invocation alone is not accepted as proof.`;
+  return `Inspect the ${tool} native lifecycle output and managed integration logs; hook invocation alone is not accepted as proof.${scenario.diagnostic ? ` Native diagnostic: ${redactText(scenario.diagnostic)}` : ""}`;
+}
+
+function shouldPreserveForTrustApproval(tool: AiuHost, scenario: AiuVerificationScenario): boolean {
+  return tool === "cursor" && scenario.reasonCode === "trust-prerequisite-unmet";
 }
 
 function workspaceSummary(workspace: AiuPreparedVerification): AiuVerificationWorkspaceSummary {

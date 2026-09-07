@@ -472,7 +472,7 @@ async function createFakeComponentTarball(component, root, packDir) {
         "  codex: profile('codex', 'Codex', 'AGENTS.md', '.agents/skills/make-it-so/SKILL.md', 'skill', '$make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'supported' }),",
         "  'claude-code': profile('claude-code', 'Claude Code', 'CLAUDE.md', '.claude/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'supported', subagents: 'supported', localReview: 'supported', isolatedReview: 'unsupported', models: 'unsupported', umpire: 'supported' }),",
         "  'grok-build': profile('grok-build', 'Grok Build', 'AGENTS.md', '.grok/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'supported', localReview: 'supported', isolatedReview: 'supported', models: 'supported', umpire: 'experimental' }),",
-        "  cursor: profile('cursor', 'Cursor', 'AGENTS.md', '.cursor/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'unsupported', localReview: 'unsupported', isolatedReview: 'supported', models: 'supported', umpire: 'unsupported' }),",
+        "  cursor: profile('cursor', 'Cursor', 'AGENTS.md', '.cursor/commands/make-it-so.md', 'command', '/make-it-so', { taskList: 'unsupported', subagents: 'unsupported', localReview: 'unsupported', isolatedReview: 'supported', models: 'supported', umpire: 'supported' }),",
         "};",
         "export function getAgentHostProfileSync(id) { const value = profiles[id]; if (!value) throw new Error('Unknown host: ' + id); return value; }",
         "export async function getAgentHostProfile(id) { return getAgentHostProfileSync(id); }",

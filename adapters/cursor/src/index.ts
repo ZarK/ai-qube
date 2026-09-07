@@ -64,8 +64,8 @@ export const cursorHostProfile = defineAgentHostProfile({
   id: CURSOR_HOST_ID,
   displayName: "Cursor",
   executables: Object.freeze({
-    names: Object.freeze(["cursor-agent", "agent"]),
-    windowsNames: Object.freeze(["cursor-agent.exe", "agent.exe"]),
+    names: Object.freeze(["cursor-agent"]),
+    windowsNames: Object.freeze(["cursor-agent.exe"]),
   }),
   instructionTarget: CURSOR_INSTRUCTIONS,
   makeItSo: CURSOR_MAKE_IT_SO,
@@ -96,22 +96,28 @@ export const cursorHostProfile = defineAgentHostProfile({
   }),
   umpire: Object.freeze({
     continuation: Object.freeze({
-      support: "unsupported",
-      description: "QUBE has no tested Cursor continuation hook or prompt-delivery integration.",
-      nextAction: "Continue the current issue from the Cursor session or use a harness with supported Umpire continuation.",
-      delivery: "none",
-      currentIssueRecovery: false,
+      support: "supported",
+      description: "A verified Cursor project Stop hook can return one follow-up message to the current conversation.",
+      nextAction: "Review the managed project hook, trust the repository in Cursor, and run aiu verify --tool cursor --model <model> --json.",
+      delivery: "stdout",
+      currentIssueRecovery: true,
     }),
     probe: Object.freeze({
-      support: "unsupported",
-      description: "QUBE has no Cursor Umpire integration to inspect.",
-      nextAction: "No Cursor Umpire probe is available.",
+      support: "supported",
+      description: "QUBE inspects the managed Cursor Stop hook and compatible consumed lifecycle evidence.",
+      command: Object.freeze(["status", "--format", "json"] as const),
+      nextAction: "Run aiu doctor --json and complete explicit lifecycle verification when activation is unverified.",
     }),
   }),
   trust: Object.freeze({
-    required: false,
-    description: "QUBE does not install Cursor hooks or other trust-gated runtime assets.",
-    actions: Object.freeze([]),
+    required: true,
+    description: "Cursor project hooks require repository trust that QUBE does not grant.",
+    actions: Object.freeze([Object.freeze({
+      id: "review-project-stop-hook",
+      kind: "review-files",
+      description: "Review `.cursor/hooks.json` and trust the project in Cursor before relying on continuation.",
+      paths: Object.freeze([".cursor/hooks.json"]),
+    })]),
   }),
   subagents: Object.freeze({
     support: "unsupported",
@@ -120,6 +126,18 @@ export const cursorHostProfile = defineAgentHostProfile({
     instruction: "Do not use Cursor subagents for QUBE routed review. QUBE starts one fresh isolated Cursor process per lane.",
   }),
 } satisfies AgentHostProfile);
+
+export {
+  buildCursorVerifyInvocation,
+  cursorVerificationObserverScript,
+  cursorContinuationAdapter,
+  cursorContinuationDeclaration,
+  inspectCursorVerificationObservations,
+  resolveCursorVerificationTranscriptRoot,
+  CURSOR_CONTINUATION_MINIMUM_VERSION,
+  CURSOR_STOP_LOOP_LIMIT,
+} from "./continuation.js";
+export type { CursorVerificationObservation } from "./continuation.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -545,7 +563,7 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
   id: CURSOR_HOST_ID,
   capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
-  executableNames: Object.freeze(["cursor-agent", "agent"]),
+  executableNames: Object.freeze(["cursor-agent"]),
   windowsExecutableNames: Object.freeze([]),
   requiresPromptFile: false,
   requiresSchemaFile: false,

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-cursor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cursor CLI adapter for QUBE isolated review and model routing.",
   "keywords": [
     "cli",

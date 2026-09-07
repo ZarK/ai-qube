@@ -1309,7 +1309,7 @@ describe('init service', () => {
     const cursor = profiles.find(profile => profile.id === 'cursor');
     assert.ok(cursor);
     assert.equal(cursor.subagents.support, 'unsupported');
-    assert.equal(cursor.umpire.continuation.support, 'unsupported');
+    assert.equal(cursor.umpire.continuation.support, 'supported');
     assert.ok(grok);
     assert.deepEqual(profiles.map(profile => profile.makeItSo.path), [
       pathPosix.join('.opencode', 'commands', 'make-it-so.md'),

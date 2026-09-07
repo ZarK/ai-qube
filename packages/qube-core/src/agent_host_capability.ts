@@ -151,7 +151,7 @@ const HOST_DECLARATIONS = Object.freeze({
   codex: Object.freeze({ task: "supported", subagents: "supported", hostReview: "supported", isolatedReview: "supported", modelCatalog: "supported", modelInvoke: "supported", stopHook: "experimental", idleEvent: "unsupported", selectedSession: "unsupported", wait: "unsupported", trust: "experimental", readOnlySandbox: "supported" }),
   "claude-code": Object.freeze({ task: "supported", subagents: "supported", hostReview: "supported", isolatedReview: "unsupported", modelCatalog: "unsupported", modelInvoke: "unsupported", stopHook: "experimental", idleEvent: "unsupported", selectedSession: "unsupported", wait: "unsupported", trust: "experimental", readOnlySandbox: "supported" }),
   "grok-build": Object.freeze({ task: "unsupported", subagents: "supported", hostReview: "supported", isolatedReview: "supported", modelCatalog: "supported", modelInvoke: "supported", stopHook: "experimental", idleEvent: "unsupported", selectedSession: "unsupported", wait: "unsupported", trust: "experimental", readOnlySandbox: "supported" }),
-  cursor: Object.freeze({ task: "unsupported", subagents: "unsupported", hostReview: "unsupported", isolatedReview: "supported", modelCatalog: "supported", modelInvoke: "supported", stopHook: "unsupported", idleEvent: "unsupported", selectedSession: "unsupported", wait: "unsupported", trust: "unsupported", readOnlySandbox: "supported" }),
+  cursor: Object.freeze({ task: "unsupported", subagents: "unsupported", hostReview: "unsupported", isolatedReview: "supported", modelCatalog: "supported", modelInvoke: "supported", stopHook: "supported", idleEvent: "unsupported", selectedSession: "unsupported", wait: "unsupported", trust: "supported", readOnlySandbox: "supported" }),
 } as const satisfies Readonly<Record<AgentHostId, HostDeclarations>>);
 
 const HOST_EXECUTABLES = Object.freeze({
@@ -159,7 +159,7 @@ const HOST_EXECUTABLES = Object.freeze({
   codex: Object.freeze({ names: Object.freeze(["codex"]), windowsNames: Object.freeze(["codex.exe"]) }),
   "claude-code": Object.freeze({ names: Object.freeze(["claude"]), windowsNames: Object.freeze(["claude.exe"]) }),
   "grok-build": Object.freeze({ names: Object.freeze(["grok"]), windowsNames: Object.freeze(["grok.exe"]) }),
-  cursor: Object.freeze({ names: Object.freeze(["cursor-agent", "agent"]), windowsNames: Object.freeze(["cursor-agent.exe", "agent.exe"]) }),
+  cursor: Object.freeze({ names: Object.freeze(["cursor-agent"]), windowsNames: Object.freeze(["cursor-agent.exe"]) }),
 } as const satisfies Readonly<Record<AgentHostId, { readonly names: readonly string[]; readonly windowsNames: readonly string[] }>>);
 
 const HOST_INSTRUCTION_PATHS = Object.freeze({

@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 import { claudeCodeHostProfile } from "@tjalve/qube-adapter-claude-code";
 import { codexHostProfile } from "@tjalve/qube-adapter-codex";
+import { cursorHostProfile } from "@tjalve/qube-adapter-cursor";
 import { grokBuildHostProfile } from "@tjalve/qube-adapter-grok-build";
 import { opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
 
@@ -23,14 +24,16 @@ describe("host runtime policy", () => {
   it("exposes provider-neutral profiles and explicit support states", () => {
     const profiles = getAllAiuHostCapabilityProfiles();
 
-    assert.deepEqual(profiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.deepEqual(profiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
+    assert.deepEqual(profiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
+    assert.deepEqual(profiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental", "supported"]);
     assert.equal(getAiuHostCapabilityProfile("opencode").capabilities.promptDelivery.support, "supported");
     assert.equal(getAiuHostCapabilityProfile("codex").stopHook.blocksByDefault, true);
     assert.equal(getAiuHostCapabilityProfile("claude-code").capabilities.stopHook.support, "experimental");
     assert.equal(getAiuHostCapabilityProfile("grok-build").managedFiles.length, 1);
     assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.support, "experimental");
     assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.blocksByDefault, true);
+    assert.equal(getAiuHostCapabilityProfile("cursor").stopHook.blocksByDefault, true);
+    assert.equal(getAiuHostCapabilityProfile("cursor").managedFiles[0]?.relativePath.replaceAll("\\", "/"), ".cursor/hooks.json");
     const grokBuild = profiles.find((profile) => profile.tool === "grok-build");
     assert.ok(grokBuild);
     assert.equal(grokBuild.managedFiles[0]?.relativePath.replaceAll("\\", "/"), ".grok/hooks/ai-umpire.json");
@@ -43,6 +46,7 @@ describe("host runtime policy", () => {
       ["codex", codexHostProfile],
       ["claude-code", claudeCodeHostProfile],
       ["grok-build", grokBuildHostProfile],
+      ["cursor", cursorHostProfile],
     ] as const;
     for (const [host, shared] of canonical) {
       const profile = getAiuHostCapabilityProfile(host);
@@ -66,6 +70,7 @@ describe("host runtime policy", () => {
     assert.deepEqual(getDefaultHostModes("codex"), ["continue", "repair", "stop"]);
     assert.deepEqual(getDefaultHostModes("claude-code"), ["continue", "repair", "stop"]);
     assert.deepEqual(getDefaultHostModes("grok-build"), ["continue", "repair", "stop"]);
+    assert.deepEqual(getDefaultHostModes("cursor"), ["continue", "repair", "stop"]);
     assert.equal(getDefaultStopHookBlocking("opencode"), false);
     assert.equal(getDefaultStopHookBlocking("codex"), true);
     assert.equal(getDefaultHostCapabilityOverrides("opencode").promptDelivery, "host");

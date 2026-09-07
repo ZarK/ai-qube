@@ -78,8 +78,13 @@ export type ContinuationAssetMerge =
 export interface ContinuationDecodedEvent {
   readonly event: string;
   readonly sessionId?: string;
+  readonly generationId?: string;
+  readonly harnessVersion?: string;
   readonly selectedSessionId?: string;
   readonly cwd?: string;
+  readonly workspaceRoots?: readonly string[];
+  readonly hostStatus?: "completed" | "aborted" | "error";
+  readonly nativeLoopCount?: number;
   readonly stopHookActive?: boolean;
   readonly sessionEnd?: boolean;
   readonly suppressions?: readonly string[];

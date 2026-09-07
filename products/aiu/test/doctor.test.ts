@@ -351,7 +351,7 @@ describe("doctor diagnostics", () => {
     const repoRoot = await createRepoRoot();
     const grokHome = await createTempRoot("aiu-grok-home-probe-unverified-");
     await writeContinuationHostConfig(repoRoot);
-    for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
+    for (const host of ["opencode", "codex", "claude-code", "grok-build", "cursor"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
     await writeResolvableOpenCodePackage(repoRoot);
@@ -362,10 +362,10 @@ describe("doctor diagnostics", () => {
     try {
       const report = runAiuDoctor({ cwd: repoRoot });
 
-      assert.equal(report.hostProbes.length, 4);
+      assert.equal(report.hostProbes.length, 5);
       assert.equal(report.hostProbes.every((probe) => probe.state === "unverified"), true);
       assert.equal(report.hostProbes.every((probe) => probe.currentIssueRecovery === false), true);
-      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-unverified").length, 4);
+      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-unverified").length, 5);
     } finally {
       if (previousHome === undefined) {
         delete process.env.GROK_HOME;
@@ -379,14 +379,14 @@ describe("doctor diagnostics", () => {
     const repoRoot = await createRepoRoot();
     const grokHome = await createTempRoot("aiu-grok-home-probe-active-");
     await writeContinuationHostConfig(repoRoot);
-    for (const host of ["opencode", "codex", "claude-code", "grok-build"] as const) {
+    for (const host of ["opencode", "codex", "claude-code", "grok-build", "cursor"] as const) {
       await writeManagedHostFiles(repoRoot, host);
     }
     await writeResolvableOpenCodePackage(repoRoot);
     await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
     const paths = resolveAiuContinuationPaths(repoRoot, getDefaultAiuConfig());
     const observedAt = "2026-08-20T12:00:00.000Z";
-    for (const host of ["codex", "claude-code", "grok-build"] as const) writeCompatibleActivation(repoRoot, paths, host, observedAt);
+    for (const host of ["codex", "claude-code", "grok-build", "cursor"] as const) writeCompatibleActivation(repoRoot, paths, host, observedAt);
     writeCompatibleActivation(repoRoot, paths, "opencode", observedAt);
     const previousHome = process.env.GROK_HOME;
     process.env.GROK_HOME = grokHome;
@@ -397,7 +397,7 @@ describe("doctor diagnostics", () => {
       assert.equal(report.hostProbes.every((probe) => probe.currentIssueRecovery), true);
       assert.equal(report.hostProbes.find((probe) => probe.host === "opencode")?.effectiveDelivery, "host");
       assert.equal(report.hostProbes.find((probe) => probe.host === "codex")?.effectiveDelivery, "stdout");
-      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-active").length, 4);
+      assert.equal(report.checks.filter((check) => check.kind === "host-continuation-active").length, 5);
     } finally {
       if (previousHome === undefined) {
         delete process.env.GROK_HOME;
@@ -719,17 +719,19 @@ async function writeContinuationHostConfig(repoRoot: string): Promise<string> {
   await writeConfig(repoRoot, {
     version: 1,
     hosts: {
-      enabled: ["opencode", "codex", "claude-code", "grok-build"],
+      enabled: ["opencode", "codex", "claude-code", "grok-build", "cursor"],
       modes: {
         opencode: ["continue", "repair", "wait", "stop"],
         codex: ["continue", "repair", "stop"],
         "claude-code": ["continue", "repair", "stop"],
         "grok-build": ["continue", "repair", "stop"],
+        cursor: ["continue", "repair", "stop"],
       },
       stopHookBlocking: {
         codex: true,
         "claude-code": true,
         "grok-build": true,
+        cursor: true,
       },
     },
     trustedStateCommands,
@@ -742,6 +744,7 @@ const verificationHarnessVersions: Readonly<Record<AiuHost, string>> = Object.fr
   codex: "0.147.0",
   "claude-code": "2.0.0",
   "grok-build": "1.0.13",
+  cursor: "2026.08.11",
 });
 
 function writeCompatibleActivation(
@@ -783,7 +786,7 @@ async function createTempRoot(prefix: string): Promise<string> {
   return repoRoot;
 }
 
-async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex" | "claude-code" | "grok-build"): Promise<void> {
+async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex" | "claude-code" | "grok-build" | "cursor"): Promise<void> {
   for (const file of getAiuHostCapabilityProfile(host, repoRoot).managedFiles) {
     const target = path.join(repoRoot, file.relativePath);
     await mkdir(path.dirname(target), { recursive: true });

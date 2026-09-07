@@ -2,6 +2,7 @@ import { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeC
 import { buildCodexVerifyInvocation, codexContinuationAdapter, codexHostProfile } from "@tjalve/qube-adapter-codex";
 import { buildGrokBuildVerifyInvocation, grokBuildContinuationAdapter, grokBuildHostProfile } from "@tjalve/qube-adapter-grok-build";
 import { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeHostProfile } from "@tjalve/qube-adapter-opencode";
+import { buildCursorVerifyInvocation, cursorContinuationAdapter, cursorHostProfile } from "@tjalve/qube-adapter-cursor";
 import {
   AGENT_HOST_CAPABILITY_PROFILES,
   AGENT_HOST_REGISTRATIONS,
@@ -12,13 +13,14 @@ import {
   type ContinuationDecodeResult,
 } from "@tjalve/qube-core";
 
-export type AiuContinuationHost = Exclude<AgentHostId, "cursor">;
+export type AiuContinuationHost = AgentHostId;
 
 const adapterList = Object.freeze([
   opencodeContinuationAdapter,
   codexContinuationAdapter,
   claudeCodeContinuationAdapter,
   grokBuildContinuationAdapter,
+  cursorContinuationAdapter,
 ] satisfies readonly ContinuationAdapter[]);
 
 const runtimeProfiles = Object.freeze([
@@ -26,6 +28,7 @@ const runtimeProfiles = Object.freeze([
   codexHostProfile,
   claudeCodeHostProfile,
   grokBuildHostProfile,
+  cursorHostProfile,
 ] satisfies readonly AgentHostProfile[]);
 
 const adapterRegistry = createContinuationAdapterRegistry(adapterList);
@@ -38,7 +41,6 @@ for (const [hostId, adapter] of adapterRegistry) {
     || capabilities["continuation-idle-event"].support !== "unsupported";
   if (!declaresContinuation) throw new TypeError(`Continuation adapter ${hostId} has no declared continuation capability.`);
   if (!runtimeProfileRegistry.has(hostId)) throw new TypeError(`Continuation adapter ${hostId} has no runtime host profile.`);
-  if (adapter.declaration.hostId === "cursor") throw new TypeError("Cursor continuation is not supported.");
 }
 
 export const AIU_CONTINUATION_HOSTS = Object.freeze([...adapterRegistry.keys()] as AiuContinuationHost[]);
@@ -62,7 +64,8 @@ export function buildAiuVerifyInvocation(
   if (host === "opencode") return buildOpenCodeVerifyInvocation(input);
   if (host === "codex") return buildCodexVerifyInvocation(input);
   if (host === "claude-code") return buildClaudeCodeVerifyInvocation(input);
-  return buildGrokBuildVerifyInvocation(input);
+  if (host === "grok-build") return buildGrokBuildVerifyInvocation(input);
+  return buildCursorVerifyInvocation(input);
 }
 
 export function decodeAiuContinuationEvent(
@@ -72,5 +75,10 @@ export function decodeAiuContinuationEvent(
   const adapter = getAiuContinuationAdapter(host);
   const probe = adapter.probe({ surface: input.surface, version: input.version });
   if (probe.status === "blocked") return Object.freeze({ ok: false, code: "unsupported-event", error: probe.reason });
-  return adapter.decodeEvent(input.event);
+  const decoded = adapter.decodeEvent(input.event);
+  if (decoded.ok && decoded.event.harnessVersion !== undefined) {
+    const nativeProbe = adapter.probe({ surface: input.surface, version: decoded.event.harnessVersion });
+    if (nativeProbe.status === "blocked") return Object.freeze({ ok: false, code: "unsupported-event", error: nativeProbe.reason });
+  }
+  return decoded;
 }

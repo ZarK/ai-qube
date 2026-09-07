@@ -16,14 +16,14 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.5
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.14
 pnpm exec aiu --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aiu@0.0.5 --ignore-scripts
+npm install -g @tjalve/aiu@0.0.14 --ignore-scripts
 aiu --help
 ```
 
@@ -91,6 +91,18 @@ listed free model when `--model` is absent. If no free model is listed, the
 command stops and asks for an explicit model. Successful verification records
 compatible consumed-event evidence for `doctor`; normal hook delivery does not.
 
+Cursor verification requires an explicit model. List the available Cursor
+models, select an appropriate low-cost model, and then run:
+
+```sh
+cursor-agent models
+pnpm exec aiu verify --tool cursor --model <model-id> --json
+```
+
+Cursor verification never grants project trust. If Cursor blocks the first run, the JSON report includes `trustApprovalPath` and preserves that disposable project. Approve that exact project through Cursor's trust surface, then rerun the same verification command.
+
+Run Cursor verification in an interactive terminal. Standard input and standard error must be TTYs. The verifier tests the Cursor CLI project Stop reprompt. It does not assert continuation support in Cursor desktop, cloud, or headless mode. AIU does not pass Cursor's trust flag or change repository trust.
+
 ## Host Support
 
 | Host | Status | Init target | Notes |
@@ -98,6 +110,8 @@ compatible consumed-event evidence for `doctor`; normal hook delivery does not.
 | OpenCode | Supported | `aiu init --tool opencode` | A named project plugin delegates `/make-it-so` to the exact package version declared in `.opencode/package.json`. |
 | Codex CLI/Desktop | Experimental | `aiu init --tool codex` | Stop-hook behavior must be explicitly trusted and verified. |
 | Claude Code | Experimental | `aiu init --tool claude-code` | Project settings are preserved on conflict; continuation must be explicitly verified. |
+| Grok Build | Experimental | `aiu init --tool grok-build` | Project hooks require explicit trust and verification. |
+| Cursor | Supported | `aiu init --tool cursor` | One finite-loop Stop hook is merged into `.cursor/hooks.json`; unrelated hooks are preserved. |
 | Generic MCP, Git hooks, GitHub Actions | Not a continuation host | none | These are not interactive idle-session continuation surfaces. |
 
 ## Safe Uninstall

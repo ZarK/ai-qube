@@ -598,7 +598,8 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult, harnessVersi
       repoRoot: configLoad.repoRoot,
       packageVersions: { "@tjalve/aiu": getAiuPackageVersion() },
     });
-    if (nativeProbe.status === "blocked") {
+    const trustProvenByLifecycle = nativeProbe.code === "cursor-hook-trust-unverified";
+    if (nativeProbe.status === "blocked" && !trustProvenByLifecycle) {
       return hostProbe(
         base,
         nativeProbe.severity === "warning" ? "unverified" : "unavailable",
@@ -624,7 +625,14 @@ function probeAiuHostContinuations(configLoad: AiuConfigLoadResult, harnessVersi
       const nextAction = trustSteps
         ? `${trustSteps} Then run aiu verify --tool ${host} --json.`
         : `Run aiu verify --tool ${host} --json.`;
-      return hostProbe(base, "unverified", "none", false, `${host} managed files are ready, but compatible consumed lifecycle evidence is missing.`, nextAction);
+      return hostProbe(
+        base,
+        "unverified",
+        "none",
+        false,
+        trustProvenByLifecycle ? nativeProbe.reason : `${host} managed files are ready, but compatible consumed lifecycle evidence is missing.`,
+        trustProvenByLifecycle ? nativeProbe.nextAction ?? nextAction : nextAction,
+      );
     }
     const harnessVersion = harnessVersions?.[host] ?? readAiuHarnessVersion(host, configLoad.repoRoot);
     if (!harnessVersion || !activationMatchesCurrentConfiguration({ activation, config: configLoad.config, repoRoot: configLoad.repoRoot, harnessVersion })) {
