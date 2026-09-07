@@ -165,11 +165,11 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'checklist verify',
-    description: 'Verify exactly one acceptance checklist criterion with prompt-backed evidence before checking it.',
+    description: 'Verify exactly one acceptance criterion with suitable current proof before checking it; optionally capture a configured test gate.',
     args: ['issue'],
     flags: CHECKLIST_VERIFY_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: CHECKLIST_VERIFY_FLAG_DETAILS,
-    mutationTargets: ['github'],
+    mutationTargets: ['github', 'local-files'],
     supportsJson: true,
     supportsDryRun: true,
     externalServices: ['github'],

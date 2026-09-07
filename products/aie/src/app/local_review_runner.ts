@@ -10,7 +10,7 @@ import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_e
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, stableLanePromptHash, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { resolveModelHostExecutable, runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
@@ -378,7 +378,7 @@ export function reviewRouteKey(plan: ModelReviewRoutePlan | null): string {
   return hash([plan.host, plan.model ?? '', plan.tier, plan.effort ?? '', String(plan.timeoutSeconds), String(plan.maxTurns)].join('|')).slice(0, 16);
 }
 
-function laneConfiguredFragments(config: Config, lane: LocalReviewLaneId): LaneConfiguredFragments {
+export function laneConfiguredFragments(config: Config, lane: LocalReviewLaneId): LaneConfiguredFragments {
   return {
     host: configuredReviewModelHost(config),
     repository: config.reviewPromptFragments.repository,
@@ -470,8 +470,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   if (!configuredFragments) throw new Error('Local review prompt fragments must include the selected agent harness.');
   const promptHost = (route?.host ?? configuredFragments.host) as ReviewModelHostId;
   const rendered = promptStack(promptHost, lane, laneContextLines(promptHost, lane, issueNumbers, prNumber, headSha, evidencePaths, renderedContext, repoRoot), riskCardFragments, repoRoot, configuredFragments);
-  const stableRendered = promptStack(promptHost, lane, laneContextLines(promptHost, lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot), riskCardFragments, repoRoot, configuredFragments);
-  const promptStackHash = hash(stableRendered.text);
+  const promptStackHash = stableLanePromptHash({ host: promptHost, lane, issueNumbers, prNumber, headSha, evidencePaths, riskCardFragments, repoRoot, configuredFragments });
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
     ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, reviewScope, modelTier: plannedTier, tierResolution })

@@ -100,6 +100,7 @@ describe('review head digest', () => {
     assert.doesNotMatch(first.prIntent.criterionToProof, /Outside the map/);
     assert.equal(first.acceptanceCriteria[0].bodyStatus, 'current');
     assert.equal(first.acceptanceCriteria[0].items[0].text, 'Digest evidence exists per head with provenance.');
+    assert.deepEqual(first.acceptanceCriteria[0].items[0].identity, { issueNumber: 93, index: 1, text: 'Digest evidence exists per head with provenance.' });
     assert.equal(first.acceptanceCriteria[0].requirementSections[0].heading, 'Requirements');
     assert.ok(first.provenance.sources.some(source => source.kind === 'issue-body' && source.freshness === 'current' && source.sha256));
     assert.ok(first.provenance.sources.some(source => source.kind === 'criterion-to-proof' && source.freshness === 'current'));
@@ -114,6 +115,26 @@ describe('review head digest', () => {
     assert.equal(digest.acceptanceCriteria[0].bodyStatus, 'missing');
     assert.equal(digest.prIntent.criterionToProofStatus, 'missing');
     assert.equal(digest.prIntent.criterionToProof, null);
+  });
+
+  it('keeps the full identity when digest display text is capped', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-digest-identity-'));
+    const criterion = `Preserve ${'every exact word '.repeat(30)}and terminal punctuation!`;
+    const digest = buildReviewHeadDigest(digestInput(repo, {
+      issueChecklists: [{
+        issue: { number: 93, title: 'Long criterion identity', state: 'OPEN', url: 'https://example.test/93' },
+        checklist: {
+          total: 1,
+          checked: 0,
+          unchecked: 1,
+          items: [{ index: 1, line: 4, text: criterion, checked: false }],
+        },
+      }],
+    }));
+
+    const item = digest.acceptanceCriteria[0].items[0];
+    assert.notEqual(item.text, criterion);
+    assert.deepEqual(item.identity, { issueNumber: 93, index: 1, text: criterion });
   });
 
   it('changes sha256 when acceptance text changes', () => {

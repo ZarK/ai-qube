@@ -946,6 +946,28 @@ export function promptStack(
   };
 }
 
+export function stableLanePromptHash(input: {
+  host: ReviewModelHostId;
+  lane: LocalReviewLaneId;
+  issueNumbers: readonly number[];
+  prNumber: number;
+  headSha: string;
+  evidencePaths: readonly string[];
+  riskCardFragments?: readonly string[];
+  repoRoot: string;
+  configuredFragments: LaneConfiguredFragments;
+}): string {
+  const rendered = promptStack(
+    input.host,
+    input.lane,
+    laneContextLines(input.host, input.lane, input.issueNumbers, input.prNumber, input.headSha, input.evidencePaths, [], input.repoRoot),
+    input.riskCardFragments ?? [],
+    input.repoRoot,
+    input.configuredFragments,
+  );
+  return hash(rendered.text);
+}
+
 export interface LocalReviewSpawnContract {
   agentType: string;
   forkContext: false;

@@ -13,7 +13,7 @@ export function formatBriefLines(brief: ImplementationBrief): string[] {
     lines.push('    (none stated in the issue checklist)');
   }
   for (const obligation of brief.obligations) {
-    lines.push(`    - [${obligation.kind}] ${obligation.criterion}`);
+    lines.push(`    - [${obligation.kind}] #${obligation.identity.issueNumber} criterion ${obligation.identity.index}: ${obligation.criterion}`);
   }
   if (brief.omittedObligations > 0) lines.push(`    (+${brief.omittedObligations} obligations omitted)`);
 

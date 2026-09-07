@@ -1781,7 +1781,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(laneIds.slice(1).every(lane => byLane.get(lane).status === 'skipped' && byLane.get(lane).evidenceSource === 'trusted-provider'));
   });
 
-  it('renders issue requirement proof statuses in the dry-run self-check', async () => {
+  it('renders issue requirement mapping statuses in the dry-run self-check', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     config.reviewAdapter = 'mixed';
@@ -1789,9 +1789,12 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     writeFileSync(join(repo, 'test', 'probe.test.cjs'), 'assert stale provider metadata rejected with actionable reason\n');
     const criterion = 'Stale provider metadata is rejected with an actionable reason.';
     const prBody = [
+      '## Criterion-to-proof map',
       '### Criterion 1: ' + criterion,
-      '- Implemented at: `test/probe.test.cjs`',
-      '- Proven by: `test/probe.test.cjs`',
+      '',
+      '- **Implemented at:** `test/probe.test.cjs`',
+      '- **Proven by:** source observation in `test/probe.test.cjs`',
+      '- **Negative case:** stale metadata produces an actionable rejection.',
     ].join('\n');
     const { exec } = makePrExec({
       prViews: [cleanLocalPr({ body: prBody })],
@@ -1803,11 +1806,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(result.selfCheck);
     assert.equal(result.selfCheck.requirements.length, 2);
     const byIndex = new Map(result.selfCheck.requirements.map(requirement => [requirement.index, requirement]));
-    assert.equal(byIndex.get(1).proof.status, 'proven');
-    assert.equal(byIndex.get(2).proof.status, 'unmapped');
-    assert.equal(result.selfCheck.requirements[0].proof.status, 'unmapped');
+    assert.equal(byIndex.get(1).mapping.status, 'mapped');
+    assert.equal(byIndex.get(2).mapping.status, 'unmapped');
+    assert.equal(result.selfCheck.requirements[0].mapping.status, 'unmapped');
     const formattedLines = require('../dist/app/implementer_self_check.js').formatImplementerSelfCheck(result.selfCheck).join('\n');
-    assert.match(formattedLines, /Linked issue requirements \(unproven first\)/);
+    assert.match(formattedLines, /Linked issue requirements \(incomplete or unmapped first\)/);
   });
 
   it('returns the same ranked fix batch from pr batch as the full gate over partial evidence', async () => {

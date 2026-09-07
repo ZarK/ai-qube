@@ -1,6 +1,6 @@
 import type { RepoLayoutInspection } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
-import { parseWorkChecklistItems } from '../core/work_item.js';
+import { getCriterionIdentity, parseChecklist } from '../checklist.js';
 import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { selectImplementerLearnings } from '../implementer_learnings.js';
 import { implementerFaceHasTestObligation, selectRiskCards } from '../risk_cards/index.js';
@@ -216,12 +216,12 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   return { owningProjects, omittedProjects, boundaryRules, doNotEditPaths, omittedDoNotEditPaths, derived };
 }
 
-export function buildImplementationBrief(input: { title: string; body: string; config: Config; layout?: RepoLayoutInspection; repoRoot?: string }): ImplementationBrief {
+export function buildImplementationBrief(input: { issueNumber: number; title: string; body: string; config: Config; layout?: RepoLayoutInspection; repoRoot?: string }): ImplementationBrief {
   const issueText = `${input.title}\n${input.body}`;
-  const criteria = parseWorkChecklistItems(input.body).map(item => item.text);
+  const criteria = parseChecklist(input.body).items;
   const obligations: BriefObligation[] = criteria
     .slice(0, MAX_OBLIGATIONS)
-    .map(criterion => ({ criterion: capText(criterion), kind: verificationKind(criterion) }));
+    .map(criterion => ({ criterion: capText(criterion.text), identity: getCriterionIdentity(input.issueNumber, criterion), kind: verificationKind(criterion.text) }));
   const omittedObligations = Math.max(0, criteria.length - MAX_OBLIGATIONS);
 
   const expectedPaths = extractExpectedPaths(issueText);
