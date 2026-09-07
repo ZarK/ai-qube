@@ -299,11 +299,12 @@ export const aiuCli = createCli({
         },
         hookStop: {
           commands: ["aiu hook-stop --tool codex", "aiu hook-stop --tool claude-code", "aiu hook-stop --tool grok-build", "aiu hook-stop --tool cursor"],
-          tools: ["codex", "claude-code", "grok-build"],
+          tools: ["codex", "claude-code", "grok-build", "cursor"],
           outputKinds: ["allow", "block"],
           stdoutShapes: [
             { decision: "allow", json: {} },
             { decision: "block", json: { decision: "block", reason: "string" } },
+            { decision: "block", tool: "cursor", json: { followup_message: "string" } },
           ],
           stableErrorKinds: [
             "empty-hook-input",

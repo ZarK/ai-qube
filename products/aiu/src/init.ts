@@ -749,7 +749,7 @@ function parseJsonObject(raw: string): { readonly ok: true; readonly value: Reco
 
 function readMergedHosts(config: Record<string, unknown>): readonly AiuHost[] {
   const hosts = isRecord(config.hosts) && Array.isArray(config.hosts.enabled) ? config.hosts.enabled : [];
-  return hosts.filter((host): host is AiuHost => typeof host === "string" && ["opencode", "codex", "claude-code", "grok-build"].includes(host));
+  return hosts.filter((host): host is AiuHost => typeof host === "string" && AIU_HOSTS.includes(host as AiuHost));
 }
 
 function readMergedTrustedStateCommandNames(config: Record<string, unknown>): readonly string[] {

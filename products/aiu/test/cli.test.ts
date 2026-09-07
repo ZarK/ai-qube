@@ -175,6 +175,7 @@ describe("metadata-backed CLI", () => {
         hookStop?: {
           tools?: string[];
           outputKinds?: string[];
+          stdoutShapes?: Array<{ decision?: string; tool?: string; json?: Record<string, unknown> }>;
           stableErrorKinds?: string[];
         };
         continuationState?: {
@@ -289,8 +290,13 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("promptFingerprint"));
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("expectedEvidence"));
     assert.ok(parsed.sections?.decision?.reasonCodes?.some((reason) => reason.code === "stop-supply-chain-approval" && reason.category === "safety"));
-    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(parsed.sections?.hookStop?.outputKinds, ["allow", "block"]);
+    assert.deepEqual(parsed.sections?.hookStop?.stdoutShapes, [
+      { decision: "allow", json: {} },
+      { decision: "block", json: { decision: "block", reason: "string" } },
+      { decision: "block", tool: "cursor", json: { followup_message: "string" } },
+    ]);
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("malformed-hook-input"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("trusted-state-load-failed"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("hook-deadline-exhausted"));
