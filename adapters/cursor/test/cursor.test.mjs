@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -18,8 +23,8 @@ const context = {
 describe("Cursor isolated review adapter", () => {
   it("publishes a truthful Cursor host profile", () => {
     assert.deepEqual(cursor.cursorHostProfile.executables, {
-      names: ["cursor-agent", "agent"],
-      windowsNames: ["cursor-agent.exe", "agent.exe"],
+      names: ["cursor-agent"],
+      windowsNames: ["cursor-agent.exe"],
     });
     assert.equal(cursor.cursorHostProfile.instructionTarget.path, "AGENTS.md");
     assert.equal(cursor.cursorHostProfile.makeItSo.path, ".cursor/commands/make-it-so.md");
@@ -38,8 +43,11 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(cursor.cursorHostProfile.review.isolated.readOnly, true);
     assert.deepEqual(cursor.cursorHostProfile.review.isolated.agents, []);
     assert.equal("executableNames" in cursor.cursorHostProfile.modelDiscovery, false);
-    assert.equal(cursor.cursorHostProfile.umpire.continuation.support, "unsupported");
-    assert.equal(cursor.cursorHostProfile.trust.required, false);
+    assert.equal(cursor.cursorHostProfile.umpire.continuation.support, "supported");
+    assert.equal(cursor.cursorHostProfile.umpire.continuation.delivery, "stdout");
+    assert.equal(cursor.cursorHostProfile.umpire.continuation.currentIssueRecovery, true);
+    assert.equal(cursor.cursorHostProfile.trust.required, true);
+    assert.deepEqual(cursor.cursorHostProfile.trust.actions[0].paths, [".cursor/hooks.json"]);
 
     const calls = [];
     const models = cursor.cursorHostProfile.modelDiscovery.listModels({
@@ -55,6 +63,148 @@ describe("Cursor isolated review adapter", () => {
     assert.deepEqual(calls, process.platform === "win32"
       ? [["node", ["cursor-script.js", "models"]], ["node", ["cursor-script.js", "--acp-models"]]]
       : [["node", ["cursor-script.js", "models"]]]);
+  });
+
+  it("implements the Cursor Stop-hook continuation contract", () => {
+    const adapter = cursor.cursorContinuationAdapter;
+    assert.equal(adapter.declaration.hostId, "cursor");
+    assert.deepEqual(adapter.declaration.nativeSurfaces, [{ id: "stop-hook", minimumVersion: "2026.08.11", maximumVersionExclusive: null }]);
+    assert.deepEqual(adapter.declaration.delivery, { method: "stdout-json", sessionScope: "current-session" });
+    assert.deepEqual(adapter.declaration.umpireModes, ["continue", "repair", "stop"]);
+    assert.equal(adapter.declaration.currentIssueRecovery, true);
+
+    const decoded = adapter.decodeEvent(cursorStopPayload());
+    assert.deepEqual(decoded, {
+      ok: true,
+      event: {
+        event: "stop",
+        sessionId: "conversation-1",
+        generationId: "generation-1",
+        harnessVersion: "2026.08.11-e8db854",
+        workspaceRoots: ["/repo"],
+        hostStatus: "completed",
+        nativeLoopCount: 0,
+        sessionEnd: false,
+      },
+    });
+    assert.deepEqual(adapter.encodeResponse({ decision: "allow" }).response, {});
+    assert.deepEqual(adapter.encodeResponse({ decision: "block", prompt: "Continue safely." }).response, { followup_message: "Continue safely." });
+    assert.equal(adapter.encodeResponse({ decision: "block", prompt: " " }).ok, false);
+    assert.equal(adapter.probe({ surface: "plugin-event", version: "2026.08.11" }).status, "blocked");
+    assert.equal(adapter.probe({ surface: "stop-hook", version: "2026.08.10" }).status, "blocked");
+    assert.equal(adapter.probe({ surface: "stop-hook", version: "2026.08.11" }).status, "ready");
+    assert.equal(adapter.probe({ surface: "stop-hook", version: "2026.08.11", repoRoot: "/repo" }).code, "cursor-hook-trust-unverified");
+  });
+
+  it("rejects malformed, unsafe, and non-completed Cursor Stop payloads", () => {
+    const adapter = cursor.cursorContinuationAdapter;
+    const failures = [
+      null,
+      {},
+      { ...cursorStopPayload(), hook_event_name: "Stop" },
+      { ...cursorStopPayload(), conversation_id: "" },
+      { ...cursorStopPayload(), generation_id: null },
+      { ...cursorStopPayload(), cursor_version: 1 },
+      { ...cursorStopPayload(), status: "cancelled" },
+      { ...cursorStopPayload(), loop_count: -1 },
+      { ...cursorStopPayload(), loop_count: 1.5 },
+      { ...cursorStopPayload(), workspace_roots: [] },
+      { ...cursorStopPayload(), workspace_roots: ["/repo", 42] },
+    ];
+    for (const value of failures) assert.equal(adapter.decodeEvent(value).ok, false);
+    assert.equal(adapter.decodeEvent({ ...cursorStopPayload(), status: "aborted" }).event.sessionEnd, true);
+    assert.equal(adapter.decodeEvent({ ...cursorStopPayload(), status: "error" }).event.sessionEnd, true);
+  });
+
+  it("semantically merges one finite managed Stop hook and preserves unrelated Cursor configuration", () => {
+    const adapter = cursor.cursorContinuationAdapter;
+    const desired = adapter.renderManagedAssets({ packageVersions: { "@tjalve/aiu": "0.0.14" }, commandPrefix: "node node_modules/@tjalve/aiu/bin/run" })[0];
+    assert.equal(desired.relativePath, ".cursor/hooks.json");
+    const desiredJson = JSON.parse(desired.content);
+    assert.equal(desiredJson.hooks.stop[0].loop_limit, 3);
+    assert.match(desiredJson.hooks.stop[0].command, /hook-stop --tool cursor$/);
+
+    const existing = JSON.stringify({ version: 1, theme: "dark", hooks: { afterFileEdit: [{ command: "format" }], stop: [{ command: "audit" }] } });
+    const merged = adapter.mergeManagedAsset(desired.id, existing, desired);
+    assert.equal(merged.ok, true);
+    const value = JSON.parse(merged.content);
+    assert.equal(value.theme, "dark");
+    assert.deepEqual(value.hooks.afterFileEdit, [{ command: "format" }]);
+    assert.deepEqual(value.hooks.stop.map(entry => entry.command), ["audit", desiredJson.hooks.stop[0].command]);
+    assert.equal(adapter.validateManagedAsset(desired.id, merged.content, desired).state, "current");
+    const rerun = adapter.mergeManagedAsset(desired.id, merged.content, desired);
+    assert.equal(rerun.ok, true);
+    assert.equal(rerun.changed, false);
+    assert.equal(rerun.content, merged.content);
+
+    const conflicting = JSON.stringify({ version: 1, hooks: { stop: [{ command: "aiu hook-stop --tool cursor", loop_limit: null }] } });
+    assert.equal(adapter.validateManagedAsset(desired.id, conflicting, desired).state, "conflicting");
+    assert.equal(adapter.mergeManagedAsset(desired.id, conflicting, desired).ok, false);
+    const duplicate = JSON.stringify({ version: 1, hooks: { stop: [desiredJson.hooks.stop[0], desiredJson.hooks.stop[0]] } });
+    assert.equal(adapter.validateManagedAsset(desired.id, duplicate, desired).state, "duplicate");
+    assert.equal(adapter.mergeManagedAsset(desired.id, duplicate, desired).ok, false);
+    assert.equal(adapter.mergeManagedAsset(desired.id, "[]", desired).ok, false);
+  });
+
+  it("builds an explicit-model verification invocation without trust or session-control flags", () => {
+    const invocation = cursor.buildCursorVerifyInvocation({ root: "/repo", prompt: "verify", model: "gpt-5.4-nano-none", platform: "linux" });
+    assert.deepEqual(invocation.args, ["--disable-auto-update", "--sandbox", "enabled", "--model", "gpt-5.4-nano-none", "--workspace", "/repo", "verify"]);
+    const windows = cursor.buildCursorVerifyInvocation({ root: "C:\\repo", prompt: "verify", model: "gpt-5.4-nano-none", platform: "win32" });
+    assert.deepEqual(windows.args, ["--disable-auto-update", "--model", "gpt-5.4-nano-none", "--workspace", "C:\\repo", "verify"]);
+    assert.throws(() => cursor.buildCursorVerifyInvocation({ root: "/repo", prompt: "verify" }), /explicit model/);
+    for (const forbidden of ["--print", "--output-format", "--trust", "--continue", "--resume", "--worktree", "--force", "--yolo", "--approve-mcps"]) {
+      assert.equal(invocation.args.includes(forbidden), false);
+      assert.equal(windows.args.includes(forbidden), false);
+    }
+    assert.equal(windows.args.includes("--sandbox"), false);
+  });
+
+  it("accepts bounded current Cursor Stop observations with assistant transcript evidence", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cursor-observer-test-"));
+    try {
+      const stateDir = path.join(root, ".qube", "aiu");
+      mkdirSync(stateDir, { recursive: true });
+      const transcriptRoot = path.join(root, "cursor-data", "agent-transcripts");
+      const transcriptPath = path.join(transcriptRoot, "conversation", "conversation.jsonl");
+      mkdirSync(path.dirname(transcriptPath), { recursive: true });
+      const transcript = [
+        { role: "user", message: { content: [{ type: "text", text: "AIU_VERIFY_INITIAL:user-echo" }] } },
+        { role: "assistant", message: { content: [{ type: "text", text: "AIU_VERIFY_INITIAL:nonce" }] } },
+      ].map(value => JSON.stringify(value)).join("\n") + "\n";
+      writeFileSync(transcriptPath, transcript);
+      const observedAt = new Date().toISOString();
+      const observationPath = path.join(stateDir, "verify-cursor-observations.jsonl");
+      writeFileSync(observationPath, JSON.stringify({ conversation_id: "conversation", generation_id: "generation", cursor_version: "2026.08.11-e8db854", hook_event_name: "stop", status: "completed", loop_count: 0, workspace_roots: [root], transcript_path: transcriptPath, transcript, observed_at: observedAt }) + "\n");
+      const observations = cursor.inspectCursorVerificationObservations({ observationPath, workspaceRoot: root, transcriptRoot, startedAt: Date.parse(observedAt) - 1, expectedVersion: "2026.08.11-e8db854" });
+      assert.equal(observations.length, 1);
+      assert.deepEqual(observations[0].assistantMessages, ["AIU_VERIFY_INITIAL:nonce"]);
+
+      const stale = cursor.inspectCursorVerificationObservations({ observationPath, workspaceRoot: root, transcriptRoot, startedAt: Date.parse(observedAt) + 1, expectedVersion: "2026.08.11-e8db854" });
+      assert.deepEqual(stale, []);
+      const mismatch = cursor.inspectCursorVerificationObservations({ observationPath, workspaceRoot: root, transcriptRoot, startedAt: Date.parse(observedAt) - 1, expectedVersion: "2026.08.12" });
+      assert.deepEqual(mismatch, []);
+      assert.equal(cursor.resolveCursorVerificationTranscriptRoot("C:\\Odd path\\a_b...", "C:\\CursorData"), path.join("C:\\CursorData", "projects", "C-Odd-path-a-b", "agent-transcripts"));
+
+      const dataRoot = path.join(root, "native-data");
+      const nativeTranscriptRoot = cursor.resolveCursorVerificationTranscriptRoot(root, dataRoot);
+      const nativeTranscript = path.join(nativeTranscriptRoot, "conversation", "conversation.jsonl");
+      mkdirSync(path.dirname(nativeTranscript), { recursive: true });
+      writeFileSync(nativeTranscript, `${JSON.stringify({ role: "user", message: { content: [{ type: "text", text: "request" }] } })}\n`);
+      rmSync(observationPath, { force: true });
+      const observerPath = path.join(stateDir, "observer.cjs");
+      writeFileSync(observerPath, cursor.cursorVerificationObserverScript({ workspaceRoot: root, cursorDataRoot: dataRoot }));
+      const child = spawn(process.execPath, [observerPath], { stdio: ["pipe", "pipe", "pipe"] });
+      child.stdout.resume();
+      child.stdin.end(JSON.stringify({ conversation_id: "conversation", generation_id: "generation", cursor_version: "2026.08.11-e8db854", hook_event_name: "stop", status: "completed", loop_count: 0, workspace_roots: [root], transcript_path: nativeTranscript }));
+      setTimeout(() => writeFileSync(nativeTranscript, transcript), 100);
+      const [exitCode] = await once(child, "close");
+      assert.equal(exitCode, 0);
+      const flushed = cursor.inspectCursorVerificationObservations({ observationPath, workspaceRoot: root, transcriptRoot: nativeTranscriptRoot, startedAt: Date.now() - 3000, expectedVersion: "2026.08.11-e8db854" });
+      assert.equal(flushed.length, 1);
+      assert.deepEqual(flushed[0].assistantMessages, ["AIU_VERIFY_INITIAL:nonce"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
@@ -292,3 +442,15 @@ describe("Cursor isolated review adapter", () => {
     assert.deepEqual(incompatible.availableModels, ["cursor-grok-4.6-high-fast"]);
   });
 });
+
+function cursorStopPayload() {
+  return {
+    conversation_id: "conversation-1",
+    generation_id: "generation-1",
+    hook_event_name: "stop",
+    cursor_version: "2026.08.11-e8db854",
+    workspace_roots: ["/repo"],
+    status: "completed",
+    loop_count: 0,
+  };
+}

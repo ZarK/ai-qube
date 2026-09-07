@@ -1140,11 +1140,12 @@ describe("qube composer CLI", () => {
       },
       {
         host: "cursor", instructionPath: "AGENTS.md", makeItSoPath: ".cursor/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
-        support: { taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "unsupported", models: "supported" },
+        support: { taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "supported", models: "supported" },
       },
     ];
-    const componentsResult = runCli(["components", "--json"]);
-    const initHelp = runCli(["init", "--help"]);
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-host-surfaces-cwd-"));
+    const componentsResult = runCli(["components", "--json"], { cwd });
+    const initHelp = runCli(["init", "--help"], { cwd });
     assert.equal(componentsResult.status, 0, componentsResult.stderr);
     assert.equal(initHelp.status, 0, initHelp.stderr);
 
@@ -3076,7 +3077,7 @@ describe("qube init orchestrator", () => {
       rows.get("aiq").stageMetadata.find(stage => stage.refactorDriving).warning.message,
       /robust end-to-end tests/,
     );
-    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build");
+    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "codex,grok-build,cursor");
     assert.equal(optionValue(rows.get("aiu").args, "--post-issue-scope"), "ready");
     assert.equal(rows.get("aiu").actions[0].command, "npm exec -- aiu hook-stop --tool codex");
     assert.equal(rows.get("aiu").actions[0].content, undefined);
@@ -3088,7 +3089,7 @@ describe("qube init orchestrator", () => {
     assert.equal(calls[0].layerContext.sources["review.harness"], "explicit");
   });
 
-  it("plans Umpire for Cursor with an explicit unsupported-host value", () => {
+  it("plans the Cursor Umpire Stop hook", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-cwd-"));
     createInitShims(packageRoot);
@@ -3103,7 +3104,7 @@ describe("qube init orchestrator", () => {
     const rows = componentRows(parsed.plan);
     assert.deepEqual(parsed.plan.components.map(component => component.id), ["aie", "aib", "aiq", "aiu"]);
     assert.equal(optionValue(rows.get("aie").args, "--tool"), "cursor");
-    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "none");
+    assert.equal(optionValue(rows.get("aiu").args, "--tool"), "cursor");
   });
 
   it("does not apply any component when a child plan fails", () => {
@@ -3786,18 +3787,18 @@ describe("host toolkit manifests", () => {
       assert.equal(manifest.capabilities.modelDiscovery.support, profile.modelDiscovery.support, manifest.host);
       assert.equal(manifest.capabilities.umpire.continuation.support, profile.umpire.continuation.support, manifest.host);
       assert.equal(manifest.capabilities.umpire.probe.support, profile.umpire.probe.support, manifest.host);
-      assert.equal(manifest.capabilities.umpire.continuation.state, host === "cursor" ? "unavailable" : "unverified", manifest.host);
+      assert.equal(manifest.capabilities.umpire.continuation.state, "unverified", manifest.host);
       assert.equal(manifest.capabilities.umpire.continuation.effectiveDelivery, "none", manifest.host);
       assert.equal(manifest.capabilities.umpire.continuation.currentIssueRecovery, false, manifest.host);
       assert.equal(manifest.capabilities.trust.required, profile.trust.required, manifest.host);
       assert.deepEqual(manifest.capabilities.trust.actions, profile.trust.actions, manifest.host);
       assert.ok(formatPlannedHostToolkits(composition).includes(`Make It So ${profile.makeItSo.invocation}`), manifest.host);
       if (host === "cursor") {
-        assert.equal(manifest.capabilities.umpire.continuation.support, "unsupported");
-        assert.equal(manifest.capabilities.umpire.continuation.state, "unavailable");
+        assert.equal(manifest.capabilities.umpire.continuation.support, "supported");
+        assert.equal(manifest.capabilities.umpire.continuation.state, "unverified");
         assert.equal(manifest.capabilities.umpire.continuation.effectiveDelivery, "none");
         assert.equal(manifest.capabilities.umpire.continuation.currentIssueRecovery, false);
-        assert.equal(manifest.assets.some((item) => item.source === "aiu"), false);
+        assert.equal(manifest.assets.some((item) => item.source === "aiu"), true);
       }
     });
   }

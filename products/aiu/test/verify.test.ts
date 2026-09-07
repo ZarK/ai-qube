@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { AIU_HOSTS, getDefaultAiuConfig, type AiuConfig, type AiuHost } from "../dist/src/config.js";
-import { createAiuTrustedStateFingerprint, readAiuHostActivation, resolveAiuContinuationPaths } from "../dist/src/continuation_store.js";
+import { createAiuTrustedStateFingerprint, readAiuHostActivation, resolveAiuContinuationPaths, writeAiuContinuationState } from "../dist/src/continuation_store.js";
+import { evaluateCursorVerificationLifecycle } from "../dist/src/cursor_verify.js";
 import {
   activationMatchesCurrentConfiguration,
   assertVerificationPath,
+  createVerificationWorkspaceRoot,
+  cursorVerificationTerminalPrerequisite,
   createAiuManagedAssetDigest,
   createAiuRelevantConfigDigest,
   runAiuVerify,
@@ -66,6 +69,95 @@ describe("native continuation verification", () => {
     }
   });
 
+  it("reports the interactive Cursor terminal prerequisite before workspace setup", () => {
+    const missing = cursorVerificationTerminalPrerequisite({ isTTY: false }, { isTTY: true });
+    assert.equal(missing?.status, "blocked");
+    assert.equal(missing?.reasonCode, "terminal-prerequisite-unmet");
+    assert.match(missing?.nextAction ?? "", /standard input and standard error/);
+    assert.equal(cursorVerificationTerminalPrerequisite({ isTTY: true }, { isTTY: true }), undefined);
+  });
+
+  it("awaits asynchronous scenario runtimes", async () => {
+    const repo = await createRepo("codex");
+    try {
+      const runtime = passingRuntime("codex");
+      const report = await runAiuVerify({ tool: "codex", cwd: repo, runtime: { ...runtime, async runScenario(input) { await new Promise(resolve => setTimeout(resolve, 1)); return runtime.runScenario(input); } } });
+      assert.equal(report.status, "passed");
+      assert.equal(report.scenarios.length, 2);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("requires native Cursor allow and consumed continuation observations", async () => {
+    const repo = await createRepo("cursor");
+    const workspace = passingWorkspace("cursor", repo);
+    const paths = resolveAiuContinuationPaths(repo, workspace.config);
+    const startedAt = Date.now() - 100;
+    const initial = "AIU_VERIFY_INITIAL:nonce";
+    const next = "AIU_VERIFY_NEXT:nonce";
+    const first = cursorObservation(0, "generation-0", [initial]);
+    const second = cursorObservation(1, "generation-1", [initial, next]);
+    try {
+      await mkdir(paths.logDir, { recursive: true });
+      await writeFile(paths.logPath, `${JSON.stringify({ event: "decision", hostId: "cursor", eventType: "stop", sessionId: "conversation", decisionKind: "stop", observedAt: new Date().toISOString() })}\n`, "utf8");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "allow", timeoutMs: 1000, token: "nonce" }, [first], initial, next, true, startedAt)?.status, "passed");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "allow", timeoutMs: 1000, token: "nonce" }, [first, second], initial, next, true, startedAt)?.reasonCode, "allow-path-continued");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "continue", timeoutMs: 1000, token: "nonce" }, [first, second], initial, next, true, startedAt)?.reasonCode, "continuation-not-consumed");
+
+      writeAiuContinuationState(paths, consumedCursorState());
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "continue", timeoutMs: 1000, token: "nonce" }, [first, second], initial, next, true, startedAt)?.status, "passed");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "continue", timeoutMs: 1000, token: "nonce" }, [cursorObservation(0, "generation-0", ["wrong"]), second], initial, next, true, startedAt)?.reasonCode, "native-response-invalid");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "continue", timeoutMs: 1000, token: "nonce" }, [first, second, cursorObservation(2, "generation-2", [initial, next, next])], initial, next, true, startedAt)?.reasonCode, "native-response-invalid");
+      assert.equal(evaluateCursorVerificationLifecycle({ discovery: passingDiscovery("cursor"), workspace, kind: "continue", timeoutMs: 1000, token: "nonce" }, [first, { ...second, conversationId: "other" }], initial, next, true, startedAt)?.reasonCode, "native-response-invalid");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves only a Cursor workspace that requires manual trust approval", async () => {
+    const repo = await createRepo("cursor");
+    try {
+      let cursorCleanups = 0;
+      const cursorRuntime = passingRuntime("cursor", {
+        allowScenario: scenario("allow", "trust-prerequisite-unmet", { nativeInvocationObserved: true }),
+        onCleanup: () => { cursorCleanups += 1; },
+      });
+      const cursorReport = await runAiuVerify({ tool: "cursor", cwd: repo, runtime: cursorRuntime });
+      assert.equal(cursorReport.status, "blocked");
+      assert.equal(cursorReport.reasonCode, "trust-prerequisite-unmet");
+      assert.equal(cursorReport.trustApprovalPath, path.join(tmpdir(), "aiu-runtime-cursor"));
+      assert.equal(cursorCleanups, 0);
+
+      let codexCleanups = 0;
+      const codexRuntime = passingRuntime("codex", {
+        allowScenario: scenario("allow", "trust-prerequisite-unmet", { nativeInvocationObserved: true }),
+        onCleanup: () => { codexCleanups += 1; },
+      });
+      const codexReport = await runAiuVerify({ tool: "codex", cwd: repo, runtime: codexRuntime });
+      assert.equal(codexReport.trustApprovalPath, undefined);
+      assert.equal(codexCleanups, 1);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the same controlled Cursor workspace root after manual trust", async () => {
+    const repo = await createRepo("cursor");
+    const root = createVerificationWorkspaceRoot("cursor", repo);
+    try {
+      await writeFile(path.join(root, "stale.txt"), "stale\n", "utf8");
+      const reused = createVerificationWorkspaceRoot("cursor", repo);
+      assert.equal(reused, root);
+      await assert.rejects(readFile(path.join(root, "stale.txt"), "utf8"), { code: "ENOENT" });
+      const marker = JSON.parse(await readFile(path.join(root, ".aiu-verification-workspace.json"), "utf8")) as { schemaVersion?: unknown };
+      assert.equal(marker.schemaVersion, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it("rejects hook-only evidence, invalid responses, timeouts, aborts, and allow-path continuation", async () => {
     const repo = await createRepo("codex");
     try {
@@ -96,6 +188,16 @@ describe("native continuation verification", () => {
       });
       assert.doesNotMatch(redacted.nextAction, /sk-test/);
       assert.match(redacted.nextAction, /\[REDACTED\]/);
+
+      const invalidResponse = await runAiuVerify({
+        tool: "codex",
+        cwd: repo,
+        runtime: passingRuntime("codex", {
+          continueScenario: scenario("continue", "native-response-invalid", { diagnostic: secret }),
+        }),
+      });
+      assert.doesNotMatch(invalidResponse.nextAction, /sk-test/);
+      assert.match(invalidResponse.nextAction, /\[REDACTED\]/);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -175,6 +277,7 @@ function passingRuntime(host: AiuHost, options: {
   readonly onPrepare?: () => void;
   readonly allowScenario?: AiuVerificationScenario;
   readonly continueScenario?: AiuVerificationScenario;
+  readonly onCleanup?: () => void;
 } = {}): AiuVerificationRuntime {
   const discovery: AiuVerificationDiscovery = { executablePath: `${host}.exe`, executableIdentity: `${host}.exe`, harnessVersion: host === "codex" ? "0.147.0" : "1.18.25", surface: host === "opencode" ? "plugin-event" : "stop-hook", authentication: "ready", repositoryTrust: "required", model: host === "opencode" ? "opencode/test-free" : null };
   const workspace: AiuPreparedVerification = { root: path.join(tmpdir(), `aiu-runtime-${host}`), aiuEntry: "packed/bin/run", modePath: "mode", markerPath: "marker", tokenPath: "token", commandPath: "command", packedArtifactDigest: digest, managedAssetDigest: digest, relevantConfigDigest: digest, trustedStateFingerprint: digest, config: getDefaultAiuConfig() };
@@ -186,10 +289,42 @@ function passingRuntime(host: AiuHost, options: {
         ? options.allowScenario ?? { kind: "allow", status: "passed", reasonCode: "verification-passed", nativeInvocationObserved: true, responseConsumed: false, nextTurnObserved: false, continuationCount: 0 }
         : options.continueScenario ?? { kind: "continue", status: "passed", reasonCode: "verification-passed", nativeInvocationObserved: true, responseConsumed: true, nextTurnObserved: true, continuationCount: 1, sessionId: `${host}-session` };
     },
-    cleanup() {},
+    cleanup() { options.onCleanup?.(); },
   };
 }
 
 function scenario(kind: "continue" | "allow", reasonCode: AiuVerificationScenario["reasonCode"], overrides: Partial<AiuVerificationScenario> = {}): AiuVerificationScenario {
   return { kind, status: "failed", reasonCode, nativeInvocationObserved: false, responseConsumed: false, nextTurnObserved: false, continuationCount: 0, ...overrides };
+}
+
+function passingDiscovery(host: AiuHost): AiuVerificationDiscovery {
+  return { executablePath: `${host}.exe`, executableIdentity: `${host}.exe`, harnessVersion: "2026.08.11-e8db854", surface: "stop-hook", authentication: "ready", repositoryTrust: "required", model: "test-model" };
+}
+
+function passingWorkspace(host: AiuHost, root: string): AiuPreparedVerification {
+  return { root, aiuEntry: "packed/bin/run", modePath: "mode", markerPath: "marker", tokenPath: "token", commandPath: "command", packedArtifactDigest: digest, managedAssetDigest: digest, relevantConfigDigest: digest, trustedStateFingerprint: digest, config: getDefaultAiuConfig() };
+}
+
+function cursorObservation(loopCount: number, generationId: string, assistantMessages: readonly string[]) {
+  return { conversationId: "conversation", generationId, cursorVersion: "2026.08.11-e8db854", status: "completed" as const, loopCount, observedAt: new Date().toISOString(), assistantMessages };
+}
+
+function consumedCursorState() {
+  return {
+    schemaVersion: 2 as const,
+    deliveryState: "consumed" as const,
+    hostId: "cursor" as const,
+    eventType: "stop",
+    ownerSessionId: "conversation",
+    targetSessionId: "conversation",
+    selectedItem: { sourceId: "verification", kind: "work-item" as const, id: "verify", title: "Verify" },
+    mode: "continue" as const,
+    decisionKind: "continue" as const,
+    reasonCodes: ["active-work"],
+    lastPromptFingerprint: "b".repeat(64),
+    lastPromptAt: new Date().toISOString(),
+    nativeLoopCount: 1,
+    updatedAt: new Date().toISOString(),
+    sourceSummaries: [],
+  };
 }

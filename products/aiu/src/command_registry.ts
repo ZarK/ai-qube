@@ -559,7 +559,7 @@ export const hookStopCommand = defineCommand({
       name: "tool",
       description: "Host tool that invoked the Stop hook.",
       type: "option",
-      options: ["codex", "claude-code", "grok-build"],
+      options: ["codex", "claude-code", "grok-build", "cursor"],
       required: true,
     }),
   ],
@@ -575,6 +575,10 @@ export const hookStopCommand = defineCommand({
     defineExample({
       description: "Handle a Grok Build Stop hook using trusted-state decisions and host policy.",
       command: "aiu hook-stop --tool grok-build",
+    }),
+    defineExample({
+      description: "Handle a Cursor Stop hook and emit an optional current-conversation follow-up message.",
+      command: "aiu hook-stop --tool cursor",
     }),
   ],
   output: {
@@ -649,6 +653,10 @@ export const verifyCommand = defineCommand({
     defineExample({
       description: "Verify Codex with an explicit model selection.",
       command: "aiu verify --tool codex --model gpt-5.4-mini --json",
+    }),
+    defineExample({
+      description: "Verify the interactive Cursor CLI project Stop reprompt with an explicit model.",
+      command: "aiu verify --tool cursor --model gpt-5.4-nano-none --json",
     }),
   ],
   output: { formats: ["human", "json"], defaultFormat: "human" },

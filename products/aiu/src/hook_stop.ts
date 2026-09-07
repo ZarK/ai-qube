@@ -20,9 +20,10 @@ import { createAiuTrustedStateEnvelope, type AiuHostSessionState, type AiuTruste
 import { runAiuTrustedStateAdapter, type AiuTrustedStateAdapterResult } from "./trusted_adapter.js";
 import { decideAiuWhipContinuation, readAiuWhipState } from "./whip.js";
 import { decodeAiuContinuationEvent, getAiuContinuationAdapter } from "./continuation_adapters.js";
+import { resolveTrustedHookWorkspace } from "./hook_workspace.js";
 
 export interface AiuHookStopOptions {
-  readonly tool: Extract<AiuHost, "codex" | "claude-code" | "grok-build">;
+  readonly tool: Extract<AiuHost, "codex" | "claude-code" | "grok-build" | "cursor">;
   readonly stdin?: string;
   readonly cwd?: string;
   readonly configPath?: string;
@@ -41,7 +42,10 @@ export interface AiuHookStopResult {
   readonly prompt?: AiuContinuationPrompt;
 }
 
-export type AiuHookStopStdoutJson = Readonly<Record<string, never>> | Readonly<{ decision: "block"; reason: string }>;
+export type AiuHookStopStdoutJson =
+  | Readonly<Record<string, never>>
+  | Readonly<{ decision: "block"; reason: string }>
+  | Readonly<{ followup_message: string }>;
 
 export interface AiuHookStopDiagnostic {
   readonly severity: "info" | "warning" | "error";
@@ -71,7 +75,7 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  const resolvedCwd = resolveTrustedHookCwd(options.cwd, parsed.payload.cwd);
+  const resolvedCwd = resolveTrustedHookWorkspace(options.cwd, parsed.payload.cwd, parsed.payload.workspaceRoots);
   if (!resolvedCwd.ok) {
     return allow(options, inputBytes, resolvedCwd.code, [
       diagnostic("warning", resolvedCwd.code, resolvedCwd.error),
@@ -92,7 +96,6 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
       diagnostic("info", policyBlocker, policyBlockerMessage(policyBlocker, options.tool)),
     ]);
   }
-
   const hookWindowMs = Math.min(
     configLoad.config.timeouts.hookMs,
     Math.max(1, configLoad.config.timeouts.hostMs - HOOK_SERIALIZATION_HEADROOM_MS),
@@ -107,7 +110,8 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ...(parsed.payload.sessionId ? { sessionId: parsed.payload.sessionId, targetSessionId: parsed.payload.sessionId } : {}),
     nativeDelivery: true,
     recursionActive: parsed.payload.stopHookActive === true,
-    consumeEvidence: parsed.payload.stopHookActive !== true,
+    consumeEvidence: parsed.payload.stopHookActive !== true
+      && (parsed.payload.nativeLoopCount === undefined || parsed.payload.nativeLoopCount > 0),
   });
   if (!safety.ok) {
     return allow(options, inputBytes, safety.reason, [
@@ -118,6 +122,15 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
 
   const transaction = safety.transaction;
   try {
+    if (parsed.payload.nativeLoopCount !== undefined
+      && parsed.payload.nativeLoopCount >= configLoad.config.continuation.nativeLoopLimit) {
+      appendHookDecisionLog(transaction, "native-loop-limit-exhausted", ["native-loop-limit-exhausted"]);
+      return allow(options, inputBytes, "native-loop-limit-exhausted", [
+        ...configDiagnostics,
+        diagnostic("info", "native-loop-limit-exhausted", `${options.tool} reported an exhausted native continuation loop count.`),
+      ]);
+    }
+
     const immediateSuppressions = continuationSafetyImmediateSuppressions(transaction);
     if (immediateSuppressions.length > 0) {
       const reason = immediateSuppressions[0]!;
@@ -347,43 +360,6 @@ export async function readHookStopStdin(timeoutMs = 250): Promise<string> {
   });
 }
 
-function resolveTrustedHookCwd(
-  invocationCwd: string | undefined,
-  payloadCwd: string | undefined,
-): { readonly ok: true; readonly cwd: string } | { readonly ok: false; readonly code: "untrusted-hook-cwd"; readonly error: string } {
-  const trustedRoot = path.resolve(invocationCwd ?? process.cwd());
-  if (payloadCwd === undefined || payloadCwd.length === 0) {
-    return { ok: true, cwd: trustedRoot };
-  }
-  const requested = path.resolve(payloadCwd);
-  if (!isSameOrChildPath(requested, trustedRoot)) {
-    return {
-      ok: false,
-      code: "untrusted-hook-cwd",
-      error: "Stop hook cwd is outside the invocation repository.",
-    };
-  }
-  return { ok: true, cwd: trustedRoot };
-}
-
-function isSameOrChildPath(candidate: string, root: string): boolean {
-  const normalizedCandidate = normalizePath(candidate);
-  const normalizedRoot = normalizePath(root);
-  if (normalizedCandidate === normalizedRoot) {
-    return true;
-  }
-  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
-  return normalizedCandidate.startsWith(prefix);
-}
-
-function normalizePath(value: string): string {
-  const resolved = path.resolve(value);
-  if (process.platform === "win32" && /^[A-Za-z]:/.test(resolved)) {
-    return resolved[0].toLowerCase() + resolved.slice(1);
-  }
-  return resolved;
-}
-
 function parseHookPayload(
   tool: AiuHookStopOptions["tool"],
   stdin: string,
@@ -553,5 +529,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isHookStopStdoutJson(value: unknown): value is AiuHookStopStdoutJson {
   if (!isRecord(value)) return false;
   if (Object.keys(value).length === 0) return true;
-  return value.decision === "block" && typeof value.reason === "string" && value.reason.trim().length > 0;
+  const keys = Object.keys(value);
+  if (keys.length === 2 && value.decision === "block" && typeof value.reason === "string" && value.reason.trim().length > 0) return true;
+  return keys.length === 1 && typeof value.followup_message === "string" && value.followup_message.trim().length > 0;
 }

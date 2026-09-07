@@ -8,9 +8,8 @@ import {
 } from "../dist/src/continuation_adapters.js";
 
 describe("AI Umpire continuation adapter registry", () => {
-  it("derives exactly four runtime hosts from executable adapter registrations", () => {
-    assert.deepEqual(AIU_CONTINUATION_HOSTS, ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.equal(AIU_CONTINUATION_HOSTS.includes("cursor" as never), false);
+  it("derives exactly five runtime hosts from executable adapter registrations", () => {
+    assert.deepEqual(AIU_CONTINUATION_HOSTS, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     for (const host of AIU_CONTINUATION_HOSTS) {
       const adapter = getAiuContinuationAdapter(host);
       assert.equal(adapter.declaration.hostId, host);

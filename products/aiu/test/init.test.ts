@@ -36,8 +36,8 @@ describe("init planner", () => {
     assert.equal(parsed.ok, true);
     assert.equal(parsed.command, "init");
     assert.equal(parsed.init.dryRun, true);
-    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.equal(parsed.init.files.length, 8);
+    assert.deepEqual(parsed.init.tools, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
+    assert.equal(parsed.init.files.length, 9);
     assert.equal(parsed.init.config.operation, "create");
     assert.equal(parsed.init.recommendedNextCommand, "aiu config --json");
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
@@ -100,6 +100,10 @@ describe("init planner", () => {
         tool: "grok-build",
         file: path.join(".grok", "hooks", "ai-umpire.json"),
       },
+      {
+        tool: "cursor",
+        file: path.join(".cursor", "hooks.json"),
+      },
     ];
 
     for (const { tool, file } of cases) {
@@ -113,10 +117,15 @@ describe("init planner", () => {
       assert.equal(result.exitCode, 0, tool);
       assert.equal(parsed.init.ok, true, tool);
       assert.deepEqual(parsed.init.tools, [tool], tool);
+      assert.deepEqual(parsed.init.config.hosts, [tool], tool);
       assert.equal(existsSync(path.join(target, file)), true, tool);
       assert.deepEqual(config.hosts.enabled, [tool], tool);
       assert.deepEqual(config.hosts.modes[tool], tool === "opencode" ? ["continue", "repair", "wait", "stop"] : ["continue", "repair", "stop"], tool);
       assert.equal(config.hosts.stopHookBlocking[tool], tool !== "opencode", tool);
+      if (tool === "cursor") {
+        const human = await runCli(target, ["init", "--tool", "cursor", "--dry-run"]);
+        assert.match(human.stdout, /hosts=cursor;/);
+      }
 
       if (tool === "opencode") {
         const wrapper = await readFile(path.join(target, file), "utf8");
@@ -152,6 +161,12 @@ describe("init planner", () => {
         };
         assert.equal(hooks.hooks.Stop[0]?.hooks[0]?.type, "command");
         assert.equal(hooks.hooks.Stop[0]?.hooks[0]?.command, "pnpm exec aiu hook-stop --tool grok-build");
+      } else if (tool === "cursor") {
+        const hooks = JSON.parse(await readFile(path.join(target, file), "utf8")) as {
+          hooks: { stop: Array<{ command: string; loop_limit: number }> };
+        };
+        assert.equal(hooks.hooks.stop[0]?.command, "pnpm exec aiu hook-stop --tool cursor");
+        assert.equal(hooks.hooks.stop[0]?.loop_limit, 3);
       }
     }
   });
@@ -358,15 +373,37 @@ describe("init planner", () => {
     assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
-  it("rejects Cursor because Umpire continuation is unavailable", async () => {
+  it("merges one finite Cursor Stop hook while preserving unrelated configuration", async () => {
     const target = await createRepoRoot();
+    const hooksPath = path.join(target, ".cursor", "hooks.json");
+    await mkdir(path.dirname(hooksPath), { recursive: true });
+    await writeFile(hooksPath, JSON.stringify({
+      version: 1,
+      theme: "dark",
+      hooks: {
+        afterFileEdit: [{ command: "format" }],
+        stop: [{ command: "audit" }],
+      },
+    }), "utf8");
     const result = await runCli(target, ["init", "--tool", "cursor", "--json"]);
-    const parsed = JSON.parse(result.stdout) as { error: { kind: string; likelyCause: string } };
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const hooks = JSON.parse(await readFile(hooksPath, "utf8")) as {
+      theme: string;
+      hooks: { afterFileEdit: Array<{ command: string }>; stop: Array<{ command: string; loop_limit?: number }> };
+    };
 
-    assert.equal(result.exitCode, 2);
-    assert.equal(parsed.error.kind, "invalid-command-usage");
-    assert.match(parsed.error.likelyCause, /--tool=cursor/);
-    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+    assert.deepEqual(parsed.init.tools, ["cursor"]);
+    assert.equal(parsed.init.files.length, 1);
+    assert.equal(hooks.theme, "dark");
+    assert.deepEqual(hooks.hooks.afterFileEdit, [{ command: "format" }]);
+    assert.equal(hooks.hooks.stop.filter((entry) => /hook-stop --tool cursor/u.test(entry.command)).length, 1);
+    assert.equal(hooks.hooks.stop.find((entry) => /hook-stop --tool cursor/u.test(entry.command))?.loop_limit, 3);
+
+    const rerun = await runCli(target, ["init", "--tool", "cursor", "--json"]);
+    const rerunHooks = JSON.parse(await readFile(hooksPath, "utf8")) as typeof hooks;
+    assert.equal(rerun.exitCode, 0);
+    assert.equal(rerunHooks.hooks.stop.filter((entry) => /hook-stop --tool cursor/u.test(entry.command)).length, 1);
   });
 
   it("merges the AI Umpire plugin into a shared Codex marketplace", async () => {
@@ -571,19 +608,23 @@ describe("init planner", () => {
     };
 
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
-    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
+    assert.deepEqual(parsed.init.hostProfiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental", "supported"]);
+    assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.ok(config.hosts.capabilities.opencode);
     assert.ok(config.hosts.capabilities.codex);
     assert.ok(config.hosts.capabilities["claude-code"]);
     assert.ok(config.hosts.capabilities["grok-build"]);
+    assert.ok(config.hosts.capabilities.cursor);
     assert.deepEqual(config.hosts.modes.opencode, ["continue", "repair", "wait", "stop"]);
     assert.deepEqual(config.hosts.modes.codex, ["continue", "repair", "stop"]);
     assert.deepEqual(config.hosts.modes["claude-code"], ["continue", "repair", "stop"]);
     assert.deepEqual(config.hosts.modes["grok-build"], ["continue", "repair", "stop"]);
-    assert.deepEqual(config.hosts.stopHookBlocking, { opencode: false, codex: true, "claude-code": true, "grok-build": true });
+    assert.deepEqual(config.hosts.modes.cursor, ["continue", "repair", "stop"]);
+    assert.deepEqual(config.hosts.stopHookBlocking, { opencode: false, codex: true, "claude-code": true, "grok-build": true, cursor: true });
     assert.deepEqual(config.trustedStateCommands.work.argv, ["qube", "aie", "status", "--json"]);
+    const human = await runCli(target, ["init", "--tool", "all", "--dry-run"]);
+    assert.match(human.stdout, /hosts=opencode, codex, claude-code, grok-build, cursor;/);
   });
 
   it("preserves existing host overrides while seeding missing init defaults", async () => {
@@ -797,7 +838,7 @@ describe("init planner", () => {
 
     assert.equal(result.exitCode, 0);
     assert.equal(parsed.init.config.operation, "skip");
-    assert.deepEqual(parsed.init.config.hosts, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.init.config.hosts, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(parsed.init.config.trustedStateCommands, ["work"]);
   });
 

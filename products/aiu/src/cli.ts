@@ -212,6 +212,7 @@ export const aiuCli = createCli({
         `Observed: ${report.observedAt}`,
         report.discovery ? `Harness: ${report.discovery.executableIdentity} ${report.discovery.harnessVersion}` : undefined,
         report.discovery?.model ? `Model: ${report.discovery.model}` : undefined,
+        report.trustApprovalPath ? `Trust approval path: ${report.trustApprovalPath}` : undefined,
         `Next: ${report.nextAction}`,
       ].filter((line): line is string => line !== undefined).join("\n");
       return {
@@ -297,12 +298,13 @@ export const aiuCli = createCli({
           selectedItemFields: ["kind", "id", "title", "sourceId", "status", "targetKind", "affectedPaths", "command", "rerunCommand", "artifactChecks", "expectedEvidence", "prompt", "priority", "promptFingerprint"],
         },
         hookStop: {
-          commands: ["aiu hook-stop --tool codex", "aiu hook-stop --tool claude-code", "aiu hook-stop --tool grok-build"],
-          tools: ["codex", "claude-code", "grok-build"],
+          commands: ["aiu hook-stop --tool codex", "aiu hook-stop --tool claude-code", "aiu hook-stop --tool grok-build", "aiu hook-stop --tool cursor"],
+          tools: ["codex", "claude-code", "grok-build", "cursor"],
           outputKinds: ["allow", "block"],
           stdoutShapes: [
             { decision: "allow", json: {} },
             { decision: "block", json: { decision: "block", reason: "string" } },
+            { decision: "block", tool: "cursor", json: { followup_message: "string" } },
           ],
           stableErrorKinds: [
             "empty-hook-input",
@@ -486,8 +488,8 @@ export const aiuCli = createCli({
   ],
 });
 
-function readHookStopTool(value: unknown): "codex" | "claude-code" | "grok-build" | undefined {
-  return value === "codex" || value === "claude-code" || value === "grok-build" ? value : undefined;
+function readHookStopTool(value: unknown): "codex" | "claude-code" | "grok-build" | "cursor" | undefined {
+  return value === "codex" || value === "claude-code" || value === "grok-build" || value === "cursor" ? value : undefined;
 }
 
 function readVerifyTool(value: unknown): (typeof AIU_HOSTS)[number] | undefined {

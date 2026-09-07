@@ -16,7 +16,7 @@
         "0.2.4",
         "0.2.5"
       ],
-      "selectedVersion": "0.2.9"
+      "selectedVersion": "0.2.10"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -181,7 +181,7 @@
         "0.1.0",
         "0.1.1"
       ],
-      "selectedVersion": "0.1.2"
+      "selectedVersion": "0.1.3"
     },
     {
       "name": "@tjalve/aie",
@@ -204,7 +204,7 @@
         "0.2.7",
         "0.2.8"
       ],
-      "selectedVersion": "0.2.12"
+      "selectedVersion": "0.2.13"
     },
     {
       "name": "@tjalve/aib",
@@ -224,7 +224,7 @@
         "0.2.7",
         "0.2.8"
       ],
-      "selectedVersion": "0.2.12"
+      "selectedVersion": "0.2.13"
     },
     {
       "name": "@tjalve/aiu",
@@ -243,7 +243,7 @@
         "0.0.8",
         "0.0.9"
       ],
-      "selectedVersion": "0.0.13"
+      "selectedVersion": "0.0.14"
     },
     {
       "name": "@tjalve/aiq",
@@ -282,7 +282,7 @@
         "0.2.10",
         "0.2.11"
       ],
-      "selectedVersion": "0.2.15"
+      "selectedVersion": "0.2.16"
     }
   ]
 }

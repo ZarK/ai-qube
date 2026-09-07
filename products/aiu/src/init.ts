@@ -29,17 +29,33 @@ export const AIU_INIT_TOOLS = [
   "codex",
   "claude-code",
   "grok-build",
+  "cursor",
   "opencode,codex",
   "opencode,claude-code",
   "opencode,grok-build",
   "codex,claude-code",
   "codex,grok-build",
   "claude-code,grok-build",
+  "opencode,cursor",
+  "codex,cursor",
+  "claude-code,cursor",
+  "grok-build,cursor",
   "opencode,codex,claude-code",
   "opencode,codex,grok-build",
   "opencode,claude-code,grok-build",
   "codex,claude-code,grok-build",
+  "opencode,codex,cursor",
+  "opencode,claude-code,cursor",
+  "opencode,grok-build,cursor",
+  "codex,claude-code,cursor",
+  "codex,grok-build,cursor",
+  "claude-code,grok-build,cursor",
   "opencode,codex,claude-code,grok-build",
+  "opencode,codex,claude-code,cursor",
+  "opencode,codex,grok-build,cursor",
+  "opencode,claude-code,grok-build,cursor",
+  "codex,claude-code,grok-build,cursor",
+  "opencode,codex,claude-code,grok-build,cursor",
   "all",
 ] as const;
 
@@ -733,7 +749,7 @@ function parseJsonObject(raw: string): { readonly ok: true; readonly value: Reco
 
 function readMergedHosts(config: Record<string, unknown>): readonly AiuHost[] {
   const hosts = isRecord(config.hosts) && Array.isArray(config.hosts.enabled) ? config.hosts.enabled : [];
-  return hosts.filter((host): host is AiuHost => typeof host === "string" && ["opencode", "codex", "claude-code", "grok-build"].includes(host));
+  return hosts.filter((host): host is AiuHost => typeof host === "string" && AIU_HOSTS.includes(host as AiuHost));
 }
 
 function readMergedTrustedStateCommandNames(config: Record<string, unknown>): readonly string[] {

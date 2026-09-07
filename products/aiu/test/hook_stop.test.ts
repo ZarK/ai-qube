@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -342,6 +342,155 @@ describe("provider-neutral stop hooks", () => {
     }
   });
 
+  it("emits one Cursor follow-up through the shared continuation safety state", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState() });
+    try {
+      const result = await runAiuHookStop({
+        tool: "cursor",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify(cursorStopPayload(target)),
+      });
+
+      assert.equal(result.decision, "block");
+      assert.match("followup_message" in result.stdoutJson ? result.stdoutJson.followup_message : "", /Continue active work/u);
+      assert.equal("decision" in result.stdoutJson, false);
+      assert.equal(readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()))?.deliveryState, "emitted");
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not consume a Cursor follow-up when an initial Stop is replayed", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState(), promptCooldownMs: 1 });
+    try {
+      const first = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify(cursorStopPayload(target)) });
+      assert.equal(first.decision, "block");
+      const paths = resolveAiuContinuationPaths(target, getDefaultAiuConfig());
+      const emitted = readAiuContinuationState(paths);
+
+      const replay = await runAiuHookStop({
+        tool: "cursor",
+        cwd: target,
+        observedAt: "2026-05-23T00:01:00.000Z",
+        stdin: JSON.stringify(cursorStopPayload(target)),
+      });
+      assert.equal(replay.decision, "allow");
+      assert.deepEqual(replay.stdoutJson, {});
+      assert.match(replay.reason, /^duplicate-/u);
+      assert.deepEqual(readAiuContinuationState(paths), emitted);
+      assert.equal(emitted?.deliveryState, "emitted");
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("lets Cursor stop without reserving continuation for unsupported native versions", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState() });
+    try {
+      for (const cursorVersion of ["2026.08.10-e8db854", "not-a-version"]) {
+        const result = await runAiuHookStop({
+          tool: "cursor",
+          cwd: target,
+          observedAt,
+          stdin: JSON.stringify({ ...cursorStopPayload(target), cursor_version: cursorVersion }),
+        });
+        assert.equal(result.decision, "allow");
+        assert.equal(result.reason, "malformed-hook-input");
+        assert.deepEqual(result.stdoutJson, {});
+        assert.equal(readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig())), undefined);
+      }
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("lets Cursor stop for aborted, error, and exhausted-loop payloads", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState(), nativeLoopLimit: 3 });
+    try {
+      for (const status of ["aborted", "error"] as const) {
+        const result = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify({ ...cursorStopPayload(target), status }) });
+        assert.equal(result.decision, "allow");
+        assert.equal(result.reason, "session-end-stop");
+        assert.deepEqual(result.stdoutJson, {});
+      }
+      const exhausted = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify({ ...cursorStopPayload(target), loop_count: 3 }) });
+      assert.equal(exhausted.decision, "allow");
+      assert.equal(exhausted.reason, "native-loop-limit-exhausted");
+      assert.deepEqual(exhausted.stdoutJson, {});
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("records a Cursor follow-up as consumed before suppressing the exhausted native loop", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState(), nativeLoopLimit: 1 });
+    try {
+      const first = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify(cursorStopPayload(target)) });
+      assert.equal(first.decision, "block");
+
+      const second = await runAiuHookStop({
+        tool: "cursor",
+        cwd: target,
+        observedAt: "2026-05-23T00:01:00.000Z",
+        stdin: JSON.stringify({ ...cursorStopPayload(target), loop_count: 1 }),
+      });
+      assert.equal(second.decision, "allow");
+      assert.equal(second.reason, "native-loop-limit-exhausted");
+      assert.equal(readAiuContinuationState(resolveAiuContinuationPaths(target, getDefaultAiuConfig()))?.deliveryState, "consumed");
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts one contained Cursor workspace root and rejects ambiguous, relative, and outside roots", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState() });
+    const outside = await mkdtemp(path.join(tmpdir(), "aiu-cursor-outside-"));
+    const contained = path.join(target, "packages", "app");
+    await mkdir(contained, { recursive: true });
+    try {
+      const accepted = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify({ ...cursorStopPayload(target), workspace_roots: [contained] }) });
+      assert.equal(accepted.decision, "block");
+      for (const workspaceRoots of [[target, contained], ["relative/path"], [outside], [path.join(target, "..", path.basename(outside))]]) {
+        const rejected = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify({ ...cursorStopPayload(target), workspace_roots: workspaceRoots }) });
+        assert.equal(rejected.decision, "allow");
+        assert.equal(rejected.reason, "untrusted-hook-cwd");
+        assert.deepEqual(rejected.stdoutJson, {});
+      }
+    } finally {
+      await rm(target, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a Cursor workspace root that escapes through a linked directory", async (context) => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({ tool: "cursor", stopHookBlocking: true, trustedState: activeWorkState() });
+    const outside = await mkdtemp(path.join(tmpdir(), "aiu-cursor-linked-outside-"));
+    const linked = path.join(target, "linked-root");
+    try {
+      try {
+        await symlink(outside, linked, process.platform === "win32" ? "junction" : "dir");
+      } catch {
+        context.skip("directory link creation is unavailable on this platform");
+        return;
+      }
+      const result = await runAiuHookStop({ tool: "cursor", cwd: target, observedAt, stdin: JSON.stringify({ ...cursorStopPayload(target), workspace_roots: [linked] }) });
+      assert.equal(result.decision, "allow");
+      assert.equal(result.reason, "untrusted-hook-cwd");
+      assert.deepEqual(result.stdoutJson, {});
+    } finally {
+      await rm(target, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("accepts Stop hook payloads that omit optional host fields", async () => {
     const { runAiuHookStop } = await loadHookStop();
     const target = await createRepo({
@@ -618,7 +767,7 @@ async function loadHookStop(): Promise<typeof HookStop> {
 }
 
 async function createRepo(options: {
-  readonly tool: "codex" | "claude-code" | "grok-build";
+  readonly tool: "codex" | "claude-code" | "grok-build" | "cursor";
   readonly stopHookBlocking: boolean;
   readonly trustedState?: Record<string, unknown>;
   readonly trustedCommand?: readonly [string, ...string[]];
@@ -701,6 +850,18 @@ function stopPayload(cwd: string, sessionId: string) {
     stop_hook_active: false,
     transcript_path: null,
     turn_id: "turn-1",
+  };
+}
+
+function cursorStopPayload(workspaceRoot: string) {
+  return {
+    conversation_id: "cursor-conversation",
+    generation_id: "cursor-generation",
+    hook_event_name: "stop",
+    cursor_version: "2026.08.11-e8db854",
+    workspace_roots: [workspaceRoot],
+    status: "completed",
+    loop_count: 0,
   };
 }
 

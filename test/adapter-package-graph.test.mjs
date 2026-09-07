@@ -17,6 +17,7 @@ const PRODUCT_ADAPTERS = new Map([
   ["products/aiu/package.json", [
     "@tjalve/qube-adapter-claude-code",
     "@tjalve/qube-adapter-codex",
+    "@tjalve/qube-adapter-cursor",
     "@tjalve/qube-adapter-grok-build",
     "@tjalve/qube-adapter-opencode",
   ]],

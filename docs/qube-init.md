@@ -342,6 +342,15 @@ support the QUBE continuation method and trust the installed hook or command.
 If the harness does not support continuation, QUBE records the scope but does
 not claim that the harness can resume itself.
 
+Cursor uses one project Stop hook in `.cursor/hooks.json`. QUBE preserves
+unrelated hooks, limits the native follow-up loop, and requires Cursor to trust
+the repository before the hook can run. QUBE does not change Cursor trust. Run
+`qube aiu verify --tool cursor --model <model-id> --json` with an explicit model
+after setup. Run the command in an interactive terminal with standard input and
+standard error attached to TTYs. Verification tests the Cursor CLI project Stop
+reprompt. It does not assert continuation support in Cursor desktop, cloud, or
+headless mode.
+
 <a id="quality-checks"></a>
 
 ## 6. Quality checks

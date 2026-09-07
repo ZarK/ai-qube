@@ -555,7 +555,7 @@ function validOptionalTimestamp(value: unknown): boolean {
 }
 
 function isAiuHost(value: unknown): value is AiuHost {
-  return value === "opencode" || value === "codex" || value === "claude-code" || value === "grok-build";
+  return value === "opencode" || value === "codex" || value === "claude-code" || value === "grok-build" || value === "cursor";
 }
 
 function continuesNativeLoop(

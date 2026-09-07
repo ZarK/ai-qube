@@ -43,13 +43,13 @@ describe("canonical agent host capability profiles", () => {
     }
   });
 
-  it("preserves the previous task, subagent, review, model-catalog, and continuation support levels", () => {
+  it("declares the current task, subagent, review, model-catalog, and continuation support levels", () => {
     const rows = {
       opencode: ["supported", "supported", "supported", "unsupported", "supported", "supported"],
       codex: ["supported", "supported", "supported", "supported", "supported", "experimental"],
       "claude-code": ["supported", "supported", "supported", "unsupported", "unsupported", "experimental"],
       "grok-build": ["unsupported", "supported", "supported", "supported", "supported", "experimental"],
-      cursor: ["unsupported", "unsupported", "unsupported", "supported", "supported", "unsupported"],
+      cursor: ["unsupported", "unsupported", "unsupported", "supported", "supported", "supported"],
     };
     for (const [host, expected] of Object.entries(rows)) {
       const capabilities = core.AGENT_HOST_CAPABILITY_PROFILES[host].capabilities;
@@ -114,8 +114,8 @@ describe("agent host runtime readiness", () => {
     }
     assert.throws(() => core.commandRequirement("undeclared-command"), /Unknown agent host command requirement/);
     const continuation = core.evaluateAgentHostCommandReadiness(core.AGENT_HOST_COMMAND_REQUIREMENTS["continuation-stop-hook"], profile, value);
-    assert.equal(continuation.ready, false);
-    assert.deepEqual(continuation.missingCapabilities, ["continuation-stop-hook"]);
+    assert.equal(continuation.ready, true);
+    assert.deepEqual(continuation.missingCapabilities, []);
     const openCodeContinuation = core.evaluateAgentHostCommandReadiness(
       core.AGENT_HOST_COMMAND_REQUIREMENTS["continuation-selected-session"],
       core.AGENT_HOST_CAPABILITY_PROFILES.opencode,

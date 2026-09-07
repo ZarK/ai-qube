@@ -126,7 +126,7 @@ describe("qube core contracts", () => {
       { id: "codex", instructionPath: "AGENTS.md", makeItSoKind: "skill", makeItSoPath: ".agents/skills/make-it-so/SKILL.md", invocation: "$make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
       { id: "claude-code", instructionPath: "CLAUDE.md", makeItSoKind: "command", makeItSoPath: ".claude/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "experimental" },
       { id: "grok-build", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".grok/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
-      { id: "cursor", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".cursor/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "unsupported" },
+      { id: "cursor", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".cursor/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "supported" },
     ];
 
     assert.deepEqual(Object.keys(core.AGENT_HOST_REGISTRATIONS), [...core.AGENT_HOST_IDS]);

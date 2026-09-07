@@ -175,6 +175,7 @@ describe("metadata-backed CLI", () => {
         hookStop?: {
           tools?: string[];
           outputKinds?: string[];
+          stdoutShapes?: Array<{ decision?: string; tool?: string; json?: Record<string, unknown> }>;
           stableErrorKinds?: string[];
         };
         continuationState?: {
@@ -247,12 +248,12 @@ describe("metadata-backed CLI", () => {
     assert.ok(config.errors?.some((error) => error.kind === "unsafe-command-descriptor"));
     assert.equal(parsed.sections?.config?.schemaVersion, 1);
     assert.equal(parsed.sections?.config?.defaultPath, ".qube/aiu/config.json");
-    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilityNames, ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"]);
     assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "unsupported"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilitySupport, ["supported", "experimental", "disabled", "unsupported", "unknown"]);
-    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
-    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
+    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build", "cursor"]);
+    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental", "supported"]);
     assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "codex")?.stopHook?.blocksByDefault, true);
     assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.support, "experimental");
     assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.blocksByDefault, true);
@@ -289,8 +290,13 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("promptFingerprint"));
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("expectedEvidence"));
     assert.ok(parsed.sections?.decision?.reasonCodes?.some((reason) => reason.code === "stop-supply-chain-approval" && reason.category === "safety"));
-    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code", "grok-build", "cursor"]);
     assert.deepEqual(parsed.sections?.hookStop?.outputKinds, ["allow", "block"]);
+    assert.deepEqual(parsed.sections?.hookStop?.stdoutShapes, [
+      { decision: "allow", json: {} },
+      { decision: "block", json: { decision: "block", reason: "string" } },
+      { decision: "block", tool: "cursor", json: { followup_message: "string" } },
+    ]);
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("malformed-hook-input"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("trusted-state-load-failed"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("hook-deadline-exhausted"));
@@ -567,6 +573,11 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.hookStop.decision, "allow");
     assert.equal(parsed.hookStop.reason, "empty-hook-input");
     assert.deepEqual(parsed.hookStop.stdoutJson, {});
+
+    const cursorResponse = await runCli(["hook-stop", "--tool", "cursor"]);
+    assert.equal(cursorResponse.exitCode, 0);
+    assert.equal(cursorResponse.stdout, "{}\n");
+    assert.match(cursorResponse.stderr, /empty-hook-input/);
   });
 
   it("suggests unknown commands and flags without executing alternatives", async () => {
