@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,45 @@ function read(path) {
 }
 
 describe("QUBE public docs site", () => {
+  it("keeps QUBE release examples and command references consistent", () => {
+    const releaseVersion = "0.2.12";
+    const releaseReference = "https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md";
+    const publicDocs = [
+      ["README.md", read("README.md")],
+      ["products/qube/README.md", read("products/qube/README.md")],
+      ["docs/qube-init.md", read("docs/qube-init.md")],
+      ["docs/index.html", read("docs/index.html")],
+    ];
+
+    for (const [docPath, content] of publicDocs) {
+      const installVersions = [...content.matchAll(/@tjalve\/qube@(\d+\.\d+\.\d+)/g)].map((match) => match[1]);
+      assert.ok(installVersions.length > 0, `${docPath} must contain a pinned QUBE install example`);
+      assert.deepEqual([...new Set(installVersions)], [releaseVersion], docPath);
+      assert.match(content, /development/i, docPath);
+      assert.ok(content.includes(releaseReference), docPath);
+      assert.doesNotMatch(content, /\bqube status\b/, docPath);
+    }
+
+    for (const [docPath, content] of publicDocs.slice(0, 3)) {
+      assert.match(content, /npm exec -- qube init\b/, docPath);
+      assert.match(content, /pnpm exec qube init\b/, docPath);
+      assert.match(content, /global install/i, docPath);
+    }
+    assert.match(publicDocs[3][1], /pnpm exec qube init\b/);
+    assert.match(publicDocs[3][1], /qube continue --json/);
+
+    const commandReference = read("docs/qube-command-surfaces.md");
+    assert.match(commandReference, /development/i);
+    assert.ok(commandReference.includes(releaseReference));
+
+    const rootReadme = publicDocs[0][1];
+    assert.doesNotMatch(rootReadme, /docs\/version-audit\.json/);
+    const auditLinks = [...rootReadme.matchAll(/docs\/release\/version-audit\.json/g)];
+    assert.ok(auditLinks.length > 0);
+    assert.equal(existsSync(new URL("../docs/release/version-audit.json", import.meta.url)), true);
+    assert.doesNotThrow(() => JSON.parse(read("docs/release/version-audit.json")));
+  });
+
   it("keeps the landing page public-ready and linked from package docs", () => {
     const page = read("docs/index.html");
     const rootReadme = read("README.md");

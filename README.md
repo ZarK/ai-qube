@@ -45,32 +45,32 @@ npm install --global --ignore-scripts @tjalve/qube@0.2.12
 pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-Package placement does not select the QUBE configuration scope. After the
-`qube` command is available, use `qube init` for all normal setup and resume
-work:
+For a project installation, run the published CLI through the package manager:
 
 ```sh
-qube init --global
-qube init
-qube init <target>
-qube init <target> --git-init
+npm exec -- qube init
+pnpm exec qube init
 ```
 
-User-global initialization does not use Git. Repository initialization reports
-Git executable, repository, identity, HEAD, branch, worktree, base-reference,
-remote, and transport readiness before setup choices. See the
-[guided init Git prerequisites](./docs/qube-init.md#git-prerequisites).
-GitHub-backed roles also receive a conditional, role-aware connection check;
-see [GitHub provider support](./docs/qube-github-provider-support.md).
+For a global installation, run `qube init`. See the
+[QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
+for the commands in this release.
 
 Install a single component when you intentionally only need that package:
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.1
+pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.2.9
 pnpm exec aib --help
 ```
 
-## Command Surface
+## Current development commands
+
+This section describes the current source checkout. These commands can include
+changes that are not in QUBE 0.2.12. In a source checkout, replace `qube` in
+the examples with `node products/qube/bin/run`. Plain `qube` examples require a
+global installation of the current development version.
+
+### Command surface
 
 `qube` dispatches to the component versions installed with the composer package.
 Use the composer entry point for automation, agent instructions, hooks, and
@@ -134,7 +134,7 @@ docs/
 Public package READMEs live beside the package that npm publishes. They contain
 the package install instructions. Product docs under `docs/` explain command
 boundaries and agent harness surfaces. `docs/release-controls.md` and
-`docs/version-audit.json` describe release controls and package versions.
+`docs/release/version-audit.json` describe release controls and package versions.
 
 ## Publishing
 
@@ -183,4 +183,4 @@ Useful public docs:
 - `docs/qube-linear-provider-support.md`
 - `docs/qube-paths-and-artifacts.md`
 - `docs/release-controls.md`
-- `docs/version-audit.json`
+- `docs/release/version-audit.json`
