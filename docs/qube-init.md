@@ -124,9 +124,15 @@ In an interactive repository setup, QUBE shows the identity state before the
 ordinary setup choices. If a value is missing, QUBE recommends repository
 scope. Repository scope changes only the selected repository. User-global
 scope changes the default for all repositories used by the current operating-
-system user. QUBE asks for the missing values and a separate confirmation
-before it writes Git configuration. It does not infer identity from a provider
+system user. The choices are **This repository** and **All repositories**.
+QUBE checks each value before the next question. If a value is invalid, correct
+that value without restarting setup. QUBE asks for confirmation before it
+writes Git configuration. It does not infer identity from a provider
 account, operating-system account, package manifest, or QUBE setting.
+
+Cancel a prompt to stop before QUBE applies pending setup changes. A dry run
+does not write configuration or start credential repair. JSON mode never asks
+questions. Complete arguments and `--yes` need no extra confirmation.
 
 You can also configure identity directly. See the official
 [first-time Git setup guide](https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup).
