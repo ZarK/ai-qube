@@ -141,6 +141,12 @@ describe("guided QUBE init questions", () => {
     });
     assert.equal(native.validation.ok, true);
     assert.equal(native.answers.reviewSource, "primary");
+    const backup = buildGuidedInitQuestions({
+      capabilities: limited,
+      answers: { agentHarnesses: ["claude-code", "codex"], issueTracker: "github", reviewSource: "harness", reviewHarness: "codex" },
+    }).find(question => question.id === "review-backup-harness");
+    assert.equal(backup.selectedValue, GUIDED_INIT_NO_BACKUP);
+    assert.equal(backup.promptNeeded, false);
   });
 
   it("keeps the public question order and complete guidance metadata", () => {

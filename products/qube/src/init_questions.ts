@@ -767,10 +767,10 @@ function resolveQuestion(input: ResolveQuestionInput): GuidedInitQuestion {
     selectedValue = recommendation;
     answeredBy = "default";
     reason = input.recommendationReason;
-  } else if ((input.autoSelectOnlyChoice ?? true) && options.length === 1 && enabledOptions.length === 1) {
+  } else if ((input.autoSelectOnlyChoice ?? true) && enabledOptions.length === 1) {
     selectedValue = input.selection === "multiple"
-      ? Object.freeze([options[0]!.value])
-      : options[0]!.value;
+      ? Object.freeze([enabledOptions[0]!.value])
+      : enabledOptions[0]!.value;
     answeredBy = "automatic";
     reason = "This is the only available choice.";
   }
