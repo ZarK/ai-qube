@@ -7,7 +7,7 @@ const { tmpdir } = require('node:os');
 const { join, posix: pathPosix } = require('node:path');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
-const { configToFileShape, getDefaults, userConfigPath } = require('../dist/config/index.js');
+const { configToFileShape, getDefaults, userConfigPath, validateConfig } = require('../dist/config/index.js');
 const { renderAgentInstructions, renderMakeItSoCommand, renderMakeItSoSkill } = require('../dist/init_content.js');
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
 const { renderManagedSection } = require('../dist/managed_file.js');
@@ -95,6 +95,245 @@ describe('init service', () => {
       version: 1,
       policy: { audit: { manualUiAudit: true } },
     });
+  });
+
+  it('stores inherited main and backup reviewers with a repository shipping override and updates them on rerun', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-backup-home-${process.pid}-${Date.now()}`);
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.QUBE_INIT_LAYER_CONTEXT;
+    const modelCatalogs = {
+      cursor: { host: 'cursor', status: 'ready', models: ['cursor-main-high'], diagnostic: null },
+      codex: { host: 'codex', status: 'ready', models: ['codex-backup', 'codex-backup-next'], diagnostic: null },
+    };
+    process.env.QUBE_INIT_LAYER_CONTEXT = JSON.stringify({
+      version: 1,
+      selectedScope: 'repository',
+      effective: {
+        review: {
+          mode: 'isolated',
+          harness: 'cursor',
+          models: ['cursor:cursor-main-high'],
+          backup: { harness: 'codex', model: 'codex-backup', effort: 'medium' },
+        },
+      },
+      sources: {
+        'review.mode': 'user-global',
+        'review.harness': 'user-global',
+        'review.models': 'user-global',
+        'review.backup': 'user-global',
+      },
+      baseline: {
+        version: 1,
+        review: {
+          mode: 'isolated',
+          harness: 'cursor',
+          models: ['cursor:cursor-main-high'],
+          backup: { harness: 'codex', model: 'codex-backup', effort: 'medium' },
+        },
+      },
+      repository: { version: 1, continuousShipping: false },
+    });
+    try {
+      const result = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, cwd: repo, homeDirectory: home,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+        policy: { autonomousMode: false },
+      });
+      assert.equal(result.ok, true, result.errors.join('\n'));
+      const configPath = join(repo, '.qube', 'aie', 'config.json');
+      const stored = validateConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+      assert.equal(stored.ok, true);
+      assert.equal(stored.config.autonomousMode, false);
+      assert.equal(stored.config.reviewRoute.host, 'cursor');
+      assert.deepEqual(stored.config.reviewFailover, {
+        faults: 1,
+        route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 16 },
+      });
+      assert.deepEqual(stored.config.reviewModels.review.codex, { model: 'codex-backup', effort: 'medium' });
+
+      const context = JSON.parse(process.env.QUBE_INIT_LAYER_CONTEXT);
+      context.effective.review.backup = { harness: 'codex', model: 'codex-backup-next', effort: 'high' };
+      context.baseline.review.backup = context.effective.review.backup;
+      process.env.QUBE_INIT_LAYER_CONTEXT = JSON.stringify(context);
+
+      const rerun = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, cwd: repo, homeDirectory: home,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+        policy: { autonomousMode: false },
+      });
+      assert.equal(rerun.ok, true, rerun.errors.join('\n'));
+      const updated = validateConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+      assert.equal(updated.ok, true);
+      assert.equal(updated.config.autonomousMode, false);
+      assert.deepEqual(updated.config.reviewFailover, {
+        faults: 1,
+        route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 16 },
+      });
+      assert.deepEqual(updated.config.reviewModels.review.codex, { model: 'codex-backup-next', effort: 'high' });
+
+      context.effective.review.backup = null;
+      context.baseline.review.backup = null;
+      process.env.QUBE_INIT_LAYER_CONTEXT = JSON.stringify(context);
+      const disabled = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, cwd: repo, homeDirectory: home,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+        policy: { autonomousMode: false },
+      });
+      assert.equal(disabled.ok, true, disabled.errors.join('\n'));
+      const disabledConfig = validateConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+      assert.equal(disabledConfig.ok, true);
+      assert.equal(disabledConfig.config.reviewFailover, null);
+    } finally {
+      if (previous === undefined) delete process.env.QUBE_INIT_LAYER_CONTEXT;
+      else process.env.QUBE_INIT_LAYER_CONTEXT = previous;
+    }
+  });
+
+  it('stores all-global main and backup reviewers for later AIE runtime reads', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-global-backup-home-${process.pid}-${Date.now()}`);
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.QUBE_INIT_LAYER_CONTEXT;
+    const modelCatalogs = {
+      cursor: { host: 'cursor', status: 'ready', models: ['cursor-main-high'], diagnostic: null },
+      codex: { host: 'codex', status: 'ready', models: ['codex-backup'], diagnostic: null },
+    };
+    process.env.QUBE_INIT_LAYER_CONTEXT = JSON.stringify({
+      version: 1,
+      selectedScope: 'repository',
+      effective: {
+        review: {
+          mode: 'isolated',
+          harness: 'cursor',
+          models: ['cursor:cursor-main-high'],
+          backup: { harness: 'codex', model: 'codex-backup', effort: 'medium' },
+        },
+      },
+      sources: {
+        'review.mode': 'user-global',
+        'review.harness': 'user-global',
+        'review.models': 'user-global',
+        'review.backup': 'user-global',
+      },
+      baseline: {
+        version: 1,
+        review: {
+          mode: 'isolated',
+          harness: 'cursor',
+          models: ['cursor:cursor-main-high'],
+          backup: { harness: 'codex', model: 'codex-backup', effort: 'medium' },
+        },
+      },
+      repository: { version: 1 },
+    });
+    try {
+      const result = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, cwd: repo, homeDirectory: home,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+      });
+      assert.equal(result.ok, true, result.errors.join('\n'));
+      const stored = validateConfig(JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'config.json'), 'utf8')));
+      assert.equal(stored.ok, true);
+      assert.equal(stored.config.reviewRoute.host, 'cursor');
+      assert.deepEqual(stored.config.reviewFailover, {
+        faults: 1,
+        route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 16 },
+      });
+      assert.deepEqual(stored.config.reviewModels.review.codex, { model: 'codex-backup', effort: 'medium' });
+    } finally {
+      if (previous === undefined) delete process.env.QUBE_INIT_LAYER_CONTEXT;
+      else process.env.QUBE_INIT_LAYER_CONTEXT = previous;
+    }
+  });
+
+  it('does not validate an inherited host reviewer as an isolated reviewer', async () => {
+    const repo = makeGitRepo();
+    const home = join(tmpdir(), `aie-init-host-review-home-${process.pid}-${Date.now()}`);
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.QUBE_INIT_LAYER_CONTEXT;
+    process.env.QUBE_INIT_LAYER_CONTEXT = JSON.stringify({
+      version: 1,
+      selectedScope: 'repository',
+      effective: {
+        review: {
+          mode: 'host',
+          harness: 'opencode',
+          models: ['opencode:host-review'],
+          backup: null,
+        },
+      },
+      sources: {
+        'review.mode': 'user-global',
+        'review.harness': 'user-global',
+        'review.models': 'user-global',
+        'review.backup': 'derived',
+      },
+      baseline: { version: 1, review: { mode: 'host', harness: 'opencode', models: ['opencode:host-review'], backup: null } },
+      repository: { version: 1 },
+    });
+    try {
+      const result = await runInit({
+        target: '.', tool: 'opencode', dryRun: false, force: false, yes: true, cwd: repo, homeDirectory: home,
+        installedHosts: ['opencode'],
+        modelCatalogs: {
+          opencode: { host: 'opencode', status: 'ready', models: ['host-review'], diagnostic: null },
+        },
+        policy: { reviewMode: 'host' },
+      });
+      assert.equal(result.ok, true, result.errors.join('\n'));
+      assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
+    } finally {
+      if (previous === undefined) delete process.env.QUBE_INIT_LAYER_CONTEXT;
+      else process.env.QUBE_INIT_LAYER_CONTEXT = previous;
+    }
+  });
+
+  it('writes an explicit backup reviewer and lets None disable it', async () => {
+    const repo = makeGitRepo();
+    const modelCatalogs = {
+      cursor: { host: 'cursor', status: 'ready', models: ['cursor-main-high'], diagnostic: null },
+      codex: { host: 'codex', status: 'ready', models: ['codex-backup'], diagnostic: null },
+    };
+    const configured = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, yes: true, cwd: repo,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+        policy: {
+          reviewMode: 'isolated',
+          isolatedReviewAgent: 'cursor',
+          reviewModelSelections: ['cursor:cursor-main-high'],
+          reviewBackupHarness: 'codex',
+          reviewBackupModel: 'codex-backup',
+          reviewBackupEffort: 'medium',
+        },
+    });
+    assert.equal(configured.ok, true, configured.errors.join('\n'));
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    const stored = validateConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+    assert.equal(stored.ok, true);
+    assert.equal(stored.config.reviewRoute.host, 'cursor');
+    assert.deepEqual(stored.config.reviewFailover, {
+      faults: 1,
+      route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 16 },
+    });
+    assert.deepEqual(stored.config.reviewModels.review.cursor, { model: 'cursor-main-high', effort: null });
+    assert.deepEqual(stored.config.reviewModels.review.codex, { model: 'codex-backup', effort: 'medium' });
+
+    const disabled = await runInit({
+        target: '.', tool: 'codex,cursor', dryRun: false, force: false, yes: true, cwd: repo,
+        installedHosts: ['codex', 'cursor'],
+        modelCatalogs,
+        policy: { reviewBackupHarness: 'none' },
+    });
+    assert.equal(disabled.ok, true, disabled.errors.join('\n'));
+    const disabledConfig = validateConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+    assert.equal(disabledConfig.ok, true);
+    assert.equal(disabledConfig.config.reviewFailover, null);
   });
 
   it('removes a full repository config when every leaf equals explicit user-global setup', async () => {
@@ -1382,6 +1621,9 @@ describe('init command metadata', () => {
     assert.ok(metadata.flags.includes('--local-review-agent'));
     assert.ok(metadata.flags.includes('--isolated-review-agent'));
     assert.ok(metadata.flags.includes('--review-model'));
+    assert.ok(metadata.flags.includes('--review-backup-harness'));
+    assert.ok(metadata.flags.includes('--review-backup-model'));
+    assert.ok(metadata.flags.includes('--review-backup-effort'));
     assert.ok(metadata.flags.includes('--ui-audit-evidence-root'));
     assert.ok(metadata.flags.includes('--publisher'));
     assert.ok(metadata.flags.includes('--tool'));
@@ -1414,7 +1656,7 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    const usage = 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--review-agent <id>] [--local-review-agent <host>] [--isolated-review-agent <host>] [--review-model <host:model>] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    const usage = 'aie init <target> [--tool <id[,id...]|all>] [--from <path-or-repo>] [--review-mode external|host|isolated] [--review-agent <id>] [--local-review-agent <host>] [--isolated-review-agent <host>] [--review-model <host:model>] [--review-backup-harness <host|none>] [--review-backup-model <id>] [--review-backup-effort low|medium|high] [--publisher user|github-app] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok-build|cursor] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]';
     assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);

@@ -3,6 +3,7 @@ import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_r
 import type { ReviewAdapterKind, ReviewFailoverPolicy, ReviewLanePolicy, ReviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewRoutePolicy } from '../core/policy.js';
 import type { InitTool } from '../init_content.js';
 import type { RepositoryPrerequisites } from '../core/repo_state.js';
+import type { HostModelListing } from '../app/model_catalog.js';
 
 export type InitActionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';
 export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'remove' | 'unchanged' | 'blocked';
@@ -140,6 +141,12 @@ export interface InitPolicyOptions {
   isolatedReviewAgent?: string;
   /** Normal-setup host:model values. Init writes only values found in a live host catalog. */
   reviewModelSelections?: string[];
+  /** Backup harness selected for isolated review. The value `none` disables failover. */
+  reviewBackupHarness?: string;
+  /** Exact live model selected for the backup review harness. */
+  reviewBackupModel?: string;
+  /** Explicit backup effort. Cursor model ids include effort, so Cursor uses null. */
+  reviewBackupEffort?: 'low' | 'medium' | 'high';
   publisher?: GitHubReviewPublisherConfig;
   /** Publisher choice that can require a separate credential setup command. */
   publisherIntent?: 'user' | 'github-app';
@@ -171,6 +178,8 @@ export interface InitOptions {
   guide?: boolean;
   fetchRepoConfig?: (slug: string) => Promise<string>;
   installedHosts?: readonly string[];
+  /** Optional live catalog snapshot for programmatic init callers and deterministic tests. */
+  modelCatalogs?: Readonly<Partial<Record<import('../core/policy.js').ReviewModelHostId, HostModelListing>>>;
   agentBrowserAvailable?: boolean;
   aiqAvailable?: boolean;
   homeDirectory?: string;

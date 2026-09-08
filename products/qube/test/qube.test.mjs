@@ -3749,6 +3749,254 @@ describe("qube init orchestrator", () => {
     assert.equal(optionValue(componentRows(isolatedPlan).get("aie").args, "--isolated-review-agent"), "grok-build");
   });
 
+  it("applies an explicit backup reviewer and sends its exact route to Executor", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-repo-"));
+    initializeRepository(cwd);
+    createInitShims(packageRoot);
+    createExecutableStub(packageRoot, "cursor-agent");
+    createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const modelBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), modelBin);
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex,grok-build,cursor",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
+      "--review-backup-harness", "codex",
+      "--review-backup-model", "gpt-5.6-sol",
+      "--review-backup-effort", "high",
+      "--yes",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.plan.resolved.review.backup, {
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    });
+    assert.equal(
+      payload.answers.find(answer => answer.id === "review-backup-harness").value,
+      "Codex (implementation host)",
+    );
+    const aieArgs = componentRows(payload.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-backup-harness"), "codex");
+    assert.equal(optionValue(aieArgs, "--review-backup-model"), "gpt-5.6-sol");
+    assert.equal(optionValue(aieArgs, "--review-backup-effort"), "high");
+    assert.deepEqual(JSON.parse(readFileSync(repoQubeConfigPath(cwd), "utf8")).review.backup, {
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    });
+  });
+
+  it("uses an explicit None backup reviewer and does not write during a dry run", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-none-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-none-repo-"));
+    createInitShims(packageRoot);
+    createExecutableStub(packageRoot, "cursor-agent");
+    createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const env = addExecutablePath(initEnv(packageRoot), path.join(packageRoot, "node_modules", ".bin"));
+
+    const result = runCli([
+      "init", ".",
+      "--host", "cursor,grok-build",
+      "--ci-provider", "github",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
+      "--review-backup-harness", "none",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.plan.resolved.review.backup, null);
+    const aieArgs = componentRows(payload.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-backup-harness"), "none");
+    assert.equal(optionValue(aieArgs, "--review-backup-model"), undefined);
+    assert.equal(optionValue(aieArgs, "--review-backup-effort"), undefined);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    assert.ok(readInitCalls(packageRoot).every(call => call.phase === "plan"));
+
+    const defaultResult = runCli([
+      "init", ".", "--host", "cursor,grok-build", "--ci-provider", "github",
+      "--review-mode", "isolated", "--review-harness", "grok-build", "--yes", "--dry-run", "--json",
+    ], { cwd, env });
+    assert.equal(defaultResult.status, 0, `${defaultResult.stdout}\n${defaultResult.stderr}`);
+    assert.equal(JSON.parse(defaultResult.stdout).plan.resolved.review.backup, null);
+  });
+
+  it("sends an inherited backup reviewer through the init layer context", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-layer-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-layer-repo-"));
+    initializeRepository(cwd);
+    createInitShims(packageRoot);
+    createExecutableStub(packageRoot, "cursor-agent");
+    createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const modelBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), modelBin);
+    writeInitSetup(userQubeConfigPath(env.USERPROFILE), completeInitSetup({
+      hosts: ["cursor", "grok-build", "codex"],
+      review: {
+        mode: "isolated",
+        harness: "grok-build",
+        models: ["grok-build:grok-code-fast-1"],
+        backup: { harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
+        publisher: "user",
+      },
+    }));
+
+    const result = runCli(["init", ".", "--dry-run", "--json"], { cwd, env });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.plan.resolved.review.backup, {
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      effort: "medium",
+    });
+    const calls = readInitCalls(packageRoot);
+    assert.ok(calls.every(call => call.layerContext.effective.review.backup.harness === "codex"));
+    assert.ok(calls.every(call => call.layerContext.sources["review.backup"] === "user-global"));
+    const aieArgs = componentRows(payload.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-backup-harness"), undefined);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+
+    writeInitSetup(repoQubeConfigPath(cwd), { version: 1, review: { backup: null } });
+    const overridden = runCli(["init", ".", "--dry-run", "--json"], { cwd, env });
+    assert.equal(overridden.status, 0, `${overridden.stdout}\n${overridden.stderr}`);
+    const overriddenPayload = JSON.parse(overridden.stdout);
+    assert.equal(overriddenPayload.plan.resolved.review.backup, null);
+    assert.equal(overriddenPayload.plan.sources["review.backup"], "repository");
+    assert.equal(
+      optionValue(componentRows(overriddenPayload.plan).get("aie").args, "--review-backup-harness"),
+      "none",
+    );
+  });
+
+  it("omits backup effort for a Cursor backup reviewer", { skip: process.platform !== "win32" }, () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-cursor-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-cursor-repo-"));
+    createInitShims(packageRoot);
+    const cursorBin = createWindowsCursorTransportStub(packageRoot);
+    createExecutableStub(packageRoot, "grok", "Available models:\n- grok-4.6\n");
+    const env = addExecutablePath(initEnv(packageRoot), cursorBin);
+
+    const result = runCli([
+      "init", ".",
+      "--host", "codex,grok-build,cursor",
+      "--ci-provider", "github",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
+      "--review-backup-harness", "cursor",
+      "--review-backup-model", "cursor-grok-4.6-high-fast",
+      "--yes",
+      "--dry-run",
+      "--json",
+    ], { cwd, env });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.plan.resolved.review.backup, {
+      harness: "cursor",
+      model: "cursor-grok-4.6-high-fast",
+      effort: null,
+    });
+    const aieArgs = componentRows(payload.plan).get("aie").args;
+    assert.equal(optionValue(aieArgs, "--review-backup-harness"), "cursor");
+    assert.equal(optionValue(aieArgs, "--review-backup-model"), "cursor-grok-4.6-high-fast");
+    assert.equal(optionValue(aieArgs, "--review-backup-effort"), undefined);
+  });
+
+  it("rejects invalid or incomplete backup reviewer flags before child planning", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-invalid-root-"));
+    createInitShims(packageRoot);
+    createExecutableStub(packageRoot, "cursor-agent");
+    createExecutableStub(packageRoot, "grok", "Available models:\n- grok-code-fast-1\n");
+    const modelBin = createExecutableStub(
+      packageRoot,
+      "codex",
+      `${JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }, { slug: "gpt-6-astra" }] })}\n`,
+    );
+    const env = addExecutablePath(initEnv(packageRoot), modelBin);
+    const base = [
+      "init", ".",
+      "--git-init",
+      "--host", "cursor,grok-build,codex",
+      "--work-provider", "github",
+      "--ci-provider", "github",
+      "--review-mode", "isolated",
+      "--review-harness", "grok-build",
+      "--json",
+    ];
+    const cases = [
+      {
+        flags: ["--review-backup-harness", "codex"],
+        error: /still needs an answer for review-backup-model/u,
+      },
+      {
+        flags: ["--review-backup-harness", "codex", "--review-backup-model", "gpt-5.6-sol"],
+        error: /still needs an answer for review-backup-effort/u,
+      },
+      {
+        flags: ["--review-backup-harness", "codex", "--review-backup-model", "unknown", "--review-backup-effort", "medium"],
+        error: /Backup model: selects unavailable choice: unknown/u,
+      },
+      {
+        flags: ["--review-backup-harness", "codex", "--review-backup-model", "gpt-5.6-sol", "--review-backup-effort", "extreme"],
+        error: /Expected --review-backup-effort=extreme to be one of: low, medium, high/u,
+        parseError: true,
+      },
+      {
+        args: [
+          "init", ".", "--git-init", "--host", "codex", "--ci-provider", "github",
+          "--review-mode", "host", "--review-backup-harness", "none", "--yes", "--json",
+        ],
+        error: /backup reviewer requires isolated review mode/u,
+      },
+      {
+        flags: ["--review-backup-harness", "grok-build", "--review-backup-model", "grok-code-fast-1", "--review-backup-effort", "medium"],
+        error: /Backup reviewer: selects unavailable choice: grok-build/u,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-backup-reviewer-invalid-repo-"));
+      writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup({
+        hosts: ["cursor", "grok-build", "codex"],
+        review: {
+          mode: "isolated",
+          harness: "grok-build",
+          models: ["grok-build:grok-code-fast-1"],
+          backup: null,
+          publisher: "user",
+        },
+      }));
+      const before = readFileSync(repoQubeConfigPath(cwd), "utf8");
+      const result = runCli(testCase.args ?? [...base, ...testCase.flags], { cwd, env });
+      assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
+      const error = JSON.parse(result.stdout).error;
+      assert.match(testCase.parseError ? error.likelyCause : error, testCase.error);
+      assert.equal(readFileSync(repoQubeConfigPath(cwd), "utf8"), before);
+    }
+    assert.deepEqual(readInitCalls(packageRoot), []);
+  });
+
   it("offers and defaults only to Cursor models compatible with the packaged Windows ACP transport", { skip: process.platform !== "win32" }, () => {
     for (const automaticFlag of ["--yes", "--defaults"]) {
       const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-cursor-transport-root-"));

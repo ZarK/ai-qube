@@ -326,6 +326,7 @@ describe('fresh setup defaults', () => {
     assert.deepEqual(policy.reviewModels.review['grok-build'], { model: 'grok-next', effort: null });
     assert.deepEqual(policy.reviewModels.review.codex, { model: 'codex-next', effort: null });
     assert.deepEqual(policy.reviewModels.economy, {});
+    assert.equal(policy.reviewFailover, null);
     assert.ok(policy.gates.some(gate => gate.kind === 'aiq' && gate.command === defaultAiqLintFormatGate().command));
     assert.ok(!policy.gates.some(gate => /changed-files|git diff --name-only/.test(gate.command)));
   });
@@ -347,6 +348,7 @@ describe('fresh setup defaults', () => {
     assert.equal(policy.reviewMode, 'isolated');
     assert.equal(policy.reviewRoute.host, 'cursor');
     assert.deepEqual(policy.reviewModels.review.cursor, { model: 'gpt-5.6-luna-high', effort: null });
+    assert.equal(policy.reviewFailover, null);
   });
 
   it('uses a new Grok catalog model and leaves Quality Control off without AIQ', () => {

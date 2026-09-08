@@ -7,7 +7,7 @@ import {
   FRESH_SETUP_ROUTE_MAX_TURNS,
   FRESH_SETUP_ROUTE_TIMEOUT_SECONDS,
 } from '../config/fresh_setup_lanes.js';
-import { REVIEW_MODEL_HOST_IDS, type ReviewFailoverPolicy, type ReviewMode, type ReviewModelHostId, type ReviewModelsPolicy, type ReviewRoutePolicy } from '../core/policy.js';
+import { REVIEW_MODEL_HOST_IDS, type ReviewMode, type ReviewModelHostId, type ReviewModelsPolicy, type ReviewRoutePolicy } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { reviewModeOf } from '../review_mode.js';
 import { isolatedReviewHostsOnMachine, recommendedManualUiAudit, recommendedQualityControl, recommendedReviewMode, type GuideMachine } from './questions.js';
@@ -95,22 +95,6 @@ export function defaultAiqLintFormatGate(): GateConfig {
   };
 }
 
-function failoverFromMachine(machine: GuideMachine, primaryHost: string | undefined): ReviewFailoverPolicy | null {
-  const secondary = isolatedReviewHostsOnMachine(machine).find(host => host !== primaryHost);
-  if (!secondary) return null;
-  const model = machine.liveModels?.[secondary]?.[0];
-  if (!model) return null;
-  return {
-    faults: 1,
-    route: {
-      host: secondary,
-      tier: 'review',
-      timeoutSeconds: FRESH_SETUP_ROUTE_TIMEOUT_SECONDS,
-      maxTurns: FRESH_SETUP_ROUTE_MAX_TURNS,
-    },
-  };
-}
-
 export function buildIsolatedReviewRoute(host: ReviewModelHostId): ReviewRoutePolicy {
   return {
     host,
@@ -151,9 +135,7 @@ export function reconcileReviewModePolicy(input: {
   next.reviewAgents ??= [];
   next.localReviewAgents = mode === 'host' ? (next.localReviewAgents ?? [...input.machine.installedHosts]) : [];
   next.reviewRoute = route;
-  next.reviewFailover = mode === 'isolated'
-    ? (next.reviewFailover ?? failoverFromMachine(input.machine, route?.host))
-    : null;
+  next.reviewFailover = mode === 'isolated' ? (next.reviewFailover ?? null) : null;
   return next;
 }
 
@@ -182,10 +164,7 @@ export function applyFreshSetupPolicy(input: {
           const models = modelsFromMachine(input.machine);
           if (models) next.reviewModels = models;
         }
-        if (next.reviewFailover === undefined) {
-          const failover = failoverFromMachine(input.machine, next.reviewRoute?.host);
-          if (failover) next.reviewFailover = failover;
-        }
+        if (next.reviewFailover === undefined) next.reviewFailover = null;
       } else if (next.reviewRoute === undefined) {
         next.reviewRoute = null;
       }

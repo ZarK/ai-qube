@@ -1,5 +1,8 @@
 export const GUIDED_INIT_DOCS_BASE_URL = "https://github.com/ZarK/ai-qube/blob/main/docs/qube-init.md";
 export const GUIDED_INIT_UNPINNED_MODEL = "unpinned";
+export const GUIDED_INIT_NO_BACKUP = "none";
+
+export type GuidedReviewEffort = "low" | "medium" | "high";
 
 export type GuidedInitQuestionId =
   | "agent-harnesses"
@@ -12,6 +15,9 @@ export type GuidedInitQuestionId =
   | "external-reviewer"
   | "review-harness"
   | "review-model"
+  | "review-backup-harness"
+  | "review-backup-model"
+  | "review-backup-effort"
   | "review-publisher";
 
 export type GuidedInitSelection = "single" | "multiple";
@@ -85,6 +91,10 @@ export interface GuidedInitAnswers {
   readonly reviewHarness?: string;
   /** Null selects the harness default without pinning a model. */
   readonly reviewModel?: string | null;
+  /** Null disables the backup review route. */
+  readonly reviewBackupHarness?: string | null;
+  readonly reviewBackupModel?: string;
+  readonly reviewBackupEffort?: GuidedReviewEffort | null;
   readonly reviewPublisher?: GuidedReviewPublisher;
 }
 
@@ -152,6 +162,9 @@ export interface NormalizedGuidedInitAnswers {
   readonly externalReviewers?: readonly string[];
   readonly reviewHarness?: string;
   readonly reviewModel?: string | null;
+  readonly reviewBackupHarness?: string | null;
+  readonly reviewBackupModel?: string;
+  readonly reviewBackupEffort?: GuidedReviewEffort | null;
   readonly reviewPublisher?: GuidedReviewPublisher;
 }
 
@@ -173,8 +186,35 @@ const QUESTION_DOCS: Readonly<Record<GuidedInitQuestionId, string>> = Object.fre
   "external-reviewer": `${GUIDED_INIT_DOCS_BASE_URL}#review`,
   "review-harness": `${GUIDED_INIT_DOCS_BASE_URL}#review`,
   "review-model": `${GUIDED_INIT_DOCS_BASE_URL}#review-publisher`,
+  "review-backup-harness": `${GUIDED_INIT_DOCS_BASE_URL}#review-backup-harness`,
+  "review-backup-model": `${GUIDED_INIT_DOCS_BASE_URL}#review-backup-model`,
+  "review-backup-effort": `${GUIDED_INIT_DOCS_BASE_URL}#review-backup-effort`,
   "review-publisher": `${GUIDED_INIT_DOCS_BASE_URL}#review-publisher`,
 });
+
+const REVIEW_EFFORT_OPTIONS: readonly GuidedInitChoice[] = Object.freeze([
+  Object.freeze({ value: "low", label: "Low" }),
+  Object.freeze({ value: "medium", label: "Medium", recommended: true }),
+  Object.freeze({ value: "high", label: "High" }),
+]);
+
+const NATIVE_MODEL_PREFIXES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  cursor: Object.freeze(["cursor-grok", "composer"]),
+  codex: Object.freeze(["gpt-", "o1", "o2", "o3", "o4", "o5", "o6", "o7", "o8", "o9"]),
+  "grok-build": Object.freeze(["grok"]),
+  opencode: Object.freeze(["opencode/"]),
+  "claude-code": Object.freeze(["claude"]),
+});
+
+export function sortReviewModels(host: string, choices: readonly GuidedInitChoice[]): readonly GuidedInitChoice[] {
+  const prefixes = NATIVE_MODEL_PREFIXES[host] ?? Object.freeze([]);
+  return Object.freeze([...choices].sort((left, right) => {
+    const leftNative = prefixes.some(prefix => left.value.toLowerCase().startsWith(prefix));
+    const rightNative = prefixes.some(prefix => right.value.toLowerCase().startsWith(prefix));
+    if (leftNative !== rightNative) return leftNative ? -1 : 1;
+    return left.value.localeCompare(right.value, "en");
+  }));
+}
 
 const CONTINUOUS_SHIPPING_OPTIONS: readonly GuidedInitChoice[] = Object.freeze([
   Object.freeze({ value: "on", label: "On", recommended: true }),
@@ -447,6 +487,98 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
   }
   questions.push(modelQuestion);
 
+  const backupHarnesses = harnessOptions
+    .filter(option => (
+      selectedHarnesses.includes(option.value)
+      && option.value !== selectedReviewHarness
+      && option.canRunSeparateReview
+    ))
+    .map(option => option.value === primaryHarness
+      ? Object.freeze({
+          ...option,
+          label: `${option.label} (implementation host)`,
+          description: "This harness also runs the implementation work. Its account will pay for backup Review usage.",
+        })
+      : option);
+  const backupOptions = Object.freeze([
+    Object.freeze({
+      value: GUIDED_INIT_NO_BACKUP,
+      label: "None",
+      description: "Do not retry Review on another harness.",
+      recommended: true,
+    }),
+    ...backupHarnesses,
+  ]);
+  const backupHarnessQuestion = resolveQuestion({
+    id: "review-backup-harness",
+    step: 8,
+    label: "Backup reviewer",
+    prompt: "Which harness should retry Review if the selected review harness fails?",
+    explanation: "The backup review harness runs Review only after the selected review route fails.",
+    selection: "single",
+    options: backupOptions,
+    applicable: selectedReviewSource === "harness",
+    answer: backupHarnessAnswerValue(answers),
+    current: backupHarnessAnswerValue(current),
+    recommendedValue: backupHarnessDefaultValue(defaults, backupOptions),
+    recommendationReason: "Select None unless this repository needs Review to retry on another installed harness.",
+    resolveDefaults,
+  });
+  questions.push(backupHarnessQuestion);
+
+  const selectedBackupHarness = selectedString(backupHarnessQuestion);
+  const backupHarnessChoice = selectedBackupHarness && selectedBackupHarness !== GUIDED_INIT_NO_BACKUP
+    ? harnessOptions.find(option => option.value === selectedBackupHarness)
+    : undefined;
+  const currentBackupMatches = selectedBackupHarness !== null
+    && current.reviewBackupHarness === selectedBackupHarness;
+  const backupModelState = buildBackupModelState(backupHarnessChoice);
+  let backupModelQuestion = resolveQuestion({
+    id: "review-backup-model",
+    step: 8,
+    label: "Backup model",
+    prompt: "Which listed model should backup Review use?",
+    explanation: "Choose a model from the live catalog for the backup review harness.",
+    selection: "single",
+    options: backupModelState.options,
+    applicable: backupHarnessChoice !== undefined,
+    answer: answerValue(answers, "reviewBackupModel"),
+    current: currentBackupMatches
+      ? answerValue(current, "reviewBackupModel")
+      : { present: false, value: undefined },
+    recommendedValue: singleRecommendation(defaults.reviewBackupModel, backupModelState.options),
+    recommendationReason: "The first native model is the default choice. Select another listed model when this repository requires it.",
+    resolveDefaults,
+  });
+  if (backupHarnessChoice && backupModelState.error) {
+    backupModelQuestion = {
+      ...backupModelQuestion,
+      promptNeeded: false,
+      validationError: `Backup model: ${backupModelState.error}`,
+    };
+  }
+  questions.push(backupModelQuestion);
+
+  const effortRequired = backupHarnessChoice !== undefined && selectedBackupHarness !== "cursor";
+  const backupEffortQuestion = resolveQuestion({
+    id: "review-backup-effort",
+    step: 8,
+    label: "Backup effort",
+    prompt: "How much reasoning effort should backup Review use?",
+    explanation: "Reasoning effort controls how much work the selected backup model can do before it responds.",
+    selection: "single",
+    options: REVIEW_EFFORT_OPTIONS,
+    applicable: effortRequired,
+    answer: answerValue(answers, "reviewBackupEffort"),
+    current: currentBackupMatches
+      ? answerValue(current, "reviewBackupEffort")
+      : { present: false, value: undefined },
+    recommendedValue: singleRecommendation(defaults.reviewBackupEffort ?? undefined, REVIEW_EFFORT_OPTIONS),
+    recommendationReason: "Use Medium unless this repository needs a different reasoning effort for backup Review.",
+    resolveDefaults,
+  });
+  questions.push(backupEffortQuestion);
+
   const publisherOptions = compatibleChoices(capabilities.reviewPublishers, selectedTracker);
   const publisherQuestion = resolveQuestion({
     id: "review-publisher",
@@ -516,6 +648,9 @@ export function normalizeGuidedInitAnswers(input: GuidedInitQuestionInput): Guid
   const externalReviewers = selectedList(byId.get("external-reviewer"));
   const reviewHarness = selectedString(byId.get("review-harness"));
   const modelValue = selectedString(byId.get("review-model"));
+  const backupHarnessValue = selectedString(byId.get("review-backup-harness"));
+  const backupModelValue = selectedString(byId.get("review-backup-model"));
+  const backupEffortValue = selectedString(byId.get("review-backup-effort")) as GuidedReviewEffort | null;
   const reviewPublisher = selectedString(byId.get("review-publisher")) as GuidedReviewPublisher | null;
 
   const normalized: NormalizedGuidedInitAnswers = Object.freeze({
@@ -530,6 +665,15 @@ export function normalizeGuidedInitAnswers(input: GuidedInitQuestionInput): Guid
     ...(reviewSource === "harness" && reviewHarness ? { reviewHarness } : {}),
     ...((reviewSource === "primary" || reviewSource === "harness") && modelValue
       ? { reviewModel: modelValue === GUIDED_INIT_UNPINNED_MODEL ? null : modelValue }
+      : {}),
+    ...(reviewSource === "harness" && backupHarnessValue
+      ? backupHarnessValue === GUIDED_INIT_NO_BACKUP
+        ? { reviewBackupHarness: null }
+        : {
+            reviewBackupHarness: backupHarnessValue,
+            ...(backupModelValue ? { reviewBackupModel: backupModelValue } : {}),
+            reviewBackupEffort: backupEffortValue,
+          }
       : {}),
     ...(reviewPublisher ? { reviewPublisher } : {}),
   });
@@ -746,7 +890,7 @@ function buildModelState(harness: GuidedHarnessChoice | undefined): {
         ?? "Leave the model unpinned because this harness does not provide a live model list.",
     };
   }
-  const catalogModels = modelCapability.models
+  const catalogModels = sortReviewModels(harness?.value ?? "", modelCapability.models)
     .filter(model => model.value !== GUIDED_INIT_UNPINNED_MODEL)
     .map((model, index) => ({ ...model, recommended: index === 0 }));
   const options = freezeChoices(catalogModels);
@@ -755,6 +899,27 @@ function buildModelState(harness: GuidedHarnessChoice | undefined): {
     options,
     recommendationReason: "Use the first model in the live account catalog unless this repository requires another listed model. The catalog does not provide comparable price or quality data.",
   };
+}
+
+function buildBackupModelState(harness: GuidedHarnessChoice | undefined): {
+  readonly options: readonly GuidedInitChoice[];
+  readonly error: string | null;
+} {
+  if (!harness) return { options: Object.freeze([]), error: null };
+  if (harness.reviewModels.kind !== "live") {
+    return {
+      options: Object.freeze([]),
+      error: harness.reviewModels.kind === "unavailable"
+        ? harness.reviewModels.reason
+        : "The backup review harness must provide a live model list.",
+    };
+  }
+  const options = freezeChoices(sortReviewModels(harness.value, harness.reviewModels.models)
+    .filter(model => model.value !== GUIDED_INIT_UNPINNED_MODEL)
+    .map((model, index) => ({ ...model, recommended: index === 0 })));
+  return options.length > 0
+    ? { options, error: null }
+    : { options, error: "The live model list has no available model." };
 }
 
 function reviewModelDefaultValue(
@@ -831,6 +996,24 @@ function reviewModelAnswerValue(answers: GuidedInitAnswers): PresentValue {
   const value = answerValue(answers, "reviewModel");
   if (!value.present) return value;
   return { present: true, value: value.value === null ? GUIDED_INIT_UNPINNED_MODEL : value.value };
+}
+
+function backupHarnessAnswerValue(answers: GuidedInitAnswers): PresentValue {
+  const value = answerValue(answers, "reviewBackupHarness");
+  if (!value.present) return value;
+  return { present: true, value: value.value === null ? GUIDED_INIT_NO_BACKUP : value.value };
+}
+
+function backupHarnessDefaultValue(
+  defaults: GuidedInitAnswers,
+  options: readonly GuidedInitChoice[],
+): GuidedInitQuestionValue {
+  if (Object.hasOwn(defaults, "reviewBackupHarness")) {
+    return defaults.reviewBackupHarness === null
+      ? GUIDED_INIT_NO_BACKUP
+      : singleRecommendation(defaults.reviewBackupHarness, options);
+  }
+  return GUIDED_INIT_NO_BACKUP;
 }
 
 function selectedList(question: GuidedInitQuestion | undefined): string[] {

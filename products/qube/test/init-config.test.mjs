@@ -29,6 +29,7 @@ const defaults = Object.freeze({
     harness: "codex",
     externalReviewers: Object.freeze(["coderabbit"]),
     publisher: "user",
+    backup: null,
   }),
   mcp: Object.freeze({ optIn: false }),
 });
@@ -187,6 +188,111 @@ describe("QUBE init configuration", () => {
     assert.deepEqual(resolved.config.review.models, []);
     assert.equal(resolved.sources["review.models"], "explicit");
     assert.deepEqual(configForQubeScope(resolved, "repo").review.models, []);
+  });
+
+  it("inherits and overrides an isolated backup reviewer as one field", () => {
+    const isolatedDefaults = {
+      ...defaults,
+      hosts: ["codex", "cursor", "grok-build"],
+      review: { ...defaults.review, mode: "isolated", harness: "cursor", backup: null },
+    };
+    const globalBackup = { harness: "codex", model: "gpt-5.5", effort: "high" };
+    const repoBackup = { harness: "grok-build", model: "grok-code-fast-1", effort: "medium" };
+    const globalConfig = { ...isolatedDefaults, review: { ...isolatedDefaults.review, backup: globalBackup } };
+    const inherited = resolveQubeInitConfig({
+      defaults: isolatedDefaults,
+      globalConfig,
+      repoConfig: { version: 1, quality: { stages: ["unit"] } },
+    });
+    assert.deepEqual(inherited.config.review.backup, globalBackup);
+    assert.equal(inherited.sources["review.backup"], "user-global");
+    assert.equal(Object.hasOwn(configForQubeScope(inherited, "repo", globalConfig).review ?? {}, "backup"), false);
+
+    const root = mkdtempSync(path.join(tmpdir(), "qube-backup-record-"));
+    const home = mkdtempSync(path.join(tmpdir(), "qube-backup-home-"));
+    writeQubeInitConfig(userQubeConfigPath(home), globalConfig);
+    writeQubeInitConfig(repoQubeConfigPath(root), { version: 1, continuousShipping: false });
+    assert.deepEqual(readInitRecord(root, { USERPROFILE: home, HOME: home }).review.backup, globalBackup);
+
+    const overridden = resolveQubeInitConfig({
+      defaults: isolatedDefaults,
+      globalConfig,
+      repoConfig: { version: 1, review: { backup: repoBackup } },
+    });
+    assert.deepEqual(overridden.config.review.backup, repoBackup);
+    assert.equal(overridden.sources["review.backup"], "repository");
+    assert.deepEqual(configForQubeScope(overridden, "repo", globalConfig), { version: 1, review: { backup: repoBackup } });
+  });
+
+  it("keeps an explicit None backup distinct from an omitted choice", () => {
+    const isolatedDefaults = {
+      ...defaults,
+      review: { ...defaults.review, mode: "isolated", backup: null },
+    };
+    const omitted = resolveQubeInitConfig({ defaults: isolatedDefaults, globalConfig: null, repoConfig: null });
+    assert.equal(omitted.config.review.backup, null);
+    assert.equal(omitted.sources["review.backup"], "default");
+
+    const globalConfig = {
+      ...isolatedDefaults,
+      review: { ...isolatedDefaults.review, backup: { harness: "codex", model: "gpt-5.5", effort: "medium" } },
+    };
+    const explicitNone = resolveQubeInitConfig({
+      defaults: isolatedDefaults,
+      globalConfig,
+      repoConfig: null,
+      explicit: { version: 1, review: { backup: null } },
+    });
+    assert.equal(explicitNone.config.review.backup, null);
+    assert.equal(explicitNone.sources["review.backup"], "explicit");
+    const projected = configForQubeScope(explicitNone, "repo", globalConfig);
+    assert.deepEqual(projected, { version: 1, review: { backup: null } });
+
+    const root = mkdtempSync(path.join(tmpdir(), "qube-init-backup-none-"));
+    const filePath = repoQubeConfigPath(root);
+    assert.equal(writeQubeInitConfig(filePath, projected), "create");
+    const first = readFileSync(filePath, "utf8");
+    assert.equal(writeQubeInitConfig(filePath, projected), "skip");
+    assert.equal(readFileSync(filePath, "utf8"), first);
+    const saved = readQubeInitConfig(filePath).config;
+    assert.equal(saved.review.backup, null);
+    const resumed = resolveQubeInitConfig({ defaults: isolatedDefaults, globalConfig, repoConfig: saved });
+    assert.equal(resumed.config.review.backup, null);
+    assert.equal(resumed.sources["review.backup"], "repository");
+  });
+
+  it("rejects incomplete or invalid backup reviewer configuration", () => {
+    for (const backup of [
+      {},
+      { harness: "codex", model: "gpt-5.5" },
+      { harness: "", model: "gpt-5.5", effort: "high" },
+      { harness: "codex", model: "", effort: "high" },
+      { harness: "codex", model: "gpt-5.5", effort: "max" },
+      { harness: "codex", model: "gpt-5.5", effort: null, extra: true },
+      "codex:gpt-5.5",
+    ]) {
+      assert.throws(
+        () => parseQubeInitConfig({ version: 1, review: { backup } }),
+        /review\.backup/,
+        JSON.stringify(backup),
+      );
+    }
+  });
+
+  it("makes backup reviewer configuration applicable only to isolated review", () => {
+    for (const mode of ["host", "external"]) {
+      const resolved = resolveQubeInitConfig({
+        defaults,
+        globalConfig: {
+          version: 1,
+          review: { mode, backup: { harness: "codex", model: "gpt-5.5", effort: "low" } },
+        },
+        repoConfig: null,
+      });
+      assert.equal(resolved.config.review.backup, null, mode);
+      assert.equal(resolved.sources["review.backup"], "derived", mode);
+      assert.equal(Object.hasOwn(configForQubeScope(resolved, "global").review ?? {}, "backup"), false, mode);
+    }
   });
 
   it("derives a global host-review harness without seeding it into the repository", () => {

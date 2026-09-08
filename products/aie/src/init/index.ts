@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'path';
 import { readInitLayerContext } from '@tjalve/qube-core';
 import { AIE_CONFIG_FILENAME, type Config, type GitHubReviewPublisherConfig, type ReviewSourceConfig, configToFileShape, getDefaults, mergeConfigOverlay, parseUserReviewPublisherFile, userConfigPath, userReviewPublisherPath, validateConfig } from '../config/index.js';
 import { defaultModelRoutingPolicy, resolveModelRouting, type ModelRoutingPolicy } from '../core/model_routing.js';
+import { REVIEW_MODEL_HOST_IDS } from '../core/policy.js';
 import { detectInstalledReviewHostsOnPath, detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
 import { parseInitTool, uniqueTools, type InitTool } from '../init_content.js';
@@ -30,6 +31,7 @@ import { getDesiredLabels } from '../labels.js';
 import {
   listInitExternalReviewers,
   resolveInitExternalReviewers,
+  resolveInitReviewBackup,
   resolveInitIsolatedReviewer,
   resolveInitLocalReviewers,
   resolveInitReviewModels,
@@ -84,6 +86,42 @@ function resolveInitTools(tool: string | undefined): InitTool[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function applyInheritedReviewPolicy(policy: InitPolicyOptions, layerContext: ReturnType<typeof readInitLayerContext>): void {
+  if (!layerContext) return;
+  const review = layerContext.effective.review;
+  if (!isPlainObject(review)) return;
+  const effectiveReviewMode = policy.reviewMode ?? review.mode;
+  if (effectiveReviewMode !== 'isolated') return;
+  if (layerContext.sources['review.mode'] === 'user-global' && policy.reviewMode === undefined
+    && (review.mode === 'external' || review.mode === 'host' || review.mode === 'isolated')) {
+    policy.reviewMode = review.mode;
+  }
+  if (layerContext.sources['review.harness'] === 'user-global' && policy.isolatedReviewAgent === undefined
+    && typeof review.harness === 'string') {
+    policy.isolatedReviewAgent = review.harness;
+  }
+  if (layerContext.sources['review.models'] === 'user-global' && policy.reviewModelSelections === undefined
+    && Array.isArray(review.models) && review.models.every(model => typeof model === 'string')) {
+    policy.reviewModelSelections = [...review.models];
+  }
+  if (layerContext.sources['review.backup'] !== 'user-global') return;
+  if (policy.reviewBackupHarness !== undefined || policy.reviewBackupModel !== undefined || policy.reviewBackupEffort !== undefined) return;
+  const backup = review.backup;
+  if (backup === null) {
+    policy.reviewBackupHarness = 'none';
+    return;
+  }
+  if (!isPlainObject(backup) || typeof backup.harness !== 'string' || typeof backup.model !== 'string') {
+    throw new TypeError('Inherited review.backup must be null or contain harness, model, and effort.');
+  }
+  if (backup.effort !== null && backup.effort !== 'low' && backup.effort !== 'medium' && backup.effort !== 'high') {
+    throw new TypeError('Inherited review.backup effort must be low, medium, high, or null for Cursor.');
+  }
+  policy.reviewBackupHarness = backup.harness;
+  policy.reviewBackupModel = backup.model;
+  if (backup.effort !== null) policy.reviewBackupEffort = backup.effort;
 }
 
 function formatConfig(config: Record<string, unknown>): string {
@@ -685,17 +723,29 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const actions: InitAction[] = [];
   const writes: PlannedWrite[] = [];
   const selectedInstalledHosts = options.installedHosts ?? selectedTools;
-  const detectedMachine = detectGuideMachine({
+  const detected = detectGuideMachine({
     repoRoot,
-    installedHosts: selectedInstalledHosts,
+    installedHosts: options.modelCatalogs ? [] : selectedInstalledHosts,
     agentBrowserAvailable: options.agentBrowserAvailable,
     aiqAvailable: options.aiqAvailable,
   });
+  const detectedMachine = options.modelCatalogs
+    ? {
+        ...detected,
+        installedHosts: REVIEW_MODEL_HOST_IDS.filter(host => selectedInstalledHosts.includes(host)),
+        modelCatalogs: options.modelCatalogs,
+        liveModels: Object.fromEntries(Object.entries(options.modelCatalogs)
+          .filter(([, listing]) => listing?.status === 'ready')
+          .map(([host, listing]) => [host, listing?.models ?? []])),
+      }
+    : detected;
   let fromReport: InitFromReport | null = null;
   let currentAnswers: ReturnType<typeof answersFromPolicy> = {};
   let currentConfig: Config | null = null;
   let existingConfigIsBase = false;
   let policy = options.policy ? { ...options.policy } : {};
+  const parentLayerContext = readInitLayerContext();
+  applyInheritedReviewPolicy(policy, parentLayerContext);
   const publisherRead = await readUserPublisherForInit(options.homeDirectory);
   const globalRead = await readUserGlobalForInit(options.homeDirectory, publisherRead.publisher);
   const userPublisher = publisherRead.publisher;
@@ -868,6 +918,43 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       fromAdopted: Boolean(options.from) || existingConfigIsBase,
     });
   }
+  const hasBackupSelection = policy.reviewBackupHarness !== undefined
+    || policy.reviewBackupModel !== undefined
+    || policy.reviewBackupEffort !== undefined;
+  if (hasBackupSelection) {
+    const effectiveReviewMode = policy.reviewMode ?? (currentConfig ? reviewModeOf(currentConfig) : undefined);
+    const mainReviewHost = policy.reviewRoute?.host ?? currentConfig?.reviewRoute?.host ?? null;
+    if (policy.reviewBackupHarness === undefined) {
+      selectionErrors.push('Select --review-backup-harness before its model or effort.');
+    } else if (effectiveReviewMode !== 'isolated') {
+      selectionErrors.push('A backup reviewer requires isolated review mode.');
+    } else {
+      const resolved = resolveInitReviewBackup({
+        requestedHarness: policy.reviewBackupHarness,
+        requestedModel: policy.reviewBackupModel,
+        requestedEffort: policy.reviewBackupEffort,
+        mainHost: mainReviewHost,
+        selectedHosts: selectedTools,
+        installedHosts: machine.installedHosts,
+        catalogs: machine.modelCatalogs ?? {},
+      });
+      selectionErrors.push(...resolved.errors);
+      warnings.push(...resolved.warnings);
+      if (policy.reviewBackupHarness === 'none' && resolved.errors.length === 0) {
+        policy.reviewFailover = null;
+      } else if (resolved.values) {
+        policy.reviewFailover = {
+          faults: 1,
+          route: buildIsolatedReviewRoute(resolved.values.host),
+        };
+        policy.reviewModels = {
+          review: { ...(policy.reviewModels?.review ?? currentConfig?.reviewModels.review ?? {}), [resolved.values.host]: resolved.values.binding },
+          economy: policy.reviewModels?.economy ?? currentConfig?.reviewModels.economy ?? {},
+          synthesis: policy.reviewModels?.synthesis ?? currentConfig?.reviewModels.synthesis ?? {},
+        };
+      }
+    }
+  }
   const awaitingAnswers = Boolean(options.guide) && !options.yes;
   const unanswered = unansweredQuestionIds(awaitingAnswers ? askedQuestions : questions);
   if (policy.reviewMode === 'isolated' && isolatedReviewHostsOnMachine(machine).length === 0 && answers.reviewMode === 'isolated') {
@@ -998,11 +1085,11 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     };
   }
 
-  const parentLayerContext = readInitLayerContext();
   const parentRepositoryFields = parentLayerContext?.repository ? Object.keys(parentLayerContext.repository).filter(field => field !== 'version') : [];
   const executorRepositoryFields = parentRepositoryFields.filter(field => ['hosts', 'workProviders', 'ciProviders', 'continuousShipping', 'review'].includes(field));
   const inheritComposerBaseline = parentLayerContext?.selectedScope === 'repository'
     && parentLayerContext.baseline !== null
+    && !hasBackupSelection
     && executorRepositoryFields.length === 0;
   const inheritedOnlyBaseline = inheritComposerBaseline
     ? configToFileShape(configFromPolicy(policy)) as unknown as Record<string, unknown>
