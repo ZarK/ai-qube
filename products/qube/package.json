@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "QUBE CLI for Quality, Umpire, Bootstrap, and Executor.",
   "keywords": [
     "cli",

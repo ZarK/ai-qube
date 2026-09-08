@@ -196,7 +196,7 @@ function filteredPath(binDir) {
   return [binDir, ...pathEntries].join(path.delimiter);
 }
 
-export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = os.tmpdir()) {
+export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = os.tmpdir(), expectedStatus = 0) {
   const resolvedPath = resolveInstalledCommand(prefix, command);
   if (!resolvedPath) {
     throw Object.assign(new Error(`Installed ${command} is missing.`), {
@@ -215,7 +215,7 @@ export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = 
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
-  if (result.status !== 0) {
+  if (result.status !== expectedStatus) {
     throw Object.assign(
       new Error((result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `${command} ${args.join(" ")} failed.`),
       { reasonCode: "start-failed", command, status: result.status }
@@ -229,6 +229,30 @@ export function probeInstalledCommand(prefix, command, args = ["--help"], cwd = 
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+}
+
+function assertExpectedDoctorDiagnostic(probed) {
+  let diagnostic;
+  try {
+    diagnostic = JSON.parse(probed.stdout);
+  } catch {
+    throw Object.assign(new Error("Installed doctor did not return valid JSON."), {
+      reasonCode: "invalid-doctor-diagnostic",
+    });
+  }
+  if (
+    probed.status !== 1
+    || diagnostic === null
+    || typeof diagnostic !== "object"
+    || Array.isArray(diagnostic)
+    || diagnostic.ok !== false
+    || diagnostic.command !== "doctor"
+    || diagnostic.isRepo !== false
+  ) {
+    throw Object.assign(new Error("Installed doctor did not return the expected non-repository diagnostic."), {
+      reasonCode: "invalid-doctor-diagnostic",
+    });
+  }
 }
 
 function runArgv(command, args, cwd) {
@@ -336,7 +360,9 @@ export function runInstalledIssueCommands(prefix) {
     const args = [...prefixArgs, ...line.split(" ")];
     const cwd = line.startsWith("init ") ? writeTempGitRepo(prefix) : os.tmpdir();
     try {
-      const probed = probeInstalledCommand(prefix, driver, args, cwd);
+      const doctorDiagnostic = line === "doctor --json";
+      const probed = probeInstalledCommand(prefix, driver, args, cwd, doctorDiagnostic ? 1 : 0);
+      if (doctorDiagnostic) assertExpectedDoctorDiagnostic(probed);
       assertNoSourceCheckoutRunner(`${probed.stdout}\n${probed.stderr}`, `${driver} ${args.join(" ")}`);
       if (line.startsWith("init ") && probed.stdout.trim()) {
         try {
