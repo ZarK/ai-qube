@@ -58,6 +58,8 @@ for the commands in this release.
 
 Follow the [first-task and daily-use guide](./docs/qube-init.md#first-task) to
 initialize a repository and complete a Ready issue with Codex and GitHub.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the package layout, development
+toolchain, focused checks, and pull request requirements.
 
 Install a single component when you intentionally only need that package:
 
@@ -91,30 +93,10 @@ qube aiq doctor --format json
 qube aiu status --json
 ```
 
-`qube make-it-so` is the cardinal work command. It does not invent a hidden
-workflow. By default, free-form text maps to the planned flow through
-`qube aib init`, while `--flow issue next` or `--flow issue <number>` maps to
-the AIE issue lifecycle. The direct-local flow is blocked until QUBE has a real
-oneshot workflow; it reports the missing setup instead of creating placeholder work.
-Use `--dry-run --json` to inspect the mapped command and boundaries before
-running it.
-
-`qube autoresearch` creates a safety-bounded local arena under
-`.qube/autoresearch/`. The first supported target type is a local directory:
-`init` writes a fixed evaluator and arena plan, `baseline` records immutable
-baseline evidence, `run` creates a sandboxed candidate, `status` and
-`dashboard` report structured state, and `promote` is the only step that copies
-the selected candidate back to the target or requested output path.
-
-`qube oneshot` creates a bounded local artifact without entering the normal
-GitHub issue, pull request, or review-gate workflow. The first supported path is
-a scratch doc or code artifact under `.qube/oneshot/<run-id>/`: it records
-inputs, assumptions, plan, actions, checks, local review, risks, summary, and
-final output. The summary explicitly states that no GitHub issue, branch, pull
-request, review request, merge, or approval was created by default.
-
-The composer first resolves component binaries from its npm install scope. In a
-source checkout, it then checks the current workspace install.
+See the [current command reference](./docs/qube-command-surfaces.md) for command
+behavior and the [paths and artifacts guide](./docs/qube-paths-and-artifacts.md)
+for stored state. `qube oneshot` remains a bounded local doc or code artifact
+flow outside the GitHub issue, pull request, and review-gate workflow.
 
 ## Repository Layout
 
@@ -139,51 +121,11 @@ the package install instructions. Product docs under `docs/` explain command
 boundaries and agent harness surfaces. `docs/release-controls.md` and
 `docs/release/version-audit.json` describe release controls and package versions.
 
-## Publishing
+## Maintained guides
 
-Publishing is package-specific. A tag selects exactly one package:
-
-```text
-publish-qube-cli-v<version>
-publish-aib-v<version>
-publish-aie-v<version>
-publish-aiu-v<version>
-publish-aiq-v<version>
-publish-qube-v<version>
-```
-
-The shared publish workflow runs on `publish-*` tags, uses the GitHub Actions
-environment `npm-publish`, verifies the selected package, and publishes to npm
-with trusted publishing and provenance. See `docs/release-controls.md` for the
-trusted-publishing setup, staged approval flow, and first publish exception for
-brand-new package names.
-
-## Development
-
-```sh
-corepack enable
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run verify
-```
-
-Use root workspace filters for package work:
-
-```sh
-pnpm --filter @tjalve/aie run verify
-pnpm --filter @tjalve/qube run verify
-```
-
-Useful public docs:
-
-- `docs/index.html`
-- `docs/qube-command-surfaces.md`
-- `docs/qube-claude-code-host-support.md`
-- `docs/qube-codex-host-support.md`
-- `docs/qube-gitlab-provider-support.md`
-- `docs/qube-host-surfaces.md`
-- `docs/qube-jenkins-provider-support.md`
-- `docs/qube-jira-provider-support.md`
-- `docs/qube-linear-provider-support.md`
-- `docs/qube-paths-and-artifacts.md`
-- `docs/release-controls.md`
-- `docs/release/version-audit.json`
+- [Installation, first task, and daily use](./docs/qube-init.md)
+- [Commands](./docs/qube-command-surfaces.md)
+- [Host and provider integrations](./docs/qube-host-surfaces.md)
+- [Paths and artifacts](./docs/qube-paths-and-artifacts.md)
+- [Contribution](./CONTRIBUTING.md)
+- [Release controls](./docs/release-controls.md)
