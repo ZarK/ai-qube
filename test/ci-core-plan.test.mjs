@@ -70,6 +70,13 @@ test('unmapped paths fail closed while known documentation and AIQ paths stay ro
   assert.equal(aiq.aiq, true);
 });
 
+test('AIQ selection follows its package dependency graph', () => {
+  assert.equal(planCoreCi(['products/aiq/packages/cli/src/index.ts']).aiq, true);
+  assert.equal(planCoreCi(['packages/qube-cli/src/index.ts']).aiq, true);
+  assert.equal(planCoreCi(['packages/qube-core/src/index.ts']).aiq, false);
+  assert.equal(planCoreCi(['docs/review.md']).aiq, false);
+});
+
 test('malformed or missing changed paths fail before producing a plan', () => {
   assert.throws(() => planCoreCi([]), /At least one changed path/);
   assert.throws(() => planCoreCi(['../outside']), /stay relative/);
@@ -83,7 +90,10 @@ test('production workflow preserves supply-chain controls and separates test and
   assert.match(workflow, /pnpm run verify:manifests/);
   assert.match(workflow, /name: Test selected core packages/);
   assert.match(workflow, /name: Pack-check selected core packages/);
+  assert.match(workflow, /name: Run AIQ functional tests/);
+  assert.match(workflow, /name: Check AIQ test configuration/);
   assert.match(workflow, /name: Verify required CI outcomes/);
+  assert.match(workflow, /success\|skipped[\s\S]*\*\)[\s\S]*exit 1/);
   assert.doesNotMatch(workflow, /uses:\s+[^\s@]+@(?![a-f0-9]{40}\b)/);
 });
 

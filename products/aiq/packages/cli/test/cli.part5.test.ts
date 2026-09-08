@@ -67,7 +67,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("package.json");
   });
 
-  it("runs no-arg first-run from an inferred project and initializes config state", async () => {
+  it("runs no-arg first-run from an inferred project and initializes progress state", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-first-run-typescript-");
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
@@ -91,13 +91,12 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Stages: 1 lint passed");
     expect(stdout.value).toContain("Next: no action required.");
 
-    const config = JSON.parse(
-      await readFile(path.join(project.root, ".qube", "aiq", "config.json"), "utf8"),
-    ) as { version: number };
+    await expect(
+      readFile(path.join(project.root, ".qube", "aiq", "config.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     const progress = JSON.parse(
       await readFile(path.join(project.root, ".qube", "aiq", "progress.json"), "utf8"),
     ) as { current_stage: number; disabled: number[]; last_run: string | null; order: number[] };
-    expect(config).toEqual({ version: 1 });
     expect(progress).toEqual({
       current_stage: 1,
       disabled: [],

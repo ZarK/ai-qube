@@ -431,13 +431,19 @@ export class ToolRunner {
         "/c",
         [
           "call",
-          this.quoteWindowsCommandArgument(command),
+          this.formatWindowsCommand(command),
           ...args.map((arg) => this.quoteWindowsCommandArgument(arg)),
         ].join(" "),
       ],
       command: process.env.ComSpec ?? "cmd.exe",
       windowsVerbatimArguments: true,
     };
+  }
+
+  private formatWindowsCommand(command: string): string {
+    return /^[A-Za-z0-9_.-]+\.(?:bat|cmd)$/iu.test(command)
+      ? command
+      : this.quoteWindowsCommandArgument(command);
   }
 
   private quoteWindowsCommandArgument(value: string): string {

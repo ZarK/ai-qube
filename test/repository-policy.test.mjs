@@ -111,7 +111,7 @@ describe("repository policy", () => {
     assert.doesNotMatch(approval, /--yes|NODE_AUTH_TOKEN|NPM_TOKEN/);
   });
 
-  it("keeps CI off the full AIQ suite while it is not publish-ready", () => {
+  it("runs AIQ functional tests and test configuration checks as separate CI steps", () => {
     const workflow = read(".github/workflows/ci.yml");
 
     for (const adapter of ["codex", "claude-code", "opencode", "grok-build", "cursor"]) {
@@ -119,7 +119,8 @@ describe("repository policy", () => {
     }
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run build/);
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run typecheck/);
+    assert.match(workflow, /name: Run AIQ functional tests\s+run: pnpm --filter @tjalve\/aiq-workspace test/);
+    assert.match(workflow, /name: Check AIQ test configuration\s+run: pnpm --filter @tjalve\/aiq-workspace run test:publish-readiness/);
     assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run test:publish-readiness/);
-    assert.doesNotMatch(workflow, /pnpm --filter @tjalve\/aiq-workspace test(?:\s|$)/);
   });
 });

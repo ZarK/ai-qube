@@ -175,7 +175,10 @@ jobs:
       - name: Typecheck AIQ
         run: pnpm --filter @tjalve/aiq-workspace run typecheck
 
-      - name: Check AIQ package readiness
+      - name: Run AIQ functional tests
+        run: pnpm --filter @tjalve/aiq-workspace test
+
+      - name: Check AIQ test configuration
         run: pnpm --filter @tjalve/aiq-workspace run test:publish-readiness
 
   ci-required:

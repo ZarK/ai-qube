@@ -10,13 +10,25 @@ import {
   readFile,
   runEngine,
   tempDirs,
+  writeFile,
 } from "./engine-test-support.js";
 describe("engine foundation", () => {
   it("runs document stages against fixture projects and writes canonical artifacts", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-documents-"));
     tempDirs.push(tempDir);
+    await writeFile(
+      path.join(tempDir, ".stylelintrc.json"),
+      await readFile(path.join(path.dirname(fixtureCssFile), ".stylelintrc.json")),
+    );
 
-    const fixtureFiles = [fixtureHtmlFile, fixtureCssFile, fixtureYamlFile, fixtureSqlFile];
+    const fixtureFiles = await Promise.all(
+      [fixtureHtmlFile, fixtureCssFile, fixtureYamlFile, fixtureSqlFile].map(async (sourcePath) => {
+        const fixturePath = path.join(tempDir, path.basename(sourcePath));
+        const source = await readFile(sourcePath, "utf8");
+        await writeFile(fixturePath, source.replaceAll("\r\n", "\n"), "utf8");
+        return fixturePath;
+      }),
+    );
     const result = await runEngine({
       context: "cli",
       manifest: {
@@ -60,7 +72,7 @@ describe("engine foundation", () => {
     );
     expect(formatStage?.toolRuns.find((toolRun) => toolRun.tool === "sql-formatter")).toMatchObject(
       {
-        args: [fixtureSqlFile],
+        args: [path.join(tempDir, path.basename(fixtureSqlFile))],
         exitCode: 0,
         status: "passed",
         tool: "sql-formatter",
