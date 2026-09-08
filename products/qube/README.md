@@ -214,9 +214,17 @@ It does not receive inherited tokens or other application settings. The
 - `run` creates a sandboxed candidate artifact under the run directory, records
   AIE execution ownership, AIQ evaluation evidence, and AIU continuation state.
 - `status` and `dashboard` read structured run state rather than agent prose.
-- `promote` is the only command that copies the selected best candidate to the
-  target workspace or `--output` path, and it refuses to replace existing output
-  unless `--force` is explicit.
+- `promote` applies the accepted file changes to the target. It checks all
+  affected files before writing and preserves unrelated files. A changed
+  candidate or target conflict stops promotion.
+
+Use `qube autoresearch promote --dry-run --json` to inspect the file list.
+The JSON result includes the target path, changed files, and existing report
+path. Promotion leaves the report in the run directory.
+
+If an apply step fails, QUBE restores the prior files and reports failure.
+After an interruption, run promotion again. QUBE accepts affected files only
+when they match the baseline or accepted candidate, then finishes the apply.
 
 ## Oneshot Contract
 

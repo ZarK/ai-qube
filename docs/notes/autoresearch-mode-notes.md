@@ -147,7 +147,7 @@ For local targets this can live inside the target's ignored `.qube/` directory o
    - Serve or export the run dashboard.
 
 6. `qube autoresearch promote`
-   - Convert accepted candidate(s) into normal QUBE work: branch, review item, gate evidence, changelog/summary where policy allows, and work item completion.
+   - Apply the accepted file changes to the target. Check affected files before writing and preserve unrelated files. Keep the report in the run directory.
 
 ## Arena Requirements
 
