@@ -44,7 +44,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--tool', type: 'string', description: 'Comma-separated agent harness ids: opencode, codex, claude-code, grok-build, cursor; use all for every harness', default: 'opencode' },
   { name: '--work-provider', type: 'string', description: 'Active work provider written to Executor config', options: ['github', 'gitlab', 'linear', 'jira'] },
   { name: '--review-provider', type: 'string', description: 'Active review provider written to Executor config', options: ['github', 'gitlab'] },
-  { name: '--ci-provider', type: 'string', description: 'Active CI provider written to Executor config', options: ['github', 'gitlab', 'jenkins'] },
+  { name: '--ci-provider', type: 'string', description: 'Select the active CI provider for Executor config. Jenkins CI is not available in the Executor workflow yet. Use GitHub or GitLab CI.', options: ['github', 'gitlab', 'jenkins'] },
   { name: '--branch-naming', type: 'string', description: 'Issue branch naming pattern containing <number> and <slug>' },
   { name: '--base-branch', type: 'string', description: 'Configured base branch for freshness checks', default: 'main' },
   { name: '--base-remote', type: 'string', description: 'Configured base remote for freshness checks', default: 'origin' },

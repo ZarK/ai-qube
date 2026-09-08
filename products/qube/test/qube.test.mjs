@@ -421,7 +421,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
     assert.doesNotMatch(help.stdout, /^\s*install\s+/mu);
     assert.match(help.stdout, /autoresearch\s+Run a safety-bounded local autoresearch arena lifecycle\./);
-    assert.match(help.stdout, /oneshot\s+Create a bounded local artifact without the normal issue, PR, or review-gate workflow\./);
+    assert.match(help.stdout, /oneshot\s+Show that one-shot execution is not available yet\./);
     assert.match(help.stdout, /make-it-so\s+Map an intent to the safest real QUBE workflow\./);
     assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
     assert.match(help.stdout, /spec draft\s+Draft the Bootstrap spec artifact\./);
@@ -475,16 +475,15 @@ describe("qube composer CLI", () => {
 
     const oneshotHelp = runCli(["oneshot", "--help"]);
     assert.equal(oneshotHelp.status, 0);
-    assert.match(oneshotHelp.stdout, /normal issue, PR, or review-gate workflow/);
-    assert.match(oneshotHelp.stdout, /\.qube\/oneshot\/<run-id>\//);
-    assert.match(oneshotHelp.stdout, /no GitHub issue, branch, PR, review request, merge, or approval/);
+    assert.match(oneshotHelp.stdout, /One-shot is not available yet\./);
+    assert.match(oneshotHelp.stdout, /qube make-it-so --flow planned <idea>/);
     const plannedOneshotHelp = planQubeCli(["oneshot", "--help"], {
       cwd: mkdtempSync(path.join(tmpdir(), "qube-oneshot-help-cwd-")),
       env: {},
       packageRoot: mkdtempSync(path.join(tmpdir(), "qube-oneshot-help-root-"))
     });
     assert.equal(plannedOneshotHelp.exitCode, 0);
-    assert.match(plannedOneshotHelp.stdout, /qube oneshot <idea>/);
+    assert.match(plannedOneshotHelp.stdout, /One-shot is not available yet\./);
 
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
@@ -503,8 +502,9 @@ describe("qube composer CLI", () => {
     const autoresearchCommand = parsed.commands.find(command => command.name === "autoresearch");
     assert.equal(autoresearchCommand?.dryRun.supported, true);
     const oneshotCommand = parsed.commands.find(command => command.name === "oneshot");
-    assert.equal(oneshotCommand?.dryRun.supported, true);
-    assert.deepEqual(oneshotCommand?.mutation.categories, ["local-files"]);
+    assert.equal(oneshotCommand?.dryRun.supported, false);
+    assert.deepEqual(oneshotCommand?.mutation.categories, []);
+    assert.deepEqual(oneshotCommand?.flags.map(flag => flag.name), ["help", "json"]);
     const reviewSetupCommand = parsed.commands.find(command => command.name === "review setup github-app");
     assert.equal(reviewSetupCommand?.interactions.ttyPrompt, true);
     assert.deepEqual(
@@ -2082,101 +2082,48 @@ describe("qube composer CLI", () => {
     assert.equal(readFileSync(path.join(target, "behavior.mjs"), "utf8"), "console.log('accepted');\n");
   });
 
-  it("renders oneshot dry-run plans without local mutation", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-dry-cwd-"));
-    const planned = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--dry-run", "--json"], { cwd });
-    assert.equal(planned.status, 0);
-    const parsed = JSON.parse(planned.stdout).oneshot;
-    assert.equal(parsed.status, "dry-run-complete");
-    assert.equal(parsed.plan.kind, "doc");
-    assert.equal(parsed.plan.mutationPolicy.githubSideEffects, false);
-    assert.ok(parsed.plan.mutationPolicy.allowedMutationPaths.includes(parsed.runDirectory));
-    assert.equal(parsed.githubSideEffects.issueCreated, false);
-    assert.equal(existsSync(path.join(cwd, ".qube", "oneshot")), false);
+  it("reports that one-shot is unavailable without writing files", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-unavailable-cwd-"));
+    const result = runCli(["oneshot", "Ship a local notes CLI"], { cwd });
+
+    assert.equal(result.status, 3);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Error: feature-unavailable/);
+    assert.match(result.stderr, /Likely cause: One-shot is not available yet\./);
+    assert.match(result.stderr, /qube make-it-so --flow planned <idea>/);
+    assert.equal(existsSync(path.join(cwd, ".qube")), false);
   });
 
-  it("runs a local code oneshot with trusted state and no GitHub side effects", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-code-cwd-"));
-    const binDir = path.join(cwd, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const ghLog = path.join(cwd, "gh-called.log");
-    const ghShim = process.platform === "win32" ? path.join(binDir, "gh.cmd") : path.join(binDir, "gh");
-    writeFileSync(
-      ghShim,
-      process.platform === "win32"
-        ? `@echo off\r\necho gh called>>"${ghLog}"\r\nexit /b 9\r\n`
-        : `#!/usr/bin/env sh\necho gh called >> "${ghLog}"\nexit 9\n`,
-      "utf8"
-    );
-    if (process.platform !== "win32") chmodSync(ghShim, 0o755);
+  it("reports one-shot JSON errors for all attempted operations without writes", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-json-cwd-"));
+    const attempts = [
+      ["oneshot", "--json"],
+      ["oneshot", "status", "run-1", "--json"],
+      ["oneshot", "run", "Create a README draft", "--kind", "doc", "--dry-run", "--json"],
+      ["oneshot", "resume", "run-1", "--target", "target", "--output", "result.md", "--force-output", "--json"],
+      ["oneshot", "review", "run-1", "--agent", "codex", "--quality", "strict", "--max-iterations", "2", "--apply", "--json"]
+    ];
 
-    const run = runCli(["oneshot", "Ship a local notes CLI", "--kind", "code", "--json"], {
-      cwd,
-      env: { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` }
-    });
-    assert.equal(run.status, 0);
-    const ran = JSON.parse(run.stdout).oneshot;
-    assert.equal(ran.status, "success");
-    assert.equal(ran.githubSideEffects.issueCreated, false);
-    assert.equal(ran.githubSideEffects.branchCreated, false);
-    assert.equal(ran.githubSideEffects.pullRequestCreated, false);
-    assert.equal(ran.githubSideEffects.reviewRequested, false);
-    assert.equal(existsSync(ghLog), false);
-    assert.ok(existsSync(ran.artifactPath));
-    assert.ok(existsSync(ran.summaryPath));
-    assert.match(readFileSync(ran.summaryPath, "utf8"), /GitHub side effects: none/);
+    for (const args of attempts) {
+      const result = runCli(args, { cwd });
+      assert.equal(result.status, 3, args.join(" "));
+      assert.equal(result.stderr, "");
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.command, "oneshot");
+      assert.equal(parsed.error.kind, "feature-unavailable");
+      assert.equal(parsed.error.category, "validation");
+      assert.equal(parsed.error.exitCode, 3);
+      assert.equal(parsed.error.likelyCause, "One-shot is not available yet.");
+      assert.equal(
+        parsed.error.suggestedNextAction,
+        "Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan."
+      );
+    }
 
-    const status = runCli(["oneshot", "status", ran.runId, "--json"], { cwd });
-    assert.equal(status.status, 0);
-    const current = JSON.parse(status.stdout).oneshot;
-    assert.equal(current.status, "success");
-    assert.equal(current.artifactPath, ran.artifactPath);
-
-    const checks = runCli(["oneshot", "checks", ran.runId, "--json"], { cwd });
-    assert.equal(checks.status, 0);
-    const checkState = JSON.parse(checks.stdout).oneshot;
-    assert.ok(checkState.checks.length > 0);
-    assert.equal(checkState.checks.every((check) => check.status === "passed"), true);
-
-    const summary = runCli(["oneshot", "summary", ran.runId], { cwd });
-    assert.equal(summary.status, 0);
-    assert.match(summary.stdout, /QUBE oneshot/);
-  });
-
-  it("supports explicit oneshot run subcommand and unique run ids", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-run-cwd-"));
-    const first = runCli(["oneshot", "run", "Create a README draft", "--kind", "doc", "--json"], { cwd });
-    const second = runCli(["oneshot", "run", "Create a README draft", "--kind", "doc", "--json"], { cwd });
-    assert.equal(first.status, 0);
-    assert.equal(second.status, 0);
-    const firstRun = JSON.parse(first.stdout).oneshot;
-    const secondRun = JSON.parse(second.stdout).oneshot;
-    assert.notEqual(firstRun.runId, secondRun.runId);
-    assert.ok(existsSync(path.join(cwd, ".qube", "oneshot", firstRun.runId, "state.json")));
-    assert.ok(existsSync(path.join(cwd, ".qube", "oneshot", secondRun.runId, "state.json")));
-  });
-
-  it("refuses unsafe oneshot targets and output overwrites", () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-safe-cwd-"));
-    const existingTarget = path.join(cwd, "target");
-    mkdirSync(existingTarget, { recursive: true });
-    const dryRun = runCli(["oneshot", "Create a README draft", "--target", "target", "--kind", "doc", "--dry-run", "--json"], { cwd });
-    assert.equal(dryRun.status, 0);
-    assert.equal(JSON.parse(dryRun.stdout).oneshot.plan.mutationPolicy.targetMode, "existing-target-blocked");
-
-    const blockedTarget = runCli(["oneshot", "Create a README draft", "--target", "target", "--kind", "doc", "--json"], { cwd });
-    assert.equal(blockedTarget.status, 2);
-    assert.match(JSON.parse(blockedTarget.stdout).error.likelyCause, /Existing target mutation/);
-
-    const outputPath = path.join(cwd, "result.md");
-    writeFileSync(outputPath, "keep me\n", "utf8");
-    const blockedOutput = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--output", "result.md", "--json"], { cwd });
-    assert.equal(blockedOutput.status, 2);
-    assert.match(JSON.parse(blockedOutput.stdout).error.likelyCause, /output already exists/);
-
-    const blockedDirectoryOutput = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--output", "target", "--force-output", "--json"], { cwd });
-    assert.equal(blockedDirectoryOutput.status, 2);
-    assert.match(JSON.parse(blockedDirectoryOutput.stdout).error.likelyCause, /must be a file path/);
+    assert.equal(existsSync(path.join(cwd, ".qube")), false);
+    assert.equal(existsSync(path.join(cwd, "target")), false);
+    assert.equal(existsSync(path.join(cwd, "result.md")), false);
   });
 
   it("renders make-it-so dry-run plans without dispatching", () => {
@@ -2213,7 +2160,7 @@ describe("qube composer CLI", () => {
     const directParsed = JSON.parse(directLocal.stdout);
     assert.equal(directParsed.makeItSo.status, "blocked");
     assert.equal(directParsed.makeItSo.mappedCommand, null);
-    assert.match(directParsed.makeItSo.nextAction, /oneshot/);
+    assert.match(directParsed.makeItSo.nextAction, /qube make-it-so --flow planned <intent>/);
   });
 
   it("does not load component commands from ambient PATH", async () => {
@@ -2400,7 +2347,7 @@ describe("qube composer CLI", () => {
     const directParsed = JSON.parse(directLocal.stdout);
     assert.equal(directParsed.ok, false);
     assert.equal(directParsed.error.kind, "unsupported-flow");
-    assert.match(directParsed.makeItSo.nextAction, /oneshot/);
+    assert.match(directParsed.makeItSo.nextAction, /qube make-it-so --flow planned <intent>/);
 
     const issueIdea = planQubeCli(["make-it-so", "--flow", "issue", "Ship a local notes CLI"], {
       cwd: mkdtempSync(path.join(tmpdir(), "qube-make-it-so-issue-cwd-")),
@@ -3194,7 +3141,27 @@ describe("qube init orchestrator", () => {
     assert.equal(saved.review.externalReviewers, undefined);
   });
 
-  it("keeps Linear and Jenkins setup fully non-GitHub", () => {
+  it("rejects Jenkins setup before configuration or component writes", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-jenkins-root-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-jenkins-repo-"));
+    initializeRepository(cwd);
+    createInitShims(packageRoot);
+    writeInitSetup(repoQubeConfigPath(cwd), completeInitSetup({ hosts: ["claude-code"], review: { mode: "host", harness: "claude-code", publisher: "user" } }));
+    const before = readFileSync(repoQubeConfigPath(cwd), "utf8");
+    for (const json of [false, true]) {
+      const result = runCli(["init", ".", "--ci-provider", "jenkins", "--yes", ...(json ? ["--json"] : [])], {
+        cwd, env: initEnv(packageRoot),
+      });
+      assert.notEqual(result.status, 0);
+      const error = json ? JSON.parse(result.stdout).error : result.stderr;
+      assert.match(error, /Jenkins CI is not available in the Executor workflow yet/);
+      assert.match(error, /Use GitHub or GitLab CI/);
+      assert.deepEqual(readInitCalls(packageRoot), []);
+      assert.equal(readFileSync(repoQubeConfigPath(cwd), "utf8"), before);
+    }
+  });
+
+  it("keeps Linear and GitLab CI setup fully non-GitHub", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-non-github-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-non-github-repo-"));
     initializeRepository(cwd);
@@ -3210,7 +3177,7 @@ describe("qube init orchestrator", () => {
     const result = runCli([
       "init", ".",
       "--work-provider", "linear",
-      "--ci-provider", "jenkins",
+      "--ci-provider", "gitlab",
       "--yes",
       "--json",
     ], { cwd, env });
@@ -4151,12 +4118,19 @@ describe("qube init orchestrator", () => {
         hosts: "codex,opencode",
         mode: "isolated",
         harness: "opencode",
-        error: /opencode does not support isolated review/,
+        error: /OpenCode isolated review is not available yet.*--review-mode host/,
+      },
+      {
+        hosts: "codex,claude-code",
+        mode: "isolated",
+        harness: "claude-code",
+        error: /Claude Code isolated review is not available yet.*--review-mode host/,
       },
     ];
 
     for (const testCase of cases) {
       const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-review-reject-"));
+      initializeRepository(cwd);
       const result = runCli([
         "init", ".",
         "--host", testCase.hosts,
@@ -4164,11 +4138,12 @@ describe("qube init orchestrator", () => {
         "--review-mode", testCase.mode,
         "--review-harness", testCase.harness,
         "--yes",
-        "--dry-run",
         "--json",
       ], { cwd, env: initEnv(packageRoot) });
       assert.equal(result.status, 2, result.stderr);
       assert.match(JSON.parse(result.stdout).error, testCase.error);
+      assert.deepEqual(readInitCalls(packageRoot), []);
+      assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
     }
   });
 

@@ -202,18 +202,19 @@ describe('work provider adapter boundary', () => {
     );
   });
 
-  it('names the exact adapter package and qube init when a CI adapter is not installed', () => {
+  it('names the exact adapter package and supported use when the Jenkins adapter is not installed', () => {
     const { createMissingCiProvider } = require('../dist/providers/ci_provider_adapters.js');
     const provider = createMissingCiProvider('jenkins', '@tjalve/qube-adapter-jenkins', [
-      'Install the optional Jenkins adapter package before selecting providers.ci.kind=jenkins.',
+      'Install the optional Jenkins adapter package before using its API to read build evidence.',
     ]);
     assert.throws(() => provider.mapCheck({}), error => {
       const message = error instanceof Error ? error.message : String(error);
       assert.match(message, /@tjalve\/qube-adapter-jenkins/);
       assert.match(message, /@tjalve\/qube-adapter-jenkins@0\.1\.6/);
-      assert.match(message, /qube init --ci-provider jenkins/);
+      assert.match(message, /use the Jenkins adapter API to read build evidence/);
+      assert.match(message, /For Executor workflows, select GitHub or GitLab CI/);
+      assert.doesNotMatch(message, /qube init --ci-provider jenkins/);
       assert.doesNotMatch(message, /qube install/);
-      assert.doesNotMatch(message, /github/i);
       return true;
     });
   });

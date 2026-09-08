@@ -108,6 +108,51 @@ describe("guided interaction presenter", () => {
     assert.match(outputs[1], /^Action: Answer Application identifier\nReason: That looks like a Client ID\.\nNext action:/);
   });
 
+  it("marks unavailable choices and does not select an unavailable recommendation", async () => {
+    const prompts = promptAdapter(["local"]);
+    const { createGuidedPresenter } = await import("../dist/guided/index.js");
+    const presenter = createGuidedPresenter({
+      output: () => {},
+      prompts: prompts.adapter,
+      gate: { terminal: interactiveTerminal }
+    });
+    const result = await presenter.choose({
+      section: { number: 1, title: "Install" },
+      label: "Install scope",
+      explanation: "Choose where to install the package.",
+      recommendation: { value: "remote", reason: "Use the shared environment when it becomes available." }
+    }, [
+      { value: "local", label: "Project-local" },
+      {
+        value: "remote",
+        label: "Remote",
+        description: "Remote installation is not supported.",
+        recommended: true,
+        disabled: true
+      }
+    ]);
+
+    assert.deepEqual(result, { status: "answered", value: "local", source: "prompt" });
+    assert.equal(prompts.calls[0][1].initialValue, undefined);
+    assert.deepEqual(prompts.calls[0][1].options[1], {
+      value: "remote",
+      label: "Remote (unavailable)",
+      disabled: true,
+      hint: "Remote installation is not supported."
+    });
+    await assert.rejects(() => presenter.choose({
+      section: { number: 1, title: "Install" },
+      label: "Install scope",
+      explanation: "Choose where to install the package.",
+      currentValue: "remote",
+      validation: { state: "valid" }
+    }, [{ value: "remote", label: "Remote", disabled: true }]), error => {
+      assert.equal(error.kind, "unavailable-installer-choice");
+      return true;
+    });
+    assert.equal(prompts.calls.length, 1);
+  });
+
   it("returns cancellation and non-applicability as explicit no-write outcomes", async () => {
     const prompts = promptAdapter([Symbol("cancel")]);
     const { createGuidedPresenter } = await import("../dist/guided/index.js");

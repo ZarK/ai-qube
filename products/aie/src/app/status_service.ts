@@ -504,7 +504,7 @@ function readOnlyProviderDecision(providerId: string, summary: string): StatusDe
     state: 'stop',
     reasonCodes: ['read-only-work-provider'],
     nextCommand: 'aie queue --json',
-    summary: `${summary} Lifecycle mutation commands require a provider with tested issue-number lifecycle support; ${providerId} is currently read-only.`,
+    summary: `${summary} Update the work item manually in ${providerId}; Executor access to this provider is read-only.`,
   };
 }
 

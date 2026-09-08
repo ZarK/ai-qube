@@ -17,7 +17,9 @@ export function adapterInstallAndInitGuidance(packageName: string, initOptions: 
   const spec = version ? `${packageName}@${version}` : packageName;
   return [
     `Run \`npm install --save-exact --ignore-scripts ${spec}\` or \`pnpm add --save-exact --ignore-scripts ${spec}\` for the package placement that owns QUBE.`,
-    `Then rerun \`qube init ${initOptions}\`.`,
+    packageName === '@tjalve/qube-adapter-jenkins'
+      ? 'Then use the Jenkins adapter API to read build evidence. For Executor workflows, select GitHub or GitLab CI.'
+      : `Then rerun \`qube init ${initOptions}\`.`,
   ].join(' ');
 }
 

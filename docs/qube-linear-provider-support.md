@@ -18,8 +18,9 @@ Supported now:
   items for read flows.
 - Linear workflow state, priority, labels, assignee, project, blockers, and
   source metadata are normalized into the shared work item contract.
-- QUBE install notes can target `--work-provider linear` and name the required
-  optional adapter package.
+
+- QUBE setup can select Linear for Executor read flows. Make Linear lifecycle
+  changes manually.
 
 Explicitly unsupported now:
 
@@ -41,7 +42,8 @@ LINEAR_API_KEY=<personal-api-key>
 LINEAR_TEAM_ID=<linear-team-id>
 ```
 
-The Executor config can select Linear as the work provider:
+The Executor config can select Linear for read flows. This selection does not
+enable issue writes or lifecycle changes:
 
 ```json
 {

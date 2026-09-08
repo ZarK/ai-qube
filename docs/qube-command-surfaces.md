@@ -16,7 +16,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. Native continuation verification is optional, explicit, and can incur harness model cost. |
 | `qube doctor` | Check Quality, Executor, Umpire, agent harnesses, and provider connections. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use Bootstrap arena synthesis before edits. |
-| `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |
+| `qube oneshot` | Show that one-shot execution is not available yet. |
 | `qube make-it-so` | Map an intent to the safest real QUBE workflow. |
 | `qube run` | Run a QUBE component command with passthrough arguments. |
 
@@ -27,7 +27,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 It creates planning state without a GitHub issue, branch, pull request, or
 review request. The `issue` flow maps `next`, a number, or `#number` to
 `qube aie start`; all Executor checks remain active. The `direct-local` flow is
-currently refused and directs the user to the planned flow or `qube oneshot`.
+currently refused and directs the user to the planned flow.
 Use `--dry-run --json` to inspect the mapping without dispatching it.
 
 ### Autoresearch
@@ -59,16 +59,11 @@ the accepted changes without applying them. Promotion preserves unrelated
 files and stops on candidate changes or target conflicts. If apply fails, QUBE
 restores affected files. Run promotion again after an interruption.
 
-### Oneshot
+### One-shot
 
-`qube oneshot` creates a local doc or code artifact without the normal issue,
-branch, pull request, review request, merge, or approval workflow. Default runs
-write only under `.qube/oneshot/<run-id>/`. Use `status`, `checks`, `review`, or
-`summary` with a run ID to inspect the result.
+One-shot is not available yet.
 
-`--dry-run --json` reports the plan without writing files. `--target` can write
-to a new target; existing targets are refused. `--output` copies the selected
-artifact to a file and refuses an existing file unless `--force-output` is set.
+Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
 Local checks and self-review do not count as pull request approval.
 
 ## Direct workflow commands

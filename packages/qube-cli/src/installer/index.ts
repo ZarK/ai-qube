@@ -9,6 +9,7 @@ export interface InstallerChoice<Value extends string = string> {
   readonly label: string;
   readonly description?: string;
   readonly recommended?: boolean;
+  readonly disabled?: boolean;
 }
 
 export interface InstallerChoiceGroup<Value extends string = string> {
@@ -113,7 +114,8 @@ export async function promptInstallerChoice<Value extends string>(
   const selectOptions: Option<string>[] = options.choices.map(choice => {
     const base = {
       value: choice.value,
-      label: choice.recommended === true ? `${choice.label} (recommended)` : choice.label
+      label: renderChoiceLabel(choice),
+      ...(choice.disabled === true ? { disabled: true } : {})
     };
     return choice.description ? { ...base, hint: choice.description } : base;
   });
@@ -169,11 +171,14 @@ export async function promptInstallerChoices<Value extends string>(
   const selectOptions: Option<string>[] = options.choices.map(choice => {
     const base = {
       value: choice.value,
-      label: choice.recommended === true ? `${choice.label} (recommended)` : choice.label
+      label: renderChoiceLabel(choice),
+      ...(choice.disabled === true ? { disabled: true } : {})
     };
     return choice.description ? { ...base, hint: choice.description } : base;
   });
-  const initialValues = options.choices.filter(choice => choice.recommended === true).map(choice => choice.value);
+  const initialValues = options.choices
+    .filter(choice => choice.recommended === true && choice.disabled !== true)
+    .map(choice => choice.value);
   const selected = await multiselect<string>({
     message: options.message,
     options: selectOptions,
@@ -207,9 +212,15 @@ function requireChoicesMatch<Value extends string>(
 }
 
 function renderInstallerChoice<Value extends string>(choice: InstallerChoice<Value>): string {
-  const marker = choice.recommended === true ? "*" : "-";
+  const marker = choice.recommended === true && choice.disabled !== true ? "*" : "-";
   const description = choice.description ? ` - ${choice.description}` : "";
-  return `${marker} ${choice.value}: ${choice.label}${description}`;
+  const label = choice.disabled === true ? `${choice.label} (unavailable)` : choice.label;
+  return `${marker} ${choice.value}: ${label}${description}`;
+}
+
+function renderChoiceLabel<Value extends string>(choice: InstallerChoice<Value>): string {
+  if (choice.disabled === true) return `${choice.label} (unavailable)`;
+  return choice.recommended === true ? `${choice.label} (recommended)` : choice.label;
 }
 
 function requireChoiceMatch<Value extends string>(
@@ -220,7 +231,21 @@ function requireChoiceMatch<Value extends string>(
     readonly promptName: string;
   }
 ): void {
-  if (findInstallerChoice(choices, value)) {
+  const choice = findInstallerChoice(choices, value);
+  if (choice?.disabled === true) {
+    const enabledChoices = choices.filter(candidate => candidate.disabled !== true);
+    throw createCliError({
+      ...(options.command === undefined ? {} : { command: options.command }),
+      kind: "unavailable-installer-choice",
+      operation: `validate ${options.promptName}`,
+      likelyCause: choice.description ?? `Choice "${value}" is unavailable.`,
+      suggestedNextAction: enabledChoices.length > 0
+        ? `Use one of: ${enabledChoices.map(candidate => candidate.value).join(", ")}.`
+        : `No enabled choices are available for ${options.promptName}.`,
+      category: "validation"
+    });
+  }
+  if (choice) {
     return;
   }
   throw createCliError({

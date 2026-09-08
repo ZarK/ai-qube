@@ -123,7 +123,7 @@ const ADAPTERS: readonly CiProviderAdapter[] = Object.freeze([
     installed: false,
     capabilities: JENKINS_CAPABILITIES,
     setup: Object.freeze([
-      'Install the optional Jenkins adapter package before selecting providers.ci.kind=jenkins.',
+      'Install the optional Jenkins adapter package before using its API to read build evidence.',
       'Set JENKINS_BASE_URL, and set JENKINS_USER plus JENKINS_API_TOKEN together when credentials are required.',
     ]),
     create: async (options: CiProviderAdapterOptions) => {

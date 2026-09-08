@@ -271,7 +271,7 @@ describe('init guide questions', () => {
     assert.match(resolveInitReviewBackup(base).errors.join('\n'), /requires --review-backup-model.*requires --review-backup-effort/s);
     assert.match(resolveInitReviewBackup({ ...base, requestedModel: 'gpt-review', requestedEffort: 'high', mainHost: 'codex' }).errors.join('\n'), /must differ from the main/);
     assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'cursor', requestedModel: 'cursor-review-high' }).errors.join('\n'), /catalog is unavailable/);
-    assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'opencode', requestedModel: 'model', requestedEffort: 'low', selectedHosts: ['opencode'], installedHosts: ['opencode'] }).errors.join('\n'), /does not support isolated review/);
+    assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'opencode', requestedModel: 'model', requestedEffort: 'low', selectedHosts: ['opencode'], installedHosts: ['opencode'] }).errors.join('\n'), /OpenCode isolated review is not available yet/);
     assert.match(resolveInitReviewBackup({ ...base, requestedModel: 'gpt-review' }).errors.join('\n'), /requires --review-backup-effort/);
     assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'none', requestedModel: 'gpt-review' }).errors.join('\n'), /None disables failover/);
   });

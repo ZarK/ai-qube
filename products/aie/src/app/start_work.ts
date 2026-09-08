@@ -142,7 +142,7 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!capabilities.planLifecycleMutations || !capabilities.applyLifecycleMutations) {
     return blockedStart({
       action: 'blocked',
-      reason: githubIssueLifecycleUnsupportedReason(context, 'start') ?? `Work provider ${context.provider.id} can read ${selectedWorkLabel(selectedItem)}, but start/resume lifecycle mutations are unsupported. Use \`qube aie queue --json\` and \`qube aie next --json\` for read-only provider inspection, or configure a provider with tested lifecycle mutations before starting work.`,
+      reason: githubIssueLifecycleUnsupportedReason(context, 'start') ?? `Work provider ${context.provider.id} can read ${selectedWorkLabel(selectedItem)}, but start/resume lifecycle mutations are unsupported. Use \`qube aie queue --json\` to inspect the queue, then update the work item manually in ${context.provider.id}.`,
       selectedItem,
       activeIssueState: activeState,
       dryRun,

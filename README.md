@@ -85,8 +85,7 @@ packages.
 ```sh
 qube components
 qube autoresearch init ./scratch "improve notes summary quality" --json
-qube oneshot "Ship a local notes CLI" --kind code --json
-qube make-it-so "Ship a local notes CLI" --dry-run --json
+qube make-it-so --flow planned "Ship a local notes CLI" --json
 qube aib init . --idea "Ship a local notes CLI" --json
 qube aie queue --json
 qube aiq doctor --format json
@@ -95,8 +94,8 @@ qube aiu status --json
 
 See the [current command reference](./docs/qube-command-surfaces.md) for command
 behavior and the [paths and artifacts guide](./docs/qube-paths-and-artifacts.md)
-for stored state. `qube oneshot` remains a bounded local doc or code artifact
-flow outside the GitHub issue, pull request, and review-gate workflow.
+for stored state. One-shot is unavailable. Use
+`qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
 
 ## Repository Layout
 

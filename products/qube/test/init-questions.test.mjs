@@ -95,6 +95,54 @@ const completeHarnessAnswers = Object.freeze({
 });
 
 describe("guided QUBE init questions", () => {
+  it("shows disabled CI choices, rejects attempts, and recommends a working choice", () => {
+    const reason = "Jenkins CI is not available in the Executor workflow yet. Use GitHub or GitLab CI.";
+    const limited = {
+      ...capabilities,
+      automatedChecks: capabilities.automatedChecks.map(choice => choice.value === "jenkins"
+        ? { ...choice, disabled: true, recommended: true, description: reason }
+        : choice),
+    };
+    const questions = buildGuidedInitQuestions({ capabilities: limited, answers: { issueTracker: "github" } });
+    const checks = questions.find(question => question.id === "automated-checks");
+    assert.equal(checks.options.find(choice => choice.value === "jenkins").disabled, true);
+    assert.equal(checks.recommendedValue, "github");
+    const rejected = normalizeGuidedInitAnswers({
+      capabilities: limited,
+      answers: { ...completeHarnessAnswers, automatedChecks: "jenkins" },
+    });
+    assert.equal(rejected.validation.ok, false);
+    assert.ok(rejected.validation.errors.some(error => error.message.includes(reason)));
+    const supported = normalizeGuidedInitAnswers({ capabilities: limited, answers: completeHarnessAnswers });
+    assert.equal(supported.validation.ok, true);
+  });
+
+  it("explains unavailable separate review while keeping native host review usable", () => {
+    const reason = "Claude Code isolated review is not available yet. Use native host review.";
+    const limited = {
+      ...capabilities,
+      agentHarnesses: capabilities.agentHarnesses.map(choice => choice.value === "claude-code"
+        ? { ...choice, canRunSeparateReview: false, separateReviewUnavailableReason: reason }
+        : choice.value === "cursor"
+          ? { ...choice, available: true, canRunSeparateReview: true }
+          : choice),
+    };
+    const questions = buildGuidedInitQuestions({
+      capabilities: limited,
+      answers: { ...completeHarnessAnswers, agentHarnesses: ["codex", "claude-code", "cursor"] },
+    });
+    const review = questions.find(question => question.id === "review-harness");
+    assert.equal(review.options.find(choice => choice.value === "claude-code").disabled, true);
+    assert.match(review.validationError, /Claude Code isolated review is not available yet/);
+    assert.equal(review.recommendedValue, "cursor");
+    const native = normalizeGuidedInitAnswers({
+      capabilities: limited,
+      answers: { ...completeHarnessAnswers, agentHarnesses: ["claude-code"], reviewSource: "primary" },
+    });
+    assert.equal(native.validation.ok, true);
+    assert.equal(native.answers.reviewSource, "primary");
+  });
+
   it("keeps the public question order and complete guidance metadata", () => {
     const questions = buildGuidedInitQuestions({ capabilities, answers: completeHarnessAnswers });
 
