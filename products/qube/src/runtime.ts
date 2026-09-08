@@ -6,9 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { promptInstallerChoice, promptInstallerChoices, type InstallerChoice } from "@tjalve/qube-cli/installer";
+import { createGuidedPresenter, type GuidedPresenter } from "@tjalve/qube-cli/guided";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { evaluatePromptGate, promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
+import { evaluatePromptGate } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
@@ -71,6 +72,12 @@ import {
   type QubeReviewPublisher,
   type QubeUmpireScope,
 } from "./init_config.js";
+import {
+  collectGitIdentityPromptActions,
+  confirmInitAction,
+  validGitIdentityValue,
+  type GitIdentityPromptAction,
+} from "./init_prompts.js";
 import {
   publicInitActionLabel,
   renderInitFailure,
@@ -2940,18 +2947,7 @@ function deferredProviderFailure(error: string | undefined): boolean {
   return Boolean(error && /authentication|authenticate|credential|login|remote|repository identity|not a git repository|could not resolve repository/i.test(error));
 }
 
-interface GitIdentityAction {
-  readonly key: "user.name" | "user.email";
-  readonly scope: "repository" | "user-global";
-  readonly value: string;
-}
-
-function validGitIdentityValue(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && !/[\u0000-\u001f\u007f]/u.test(normalized) ? normalized : undefined;
-}
-
-function readEffectiveGitIdentity(targetPath: string, key: GitIdentityAction["key"]): string | undefined {
+function readEffectiveGitIdentity(targetPath: string, key: GitIdentityPromptAction["key"]): string | undefined {
   const result = spawnSync("git", ["-C", targetPath, "config", "--includes", "--get", key], {
     encoding: "utf8",
     timeout: 5_000,
@@ -2974,7 +2970,8 @@ async function collectGitIdentityActions(input: {
   targetPath: string;
   json: boolean;
   useDefaults: boolean;
-}): Promise<readonly GitIdentityAction[]> {
+  presenter: GuidedPresenter;
+}): Promise<readonly GitIdentityPromptAction[]> {
   const missing = ([
     ["identity-name", "user.name", "Git author name"],
     ["identity-email", "user.email", "Git author email"],
@@ -2983,47 +2980,18 @@ async function collectGitIdentityActions(input: {
   process.stdout.write(`${renderEffectiveGitIdentity(input.targetPath)}\n`);
   if (missing.length === 0) return Object.freeze([]);
   process.stdout.write("Commits require an author name and email. Repository scope is recommended because it changes only this repository.\n");
-  const scope = await promptInstallerChoice({
-    command: initCommand,
-    promptName: "Git identity scope",
-    message: "Where should QUBE configure the missing Git identity values?",
-    choices: Object.freeze([
-      Object.freeze({ value: "repository" as const, label: "This repository", description: "Write only this repository's Git config.", recommended: true }),
-      Object.freeze({ value: "user-global" as const, label: "All repositories", description: "Write the current user's global Git config." }),
-    ]),
-    jsonMode: false,
-    yes: false,
-  });
-  const actions: GitIdentityAction[] = [];
-  for (const [, key, label] of missing) {
-    let value: string | undefined;
-    while (!value) {
-      const answer = await promptText({
-        command: initCommand,
-        promptName: label,
-        jsonMode: false,
-        yes: false,
-        clack: { message: `Enter ${label.toLowerCase()}:`, placeholder: key },
-      });
-      value = validGitIdentityValue(answer);
-      if (!value) process.stdout.write(`${label} must be non-empty and cannot contain control characters.\n`);
-    }
-    actions.push(Object.freeze({ key, scope, value }));
-  }
-  const confirmed = await promptConfirm({
-    command: initCommand,
-    promptName: "write Git identity",
-    jsonMode: false,
-    yes: false,
-    clack: {
-      message: `Write ${actions.map(action => action.key).join(" and ")} to ${scope === "repository" ? "this repository" : "the user-global Git configuration"}?`,
-      initialValue: true,
-    },
-  });
-  return confirmed ? Object.freeze(actions) : Object.freeze([]);
+  return collectGitIdentityPromptActions(
+    input.presenter,
+    missing.map(([, key, label]) => Object.freeze({ key, label })),
+  );
 }
 
-async function recoverGitHubCredential(readiness: GitHubReadiness, environment: CliEnvironment, cwd: string): Promise<boolean> {
+async function recoverGitHubCredential(
+  readiness: GitHubReadiness,
+  environment: CliEnvironment,
+  cwd: string,
+  presenter: GuidedPresenter,
+): Promise<boolean> {
   if (readiness.status !== "needs-action" || readiness.credentialSource.kind !== "stored" || !readiness.host) return false;
 
   let recoveryArgs: readonly string[] | null = null;
@@ -3036,12 +3004,12 @@ async function recoverGitHubCredential(readiness: GitHubReadiness, environment: 
   if (!recoveryArgs) return false;
 
   const displayCommand = `gh ${recoveryArgs.join(" ")}`;
-  const approved = await promptConfirm({
-    command: "qube init",
-    promptName: "repair the selected GitHub CLI credential",
-    jsonMode: false,
-    yes: false,
-    clack: { message: `Run ${displayCommand}?`, initialValue: false },
+  const approved = await confirmInitAction(presenter, {
+    title: "GitHub credential",
+    label: `Run ${displayCommand}?`,
+    explanation: "QUBE can ask GitHub CLI to repair the selected credential.",
+    recommended: false,
+    reason: "Keep the current credential unless it needs repair.",
   });
   if (!approved) return false;
   const recovery = spawnSync("gh", recoveryArgs, {
@@ -3058,6 +3026,10 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const dryRun = flags["dry-run"] === true;
   const force = flags.force === true;
   const useDefaults = flags.yes === true || flags.defaults === true;
+  const presenter = createGuidedPresenter({
+    output: message => process.stdout.write(message),
+    gate: { command: initCommand, jsonMode: json, defaults: useDefaults },
+  });
   const scopeResult = resolveQubeInitScope(flags, args);
   if (scopeResult.error) {
     const nextAction = "Use `qube init --global` without a target, or use `qube init [target]` for repository initialization.";
@@ -3111,12 +3083,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     if (!json && !useDefaults && process.stdin.isTTY === true && process.stdout.isTTY === true) {
       process.stdout.write(renderInitPrerequisites(prerequisites));
       prerequisitesShown = true;
-      gitInitializationApproved = await promptConfirm({
-        command: initCommand,
-        promptName: "initialize Git in the selected repository target",
-        jsonMode: false,
-        yes: false,
-        clack: { message: `QUBE repository setup requires Git. Initialize Git in ${targetPath}?`, initialValue: true },
+      gitInitializationApproved = await confirmInitAction(presenter, {
+        title: "Git repository",
+        label: `QUBE repository setup requires Git. Initialize Git in ${targetPath}?`,
+        explanation: "QUBE must initialize Git before it can configure this repository.",
+        recommended: true,
+        reason: "Initialize Git to continue repository setup.",
       });
     }
     if (!gitInitializationApproved) {
@@ -3132,7 +3104,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
   if (interactiveRepository && !prerequisitesShown) process.stdout.write(renderInitPrerequisites(prerequisites));
   const gitIdentityActions = scope === "repository" && !prospectivePrerequisite
-    ? await collectGitIdentityActions({ prerequisites, targetPath, json, useDefaults })
+    ? await collectGitIdentityActions({ prerequisites, targetPath, json, useDefaults, presenter })
     : Object.freeze([]);
   const globalConfigPath = userQubeConfigPath(homeDirectory(environment));
   const repositoryConfigPath = scope === "repository" ? repoQubeConfigPath(targetPath) : "";
@@ -3316,8 +3288,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     env: environment.env,
   } as const;
   let githubReadiness = await evaluateGitHubReadiness(githubProbeOptions);
-  if (interactiveRepository) {
-    const recovered = await recoverGitHubCredential(githubReadiness, environment, targetPath);
+  if (interactiveRepository && !dryRun) {
+    const recovered = await recoverGitHubCredential(githubReadiness, environment, targetPath, presenter);
     if (recovered) githubReadiness = await evaluateGitHubReadiness(githubProbeOptions);
   }
   const workRoles = githubRoles.filter(role => role === "work" || role === "ci");
@@ -3332,8 +3304,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       env: environment.env,
     })
     : githubReadiness;
-  if (interactiveRepository && githubWorkReadiness !== githubReadiness) {
-    const recovered = await recoverGitHubCredential(githubWorkReadiness, environment, targetPath);
+  if (interactiveRepository && !dryRun && githubWorkReadiness !== githubReadiness) {
+    const recovered = await recoverGitHubCredential(githubWorkReadiness, environment, targetPath, presenter);
     if (recovered) githubWorkReadiness = await evaluateGitHubReadiness({
       scope,
       offline: dryRun,
@@ -3347,17 +3319,18 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const transportCheck = prerequisiteCheck(prerequisites, "remote-transport");
   if (
     interactiveRepository
+    && !dryRun
     && githubWorkReadiness.status !== "needs-action"
     && transportCheck?.reasonCode === "remote-auth-failed"
     && transportCheck.safeDetails.transport === "https"
     && githubWorkReadiness.host
   ) {
-    const approved = await promptConfirm({
-      command: initCommand,
-      promptName: "configure GitHub CLI as the HTTPS Git credential helper",
-      jsonMode: false,
-      yes: false,
-      clack: { message: `Run gh auth setup-git for ${githubWorkReadiness.host}?`, initialValue: false },
+    const approved = await confirmInitAction(presenter, {
+      title: "Git credential helper",
+      label: `Run gh auth setup-git for ${githubWorkReadiness.host}?`,
+      explanation: "GitHub CLI can configure Git to use the selected HTTPS credential.",
+      recommended: false,
+      reason: "Keep the current Git credential helper unless HTTPS authentication failed.",
     });
     if (approved) {
       const setupGit = spawnSync("gh", ["auth", "setup-git", "--hostname", githubWorkReadiness.host], {
@@ -3685,15 +3658,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   }
 
   if (planChanged && !json && !useDefaults && process.stdin.isTTY === true) {
-    const approved = await promptConfirm({
-      command: initCommand,
-      promptName: `apply ${scope} QUBE initialization changes`,
-      jsonMode: false,
-      yes: false,
-      clack: {
-        message: `Apply the planned ${scope} QUBE initialization changes?`,
-        initialValue: true,
-      },
+    const approved = await confirmInitAction(presenter, {
+      title: "Apply QUBE initialization",
+      label: `Apply the planned ${scope} QUBE initialization changes?`,
+      explanation: "QUBE applies the displayed initialization plan after confirmation.",
+      recommended: true,
+      reason: "Apply the plan to complete initialization.",
     });
     if (!approved) {
       const error = `${scope === "global" ? "Global" : "Repository"} initialization changes were declined; no changes were made.`;

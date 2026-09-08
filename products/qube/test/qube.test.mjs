@@ -560,6 +560,54 @@ describe("qube composer CLI", () => {
     assert.equal(typeof parsed.publisherFieldSources, "object");
   });
 
+  it("forwards Reviewer App setup arguments and preserves JSON failure status", () => {
+    const shimRoot = mkdtempSync(path.join(tmpdir(), "qube-review-setup-forward-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-review-setup-project-"));
+    const success = {
+      ok: true,
+      command: "review setup github-app",
+      status: "configured",
+      applied: true,
+    };
+    createInitShims(shimRoot, { aie: { apply: success } });
+    const args = [
+      "review", "setup", "github-app",
+      "--config-scope", "global",
+      "--app-id", "123",
+      "--installation-id", "456",
+      "--private-key-path", "keys/reviewer.pem",
+      "--login", "reviewer-app",
+      "--yes", "--no-probe", "--json",
+    ];
+    const env = initEnv(shimRoot);
+
+    const configured = runCli(args, { cwd, env });
+
+    assert.equal(configured.status, 0, configured.stderr);
+    assert.deepEqual(JSON.parse(configured.stdout), success);
+    const calls = readFileSync(path.join(shimRoot, "init-calls.ndjson"), "utf8")
+      .trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+    assert.deepEqual(calls[0].args, args);
+    assert.equal(calls[0].cwd, cwd);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), false);
+    assert.equal(existsSync(path.join(cwd, ".qube", "aie", "config.json")), false);
+
+    const cancelled = {
+      ok: false,
+      command: "review setup github-app",
+      status: "cancelled",
+      errors: ["Setup was cancelled."],
+    };
+    createInitComponentShim(shimRoot, "aie", { apply: cancelled, exitCodes: { apply: 7 } });
+    const cancellation = runCli(args, { cwd, env });
+
+    assert.equal(cancellation.status, 7);
+    assert.deepEqual(JSON.parse(cancellation.stdout), cancelled);
+    assert.equal(existsSync(repoQubeConfigPath(cwd)), false);
+    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), false);
+  });
+
   it("keeps every short review help surface QUBE-primary", () => {
     const commands = [
       ["review"],
