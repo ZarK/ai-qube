@@ -152,8 +152,8 @@ describe('provider permutation composition', () => {
     const missing = createMissingCiProvider('jenkins', '@tjalve/qube-adapter-jenkins', ['Install Jenkins']);
     assert.equal(missing.capabilities().readStatus, false);
     assert.equal(missing.capabilities().triggerRun, false);
-    assert.throws(() => missing.mapCheck(JENKINS_CHECKS.passed), /qube init --ci-provider jenkins/);
-    await assert.rejects(() => missing.triggerRun(), /qube init --ci-provider jenkins/);
+    assert.throws(() => missing.mapCheck(JENKINS_CHECKS.passed), /use the Jenkins adapter API to read build evidence/);
+    await assert.rejects(() => missing.triggerRun(), /For Executor workflows, select GitHub or GitLab CI/);
 
     const config = permutationConfig('jira', 'gitlab', 'jenkins');
     const composition = await composeProviderPermutation(config, {
