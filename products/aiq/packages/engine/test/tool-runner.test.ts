@@ -103,6 +103,35 @@ describe("ToolRunner binary lookup", () => {
   );
 
   it.skipIf(process.platform !== "win32")(
+    "preserves the directory of a PATH-resolved Windows command script",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-path-"));
+      const scriptName = "show-script-dir.cmd";
+      const scriptPath = path.join(tempDir, scriptName);
+      const previousPath = process.env.PATH;
+
+      try {
+        await writeFile(scriptPath, "@echo off\r\necho %~dp0\r\n", "utf8");
+        process.env.PATH =
+          previousPath === undefined ? tempDir : `${tempDir}${path.delimiter}${previousPath}`;
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(scriptName, [], { cwd: os.tmpdir() });
+
+        expect(outcome.exitCode).toBe(0);
+        expect(path.resolve(outcome.stdout.trim())).toBe(tempDir);
+      } finally {
+        if (previousPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = previousPath;
+        }
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
     "passes Windows command script metacharacters as arguments",
     async () => {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-metachar-"));

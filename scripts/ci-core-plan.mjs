@@ -152,7 +152,7 @@ function createPlan(packages, verifyNames, options) {
   return Object.freeze({
     version: 1,
     core: verifyTargets.length > 0,
-    aiq: options.aiq,
+    aiq: options.aiq || verifyNames.has('@tjalve/aiq'),
     full: options.full,
     reason: options.reason,
     changedPackages: Object.freeze([...options.changedPackages]),
