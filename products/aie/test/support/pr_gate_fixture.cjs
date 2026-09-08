@@ -289,9 +289,9 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
   }, null, 2)}\n`);
 }
 
-function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123') {
+function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123', changedPaths = []) {
   const evidencePath = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headSha, `${id}.json`);
-  return promptTextHashFromLines(promptStack('codex', id, laneContextLines('codex', id, [issueNumber], prNumber, headSha, [evidencePath], [], repo)).text);
+  return promptTextHashFromLines(promptStack('codex', id, laneContextLines('codex', id, [issueNumber], prNumber, headSha, [evidencePath], [], repo), [], repo, undefined, changedPaths).text);
 }
 
 async function alignLocalEvidencePromptHashes(repo, config, exec, { issueNumber = 93, prNumber = 12, headSha = 'abc123' } = {}) {

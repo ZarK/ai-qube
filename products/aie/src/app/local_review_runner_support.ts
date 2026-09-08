@@ -374,8 +374,8 @@ export function priorRiskCardCommandIdentity(promptStackEntries: unknown): strin
   return hash(JSON.stringify(ids));
 }
 
-export function expectedLaneFragmentDigest(host: ReviewModelHostId, lane: LocalReviewLaneId, repoRoot?: string, configuredFragments?: LaneConfiguredFragments): string {
-  return builtinFragmentDigest(promptStack(host, lane, [`Run local review lane ${lane}.`], [], repoRoot, configuredFragments).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
+export function expectedLaneFragmentDigest(host: ReviewModelHostId, lane: LocalReviewLaneId, repoRoot?: string, configuredFragments?: LaneConfiguredFragments, changedPaths: readonly string[] = []): string {
+  return builtinFragmentDigest(promptStack(host, lane, [`Run local review lane ${lane}.`], [], repoRoot, configuredFragments, changedPaths).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
 
 async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
@@ -921,6 +921,7 @@ export function promptStack(
   riskCardFragments: readonly string[] = [],
   repoRoot?: string,
   configuredFragments?: LaneConfiguredFragments,
+  changedPaths: readonly string[] = [],
 ) {
   const rendered = renderAgentPrompt({
     hostId: host,
@@ -934,7 +935,7 @@ export function promptStack(
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
   if (!repoRoot) return rendered;
-  const learnings = loadReviewLearningsFragment(repoRoot);
+  const learnings = loadReviewLearningsFragment(repoRoot, lane, changedPaths);
   if (!learnings) return rendered;
   return {
     ...rendered,
@@ -1322,10 +1323,10 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], exec?: PrGateExec, riskCardFragments: readonly string[] = [], configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection): Promise<LaneEvidence | null> {
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], exec?: PrGateExec, riskCardFragments: readonly string[] = [], configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection, changedPaths: readonly string[] = []): Promise<LaneEvidence | null> {
   const extraContext = reviewScope ? [buildDeltaPromptSection(reviewScope), ...contextLines] : [...contextLines];
   if (!configuredFragments) throw new Error('Local review prompt fragments must include the selected agent harness.');
-  const rendered = promptStack(configuredFragments.host, lane, laneContextLines(configuredFragments.host, lane, [issueNumber], prNumber, headSha, [evidencePath], extraContext, repoRoot), riskCardFragments, repoRoot, configuredFragments);
+  const rendered = promptStack(configuredFragments.host, lane, laneContextLines(configuredFragments.host, lane, [issueNumber], prNumber, headSha, [evidencePath], extraContext, repoRoot), riskCardFragments, repoRoot, configuredFragments, changedPaths);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,
