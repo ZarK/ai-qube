@@ -21,12 +21,146 @@ For a global installation, run `qube init`. See the
 [QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
 for the commands in this release.
 
+<a id="first-task"></a>
+
+## First task and daily use
+
+This example uses QUBE 0.2.12 with Codex and GitHub. The
+[QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
+defines the released command set.
+
+Before you start:
+
+- Install Node.js 24 or newer, Git 2.28.0 or newer, Codex, and GitHub CLI.
+- Sign in to Codex and GitHub CLI.
+- [Create a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app),
+  install it only on this repository, and follow the QUBE [App permission
+  guidance](./qube-github-provider-support.md#capabilities-and-least-privilege).
+  QUBE 0.2.12 asks for Pull requests and Contents read/write. Repository rules
+  must accept the App's approval.
+- Use the primary checkout of the GitHub repository.
+- Choose a real GitHub issue that has the repository's Ready status and labels.
+  Replace `123` below with that issue number.
+- Review [Codex host support](./qube-codex-host-support.md), the [host capability
+  matrix](./qube-host-surfaces.md#capability-matrix), and [GitHub provider
+  support](./qube-github-provider-support.md).
+
+Use the project or global installation commands above. Package placement and
+configuration scope are separate in 0.2.12. `qube init` stores repository
+settings in `.qube/init.json` by default. `qube init --config-scope global`
+stores user defaults in `~/.qube/config.json`; repository values override them.
+The [current development guide](#current-development-guide) documents newer
+source commands and settings.
+
+Preview repository setup, then apply it:
+
+```sh
+npm exec -- qube init --dry-run --json
+npm exec -- qube init
+```
+
+With a global package, use `qube` instead of `npm exec -- qube`. With pnpm, use
+`pnpm exec qube`. Select Codex, GitHub issues, GitHub checks, Primary-harness
+subagents, and the QUBE Reviewer App. Read the plan before you confirm it. QUBE
+can update `AGENTS.md`, add the Codex Make It So skill, and write repository
+configuration. The plan lists the affected files.
+
+[Generate and download an App private key](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps#generating-private-keys),
+restrict the key file to your user account, and keep it outside the repository.
+Replace the example IDs and path, then apply the released setup command and
+check readiness:
+
+```sh
+npm exec -- qube review setup github-app --app-id 123456 --installation-id 789012 --private-key-path "$HOME/.config/qube/reviewer.pem" --yes
+npm exec -- qube review doctor --json
+```
+
+Setup stores the App IDs and the key's path. Doctor succeeds
+when it reports `ready`, no missing fields, repository access, and Pull requests
+write permission for an identity separate from the pull request author.
+
+Inspect and select the issue:
+
+```sh
+npm exec -- qube queue --json
+npm exec -- qube start 123 --json
+npm exec -- qube view 123 --json
+```
+
+`qube start` selects or resumes issue work. It does not edit product code.
+`qube make-it-so --flow issue` also selects work; it does not implement it.
+
+Open a fresh Codex chat in the initialized repository. Send this exact request:
+
+```text
+$make-it-so Complete issue 123, then stop.
+```
+
+Codex reads the repository instructions and starts the workflow. Subject to
+repository policy, it can implement, check, review, merge, and close the issue.
+The expected end state is a merged pull request and a closed issue. If the pull
+request merged but completion stopped, run:
+
+```sh
+npm exec -- qube complete 123 --json
+```
+
+GitHub stores the issue, pull request, checks, and published reviews. Repository
+work state stays under `.qube/`. Executor stores its policy in
+`.qube/aie/config.json`.
+
+<a id="daily-use"></a>
+
+### Daily use
+
+Inspect current work with:
+
+```sh
+npm exec -- qube view 123 --json
+npm exec -- qube pr view <pr-number> --json
+```
+
+In this example, implementation and reviews use the signed-in Codex account
+and its model allowance or charges. The GitHub App publishes review results;
+it does not run the model. QUBE follows host trust, GitHub permissions, and
+required checks. It stores credential references, not values. Code sent to a
+model follows that account's privacy terms. GitHub records follow repository
+visibility.
+
+If initialization reports a GitHub authentication failure, repair the GitHub
+CLI account and rerun initialization:
+
+```sh
+gh auth status --hostname github.com
+gh auth login --hostname github.com
+npm exec -- qube init
+```
+
+To stop safely, stop the Codex task or press Ctrl+C in the active terminal.
+Leave state in place during writes. Open a new Codex chat and send the same Make
+It So request to resume. For a setup or readiness failure, correct the reported
+item and rerun `npm exec -- qube init` or `npm exec -- qube review doctor --json`
+as applicable.
+
+QUBE has no full automatic removal command. Use the removal command for your
+package manager and installation scope:
+
+| Installation | npm | pnpm |
+| --- | --- | --- |
+| Project | `npm uninstall --save-dev @tjalve/qube` | `pnpm remove --save-dev @tjalve/qube` |
+| Global | `npm uninstall --global @tjalve/qube` | `pnpm remove --global @tjalve/qube` |
+
+Use the init plan and Git diff to remove only QUBE-managed content. Preserve
+unrelated files, hooks, configuration, and credentials. Remove credentials with
+their own tools only when you intend to remove access.
+
 ## Current development guide
 
 The remaining sections describe the current source checkout. They can include
 changes that are not in QUBE 0.2.12. In a source checkout, replace `qube` in
-the examples with `node products/qube/bin/run`. Plain `qube` examples require a
-global installation of the current development version.
+the examples with `node products/qube/bin/run`. From another project, use
+`node <absolute-path-to-QUBE-checkout>/products/qube/bin/run`. Plain `qube`
+examples require a global installation of the current development version.
 
 Package placement and configuration scope are independent. A project package
 can write user-global settings, and a global package can initialize a
@@ -61,7 +195,9 @@ setting that controls it.
 
 Repository setup shows the user-global value, the stored repository value, the
 effective value, its source, and the planned repository action. A complete
-user-global setup does not require `.qube/init.json` or a copied product config.
+user-global setup does not require `.qube/init.json`. Repository initialization
+can write effective product configuration, including inherited review policy,
+when a product needs that configuration at runtime.
 Use either of these commands to remove repository overrides:
 
 ```sh
