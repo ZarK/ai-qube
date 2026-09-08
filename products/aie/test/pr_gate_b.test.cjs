@@ -82,6 +82,7 @@ const {
   alignLocalEvidencePromptHashes,
   applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
+const { loadReviewLearningsFragment } = require('../dist/review_learnings.js');
 
 describe('PR gate service: provider reuse and publication', { concurrency: 4 }, () => {
   it('executes the routed lane with the probe-resolved executable', async () => {
@@ -770,25 +771,49 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     config.reviewLanes = [
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
       { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', suppress: ['vendor/**'], maxAdvisoryFindings: 1 },
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
     ];
     mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
-    writeFileSync(join(repo, '.qube', 'aie', 'review-learnings.json'), `${JSON.stringify({
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'review.ts'), 'export const review = false;\n');
+    writeFileSync(join(repo, 'docs', 'requirements.md'), '# Draft requirements\n');
+    commitTrustedBase(repo);
+    writeFileSync(join(repo, 'src', 'review.ts'), 'export const review = true;\n');
+    writeFileSync(join(repo, 'docs', 'requirements.md'), '# Requirements\n');
+    const learningsPath = join(repo, '.qube', 'aie', 'review-learnings.json');
+    const learnings = {
       version: 1,
-      entries: [{
-        id: 'learning:style',
-        disposition: 'rejected',
-        findingId: 'CQ-001',
-        lane: 'code-quality',
-        message: 'Brace style preference.',
-        guidance: 'Do not re-raise brace-style nits as blockers.',
-        paths: [],
-        prNumber: 12,
-        headSha: null,
-        recordedAt: '2026-08-13T00:00:00.000Z',
-      }],
-    }, null, 2)}\n`);
+      entries: [
+        {
+          id: 'learning:quality-path',
+          disposition: 'rejected',
+          findingId: 'CQ-001',
+          lane: 'code-quality',
+          message: 'Brace style preference.',
+          guidance: 'Do not re-raise brace-style nits as blockers.',
+          paths: ['src/review.ts'],
+          prNumber: 12,
+          headSha: null,
+          recordedAt: '2026-08-13T00:00:00.000Z',
+        },
+        {
+          id: 'learning:issue-path',
+          disposition: 'guidance',
+          findingId: null,
+          lane: 'issue-compliance',
+          message: 'Check the changed requirements.',
+          guidance: '',
+          paths: ['docs/requirements.md'],
+          prNumber: 12,
+          headSha: null,
+          recordedAt: '2026-08-14T00:00:00.000Z',
+        },
+      ],
+    };
+    writeFileSync(learningsPath, `${JSON.stringify(learnings, null, 2)}\n`);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
     assert.deepEqual(result.localReviewRunner.suppressions.optedOut, ['performance']);
@@ -798,7 +823,28 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(result.localReviewRunner.lanes.some(lane => lane.lane === 'performance'), false);
     const codeQuality = result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
     assert.match(codeQuality.promptText, /Do not re-raise brace-style nits as blockers/);
+    assert.doesNotMatch(codeQuality.promptText, /Check the changed requirements/);
     assert.ok(codeQuality.promptFragmentIds.includes('repo-configured/review-learnings'));
+    const issueCompliance = result.localReviewRunner.lanes.find(lane => lane.lane === 'issue-compliance');
+    assert.match(issueCompliance.promptText, /Check the changed requirements/);
+    assert.doesNotMatch(issueCompliance.promptText, /brace-style nits/);
+    const changedPaths = ['docs/requirements.md', 'src/review.ts'];
+    const expected = loadReviewLearningsFragment(repo, 'code-quality', changedPaths);
+    assert.match(expected.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(loadReviewLearningsFragment(repo, 'code-quality', []), null);
+
+    learnings.entries[1].message = 'Check the revised requirements.';
+    writeFileSync(learningsPath, `${JSON.stringify(learnings, null, 2)}\n`);
+    const changedOmitted = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
+    assert.equal(changedOmitted.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').promptStackHash, codeQuality.promptStackHash);
+    assert.notEqual(changedOmitted.localReviewRunner.lanes.find(lane => lane.lane === 'issue-compliance').promptStackHash, issueCompliance.promptStackHash);
+
+    learnings.entries[0].paths = ['src/not-changed.ts'];
+    writeFileSync(learningsPath, `${JSON.stringify(learnings, null, 2)}\n`);
+    const withoutSelected = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
+    const codeQualityWithoutSelected = withoutSelected.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
+    assert.equal(codeQualityWithoutSelected.promptFragmentIds.includes('repo-configured/review-learnings'), false);
+    assert.notEqual(codeQualityWithoutSelected.promptStackHash, codeQuality.promptStackHash);
   });
 
   it('carries resolved review tier model and substitution in spawn contracts', async () => {
