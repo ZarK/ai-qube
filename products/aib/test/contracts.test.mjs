@@ -76,6 +76,12 @@ test("agent asset plans use canonical harness instruction targets", async () => 
     const files = createAgentAssetPlan(profile.id);
     assert.deepEqual(files.map((file) => file.path), [profile.instructionTarget.path], profile.id);
     assert.deepEqual(files.map((file) => file.kind), ["instruction"], profile.id);
+    assert.deepEqual(files[0].hosts, [{
+      id: profile.id,
+      taskRead: profile.taskList.support,
+      taskWrite: profile.taskList.support,
+      workflow: profile.taskList.support === "supported" ? "native" : "checklist"
+    }], profile.id);
     assert.match(files[0].body, new RegExp(profile.displayName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")), profile.id);
     assert.match(files[0].body, /aib next --json/, profile.id);
     assert.match(files[0].body, /qube autoresearch --help/, profile.id);
@@ -88,13 +94,17 @@ test("agent asset plans use canonical harness instruction targets", async () => 
   assert.ok(agents);
   assert.match(agents.body, /Grok Build/);
   assert.match(agents.body, /Cursor/);
+  assert.deepEqual(agents.hosts.map((host) => host.id), ["grok-build", "cursor"]);
+  assert.ok(agents.hosts.every((host) => host.workflow === "checklist"));
+  const claude = shared.find((file) => file.path === "CLAUDE.md");
+  assert.deepEqual(claude.hosts, [{ id: "claude-code", taskRead: "supported", taskWrite: "supported", workflow: "native" }]);
 });
 
 test("agent asset writes reject paths outside the target", () => {
   assert.throws(
     () => writeAgentAssetFiles(".", [{
       id: "bad",
-      host: "codex",
+      hosts: [{ id: "codex", taskRead: "supported", taskWrite: "supported", workflow: "native" }],
       path: "../outside.md",
       kind: "instruction",
       body: "bad"
@@ -108,7 +118,7 @@ test("agent asset writes preserve normal files and remain idempotent", (context)
   context.after(() => rmSync(target, { force: true, recursive: true }));
   const file = {
     id: "codex:instructions",
-    host: "codex",
+    hosts: [{ id: "codex", taskRead: "supported", taskWrite: "supported", workflow: "native" }],
     path: "nested/AGENTS.md",
     kind: "instruction",
     body: "Use AIB."
@@ -151,7 +161,7 @@ test("agent asset writes reject dangling symlink destinations", (context) => {
   assert.throws(
     () => writeAgentAssetFiles(target, [{
       id: "codex:instructions",
-      host: "codex",
+      hosts: [{ id: "codex", taskRead: "supported", taskWrite: "supported", workflow: "native" }],
       path: "AGENTS.md",
       kind: "instruction",
       body: "Use AIB."

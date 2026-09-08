@@ -1,15 +1,22 @@
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-import { AGENT_HOST_CAPABILITY_PROFILES, AGENT_HOST_IDS, type AgentHostCapabilityProfile } from "@tjalve/qube-core";
+import { AGENT_HOST_CAPABILITY_PROFILES, AGENT_HOST_IDS, type AgentHostCapabilityProfile, type AgentHostCapabilitySupport } from "@tjalve/qube-core";
 
 import type { AgentHostKind } from "./contracts.js";
 
 export type AgentAssetKind = "instruction";
 
+export interface AgentAssetHost {
+  readonly id: AgentHostKind;
+  readonly taskRead: AgentHostCapabilitySupport;
+  readonly taskWrite: AgentHostCapabilitySupport;
+  readonly workflow: "native" | "checklist";
+}
+
 export interface AgentAssetFile {
   readonly id: string;
-  readonly host: AgentHostKind;
+  readonly hosts: readonly AgentAssetHost[];
   readonly path: string;
   readonly kind: AgentAssetKind;
   readonly body: string;
@@ -44,9 +51,9 @@ export function createAgentAssetPlan(hosts: AgentHostKind | readonly AgentHostKi
   const files = [...profilesByPath.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, grouped]) => instruction(
-      grouped[0]!.id,
+      grouped,
       path,
-      sharedBody(grouped.map((profile) => profile.displayName).join(", "))
+      sharedBody(grouped)
     ));
   return Object.freeze(files);
 }
@@ -177,20 +184,45 @@ function inside(baseDir: string, path: string): boolean {
   return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
-function instruction(host: AgentHostKind, path: string, body: string): AgentAssetFile {
+function instruction(profiles: readonly AgentHostCapabilityProfile[], path: string, body: string): AgentAssetFile {
+  const hosts = profiles.map(taskHost);
   return {
-    id: `${host}:instructions`,
-    host,
+    id: `${hosts.map((host) => host.id).join("+")}:instructions`,
+    hosts: Object.freeze(hosts),
     path,
     kind: "instruction",
     body
   };
 }
 
-function sharedBody(hostName: string): string {
+function taskHost(profile: AgentHostCapabilityProfile): AgentAssetHost {
+  const taskRead = profile.capabilities["task-read"].support;
+  const taskWrite = profile.capabilities["task-write"].support;
+  return Object.freeze({
+    id: profile.id,
+    taskRead,
+    taskWrite,
+    workflow: taskRead === "supported" && taskWrite === "supported" ? "native" : "checklist",
+  });
+}
+
+function taskGuidance(profile: AgentHostCapabilityProfile): string {
+  const host = taskHost(profile);
+  const workflow = host.workflow === "native"
+    ? "If native task-list operations are available in this session, use them for local working state. Otherwise, use a visible checklist."
+    : "Use a visible checklist for local working state.";
+  return `## ${profile.displayName}
+
+${workflow}`;
+}
+
+function sharedBody(profiles: readonly AgentHostCapabilityProfile[]): string {
+  const hostSections = profiles.map(taskGuidance).join("\n\n");
   return `# AIB Bootstrap Workflow
 
 This repository uses \`aib\` as an agent-operated planning engine. The human talks to the agent; the agent operates the CLI and records durable state.
+
+The \`aib\` state machine is the shared planning record. Keep Bootstrap state and configured provider records current.
 
 ## Operator Contract
 
@@ -204,8 +236,6 @@ This repository uses \`aib\` as an agent-operated planning engine. The human tal
 - If the human asks for autoresearch, run \`qube autoresearch --help\`, translate natural language to \`<target>\` plus \`<goal>\`, and synthesize the arena before edits.
 - Do not install global commands, skills, hooks, or tools unless the human explicitly requests that separate action.
 
-## ${hostName}
-
-Use this file as the local host instruction surface. Host-specific todo or command tools are convenience surfaces; the durable workflow is the \`aib\` state machine.
+${hostSections}
 `;
 }
