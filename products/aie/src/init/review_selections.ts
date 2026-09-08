@@ -114,17 +114,17 @@ export function resolveInitIsolatedReviewer(
       warnings: Object.freeze([]),
     };
   }
+  if (getAgentHostCapabilityProfile(host).capabilities['review-isolated'].support === 'unsupported') {
+    return {
+      values: null,
+      errors: Object.freeze([`${getAgentHostCapabilityProfile(host).capabilities['review-isolated'].unavailableReason} Use native host review with --review-mode host.`]),
+      warnings: Object.freeze([]),
+    };
+  }
   if (!installedHosts.includes(host)) {
     return {
       values: null,
       errors: Object.freeze([`Isolated review agent "${host}" is not installed for this init run.`]),
-      warnings: Object.freeze([]),
-    };
-  }
-  if (getAgentHostCapabilityProfile(host).capabilities['review-isolated'].support === 'unsupported') {
-    return {
-      values: null,
-      errors: Object.freeze([`Isolated review agent "${host}" does not support isolated review.`]),
       warnings: Object.freeze([]),
     };
   }

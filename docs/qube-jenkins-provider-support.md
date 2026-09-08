@@ -8,19 +8,18 @@ the selected work and review providers.
 
 Supported now:
 
-- Executor reads Jenkins build evidence through the optional
-  `@tjalve/qube-adapter-jenkins` package.
+- The optional `@tjalve/qube-adapter-jenkins` package reads Jenkins build
+  evidence through its adapter API.
 - The adapter maps build result, queue state, logs, and artifact URLs into
   provider-neutral gate evidence.
 - Missing credentials, missing jobs, queued builds, unstable builds, and
   failed builds are explicit evidence states.
-- QUBE install notes can target `--ci-provider jenkins` and name the required
-  optional adapter package.
 
 Explicitly unsupported now:
 
+- Executor workflow setup does not accept Jenkins as the CI provider. Use
+  GitHub or GitLab CI.
 - Executor does not trigger or rerun Jenkins builds.
-- Executor does not fall back to GitHub Actions when Jenkins evidence is requested.
 
 ## Configuration
 
@@ -36,27 +35,8 @@ JENKINS_API_TOKEN=<jenkins-api-token>
 `JENKINS_BASE_URL` must use `https`. Do not put credentials in the URL. Keep
 `JENKINS_API_TOKEN` out of repository files.
 
-The Executor config can select Jenkins as the CI provider:
-
-```json
-{
-  "version": 1,
-  "providers": {
-    "work": { "kind": "jira" },
-    "review": { "kind": "gitlab" },
-    "repository": { "kind": "local-git" },
-    "ci": { "kind": "jenkins" },
-    "layout": { "kind": "local" },
-    "capabilities": {
-      "work": true,
-      "review": true,
-      "repository": true,
-      "ci": true,
-      "layout": true
-    }
-  }
-}
-```
+These environment variables configure direct Jenkins adapter reads. They do
+not enable Jenkins in Executor workflow setup.
 
 ## Live Suite Bootstrap
 

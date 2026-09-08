@@ -16,8 +16,9 @@ Supported now:
   read flows.
 - Jira status, priority, labels, components, assignee, project, issue links,
   and source metadata map into the shared work item contract.
-- QUBE install notes can target `--work-provider jira` and name the required
-  optional adapter package.
+
+- QUBE setup can select Jira for Executor read flows. Make Jira lifecycle
+  changes manually.
 
 Explicitly unsupported now:
 
@@ -41,7 +42,8 @@ JIRA_PROJECT_KEY=ENG
 `JIRA_BASE_URL` must use `https`. Keep `JIRA_API_TOKEN` out of repository
 files.
 
-The Executor config can select Jira as the work provider:
+The Executor config can select Jira for read flows. This selection does not
+enable issue writes or lifecycle changes:
 
 ```json
 {

@@ -848,6 +848,9 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   };
 
   const selectionErrors: string[] = [];
+  if ((policy.ciProvider ?? baseValidation.config?.providers.ci.kind) === 'jenkins') {
+    selectionErrors.push('Jenkins CI is not available in the Executor workflow yet. Use GitHub or GitLab CI.');
+  }
   const primaryHost = policy.primaryHost ?? selectedTools[0];
   if (policy.primaryHost && !selectedTools.includes(policy.primaryHost)) {
     selectionErrors.push(`Primary harness ${policy.primaryHost} is not in the selected agent harnesses.`);

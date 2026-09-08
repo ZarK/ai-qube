@@ -627,17 +627,17 @@ describe('init service', () => {
       dryRun: false,
       force: false,
       cwd: repo,
-      policy: { workProvider: 'jira', reviewProvider: 'gitlab', ciProvider: 'jenkins' },
+      policy: { workProvider: 'jira', reviewProvider: 'gitlab', ciProvider: 'gitlab' },
     });
 
     assert.equal(result.ok, true);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.providers.work.kind, 'jira');
     assert.equal(config.providers.review.kind, 'gitlab');
-    assert.equal(config.providers.ci.kind, 'jenkins');
+    assert.equal(config.providers.ci.kind, 'gitlab');
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /configured work provider is Jira and the configured review provider is GitLab/);
-    assert.match(agents, /Configured providers: work Jira, review GitLab, repository local git, CI Jenkins jobs, layout local filesystem/);
+    assert.match(agents, /Configured providers: work Jira, review GitLab, repository local git, CI GitLab pipelines, layout local filesystem/);
     assert.doesNotMatch(agents, /configured work and review provider is GitHub/);
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(command, /Review mode is external\. Use the configured GitLab workflow/);
@@ -1790,7 +1790,7 @@ describe('init command metadata', () => {
     assert.equal(result.status, 1, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
-    assert.match(parsed.errors.join('\n'), /opencode.*does not support isolated review/);
+    assert.match(parsed.errors.join('\n'), /OpenCode isolated review is not available yet.*--review-mode host/);
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
   });
 
@@ -1936,6 +1936,24 @@ describe('init command metadata', () => {
     assert.equal(written.providers.review.kind, 'gitlab');
     assert.equal(written.providers.review.publisher, undefined);
     assert.equal(written.policy.branch.baseBranch, 'develop');
+  });
+
+  it('rejects Jenkins CI setup before writes and keeps supported CI setup available', () => {
+    const repo = makeGitRepo();
+    const configPath = join(repo, '.qube', 'aie', 'config.json');
+    const unavailable = binRun(['init', '.', '--tool', 'codex', '--ci-provider', 'jenkins', '--yes', '--json'], repo);
+
+    assert.equal(unavailable.status, 1, unavailable.stderr);
+    const parsed = JSON.parse(unavailable.stdout);
+    assert.equal(parsed.ok, false);
+    assert.deepEqual(parsed.completedChanges, []);
+    assert.match(parsed.errors.join('\n'), /Jenkins CI is not available in the Executor workflow yet\. Use GitHub or GitLab CI\./);
+    assert.equal(existsSync(configPath), false);
+
+    const supported = binRun(['init', '.', '--tool', 'codex', '--ci-provider', 'gitlab', '--yes', '--json'], repo);
+
+    assert.equal(supported.status, 0, supported.stderr);
+    assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).providers.ci.kind, 'gitlab');
   });
 
   it('rejects GitHub external review agents for a GitLab review provider', () => {

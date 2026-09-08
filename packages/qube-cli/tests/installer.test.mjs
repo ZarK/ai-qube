@@ -40,6 +40,13 @@ describe("installer choice helpers", () => {
         value: "global",
         label: "Global manual",
         description: "Install for a user shell."
+      }),
+      defineInstallerChoice({
+        value: "remote",
+        label: "Remote",
+        description: "Remote installation is not supported.",
+        recommended: true,
+        disabled: true
       })
     ];
     const group = defineInstallerChoiceGroup({
@@ -52,7 +59,7 @@ describe("installer choice helpers", () => {
     assert.equal(group.defaultValue, "local");
     assert.equal(
       renderInstallerChoices(choices),
-      "* local: Project-local - Install into the current project.\n- global: Global manual - Install for a user shell.\n"
+      "* local: Project-local - Install into the current project.\n- global: Global manual - Install for a user shell.\n- remote: Remote (unavailable) - Remote installation is not supported.\n"
     );
   });
 
@@ -101,6 +108,58 @@ describe("installer choice helpers", () => {
         assert.equal(error.likelyCause, 'Unsupported choice "npm".');
         return true;
       }
+    );
+  });
+
+  it("rejects unavailable explicit and default installer choices", async () => {
+    const { defineInstallerChoiceGroup, promptInstallerChoice } = await import("../dist/index.js");
+    const choices = [
+      { value: "local", label: "Project-local" },
+      {
+        value: "remote",
+        label: "Remote",
+        description: "Remote installation is not supported.",
+        disabled: true
+      }
+    ];
+    const unavailable = error => {
+      assert.equal(error.kind, "unavailable-installer-choice");
+      assert.equal(error.category, "validation");
+      assert.equal(error.likelyCause, "Remote installation is not supported.");
+      assert.equal(error.suggestedNextAction, "Use one of: local.");
+      return true;
+    };
+
+    assert.throws(
+      () => defineInstallerChoiceGroup({
+        name: "scope",
+        message: "Install scope?",
+        choices,
+        defaultValue: "remote"
+      }),
+      unavailable
+    );
+    await assert.rejects(
+      () => promptInstallerChoice({
+        command: "install",
+        promptName: "install scope",
+        message: "Install scope?",
+        choices,
+        value: "remote"
+      }),
+      unavailable
+    );
+    await assert.rejects(
+      () => promptInstallerChoice({
+        command: "install",
+        promptName: "install scope",
+        message: "Install scope?",
+        choices,
+        defaultValue: "remote",
+        yes: true,
+        terminal: nonTtyTerminal
+      }),
+      unavailable
     );
   });
 

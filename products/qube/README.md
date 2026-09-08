@@ -65,17 +65,15 @@ qube components
 qube init --global
 qube init
 qube autoresearch init ./scratch "improve notes summary quality" --json
-qube oneshot "Create a README draft" --kind doc --dry-run --json
-qube make-it-so "Ship a local notes CLI" --dry-run --json
+qube make-it-so --flow planned "Create a README draft" --json
 qube queue --json
 qube doctor --json
 ```
 
 The published commands above remain separate from this development surface.
 Use the [current command reference](https://github.com/ZarK/ai-qube/blob/main/docs/qube-command-surfaces.md)
-for the full command list and routing rules. `qube oneshot` remains a bounded
-local doc or code artifact flow outside the GitHub issue, pull request, and
-review-gate workflow.
+for the full command list and routing rules. One-shot is unavailable. Use
+`qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
 
 Direct component packages remain independently installable when one package is
 sufficient:

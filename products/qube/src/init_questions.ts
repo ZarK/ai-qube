@@ -33,6 +33,7 @@ export interface GuidedInitChoice {
   readonly description?: string;
   readonly recommended?: boolean;
   readonly available?: boolean;
+  readonly disabled?: boolean;
   /** Limit this choice to repositories that use one of these issue trackers. */
   readonly forIssueTrackers?: readonly string[];
 }
@@ -57,6 +58,7 @@ export type GuidedReviewModelCapability =
 export interface GuidedHarnessChoice extends GuidedInitChoice {
   readonly canRunPrimaryReview: boolean;
   readonly canRunSeparateReview: boolean;
+  readonly separateReviewUnavailableReason?: string;
   readonly reviewModels: GuidedReviewModelCapability;
 }
 
@@ -377,6 +379,10 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
       && option.value !== primaryHarness
       && option.canRunSeparateReview
   ));
+  const separateReviewChoices = harnessOptions
+    .filter(option => selectedHarnesses.includes(option.value) && option.value !== primaryHarness)
+    .filter(option => option.canRunSeparateReview || option.separateReviewUnavailableReason)
+    .map(separateReviewChoice);
   const externalReviewers = compatibleChoices(capabilities.externalReviewers, selectedTracker);
   const reviewSourceOptions = buildReviewSourceOptions({
     externalAvailable: externalReviewers.length > 0,
@@ -438,7 +444,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     prompt: "Which other agent harness should run Review?",
     explanation: "Another selected agent harness can run Review. Review usage goes to the account used by that harness.",
     selection: "single",
-    options: separateHarnesses,
+    options: separateReviewChoices,
     applicable: selectedReviewSource === "harness",
     answer: answerValue(answers, "reviewHarness"),
     current: answerValue(current, "reviewHarness"),
@@ -491,13 +497,14 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     .filter(option => (
       selectedHarnesses.includes(option.value)
       && option.value !== selectedReviewHarness
-      && option.canRunSeparateReview
+      && (option.canRunSeparateReview || option.separateReviewUnavailableReason)
     ))
+    .map(separateReviewChoice)
     .map(option => option.value === primaryHarness
       ? Object.freeze({
           ...option,
           label: `${option.label} (implementation host)`,
-          description: "This harness also runs the implementation work. Its account will pay for backup Review usage.",
+          description: option.disabled ? option.description : "This harness also runs the implementation work. Its account will pay for backup Review usage.",
         })
       : option);
   const backupOptions = Object.freeze([
@@ -704,6 +711,7 @@ interface PresentValue {
 
 function resolveQuestion(input: ResolveQuestionInput): GuidedInitQuestion {
   const options = Object.freeze(input.options.filter(option => option.available !== false));
+  const enabledOptions = options.filter(option => !option.disabled);
   const recommendation = validQuestionValue(input.recommendedValue, input.selection, options).value;
   if (!input.applicable) {
     return {
@@ -759,15 +767,18 @@ function resolveQuestion(input: ResolveQuestionInput): GuidedInitQuestion {
     selectedValue = recommendation;
     answeredBy = "default";
     reason = input.recommendationReason;
-  } else if ((input.autoSelectOnlyChoice ?? true) && options.length === 1) {
+  } else if ((input.autoSelectOnlyChoice ?? true) && enabledOptions.length === 1) {
     selectedValue = input.selection === "multiple"
-      ? Object.freeze([options[0]!.value])
-      : options[0]!.value;
+      ? Object.freeze([enabledOptions[0]!.value])
+      : enabledOptions[0]!.value;
     answeredBy = "automatic";
     reason = "This is the only available choice.";
   }
 
-  const promptNeeded = selectedValue === null;
+  if (enabledOptions.length === 0 && options.length > 0 && !validationError) {
+    validationError = `${input.label}: ${options[0]!.description ?? "No available choice."}`;
+  }
+  const promptNeeded = selectedValue === null && (options.length === 0 || enabledOptions.length > 0);
   return {
     id: input.id,
     step: input.step,
@@ -936,23 +947,36 @@ function reviewModelDefaultValue(
   return singleRecommendation(undefined, modelState.options);
 }
 
+function separateReviewChoice(option: GuidedHarnessChoice): GuidedHarnessChoice {
+  return option.canRunSeparateReview || !option.separateReviewUnavailableReason
+    ? option
+    : { ...option, disabled: true, description: option.separateReviewUnavailableReason };
+}
+
+function unavailableChoiceReason(values: readonly string[], options: readonly GuidedInitChoice[]): string {
+  const reasons = options
+    .filter(option => option.disabled && values.includes(option.value) && option.description)
+    .map(option => option.description);
+  return reasons.length > 0 ? ` ${reasons.join(" ")}` : "";
+}
+
 function validQuestionValue(
   raw: unknown,
   selection: GuidedInitSelection,
   options: readonly GuidedInitChoice[],
 ): { readonly value: GuidedInitQuestionValue; readonly error: string | null } {
-  const allowed = new Set(options.map(option => option.value));
+  const allowed = new Set(options.filter(option => !option.disabled).map(option => option.value));
   if (selection === "multiple") {
     if (!Array.isArray(raw)) return { value: null, error: "must be a list." };
     const values = [...new Set(raw.flatMap(value => typeof value === "string" && value.trim() ? [value.trim()] : []))];
     if (values.length === 0) return { value: null, error: "must select at least one available choice." };
     const unavailable = values.filter(value => !allowed.has(value));
-    if (unavailable.length > 0) return { value: null, error: `includes unavailable choice${unavailable.length === 1 ? "" : "s"}: ${unavailable.join(", ")}.` };
+    if (unavailable.length > 0) return { value: null, error: `includes unavailable choice${unavailable.length === 1 ? "" : "s"}: ${unavailable.join(", ")}.${unavailableChoiceReason(unavailable, options)}` };
     return { value: Object.freeze(values), error: null };
   }
   if (typeof raw !== "string" || raw.trim() === "") return { value: null, error: "must select one available choice." };
   const value = raw.trim();
-  if (!allowed.has(value)) return { value: null, error: `selects unavailable choice: ${value}.` };
+  if (!allowed.has(value)) return { value: null, error: `selects unavailable choice: ${value}.${unavailableChoiceReason([value], options)}` };
   return { value, error: null };
 }
 
@@ -964,11 +988,13 @@ function answerLabel(value: GuidedInitQuestionValue, options: readonly GuidedIni
 }
 
 function singleRecommendation(value: string | undefined, options: readonly GuidedInitChoice[]): string | null {
+  options = options.filter(option => !option.disabled);
   if (value && options.some(option => option.value === value)) return value;
   return options.find(option => option.recommended)?.value ?? options[0]?.value ?? null;
 }
 
 function listRecommendation(values: readonly string[] | undefined, options: readonly GuidedInitChoice[]): readonly string[] | null {
+  options = options.filter(option => !option.disabled);
   if (values && values.length > 0 && values.every(value => options.some(option => option.value === value))) {
     return Object.freeze([...new Set(values)]);
   }

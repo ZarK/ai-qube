@@ -614,7 +614,7 @@ export const aibCli = createCli({
             kind: "provider-mutation-unsupported",
             operation: `render ${provider} work items`,
             likelyCause: `${provider} issue creation is unsupported in this provider adapter.`,
-            suggestedNextAction: `Use --dry-run to review planned ${provider} issues, or render markdown drafts for offline review.`,
+            suggestedNextAction: `Run \`aib work-items render --provider ${provider} --dry-run --json\` to review the planned ${provider} issues.`,
             category: "safety",
             exitCode: 5
           });

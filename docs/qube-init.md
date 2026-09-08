@@ -439,9 +439,9 @@ Recommended: use the tracker that already owns the repository work. For a new
 GitHub repository, use GitHub. This keeps issue state and pull request state in
 one service.
 
-QUBE lists the issue trackers that the installed QUBE version supports. The
-later connection check reports whether the selected account is authenticated
-and ready.
+QUBE shows its known issue trackers. Executor can select Jira and Linear for
+read flows. Their issue writes and lifecycle changes remain manual. Use GitHub
+for automatic issue lifecycle changes.
 
 <a id="automated-checks-ci"></a>
 
@@ -454,9 +454,11 @@ Recommended: use the service that already runs the repository checks. QUBE
 preselects it when one service is detected. If detection finds no service or
 more than one service, QUBE asks for the service that controls required checks.
 
-The checks service can differ from the issue tracker. QUBE lists the checks
-providers that the installed QUBE version supports. It does not infer a value
-when the repository is ambiguous.
+The checks service can differ from the issue tracker. QUBE shows its known CI
+providers and marks unavailable workflow choices. The Jenkins adapter API can
+read build evidence, but Jenkins setup is unavailable for Executor workflows.
+Use GitHub or GitLab CI. QUBE does not infer a value when the repository is
+ambiguous.
 
 <a id="continuous-shipping"></a>
 
@@ -547,9 +549,11 @@ QUBE recommends the first available choice in this order:
 3. Otherwise, use an external review service. Review usage follows that
    service plan.
 
-QUBE does not offer a review source that the selected harnesses cannot run. An
-external service controls its own model. A harness-based review uses only
-models that the applicable harness can list from the signed-in account.
+OpenCode and Claude Code support native host review. They cannot serve as the
+isolated-review harness. QUBE marks unavailable review harness choices. An
+external service controls its own model. A
+harness-based review uses only models that the applicable harness can list
+from the signed-in account.
 
 <a id="review-publisher"></a>
 

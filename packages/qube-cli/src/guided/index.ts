@@ -12,6 +12,7 @@ import {
 } from "@clack/prompts";
 
 import { validateInstallerChoices, type InstallerChoice } from "../installer/index.js";
+import { createCliError } from "../errors/index.js";
 import { evaluatePromptGate, type PromptGateOptions } from "../prompts/index.js";
 import { redactText } from "../redaction/index.js";
 
@@ -265,18 +266,38 @@ export function createGuidedPresenter(options: GuidedPresenterOptions = {}): Gui
 
     async choose<Value extends string>(question: GuidedQuestion<Value>, choices: readonly GuidedChoice<Value>[]) {
       validateInstallerChoices(choices);
+      const currentChoice = choices.find(choice => choice.value === question.currentValue);
+      if (question.applicability?.applies !== false && currentChoice?.disabled === true && question.validation?.state === "valid") {
+        throw createCliError({
+          kind: "unavailable-installer-choice",
+          operation: `validate ${question.label}`,
+          likelyCause: currentChoice.description ?? `${currentChoice.label} is unavailable.`,
+          suggestedNextAction: `Select an available choice for ${question.label}.`,
+          category: "validation"
+        });
+      }
       const prepared = prepare(question);
       if (prepared !== undefined) return prepared;
       const choiceOptions: Option<Value>[] = choices.map(choice => ({
           value: choice.value,
-          label: choice.recommended === true ? `${choice.label} (recommended)` : choice.label,
+          label: choice.disabled === true
+            ? `${choice.label} (unavailable)`
+            : choice.recommended === true ? `${choice.label} (recommended)` : choice.label,
+          ...(choice.disabled === true ? { disabled: true } : {}),
           ...(choice.description === undefined ? {} : { hint: choice.description })
         }) as Option<Value>);
+      const recommendedChoice = question.recommendation === undefined
+        ? undefined
+        : choices.find(choice => choice.value === question.recommendation?.value);
       while (true) {
         const value = await prompts.select({
           message: question.label,
           options: choiceOptions,
-          ...(question.currentValue !== undefined ? { initialValue: question.currentValue } : question.recommendation !== undefined ? { initialValue: question.recommendation.value } : {})
+          ...(currentChoice?.disabled !== true && question.currentValue !== undefined
+            ? { initialValue: question.currentValue }
+            : recommendedChoice?.disabled !== true && question.recommendation !== undefined
+              ? { initialValue: question.recommendation.value }
+              : {})
         });
         if (prompts.isCancel(value)) return cancellation();
         const message = await validate(question, value);
