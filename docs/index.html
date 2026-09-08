@@ -342,8 +342,14 @@
     }
 
     .terminal-tag {
-      flex: 0 0 56px;
+      flex: 0 0 9ch;
       color: var(--amber);
+    }
+
+    .terminal-row code {
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
 
     .section {
@@ -723,10 +729,10 @@
         </div>
         <div class="hero-terminal" aria-label="Representative QUBE command sequence">
           <div class="terminal-row"><span class="terminal-tag">QUBE</span><code>qube components</code></div>
-          <div class="terminal-row"><span class="terminal-tag">AIB</span><code>qube idea "Ship a local notes CLI"</code></div>
-          <div class="terminal-row"><span class="terminal-tag">AIE</span><code>qube start next --json</code></div>
-          <div class="terminal-row"><span class="terminal-tag">AIQ</span><code>qube check src --json</code></div>
-          <div class="terminal-row"><span class="terminal-tag">AIU</span><code>qube continue --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">Bootstrap</span><code>qube idea "Ship a local notes CLI"</code></div>
+          <div class="terminal-row"><span class="terminal-tag">Executor</span><code>qube start next --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">Quality</span><code>qube check src --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">Umpire</span><code>qube continue --json</code></div>
         </div>
       </div>
     </section>
@@ -742,19 +748,19 @@
           </div>
           <div class="flow-item">
             <dt>Plan</dt>
-            <dd>AIB turns intent into accepted specs, milestones, and provider-ready work item drafts.</dd>
+            <dd>Bootstrap turns intent into accepted specs, milestones, and provider-ready work item drafts.</dd>
           </div>
           <div class="flow-item">
             <dt>Execute</dt>
-            <dd>AIE owns issue selection, branch policy, pull requests, review gates, and completion.</dd>
+            <dd>Executor owns issue selection, branch policy, pull requests, review gates, and completion.</dd>
           </div>
           <div class="flow-item">
             <dt>Check</dt>
-            <dd>AIQ produces staged quality evidence for source, tests, packaging, and release readiness.</dd>
+            <dd>Quality produces staged evidence for source, tests, packaging, and release readiness.</dd>
           </div>
           <div class="flow-item">
             <dt>Continue</dt>
-            <dd>AIU reads trusted state and tells an idle agent when continuing is safe and bounded.</dd>
+            <dd>Umpire reads trusted state and tells an idle agent when continuing is safe and bounded.</dd>
           </div>
         </dl>
       </div>
@@ -775,19 +781,19 @@
         </div>
         <div class="role-grid" aria-label="Package boundaries">
           <article class="role">
-            <h3>AIB plans</h3>
+            <h3>Bootstrap</h3>
             <p>Planning state, specs, milestones, and work item drafts.</p>
           </article>
           <article class="role">
-            <h3>AIE executes</h3>
+            <h3>Executor</h3>
             <p>Issue work, branches, pull requests, reviews, and completion.</p>
           </article>
           <article class="role">
-            <h3>AIQ checks</h3>
+            <h3>Quality</h3>
             <p>Quality gates, evidence, package readiness, and reports.</p>
           </article>
           <article class="role">
-            <h3>AIU continues</h3>
+            <h3>Umpire</h3>
             <p>Trusted state inspection and bounded continuation prompts.</p>
           </article>
         </div>

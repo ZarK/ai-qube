@@ -1,9 +1,9 @@
 # QUBE
 
-QUBE is a small package family for agent-assisted software work. The packages
-cover planning, issue execution, quality gates, and continuation policy. Each
-tool can be installed and used on its own; `@tjalve/qube` provides one composer
-CLI for discovering and dispatching to the installed tools.
+QUBE combines Quality (aiQ), Umpire (aiU), Bootstrap (aiB), and Executor (aiE).
+The package family supports agent-assisted planning, issue execution, quality
+gates, and continuation policy. Each tool can be installed and used on its own;
+`@tjalve/qube` provides one composer CLI for the installed tools.
 
 ## Website
 
@@ -18,10 +18,10 @@ pnpm run site:preview
 
 | Package | Command | Purpose |
 | --- | --- | --- |
-| `@tjalve/aib` | `aib` | Turn an idea into planning state, a spec, milestones, and work item drafts. |
-| `@tjalve/aie` | `aie` | Execute GitHub issues with branch, PR, review, and completion workflow controls. |
-| `@tjalve/aiq` | `aiq` | Run staged quality gates and emit structured evidence for humans and agents. |
-| `@tjalve/aiu` | `aiu` | Decide whether an idle agent session may safely continue from trusted local state. |
+| `@tjalve/aib` | `aib` | Bootstrap turns an idea into planning state, a spec, milestones, and work item drafts. |
+| `@tjalve/aie` | `aie` | Executor handles GitHub issues, branches, pull requests, reviews, and completion. |
+| `@tjalve/aiq` | `aiq` | Quality runs staged gates and emits structured evidence for humans and agents. |
+| `@tjalve/aiu` | `aiu` | Umpire decides whether an idle agent can continue safely from trusted local state. |
 | `@tjalve/qube` | `qube` | List and dispatch to the package family from one installed entry point. |
 | `@tjalve/qube-cli` | library | Shared TypeScript CLI metadata, schema, output, safety, and test helpers. |
 

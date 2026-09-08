@@ -2,14 +2,14 @@
 
 ## Strategic Goal
 
-M4 expands Umpire beyond normal work-item continuation. When execution is idle, Umpire should be able to continue Bootstrap planning, run concrete Quality Control stages, or select a safe whip task without pretending that vague "make it better" prompts are useful work.
+M4 expands Umpire beyond normal work-item continuation. When execution is idle, Umpire should be able to continue Bootstrap planning, run concrete Quality stages, or select a safe whip task without pretending that vague "make it better" prompts are useful work.
 
 This milestone makes idle time productive while keeping safety blocks hard. Umpire should drive only concrete, trusted, externally checkable actions.
 
 M4 delivers five things:
 
 1. **Whip task queue** - durable task state, selection, ownership, and status transitions.
-2. **Quality idle loop** - `aiq`-backed continuation for failing quality stages.
+2. **Quality idle loop** - Quality-backed continuation for failing quality stages.
 3. **Planning continuation** - Bootstrap automatic mode continuation from trusted planning state.
 4. **Prompt modes** - clear prompts for quality, planning, and whip tasks.
 5. **CLI management** - commands to inspect, add, cancel, and complete whip tasks safely.
@@ -27,7 +27,7 @@ M4 is the primary implementation foundation for:
 
 M4 also extends:
 
-- **FR-05** trusted Quality Control and Bootstrap inputs.
+- **FR-05** trusted Quality and Bootstrap inputs.
 - **FR-10** status, logs, and reason codes for non-execution continuation modes.
 
 ---
@@ -109,7 +109,7 @@ Umpire selects a whip task only after higher-priority continuation modes are una
 - no active review item
 - no required repair
 - no Bootstrap planning step ready
-- no Quality Control stage ready
+- no Quality stage ready
 - no safety block
 
 Delivery of a prompt does not complete a task.
@@ -246,7 +246,7 @@ Status: implemented by the shared `whip` module and `aiu whip` command. Whip sta
 
 ### M4.2 - Implement Quality Idle Continuation
 
-Read Quality Control trusted state, select failing stages, render concrete prompts, and stop on unsafe findings.
+Read Quality trusted state, select failing stages, render concrete prompts, and stop on unsafe findings.
 
 Status: implemented by extending the trusted `quality` state model and shared decision/prompt/status flow. Quality state now normalizes stages, findings, affected paths, failing checks, configured next and rerun commands, selected targets, and human or supply-chain approval blocks. `quality.enabled: false` suppresses quality idle prompts. When enabled and idle, Umpire selects one concrete failing stage or finding group and renders a bounded prompt that names the trusted source, target, affected paths, configured command, rerun check, and expected evidence. Malformed, stale, unknown, unsupported, untrusted, human-approval, and supply-chain-approval states stop instead of prompting.
 

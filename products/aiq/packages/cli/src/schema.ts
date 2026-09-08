@@ -33,7 +33,7 @@ const stageSelectionFlags = [
   },
   {
     name: "profile",
-    description: "Select the configured AIQ profile.",
+    description: "Select the configured Quality profile.",
     type: "option",
     options: ["fast", "standard", "deep"],
   },
@@ -100,7 +100,7 @@ const commonExitCodes = [
   {
     code: 3,
     category: "unexpected",
-    description: "AIQ hit an internal or host runtime error.",
+    description: "Quality hit an internal or host runtime error.",
   },
 ] as const satisfies readonly ExitCodeMetadata[];
 
@@ -108,7 +108,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "run",
-    description: "Run AIQ quality stages for explicit files or paths.",
+    description: "Run Quality stages for explicit files or paths.",
     aliases: ["check"],
     arguments: [
       {
@@ -135,7 +135,7 @@ export const aiqCommandMetadata = [
       },
       {
         name: "out-dir",
-        description: "Override the AIQ artifact output directory.",
+        description: "Override the Quality artifact output directory.",
         type: "string",
       },
       {
@@ -166,7 +166,7 @@ export const aiqCommandMetadata = [
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
-      reason: "AIQ run may execute project quality tools selected by the repository configuration.",
+      reason: "Quality may execute project quality tools selected by the repository configuration.",
     },
     exitCodes: commonExitCodes,
     extensions: {
@@ -180,7 +180,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "plan",
-    description: "Resolve the AIQ run plan without executing quality tools.",
+    description: "Resolve the Quality run plan without executing quality tools.",
     arguments: [
       {
         name: "files",
@@ -196,14 +196,14 @@ export const aiqCommandMetadata = [
       ...outputFlags,
       {
         name: "out-dir",
-        description: "Override the AIQ artifact output directory.",
+        description: "Override the Quality artifact output directory.",
         type: "string",
       },
     ],
     examples: [
       {
         command: "aiq plan src --format json",
-        description: "Render a machine-readable AIQ plan for src.",
+        description: "Render a machine-readable Quality plan for src.",
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
@@ -214,7 +214,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "bench",
-    description: "Run the standalone AIQ benchmark corpus.",
+    description: "Run the standalone Quality benchmark corpus.",
     flags: [
       ...outputFlags,
       {
@@ -258,7 +258,7 @@ export const aiqCommandMetadata = [
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
-      reason: "AIQ bench may execute repository benchmark fixtures and quality toolchains.",
+      reason: "Quality benchmarks may execute repository fixtures and quality toolchains.",
     },
     exitCodes: commonExitCodes,
     extensions: { aiq: { capability: "quality-benchmark", contexts: ["standalone"] } },
@@ -266,7 +266,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "watch",
-    description: "Run AIQ continuously for explicit files or paths when watched inputs change.",
+    description: "Run Quality continuously for explicit files or paths when watched inputs change.",
     arguments: [
       {
         name: "files",
@@ -287,7 +287,7 @@ export const aiqCommandMetadata = [
       },
       {
         name: "out-dir",
-        description: "Override the AIQ artifact output directory.",
+        description: "Override the Quality artifact output directory.",
         type: "string",
       },
     ],
@@ -303,7 +303,7 @@ export const aiqCommandMetadata = [
       sensitive: true,
       kinds: ["package-manager", "dependency"],
       reason:
-        "AIQ watch may repeatedly execute project quality tools selected by repository configuration.",
+        "Quality watch may repeatedly execute project quality tools selected by repository configuration.",
     },
     exitCodes: commonExitCodes,
     extensions: { aiq: { capability: "quality-watch", contexts: ["standalone"] } },
@@ -311,32 +311,32 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "serve",
-    description: "Start the standalone AIQ HTTP quality server.",
+    description: "Start the standalone Quality HTTP server.",
     flags: [
       ...stageSelectionFlags,
       ...outputFlags,
       {
         name: "host",
-        description: "Host interface for the AIQ server.",
+        description: "Host interface for the Quality server.",
         type: "string",
         defaultValue: "127.0.0.1",
       },
       {
         name: "port",
-        description: "TCP port for the AIQ server.",
+        description: "TCP port for the Quality server.",
         type: "integer",
         defaultValue: 3000,
       },
       {
         name: "out-dir",
-        description: "Override the AIQ artifact output directory.",
+        description: "Override the Quality artifact output directory.",
         type: "string",
       },
     ],
     examples: [
       {
         command: "aiq serve --host 127.0.0.1 --port 3000",
-        description: "Start the local AIQ server.",
+        description: "Start the local Quality server.",
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
@@ -344,7 +344,7 @@ export const aiqCommandMetadata = [
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
-      reason: "AIQ serve executes project quality tools in response to local requests.",
+      reason: "Quality server executes project quality tools in response to local requests.",
     },
     exitCodes: commonExitCodes,
     extensions: { aiq: { capability: "quality-server", contexts: ["standalone"] } },
@@ -353,7 +353,7 @@ export const aiqCommandMetadata = [
     kind: "command",
     name: "doctor",
     description:
-      "Inspect AIQ config, progress state, detected technologies, and tool prerequisites.",
+      "Inspect Quality config, progress state, detected technologies, and tool prerequisites.",
     flags: [
       ...stageSelectionFlags,
       ...outputFlags,
@@ -378,7 +378,7 @@ export const aiqCommandMetadata = [
     kind: "command",
     name: "setup",
     description:
-      "Render agent-facing setup guidance for selected AIQ stages without installing tools.",
+      "Render agent-facing setup guidance for selected Quality stages without installing tools.",
     flags: [
       ...stageSelectionFlags,
       ...outputFlags,
@@ -402,12 +402,12 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "status",
-    description: "Show the current AIQ stage selection, last run status, and next command.",
+    description: "Show the current Quality stage selection, last run status, and next command.",
     flags: outputFlags,
     examples: [
       {
         command: "aiq status --format json",
-        description: "Render machine-readable AIQ workflow status.",
+        description: "Render machine-readable Quality workflow status.",
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
@@ -418,7 +418,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "config",
-    description: "Plan or apply repository AIQ configuration and print the effective state.",
+    description: "Plan or apply repository Quality configuration and print the effective state.",
     flags: [
       ...outputFlags,
       {
@@ -475,7 +475,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "evidence",
-    description: "Emit structured AIQ quality evidence for AIE gates and AIU trusted state.",
+    description: "Emit structured Quality evidence for Executor gates and Umpire trusted state.",
     flags: [
       {
         name: "format",
@@ -488,7 +488,7 @@ export const aiqCommandMetadata = [
     examples: [
       {
         command: "aiq evidence --format json",
-        description: "Render local AIQ quality evidence as JSON.",
+        description: "Render local Quality evidence as JSON.",
       },
     ],
     output: { formats: ["json"], defaultFormat: "json" },
@@ -511,7 +511,7 @@ export const aiqCommandMetadata = [
   {
     kind: "command",
     name: "schema",
-    description: "Render the QUBE-compatible AIQ command and capability schema.",
+    description: "Render the QUBE-compatible Quality command and capability schema.",
     flags: [
       {
         name: "format",
@@ -524,7 +524,7 @@ export const aiqCommandMetadata = [
     examples: [
       {
         command: "aiq schema --format json",
-        description: "Render QUBE-compatible AIQ command metadata.",
+        description: "Render QUBE-compatible Quality command metadata.",
       },
     ],
     output: { formats: ["json"], defaultFormat: "json" },

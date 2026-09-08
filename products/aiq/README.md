@@ -1,6 +1,6 @@
-# AIQ
+# Quality
 
-AIQ is the quality package inside QUBE. The published package is
+Quality is the code quality package inside QUBE. The published package is
 `@tjalve/aiq`, and its npm-facing README lives at
 `products/aiq/packages/cli/README.md`.
 

@@ -17,22 +17,22 @@
   <g font-family="Geologica, Arial, sans-serif" text-anchor="middle">
     <g transform="translate(160 0)">
       <text y="225" fill="#64C3CF" font-size="132" font-weight="750">Q</text>
-      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Quality</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">Quality</text>
       <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Set the standard</text>
     </g>
     <g transform="translate(450 0)">
       <text y="225" fill="#F1B55B" font-size="132" font-weight="750">U</text>
-      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Umpire</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">Umpire</text>
       <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Test the decision</text>
     </g>
     <g transform="translate(740 0)">
       <text y="225" fill="#B99AE7" font-size="132" font-weight="750">B</text>
-      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Bootstrap</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">Bootstrap</text>
       <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Create the foundation</text>
     </g>
     <g transform="translate(1030 0)">
       <text y="225" fill="#F47A86" font-size="132" font-weight="750">E</text>
-      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">ai-Executor</text>
+      <text y="306" fill="#F2F0E8" font-size="22" font-weight="650">Executor</text>
       <text y="338" fill="#A7B0B2" font-size="17" font-weight="450">Finish the work</text>
     </g>
   </g>

@@ -344,7 +344,7 @@ export async function buildAiqOpenCodeHooks(
               context.worktree ??
               context.directory,
           });
-          return `AIQ doctor\n${result.text}\nStatus: passed`;
+          return `Quality doctor\n${result.text}\nStatus: passed`;
         },
       }),
     },
@@ -387,7 +387,7 @@ function mapResolvedSelection(resolved: ResolvedAiqConfig): ResolvedOpenCodeSele
 
 function formatOpenCodePlanText(plan: RunPlan): string {
   return [
-    "AIQ plan",
+    "Quality plan",
     `Profile: ${plan.profile}`,
     `Stages: ${plan.stages.length === 0 ? "none configured yet" : plan.stages.join(", ")}`,
     `Files: ${plan.summary.fileCount}`,
@@ -397,7 +397,7 @@ function formatOpenCodePlanText(plan: RunPlan): string {
 
 function formatOpenCodeStatusText(selection: ResolvedOpenCodeSelection): string {
   return [
-    "AIQ status",
+    "Quality status",
     `Profile: ${selection.profile}`,
     `Stages: ${selection.stages.length === 0 ? "none configured yet" : selection.stages.join(", ")}`,
     selection.workflow === undefined

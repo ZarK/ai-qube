@@ -107,7 +107,7 @@ describe("CLI foundation", () => {
 
   it("returns explicit setup guidance for operational commands", async () => {
     const commands: Array<[string[], string]> = [
-      [["node", "aiq", "hook", "install"], "Hook setup uses the dedicated AIQ hook adapter"],
+      [["node", "aiq", "hook", "install"], "Hook setup uses the dedicated Quality hook adapter"],
       [["node", "aiq", "ci", "setup"], "CI setup uses explicit workflow configuration"],
       [["node", "aiq", "ignore", "write"], "Ignored inputs are configured"],
     ];
@@ -126,7 +126,7 @@ describe("CLI foundation", () => {
       expect(exitCode).toBe(0);
       expect(stderr.value).toBe("");
       expect(stdout.value).toContain(expected);
-      expect(stdout.value).toContain("AIQ");
+      expect(stdout.value).toContain("Quality");
     }
   });
 });

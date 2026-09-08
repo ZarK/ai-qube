@@ -90,7 +90,7 @@ interface GitHubOperationExtra {
 const GITHUB_OPERATION_EXTRAS: readonly GitHubOperationExtra[] = Object.freeze([
   {
     id: "map-work-item",
-    nextAction: "Use the AIE GitHub work provider for live issue reads and label mutation.",
+    nextAction: "Use the Executor GitHub work provider for live issue reads and label mutation.",
   },
   {
     id: "work-item-queue",
@@ -98,7 +98,7 @@ const GITHUB_OPERATION_EXTRAS: readonly GitHubOperationExtra[] = Object.freeze([
   },
   {
     id: "sync-issue-status",
-    nextAction: "Use the AIE lifecycle command that owns the issue state transition.",
+    nextAction: "Use the Executor lifecycle command that owns the issue state transition.",
   },
   {
     id: "render-work-items",
@@ -138,7 +138,7 @@ const GITHUB_OPERATION_EXTRAS: readonly GitHubOperationExtra[] = Object.freeze([
   },
   {
     id: "run-aiq-github-action",
-    nextAction: "Use AIQ GitHub Action setup only when a repository explicitly installs that standalone quality surface.",
+    nextAction: "Use Quality GitHub Action setup only when a repository explicitly installs that standalone quality surface.",
     paths: [".github/workflows/"],
   },
   {

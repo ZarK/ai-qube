@@ -52,7 +52,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("Status: passed");
     expect(stdout.value).toContain("Stages: 3 typecheck passed");
     expect(stdout.value).toContain("Next: no action required.");
@@ -72,7 +72,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("Status: passed");
     expect(stdout.value).toContain("Stages: 3 typecheck passed");
     expect(stdout.value).toContain("Next: no action required.");
@@ -92,7 +92,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ check");
+    expect(stdout.value).toContain("Quality check");
     expect(stdout.value).toContain("Status: passed");
     expect(stdout.value).toContain("Stages: 3 typecheck passed");
     expect(stdout.value).toContain("Next: no action required.");

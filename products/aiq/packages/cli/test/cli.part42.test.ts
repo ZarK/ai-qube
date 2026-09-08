@@ -57,7 +57,7 @@ describe("CLI foundation", () => {
 
     expect(busyResponse.status).toBe(503);
     await expect(busyResponse.json()).resolves.toEqual({
-      error: "AIQ serve is already processing another run.",
+      error: "Quality server is already processing another run.",
     });
 
     blockingRequest.destroy();

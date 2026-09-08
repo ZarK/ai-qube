@@ -4,7 +4,7 @@
 
 M5 turns the gate obligations captured by M4 into usable Executor guidance, status commands, and host instructions.
 
-M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, and dependencies. M3 added issue lifecycle and branch commands. M4 installed always-loaded instructions, host projections, the protected todo pattern, and `/make-it-so`. M5 fills the remaining gate machinery that makes autonomous shipping credible: configured verification guidance, manual UI audit helpers, review-agent prompts, optional Quality Control gate guidance, PR review requests, PR review waiting, PR feedback inspection, and PR body/shipping support.
+M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, and dependencies. M3 added issue lifecycle and branch commands. M4 installed always-loaded instructions, host projections, the protected todo pattern, and `/make-it-so`. M5 fills the remaining gate machinery that makes autonomous shipping credible: configured verification guidance, manual UI audit helpers, review-agent prompts, optional Quality gate guidance, PR review requests, PR review waiting, PR feedback inspection, and PR body/shipping support.
 
 This milestone implements the first complete gate coordination layer. It does not turn Executor into a test runner, CI system, browser automation framework, review-agent runtime, package-manager runner, or static-analysis engine. Executor coordinates repository policy and gives agents reliable plans, prompts, evidence rules, PR review state, and next actions. The agent performs context-sensitive implementation, package work, tests, builds, audits, `aiq`, review interpretation, PR creation, merge judgment, and follow-up fixes under the installed instructions.
 
@@ -45,7 +45,7 @@ M5 is the primary implementation foundation for:
 
 M5 also extends:
 
-- **FR-01-001, FR-01-006, and FR-01-007** - issue execution coordination through gate guidance, optional Quality Control gate configuration, and confident shipping permissions.
+- **FR-01-001, FR-01-006, and FR-01-007** - issue execution coordination through gate guidance, optional Quality gate configuration, and confident shipping permissions.
 - **FR-03-006 and FR-03-010** - installed work-cycle instructions can now name actual guidance/status commands where implemented.
 - **FR-08-001 through FR-08-011** - gate failure loops, PR review waits, feedback handling, merge readiness, issue completion, base update, and next issue bootstrap.
 - **FR-11-001 through FR-11-007** - OpenCode, Codex, and Claude Code host wording for review-agent prompts and gate todos.
@@ -55,7 +55,7 @@ M5 also extends:
 M5 intentionally does not complete:
 
 - Bootstrap-owned spec, milestone, or issue generation.
-- Quality Control's static-analysis engine. Executor may render and track an `aiq` gate when enabled; the agent runs `aiq`.
+- Quality's static-analysis engine. Executor may render and track an `aiq` gate when enabled; the agent runs `aiq`.
 - Umpire-owned long-running scheduling, wakeups, or stop hooks.
 - Fully automated generic browser interaction. Executor provides audit helpers and evidence rules; the agent drives the app.
 - Automatic screenshot uploads. Future `gh-image` or equivalent support remains future and must be opt-in.
@@ -193,7 +193,7 @@ When `aiq` is enabled, Executor should:
 - report unavailable `aiq` as an actionable configuration or install problem
 - treat any supplied `aiq` output as a gate result input, not as authority over Executor policy
 
-Executor must not reimplement Quality Control's analysis or invoke `aiq` itself.
+Executor must not reimplement Quality's analysis or invoke `aiq` itself.
 
 ---
 

@@ -147,7 +147,7 @@ export function createFirstRunSetupGuidance(cwd: string): FirstRunSetupGuidance 
     markers: firstRunSupportedMarkers,
     remediation:
       "Run aiq from a project root with a supported marker, or pass explicit files with aiq run <files...>.",
-    summary: "No supported project marker was found, so AIQ cannot safely choose inputs.",
+    summary: "No supported project marker was found, so Quality cannot safely choose inputs.",
   };
 }
 

@@ -54,8 +54,8 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ first run");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality first run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("3 typecheck failed");
     expect(stdout.value).toContain("Next: aiq setup");
     expect(stdout.value).toContain("Quality failures:");

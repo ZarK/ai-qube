@@ -63,9 +63,9 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--format json keeps the complete machine-readable report");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
     expect(stdout.value).toContain("aiq setup gives agent-facing setup steps");
-    expect(stdout.value).toContain("AIQ uses repository-native tool configs by default");
+    expect(stdout.value).toContain("Quality uses repository-native tool configs by default");
     expect(stdout.value).toContain("Vitest/Jest, Playwright, Ruff/Radon-compatible Python config");
-    expect(stdout.value).toContain("aiq evidence emits structured AIQ quality evidence");
+    expect(stdout.value).toContain("aiq evidence emits structured Quality evidence");
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("Metric remediation:");
     expect(stdout.value).toContain("Stages 5-7 enforce SLOC, complexity, maintainability");

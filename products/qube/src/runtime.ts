@@ -459,11 +459,11 @@ const componentsCommand = defineCommand({
 const autoresearchCommand = defineCommand({
   kind: "command",
   name: "autoresearch",
-  description: "Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits.",
+  description: "Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use Bootstrap arena synthesis before edits.",
   arguments: [
     defineArgument({
       name: "args",
-      description: "Lifecycle input: init <target-directory> <goal> for an existing local directory, baseline, run, status, dashboard, promote, or compact <target-directory> <goal> as an init-only alias. AIB arena synthesis designs the fixed evaluator from command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy. State lives under .qube/autoresearch/runs/<run-id>/ with latest selection in .qube/autoresearch/latest.json.",
+      description: "Lifecycle input: init <target-directory> <goal> for an existing local directory, baseline, run, status, dashboard, promote, or compact <target-directory> <goal> as an init-only alias. Bootstrap arena synthesis designs the fixed evaluator from command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy. State lives under .qube/autoresearch/runs/<run-id>/ with latest selection in .qube/autoresearch/latest.json.",
       multiple: true
     })
   ],
@@ -496,7 +496,7 @@ const autoresearchCommand = defineCommand({
       command: "qube autoresearch baseline --json"
     },
     {
-      description: "Run one sandboxed candidate loop with AIE execution ownership and AIQ evaluation evidence.",
+      description: "Run one sandboxed candidate loop with Executor execution and Quality evaluation.",
       command: "qube autoresearch run --json"
     },
     {
@@ -705,7 +705,7 @@ interface DirectQubeCommand {
 const doctorCommand = defineCommand({
   kind: "command",
   name: "doctor",
-  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics.",
+  description: "Check Quality, Executor, Umpire, agent harnesses, and provider connections.",
   flags: [jsonFlag, offlineFlag],
   examples: [
     { description: "Run all diagnostics and live read-only provider probes.", command: "qube doctor" },
@@ -974,17 +974,17 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("app wait", "Wait for a local audit app readiness URL.", "aie", "run wait"),
   createDirectCommand("app status", "Show local audit app process status.", "aie", "run status"),
   createDirectCommand("app stop", "Stop a local audit app process.", "aie", "run stop"),
-  createDirectCommand("check", "Run Quality Control checks for explicit paths.", "aiq", "check", { translateJson: true }),
-  createDirectCommand("quality", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
-  createDirectCommand("quality run", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
-  createDirectCommand("quality plan", "Resolve the AIQ quality plan.", "aiq", "plan", { translateJson: true }),
-  createDirectCommand("quality status", "Show AIQ quality status.", "aiq", "status", { translateJson: true }),
-  createDirectCommand("quality setup", "Render AIQ setup guidance.", "aiq", "setup", { translateJson: true }),
-  createDirectCommand("evidence", "Emit structured AIQ quality evidence.", "aiq", "evidence", { translateJson: true }),
-  createDirectCommand("quality evidence", "Emit structured AIQ quality evidence.", "aiq", "evidence", { translateJson: true }),
-  createDirectCommand("bench", "Run the standalone AIQ benchmark corpus.", "aiq", "bench", { translateJson: true }),
-  createDirectCommand("watch", "Run AIQ continuously for explicit paths.", "aiq", "watch", { translateJson: true }),
-  createDirectCommand("serve", "Start the standalone AIQ quality server.", "aiq", "serve", { translateJson: true }),
+  createDirectCommand("check", "Run Quality checks for explicit paths.", "aiq", "check", { translateJson: true }),
+  createDirectCommand("quality", "Run Quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
+  createDirectCommand("quality run", "Run Quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
+  createDirectCommand("quality plan", "Show the Quality check plan.", "aiq", "plan", { translateJson: true }),
+  createDirectCommand("quality status", "Show Quality status.", "aiq", "status", { translateJson: true }),
+  createDirectCommand("quality setup", "Show Quality setup guidance.", "aiq", "setup", { translateJson: true }),
+  createDirectCommand("evidence", "Show structured Quality results.", "aiq", "evidence", { translateJson: true }),
+  createDirectCommand("quality evidence", "Show structured Quality results.", "aiq", "evidence", { translateJson: true }),
+  createDirectCommand("bench", "Run the Quality benchmark corpus.", "aiq", "bench", { translateJson: true }),
+  createDirectCommand("watch", "Run Quality continuously for explicit paths.", "aiq", "watch", { translateJson: true }),
+  createDirectCommand("serve", "Start the Quality server.", "aiq", "serve", { translateJson: true }),
   createDirectCommand("continue", "Show Umpire continuation status and resume guidance.", "aiu", "status"),
   createDirectCommand("whip", "Inspect and manage durable idle whip tasks.", "aiu", "whip"),
 ];
@@ -998,7 +998,7 @@ const ambiguousCommandGuidance: Readonly<Record<string, string>> = {
   labels: "Label management is Executor-specific. Use qube aie labels setup ... when you need repository label administration.",
   repo: "Repository preparation is Executor-specific administration. Use qube aie repo prime ... when you need it.",
   paths: "Path inspection is Umpire-specific. Use qube aiu paths ... when you need package and state paths.",
-  hook: "Hook setup is package-specific. Use qube aiq hook ... for Quality Control hooks.",
+  hook: "Hook setup is package-specific. Use qube aiq hook ... for Quality hooks.",
   "hook-stop": "Stop-hook handling is Umpire-specific host integration. Use qube aiu hook-stop ... from host hook wiring."
 };
 
@@ -1020,7 +1020,7 @@ const runCommand = defineCommand({
   ],
   examples: [
     {
-      description: "Run an advanced AIB command through QUBE.",
+      description: "Run an advanced Bootstrap command through QUBE.",
       command: "qube run aib status"
     },
     {
@@ -1387,10 +1387,10 @@ function continuationExitCode(continuation: QubeDoctorContinuationSection): numb
 
 function formatContinuationHealth(continuation: QubeDoctorContinuationSection): string {
   if (continuation.status !== "ok") {
-    return `Continuation health: ${continuation.status}${continuation.error ? ` — ${continuation.error}` : ""}\n`;
+    return `Umpire health: ${continuation.status}${continuation.error ? ` — ${continuation.error}` : ""}\n`;
   }
   const report = continuation.report as { status?: string } | undefined;
-  return `Continuation health: ${report?.status ?? "unknown"}\n`;
+  return `Umpire health: ${report?.status ?? "unknown"}\n`;
 }
 
 function toolkitExitCode(hosts: HostToolkitReport): number {
@@ -1512,7 +1512,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         ok: false,
         command: "doctor",
         configuration,
-        quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
+        quality: { ok: false, error: planned.stderr.trim() || "Quality doctor is unavailable." },
         workflow,
         continuation,
         hosts,
@@ -1537,16 +1537,16 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     workflowPromise,
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
-  // Offline mode must not mask an actual Quality Control failure as success.
+  // Offline mode must not mask an actual Quality failure as success.
   let exitCode = quality.exitCode === 0
     ? Math.max(configurationExitCode, connectionExitCode, workflowExitCode(workflow), continuationExitCode(continuation), toolkitExitCode(hosts))
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
     try {
-      qualityPayload = quality.truncated ? { ok: false, error: "Quality Control doctor output exceeded the capture limit." } : JSON.parse(quality.stdout);
+      qualityPayload = quality.truncated ? { ok: false, error: "Quality doctor output exceeded the capture limit." } : JSON.parse(quality.stdout);
     } catch {
-      qualityPayload = { ok: false, error: "Quality Control doctor returned invalid JSON." };
+      qualityPayload = { ok: false, error: "Quality doctor returned invalid JSON." };
     }
     // A zero exit with a failing or unreadable payload is still a failure.
     if (exitCode === 0 && (!qualityPayload || typeof qualityPayload !== "object" || (qualityPayload as { ok?: unknown }).ok === false)) {
@@ -4115,7 +4115,7 @@ function baselineAutoresearch(
   }
   const evaluation = evaluateAutoresearchCommand(context, workspacePath);
   if (evaluation.referee?.status !== "passed") {
-    return { error: `Autoresearch baseline evaluator was rejected: ${evaluation.referee?.reasons.join(" ") || "unknown AIQ referee rejection"}` };
+    return { error: `Autoresearch baseline evaluator was rejected: ${evaluation.referee?.reasons.join(" ") || "unknown Quality referee rejection"}` };
   }
   const state = updateAutoresearchState(context.state, {
     phase: "baselined",
@@ -5615,7 +5615,7 @@ function renderAutoresearchHelp(): string {
     "Agent entry:",
     "  When a user asks for autoresearch in natural language, run this help first.",
     "  Translate the request into <target-directory> plus <goal>; do not edit the target before arena synthesis.",
-    "  Init uses AIB arena synthesis to classify the target, resolve the local path, design the referee, define mutable surfaces and invariants, and write the fixed arena.",
+    "  Init uses Bootstrap arena synthesis to classify the target, resolve the local path, design the referee, define mutable surfaces and invariants, and write the fixed arena.",
     "  Ask only blocking clarification questions returned by synthesis; otherwise infer safe defaults from the target.",
     "",
     "Target and goal:",
@@ -5638,7 +5638,7 @@ function renderAutoresearchHelp(): string {
     "Safety boundaries:",
     "  init creates the arena and evaluator without target mutation.",
     "  baseline records immutable fixed-evaluator evidence.",
-    "  run writes sandboxed candidates under .qube/autoresearch/ and records AIE execution, AIQ evaluation, and AIU continuation ownership.",
+    "  run writes sandboxed candidates under .qube/autoresearch/ and records Executor execution, Quality evaluation, and Umpire continuation.",
     "  promote applies the accepted current-best file changes to the target workspace.",
     "  Promotion JSON includes changedFiles and the existing reportPath. The report remains in the run directory.",
     "  evaluator.json changes after init stop lifecycle commands until a new arena is created.",
@@ -6747,7 +6747,7 @@ function createMakeItSoPlan(
         "Direct-local artifact generation is intentionally not implemented here until QUBE oneshot exists.",
         "No GitHub issue, branch, pull request, dependency, or workspace mutation is performed."
       ],
-      nextAction: "Use `qube make-it-so --flow planned <intent>` to create a real AIB plan, or implement the oneshot workflow before enabling direct-local execution."
+      nextAction: "Use `qube make-it-so --flow planned <intent>` to create a Bootstrap plan, or implement the oneshot workflow before enabling direct-local execution."
     };
   }
 
@@ -6784,8 +6784,8 @@ function createMakeItSoPlan(
     status: "dispatch",
     mappedCommand: makeMappedCommand("aib", args),
     boundaries: [
-      "Uses AIB planning state only; it does not create a GitHub issue, branch, pull request, or review request.",
-      "Execution still requires explicit work item creation and AIE issue workflow after planning."
+      "Uses Bootstrap planning state only; it does not create a GitHub issue, branch, pull request, or review request.",
+      "Execution still requires explicit work item creation and the Executor issue workflow after planning."
     ],
     nextAction: `Run ${formatQubeCommand("aib", args)}.`
   };

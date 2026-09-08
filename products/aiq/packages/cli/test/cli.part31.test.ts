@@ -93,7 +93,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ check");
+    expect(stdout.value).toContain("Quality check");
     expect(stdout.value).toContain("Status: failed");
     expect(stdout.value).toContain("Stages: 1 lint failed");
     expect(stdout.value).toContain("Files: 1; diagnostics:");

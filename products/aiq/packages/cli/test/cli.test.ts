@@ -128,7 +128,7 @@ describe("CLI foundation", () => {
     expect(packageReadme).toContain(
       "Metric stages enforce SLOC, complexity, maintainability, and readability defaults for source and test code.",
     );
-    expect(packageReadme).toContain("AIQ uses repository-native tool configs by default.");
+    expect(packageReadme).toContain("Quality uses repository-native tool configs by default.");
     expect(packageReadme).toContain("Existing Biome config, `tsconfig.json`, Vitest/Jest config");
     expect(packageReadme).toContain("Default text output is compact");
     expect(packageReadme).toContain("Use `--verbose` for run metadata");

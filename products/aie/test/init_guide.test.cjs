@@ -586,7 +586,7 @@ describe('init --from', () => {
     assert.equal(result.from.source, 'known-good/.qube/aie/config.json');
     assert.ok(result.from.sourceDigest);
     assert.ok(result.from.adjustments.some(item => /Disabled manual UI audit/.test(item)));
-    assert.ok(result.from.adjustments.some(item => /Disabled Quality Control/.test(item)));
+    assert.ok(result.from.adjustments.some(item => /Disabled Quality/.test(item)));
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.policy.reviews.mode, 'isolated');
     assert.deepEqual(config.policy.reviews.agents, ['review-bot']);

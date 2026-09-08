@@ -1,4 +1,4 @@
-# @tjalve/aib
+# Bootstrap
 
 `@tjalve/aib` is an agent-operated planning CLI. It turns a rough idea into
 durable planning state, a draftable spec, milestone plans, and work item drafts
@@ -56,7 +56,7 @@ aib init . --agent opencode --idea "Add import/export support" --dry-run --json
 
 ## Outputs
 
-Depending on the selected provider and command, AIB can produce:
+Depending on the selected provider and command, Bootstrap can produce:
 
 - planning state under `.qube/aib/`
 - spec drafts and validation results
@@ -74,7 +74,7 @@ adds direct provider writes.
 - The package has no install lifecycle scripts.
 - `init`, `answer`, and rendering commands expose JSON and dry-run behavior for
   reviewable automation.
-- Host instruction files are local project assets; AIB does not install global
+- Host instruction files are local project assets; Bootstrap does not install global
   skills, hooks, package managers, or provider credentials.
 - Planning state is product data. Review generated specs and work items before
   using them as execution authority.

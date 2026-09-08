@@ -58,7 +58,7 @@ describe("packed tarball install smoke", () => {
     await rm(path.join(target, "node_modules"), { recursive: true, force: true });
     await runPnpm(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], target);
     const installedCommand = path.join(target, "node_modules", ".bin", process.platform === "win32" ? "aiu.cmd" : "aiu");
-    assert.equal(existsSync(installedCommand), true, "pnpm must create the AIU command shim during install");
+    assert.equal(existsSync(installedCommand), true, "pnpm must create the Umpire command shim during install");
     const result = await runPnpm(["exec", "aiu", "init", "--json"], target);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
 

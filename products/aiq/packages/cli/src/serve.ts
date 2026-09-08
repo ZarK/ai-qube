@@ -126,7 +126,7 @@ async function handleServeRequest(
   } catch (error) {
     if (isCliCancellation(error, signal)) {
       if (!response.headersSent && !response.destroyed) {
-        writeJsonResponse(response, 503, { error: "AIQ serve is shutting down." });
+        writeJsonResponse(response, 503, { error: "Quality server is shutting down." });
       }
       return;
     }
@@ -254,7 +254,7 @@ function tryAcquireServeRunLock(runLock: ServeRunLock): (() => void) | undefined
 
 function writeBusyServeResponse(response: ServerResponse): void {
   response.setHeader("retry-after", "1");
-  writeJsonResponse(response, 503, { error: "AIQ serve is already processing another run." });
+  writeJsonResponse(response, 503, { error: "Quality server is already processing another run." });
 }
 
 function createServeRequestSignal(
@@ -323,7 +323,7 @@ async function listenServer(server: Server, host: string, port: number): Promise
 
   const address = server.address();
   if (address === null || typeof address === "string") {
-    throw new Error("AIQ serve expected a TCP address.");
+    throw new Error("Quality server expected a TCP address.");
   }
 
   return address;

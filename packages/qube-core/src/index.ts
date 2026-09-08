@@ -641,7 +641,7 @@ export const githubAdapterContract = defineQubeAdapter({
     adapterCapability("diagnose-ci-status", "supported", "@tjalve/qube-adapter-github", "Report whether PR checks map to the current head, stale workflow runs, failed runs, skipped runs, or pending runs."),
     adapterCapability("read-review-threads", "supported", "@tjalve/qube-adapter-github", "Read unresolved GitHub pull request review threads, anchors, ids, and resolve capability as untrusted feedback inputs."),
     adapterCapability("resolve-review-threads", "supported", "@tjalve/qube-adapter-github", "Resolve addressed GitHub pull request review threads through the provider GraphQL mutation."),
-    adapterCapability("run-aiq-github-action", "standalone", "@tjalve/aiq GitHub Action package", "AIQ exposes GitHub behavior through its standalone action package, not through the QUBE GitHub provider adapter."),
+    adapterCapability("run-aiq-github-action", "standalone", "@tjalve/aiq GitHub Action package", "Quality exposes GitHub behavior through its standalone action package, not through the QUBE GitHub provider adapter."),
     adapterCapability("trigger-workflow-run", "unsupported", "@tjalve/aie", "The GitHub adapter reports CI diagnostics but does not trigger workflow runs yet."),
     adapterCapability("approve-pull-request", "unsupported", "GitHub review provider", "Adapter support never fabricates pull request approval."),
     adapterCapability("mutate-repository-files", "unsupported", "@tjalve/aie repository provider", "GitHub provider support does not edit local repository files."),
@@ -671,7 +671,7 @@ export const gitLabAdapterContract = defineQubeAdapter({
   capabilities: Object.freeze([
     adapterCapability("map-work-item", "supported", "@tjalve/qube-adapter-gitlab", "Map GitLab issues, labels, milestones, assignees, task completion, issue links, blockers, and source metadata into QUBE work items."),
     adapterCapability("work-item-queue", "supported", "@tjalve/qube-adapter-gitlab", "Read paginated GitLab project issues through GitLab.com or self-managed GitLab REST APIs and normalize reverse blocker links for queue ordering."),
-    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-gitlab", "Render provider-neutral AIB work item drafts into GitLab issue previews without mutating GitLab."),
+    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-gitlab", "Render provider-neutral Bootstrap work item drafts into GitLab issue previews without mutating GitLab."),
     adapterCapability("load-merge-request", "supported", "@tjalve/qube-adapter-gitlab", "Read GitLab merge request state, mergeability, reviewers, discussions, provider-visible review notes, and closing issue references."),
     adapterCapability("request-review-gate", "supported", "@tjalve/qube-adapter-gitlab", "Request configured review participants by posting provider-visible GitLab merge request notes with stable trusted metadata."),
     adapterCapability("read-ci-status", "supported", "@tjalve/qube-adapter-gitlab", "Normalize GitLab merge request head pipeline status into trusted provider gate evidence."),
@@ -699,7 +699,7 @@ export const linearAdapterContract = defineQubeAdapter({
   capabilities: Object.freeze([
     adapterCapability("map-work-item", "supported", "@tjalve/qube-adapter-linear", "Map Linear issues, workflow state, relations, labels, project metadata, assignee, checklist state, and source metadata into QUBE work items."),
     adapterCapability("work-item-queue", "supported", "@tjalve/qube-adapter-linear", "Read Linear team issues through the Linear GraphQL API and normalize reverse blocker links for queue ordering."),
-    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-linear", "Render provider-neutral AIB work item drafts into Linear issue previews without mutating Linear."),
+    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-linear", "Render provider-neutral Bootstrap work item drafts into Linear issue previews without mutating Linear."),
     adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-linear", "Linear lifecycle mutations require explicit team workflow-state configuration and are reported as unsupported."),
   ]),
   connection: linearConnectionContract,
@@ -723,7 +723,7 @@ export const jiraAdapterContract = defineQubeAdapter({
     adapterCapability("map-work-item", "supported", "@tjalve/qube-adapter-jira", "Map Jira issues, issue types, projects, statuses, priorities, labels/components, assignees, sprints, epics, comments, issue links, and source metadata into QUBE work items."),
     adapterCapability("work-item-queue", "supported", "@tjalve/qube-adapter-jira", "Read Jira issues through Jira REST using configured JQL and normalize reverse blocker links for queue ordering."),
     adapterCapability("workflow-schema", "supported", "@tjalve/qube-adapter-jira", "Keep status, priority, completion, sprint, epic, and dependency mapping schema-driven for custom Jira workflows and fields."),
-    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-jira", "Render provider-neutral AIB work item drafts into Jira issue previews without mutating Jira."),
+    adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-jira", "Render provider-neutral Bootstrap work item drafts into Jira issue previews without mutating Jira."),
     adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-jira", "Jira lifecycle mutations require explicit workflow transition IDs and are reported as unsupported."),
   ]),
   connection: jiraConnectionContract,
@@ -799,7 +799,7 @@ export const qubeProductContracts = [
   },
   {
     id: "quality",
-    displayName: "Quality Control",
+    displayName: "Quality",
     packageName: "@tjalve/aiq",
     commandName: "aiq",
     role: "Evaluate code quality and package readiness across languages.",
@@ -852,7 +852,7 @@ export const qubeCommandSurfaceContracts = [
     classification: "standalone package command",
     qubeFacing: false,
     schemaRequired: true,
-    notes: "AIQ benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such.",
+    notes: "Quality benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such.",
   },
   {
     productId: "umpire",

@@ -9,7 +9,7 @@ On native Windows, QUBE inspects the ACP model options without sending a review 
 The readiness probe records both the selected Cursor model ID and the exact ACP value. The review runner uses that recorded value. If the ACP catalog changes before execution, QUBE stops before it sends the review prompt. When a configured fallback host runs, provider-visible provenance keeps the original compatibility reason.
 
 The adapter also supports current-session Umpire continuation through Cursor's
-project Stop hook. AIU merges one `stop` entry with a finite loop limit into
+project Stop hook. Umpire merges one `stop` entry with a finite loop limit into
 `.cursor/hooks.json`, preserves unrelated hook configuration, and returns one
 `followup_message` only when trusted QUBE state permits continuation. Cursor
 must trust the repository before it runs the hook. QUBE does not pass the

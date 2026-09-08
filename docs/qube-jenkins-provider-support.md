@@ -8,7 +8,7 @@ the selected work and review providers.
 
 Supported now:
 
-- AIE reads Jenkins build evidence through the optional
+- Executor reads Jenkins build evidence through the optional
   `@tjalve/qube-adapter-jenkins` package.
 - The adapter maps build result, queue state, logs, and artifact URLs into
   provider-neutral gate evidence.
@@ -19,8 +19,8 @@ Supported now:
 
 Explicitly unsupported now:
 
-- AIE does not trigger or rerun Jenkins builds.
-- AIE does not fall back to GitHub Actions when Jenkins evidence is requested.
+- Executor does not trigger or rerun Jenkins builds.
+- Executor does not fall back to GitHub Actions when Jenkins evidence is requested.
 
 ## Configuration
 

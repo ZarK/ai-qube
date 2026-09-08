@@ -14,8 +14,8 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
 | `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. Native continuation verification is optional, explicit, and can incur harness model cost. |
-| `qube doctor` | Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics. |
-| `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits. |
+| `qube doctor` | Check Quality, Executor, Umpire, agent harnesses, and provider connections. |
+| `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use Bootstrap arena synthesis before edits. |
 | `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |
 | `qube make-it-so` | Map an intent to the safest real QUBE workflow. |
 | `qube run` | Run a QUBE component command with passthrough arguments. |
@@ -126,17 +126,17 @@ Each direct command is the composer-facing name for one component command.
 | `qube app wait` | `aie run wait` | Wait for a local audit app readiness URL. |
 | `qube app status` | `aie run status` | Show local audit app process status. |
 | `qube app stop` | `aie run stop` | Stop a local audit app process. |
-| `qube check` | `aiq check` | Run Quality Control checks for explicit paths. |
-| `qube quality` | `aiq run` | Run AIQ quality stages for explicit paths. |
-| `qube quality run` | `aiq run` | Run AIQ quality stages for explicit paths. |
-| `qube quality plan` | `aiq plan` | Resolve the AIQ quality plan. |
-| `qube quality status` | `aiq status` | Show AIQ quality status. |
-| `qube quality setup` | `aiq setup` | Render AIQ setup guidance. |
-| `qube evidence` | `aiq evidence` | Emit structured AIQ quality evidence. |
-| `qube quality evidence` | `aiq evidence` | Emit structured AIQ quality evidence. |
-| `qube bench` | `aiq bench` | Run the standalone AIQ benchmark corpus. |
-| `qube watch` | `aiq watch` | Run AIQ continuously for explicit paths. |
-| `qube serve` | `aiq serve` | Start the standalone AIQ quality server. |
+| `qube check` | `aiq check` | Run Quality checks for explicit paths. |
+| `qube quality` | `aiq run` | Run Quality stages for explicit paths. |
+| `qube quality run` | `aiq run` | Run Quality stages for explicit paths. |
+| `qube quality plan` | `aiq plan` | Show the Quality check plan. |
+| `qube quality status` | `aiq status` | Show Quality status. |
+| `qube quality setup` | `aiq setup` | Show Quality setup guidance. |
+| `qube evidence` | `aiq evidence` | Show structured Quality results. |
+| `qube quality evidence` | `aiq evidence` | Show structured Quality results. |
+| `qube bench` | `aiq bench` | Run the Quality benchmark corpus. |
+| `qube watch` | `aiq watch` | Run Quality continuously for explicit paths. |
+| `qube serve` | `aiq serve` | Start the Quality server. |
 | `qube continue` | `aiu status` | Show Umpire continuation status and resume guidance. |
 | `qube whip` | `aiu whip` | Inspect and manage durable idle whip tasks. |
 
@@ -160,5 +160,5 @@ Package-level classification from the core contracts: which package command patt
 | `@tjalve/aib` | `aib init\|status\|next\|answer\|spec *\|milestones *\|work-items *` | qube-facing workflow command | yes | yes | Bootstrap planning commands are safe to discover through QUBE and keep provider mutation behind dry-run or local-file guards. |
 | `@tjalve/aie` | `aie queue\|start\|switch\|branch *\|pr *\|complete\|review\|doctor\|schema\|init` | qube-facing workflow command | yes | yes | Executor owns GitHub issue, PR, and review workflow behavior plus host instruction setup. |
 | `@tjalve/aiq` | `aiq run\|check\|plan\|doctor\|setup\|status\|config\|evidence\|schema` | qube-facing workflow command | yes | yes | Quality workflow commands are discoverable by QUBE; mutating or tool-running commands expose dry-run and supply-chain metadata. |
-| `@tjalve/aiq` | `aiq bench\|watch\|serve\|hook install\|ci setup\|ignore write` | standalone package command | no | yes | AIQ benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such. |
+| `@tjalve/aiq` | `aiq bench\|watch\|serve\|hook install\|ci setup\|ignore write` | standalone package command | no | yes | Quality benchmark, daemon, and adapter-guidance commands remain standalone package surfaces and are documented as such. |
 | `@tjalve/aiu` | `aiu config\|doctor\|status\|paths\|init\|verify\|hook-stop\|whip` | qube-facing workflow command | yes | yes | Umpire exposes continuation policy, trusted-state, OpenCode host integration, and local whip state commands. |

@@ -46,7 +46,7 @@ describe("trusted command adapters", () => {
     assert.equal(result.states[0]?.value.status, "pass");
   });
 
-  it("accepts AIE status states and normalizes current-issue recovery commands", async () => {
+  it("accepts Executor status states and normalizes current-issue recovery commands", async () => {
     const { parseAiuTrustedStateJson, toAiuTrustedStateCommandRef } = await loadTrustedAdapter();
     const result = parseAiuTrustedStateJson({
       sourceId: "work",

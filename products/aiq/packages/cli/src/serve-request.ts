@@ -39,7 +39,7 @@ export class ServeRequestTooLargeError extends ServeRequestValidationError {
 }
 
 export class ServeRequestCancelledError extends Error {
-  constructor(message = "AIQ serve request cancelled.") {
+  constructor(message = "Quality server request cancelled.") {
     super(message);
     this.name = "ServeRequestCancelledError";
   }

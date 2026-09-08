@@ -14,7 +14,7 @@ import {
 const pluginAsset = Object.freeze({
   id: "plugin-wrapper",
   relativePath: ".opencode/plugins/ai-umpire-continuation.ts",
-  description: "OpenCode AI Umpire plugin wrapper.",
+  description: "OpenCode Umpire plugin wrapper.",
   ownership: "dedicated" as const,
   role: "entrypoint" as const,
 });
@@ -146,14 +146,14 @@ export const opencodeContinuationAdapter = defineContinuationAdapter({
 function probeOpenCodePackage(repoRoot: string, expectedVersion: string | undefined) {
   const manifestPath = path.join(repoRoot, ...packageAsset.relativePath.split("/"));
   const action = "Run aiu init --tool opencode, install the exact declared package, then rerun aiu doctor --json.";
-  if (!existsSync(manifestPath)) return Object.freeze({ status: "blocked" as const, code: "opencode-plugin-package-manifest-missing", reason: "OpenCode cannot load AI Umpire because .opencode/package.json is missing.", path: manifestPath, nextAction: action, severity: "error" as const });
+  if (!existsSync(manifestPath)) return Object.freeze({ status: "blocked" as const, code: "opencode-plugin-package-manifest-missing", reason: "OpenCode cannot load Umpire because .opencode/package.json is missing.", path: manifestPath, nextAction: action, severity: "error" as const });
   let manifest: Record<string, unknown>;
   try {
     const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
     if (!isRecord(parsed)) throw new Error("manifest is not a JSON object");
     manifest = parsed;
   } catch (error) {
-    return Object.freeze({ status: "blocked" as const, code: "opencode-plugin-package-manifest-invalid", reason: `OpenCode cannot load AI Umpire because .opencode/package.json is invalid: ${error instanceof Error ? error.message : String(error)}`, path: manifestPath, nextAction: "Fix .opencode/package.json, rerun aiu init --tool opencode, then rerun aiu doctor --json.", severity: "error" as const });
+    return Object.freeze({ status: "blocked" as const, code: "opencode-plugin-package-manifest-invalid", reason: `OpenCode cannot load Umpire because .opencode/package.json is invalid: ${error instanceof Error ? error.message : String(error)}`, path: manifestPath, nextAction: "Fix .opencode/package.json, rerun aiu init --tool opencode, then rerun aiu doctor --json.", severity: "error" as const });
   }
   const dependencies = isRecord(manifest.dependencies) ? manifest.dependencies : undefined;
   if (!expectedVersion || dependencies?.["@tjalve/aiu"] !== expectedVersion) return Object.freeze({ status: "blocked" as const, code: "opencode-plugin-package-version-mismatch", reason: `OpenCode requires the exact @tjalve/aiu package version ${expectedVersion ?? "declared by Umpire"} in .opencode/package.json.`, path: manifestPath, nextAction: action, severity: "error" as const });

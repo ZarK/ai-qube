@@ -57,7 +57,7 @@ All four QUBE products participate in one init run:
 
 1. Bootstrap prepares repository planning for the selected harnesses.
 2. Executor prepares issue work, automated checks, review, and shipping policy.
-3. Quality Control prepares the selected quality stages.
+3. Quality prepares the selected quality stages.
 4. Umpire prepares the selected continuation scope.
 
 QUBE writes the instructions and the canonical Make It So entry point for each

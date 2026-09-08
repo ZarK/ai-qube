@@ -92,7 +92,7 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
 
   const distPath = join(options.repoRoot, 'products', 'aie', 'dist', 'bin', 'run.js');
   const distPresent = existsSync(distPath);
-  const distNextAction = distPresent ? null : 'Build AIE before publishing local review lanes: run `pnpm --filter @tjalve/aie run build`.';
+  const distNextAction = distPresent ? null : 'Build Executor before publishing local review lanes: run `pnpm --filter @tjalve/aie run build`.';
   if (distNextAction) nextActions.push(distNextAction);
   const dist = {
     readiness: distPresent ? 'ready' as const : 'missing' as const,

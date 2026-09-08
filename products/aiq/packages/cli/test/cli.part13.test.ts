@@ -24,7 +24,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ doctor");
+    expect(stdout.value).toContain("Quality doctor");
     expect(stdout.value).toContain("Config:");
     expect(stdout.value).toContain("Progress:");
     expect(stdout.value).toContain("Technologies:");

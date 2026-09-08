@@ -1,10 +1,10 @@
-# @tjalve/aiq
+# Quality
 
-`@tjalve/aiq` is a staged code quality runner for AI-assisted repositories. It
+Quality is a staged code quality runner for AI-assisted repositories. The published package is `@tjalve/aiq`. It
 gives humans and agents one stage ladder, one persisted current stage, and one
 command surface for running the checks that matter now.
 
-AIQ uses repository-native tool configs by default. Existing Biome config, `tsconfig.json`, Vitest/Jest config, Playwright config or package test scripts, Ruff/Radon-compatible Python config, and metrics config files remain authoritative unless AIQ stage or tool selection explicitly narrows what runs.
+Quality uses repository-native tool configs by default. Existing Biome config, `tsconfig.json`, Vitest/Jest config, Playwright config or package test scripts, Ruff/Radon-compatible Python config, and metrics config files remain authoritative unless Quality stage or tool selection explicitly narrows what runs.
 
 For the full QUBE package family and command deck, see
 https://zark.github.io/ai-qube/ or the repository landing-page artifact at
@@ -56,7 +56,7 @@ explicit files and subtrees. Use `plan <paths...>` to see what would run for
 explicit targets. `--dry-run` prints the resolved run plan without executing
 tools or writing artifacts.
 
-`evidence` reads the latest AIQ report and emits structured JSON that
+`evidence` reads the latest Quality report and emits structured JSON that
 orchestration tools can store as gate evidence or parse as trusted quality
 state.
 
@@ -68,13 +68,13 @@ Default text output is compact: status, selected stage results, diagnostics summ
 `@tjalve/aiq/api` exposes the model, config, engine, reporter, and benchmark
 APIs used by the hook, MCP, LSP, GitHub Action, and OpenCode packages.
 
-QUBE orchestration can discover the implemented AIQ command surface with
-`aiq schema --format json` or by importing `@tjalve/aiq/schema`. AIE and AIU
+QUBE orchestration can discover the implemented Quality command surface with
+`aiq schema --format json` or by importing `@tjalve/aiq/schema`. Executor and Umpire
 integrations should consume `aiq evidence --format json` instead of agent
 narration.
 
-QUBE-facing AIQ commands are `run`, `check`, `plan`, `doctor`, `setup`,
-`status`, `config`, `evidence`, and `schema`. Standalone-only AIQ commands are
+QUBE-facing Quality commands are `run`, `check`, `plan`, `doctor`, `setup`,
+`status`, `config`, `evidence`, and `schema`. Standalone-only Quality commands are
 `bench`, `watch`, `serve`, `hook install`, `ci setup`, and `ignore write`.
 
 ## Stage Ladder
@@ -132,7 +132,7 @@ aiq doctor --verbose
 `setup` gives agents the setup actions for the selected stages and detected
 project technologies. It reports bundled, project-managed, and external host
 tools, lists missing required prerequisites, and returns structured recommended
-actions in JSON. AIQ does not install tools or mutate the host environment.
+actions in JSON. Quality does not install tools or mutate the host environment.
 
 `doctor` checks config/progress state, detects project technologies, reports the
 stages that would run, and separates npm-bundled tools from external host tools.
@@ -159,5 +159,5 @@ Allowed changes include splitting oversized files, extracting existing code bloc
   commands.
 - `run`, `check`, `watch`, and benchmark commands may execute repository quality
   tools selected by configuration.
-- AIQ does not install missing host tools. It reports setup actions for the
+- Quality does not install missing host tools. It reports setup actions for the
   repository owner or agent to apply through the normal project toolchain.

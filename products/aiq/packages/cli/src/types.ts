@@ -86,7 +86,7 @@ export interface VerboseToolRunDetail
   stageId: StageId;
 }
 
-export const cliHelp = `AIQ CLI
+export const cliHelp = `Quality CLI
 
 Usage:
   aiq [--up-to <0-9> | --only <0-9> | --stage <stage>] [--format <json|text>]
@@ -173,9 +173,9 @@ Operational checks:
   --verbose adds run metadata, artifact paths, stage notes, and command/tool details to text output.
   --format json keeps the complete machine-readable report for automation.
   aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
-  aiq setup gives agent-facing setup steps for the same selected stages and detected technologies. AIQ reports setup needs; it does not install tools or mutate the host environment.
-  AIQ uses repository-native tool configs by default, including Biome, tsconfig, Vitest/Jest, Playwright, Ruff/Radon-compatible Python config, and metrics config files when those tools expose them.
-  aiq evidence emits structured AIQ quality evidence that AIE can record and AIU can parse as trusted quality state.
+  aiq setup gives agent-facing setup steps for the same selected stages and detected technologies. Quality reports setup needs; it does not install tools or mutate the host environment.
+  Quality uses repository-native tool configs by default, including Biome, tsconfig, Vitest/Jest, Playwright, Ruff/Radon-compatible Python config, and metrics config files when those tools expose them.
+  aiq evidence emits structured Quality evidence that Executor can record and Umpire can parse as trusted quality state.
   aiq status shows the current stage, default stage selection, latest artifact paths, last run status, and next suggested command.
   hook install, ci setup, and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
 

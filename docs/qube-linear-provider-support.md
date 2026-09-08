@@ -10,10 +10,10 @@ explicitly chooses otherwise.
 
 Supported now:
 
-- AIB renders provider-neutral work item drafts into Linear issue previews
+- Bootstrap renders provider-neutral work item drafts into Linear issue previews
   through `@tjalve/qube-adapter-linear` with
   `qube aib work-items render --provider linear --dry-run --json`.
-- AIE resolves Linear through the optional `@tjalve/qube-adapter-linear`
+- Executor resolves Linear through the optional `@tjalve/qube-adapter-linear`
   work-provider package boundary. The adapter maps Linear issues into QUBE work
   items for read flows.
 - Linear workflow state, priority, labels, assignee, project, blockers, and
@@ -23,11 +23,11 @@ Supported now:
 
 Explicitly unsupported now:
 
-- AIB does not create Linear issues. Use `--dry-run` to review planned Linear
+- Bootstrap does not create Linear issues. Use `--dry-run` to review planned Linear
   issue payloads.
-- AIE does not mutate Linear workflow states, comments, assignees, or close
+- Executor does not mutate Linear workflow states, comments, assignees, or close
   Linear issues yet.
-- AIE does not silently fall back to GitHub labels when Linear lifecycle
+- Executor does not silently fall back to GitHub labels when Linear lifecycle
   mutation is requested.
 - GitHub pull requests, GitHub Actions, and reviewer gates are still GitHub
   provider behavior, not Linear behavior.
@@ -86,7 +86,7 @@ Linear issue fields map to QUBE work items as follows:
 Linear metadata is stored under `trustedMetadata.linear*` fields. GitHub issue
 numbers are not invented for Linear work items.
 
-## AIB Rendering
+## Bootstrap rendering
 
 Preview Linear issues from recorded provider-neutral drafts:
 
@@ -107,10 +107,10 @@ qube aib work-items render --provider linear --json
 The command exits with `provider-mutation-unsupported` until Linear issue
 creation has a tested mutation adapter.
 
-## AIE Read Flow
+## Executor read flow
 
 With `providers.work.kind` set to `linear` and the documented environment
-variables present, AIE can read Linear issues through the provider contract.
+variables present, Executor can read Linear issues through the provider contract.
 Lifecycle mutation commands report unsupported operations when they would need
 to change Linear workflow state, comments, assignees, or completion state.
 

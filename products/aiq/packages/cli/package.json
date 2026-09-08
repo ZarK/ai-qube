@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/aiq",
   "version": "0.2.6",
-  "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
+  "description": "Quality - staged code quality gates with agent-facing setup and remediation guidance.",
   "license": "MIT",
   "author": "tjalve",
   "type": "module",

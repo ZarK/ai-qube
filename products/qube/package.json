@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/qube",
   "version": "0.2.16",
-  "description": "QUBE composer CLI for coordinating the standalone planning, execution, quality, and continuation tools.",
+  "description": "QUBE CLI for Quality, Umpire, Bootstrap, and Executor.",
   "keywords": [
     "cli",
     "agent",

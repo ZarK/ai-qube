@@ -115,7 +115,7 @@ export const grokBuildHostProfile: AgentHostProfile = defineAgentHostProfile({
     }),
     probe: Object.freeze({
       support: "experimental",
-      description: "QUBE can inspect Grok Build Umpire setup through AIU doctor.",
+      description: "QUBE can inspect Grok Build Umpire setup with the `aiu doctor` command.",
       nextAction: "Run `qube aiu doctor --json` and address any reported setup problems.",
       command: Object.freeze(["qube", "aiu", "doctor", "--json"] as const),
     }),

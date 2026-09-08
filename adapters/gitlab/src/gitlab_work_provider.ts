@@ -165,7 +165,7 @@ function unsupportedAction(item: WorkItem | null, kind: Action['kind'], operatio
       providerId: 'gitlab',
       displayId: item?.displayId ?? null,
       unsupported: true,
-      nextAction: 'Use GitLab queue/view reads and AIB GitLab draft rendering, or add tested GitLab issue and merge-request mutation adapters before enabling lifecycle mutations.',
+      nextAction: 'Use GitLab queue/view reads and Bootstrap GitLab draft rendering, or add tested GitLab issue and merge-request mutation adapters before enabling lifecycle mutations.',
     },
   });
 }

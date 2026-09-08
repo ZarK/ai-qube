@@ -293,8 +293,8 @@ class DoctorDiagnosticsBuilder {
     if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') {
       recommendations.push(
         gateReadiness.aiq.tool.state === 'present-but-failing'
-          ? 'Quality Control is enabled but `aiq` failed its capability probe. Repair the install before relying on that gate.'
-          : 'Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.',
+          ? 'Quality is enabled but `aiq` failed its capability probe. Repair the install before relying on that gate.'
+          : 'Quality is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.',
       );
     }
     if (gateReadiness.prReview.readiness === 'missing') recommendations.push('PR review gates need authenticated GitHub CLI access. Run `gh auth login` before requesting or inspecting PR reviewers.');

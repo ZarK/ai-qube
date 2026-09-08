@@ -25,6 +25,19 @@ describe("codex adapter", () => {
     assert.equal(codexContinuationAdapter.decodeEvent({ ...payload, hookEventName: "stop", hook_event_name: undefined }).ok, false);
     assert.equal(codexContinuationAdapter.probe({ surface: "plugin-event", version: null }).status, "blocked");
   });
+
+  it("renders the Umpire product name in managed assets", () => {
+    const assets = codexContinuationAdapter.renderManagedAssets({ commandPrefix: "pnpm exec aiu" });
+    const marketplace = JSON.parse(assets.find((asset) => asset.id === "marketplace").content);
+    const manifest = JSON.parse(assets.find((asset) => asset.id === "plugin-manifest").content);
+    const skill = assets.find((asset) => asset.id === "skill").content;
+
+    assert.equal(marketplace.interface.displayName, "Umpire");
+    assert.equal(manifest.interface.displayName, "Umpire");
+    assert.equal(manifest.interface.developerName, "Umpire");
+    assert.match(skill, /^# Umpire$/m);
+  });
+
   it("exposes the codex host profile", () => {
     assert.equal(codexHostProfile.id, "codex");
     assert.deepEqual(codexHostProfile.executables, { names: ["codex"], windowsNames: ["codex.exe"] });

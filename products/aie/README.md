@@ -1,6 +1,6 @@
-# @tjalve/aie
+# Executor
 
-`@tjalve/aie` is the AI Executor CLI for issue-driven execution. It helps an
+`@tjalve/aie` is the Executor CLI for issue-driven execution. It helps an
 agent inspect ready work, start a scoped branch, run repository gates, open or
 update pull requests, check reviews, and complete work after merge.
 
@@ -9,7 +9,7 @@ and uses the repository's own scripts, policy, branch state, configured work
 provider, and pull requests as the source of truth.
 
 GitHub work support is owned by the optional adapter package
-`@tjalve/qube-adapter-github`. AIE core keeps provider-neutral lifecycle
+`@tjalve/qube-adapter-github`. Executor core keeps provider-neutral lifecycle
 behavior, while adapter packages own provider API clients, credentials, mapping,
 capability flags, merge and review-thread reads, and unsupported-operation
 diagnostics. Other work providers follow the same package boundary: the GitLab

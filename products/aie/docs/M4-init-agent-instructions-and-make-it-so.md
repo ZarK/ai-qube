@@ -8,7 +8,7 @@ M1 created the package and CLI foundation. M2 added labels, queue, and dependenc
 
 This milestone implements `aie init`, managed instruction sections, host-specific install targets, `/make-it-so`, config prompts, non-interactive init, optional naming-rules instruction injection, and the generic autonomous work-cycle wording.
 
-M4 does not implement the PR review polling command, review-harness prompt and evidence support, manual UI audit guidance/evidence helper, or optional Quality Control gate guidance. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
+M4 does not implement the PR review polling command, review-harness prompt and evidence support, manual UI audit guidance/evidence helper, or optional Quality gate guidance. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
 
 After M4, a developer or agent should be able to run:
 
@@ -53,14 +53,14 @@ M4 also extends:
 - **FR-13-001 through FR-13-004** - clear init output, structured output, actionable errors, and non-mutating diagnostics.
 - **FR-15-001 through FR-15-020** - CLI explorability, schema, help metadata, stdout/stderr separation, mutation labeling, and shared command metadata for `aie init`.
 
-M4 also adds milestone-level detail to installed instruction behavior: `aie init` can render an optional naming-rules section into managed agent instruction files so repositories can ask agents for clear, concrete, human-friendly names without installing Quality Control.
+M4 also adds milestone-level detail to installed instruction behavior: `aie init` can render an optional naming-rules section into managed agent instruction files so repositories can ask agents for clear, concrete, human-friendly names without installing Quality.
 
 M4 intentionally does not complete:
 
 - PR review polling and comment/review-state inspection. That is M5.
 - Review-harness prompt and evidence helpers. That is M5.
 - Manual UI audit guidance and evidence handling. That is M5 or later.
-- Optional Quality Control gate guidance and status reporting. That is M5.
+- Optional Quality gate guidance and status reporting. That is M5.
 
 ---
 
@@ -242,7 +242,7 @@ Interactive init must gather or confirm:
 - PR review agents
 - custom reviewer names/comment text
 - PR review wait duration
-- optional Quality Control gate intent
+- optional Quality gate intent
 - optional naming-rules instruction section
 - prompt-injection instruction block
 - no-credit instruction block
@@ -301,7 +301,7 @@ Installed instructions must include:
 - configured manual audit obligation
 - configured review-agent obligation
 - configured agent-run quality gates
-- optional Quality Control gate obligation
+- optional Quality gate obligation
 - PR creation and shipping authority when autonomous mode is enabled
 - PR review wait obligation when configured
 - merge and base-branch update authority when autonomous mode is enabled
@@ -477,7 +477,7 @@ The instructions must also make clear that context-sensitive git actions are per
 
 M4 adds an optional naming-rules instruction section that `aie init` can inject into managed agent instruction files.
 
-This is instruction rendering, not static analysis. Executor does not score names, rewrite code, or replace Quality Control. The section exists so repositories can ask agents to produce code that is easier for humans to read when the repository owner wants that policy installed.
+This is instruction rendering, not static analysis. Executor does not score names, rewrite code, or replace Quality. The section exists so repositories can ask agents to produce code that is easier for humans to read when the repository owner wants that policy installed.
 
 ### 4.1 - Init Option
 
