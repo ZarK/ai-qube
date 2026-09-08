@@ -298,7 +298,7 @@ test("init dry-run returns agent-facing next action without mutating", () => {
   assert.equal(result.mutated, false);
   assert.equal(result.dryRun, true);
   assert.equal(result.nextAction.actor, "agent");
-  assert.equal(result.plannedAgentFiles[0].host, "codex");
+  assert.deepEqual(result.plannedAgentFiles[0].hosts, [{ id: "codex", taskRead: "supported", taskWrite: "supported", workflow: "native" }]);
   assert.ok(result.plannedAgentFiles[0].path.endsWith("AGENTS.md"));
   assert.match(result.nextAction.summary, /human/i);
   assert.ok(result.sessionPath.endsWith("/.qube/aib/session.json") || result.sessionPath.endsWith("\\.qube\\aib\\session.json"));
@@ -311,6 +311,7 @@ test("init with opencode writes profile-derived planning instructions only", asy
   assert.equal(result.mutated, true);
   assert.equal(result.agentAssets.length, 1);
   assert.ok(result.agentAssets.some((asset) => asset.path.endsWith("AGENTS.md")));
+  assert.deepEqual(result.agentAssets[0].hosts, [{ id: "opencode", taskRead: "supported", taskWrite: "supported", workflow: "native" }]);
 
   const instructions = await readFile(join(dir, "AGENTS.md"), "utf8");
   assert.match(instructions, /agent-operated planning engine/);
@@ -319,19 +320,54 @@ test("init with opencode writes profile-derived planning instructions only", asy
   assert.match(instructions, /If the user asks you to stop or changes the scope, follow that instruction before these workflow instructions/);
 });
 
-test("init applies once and an identical rerun writes nothing", async () => {
+test("init writes mixed host workflows once and preserves user instructions on rerun", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-idempotent-"));
-  const args = ["init", dir, "--agent", "codex", "--surfaces", "codex,opencode", "--json", "--idea", "Plan a repository"];
+  const agentsPath = join(dir, "AGENTS.md");
+  const claudePath = join(dir, "CLAUDE.md");
+  await writeFile(agentsPath, "# Team instructions\n\nKeep this text.\n", "utf8");
+  await writeFile(claudePath, "# Claude instructions\n\nKeep this text too.\n", "utf8");
+  const args = ["init", dir, "--agent", "codex", "--surfaces", "opencode,codex,claude-code,grok-build,cursor", "--json", "--idea", "Plan a repository"];
   const first = parseJsonStdout(runAib(args));
   const statePath = first.statePath;
-  const instructionPath = join(dir, "AGENTS.md");
   const fixedTime = new Date("2020-01-01T00:00:00.000Z");
   await utimes(statePath, fixedTime, fixedTime);
-  await utimes(instructionPath, fixedTime, fixedTime);
+  await utimes(agentsPath, fixedTime, fixedTime);
+  await utimes(claudePath, fixedTime, fixedTime);
   const stateContent = await readFile(statePath, "utf8");
-  const instructionContent = await readFile(instructionPath, "utf8");
+  const agentsContent = await readFile(agentsPath, "utf8");
+  const claudeContent = await readFile(claudePath, "utf8");
   const stateTime = (await stat(statePath)).mtimeMs;
-  const instructionTime = (await stat(instructionPath)).mtimeMs;
+  const agentsTime = (await stat(agentsPath)).mtimeMs;
+  const claudeTime = (await stat(claudePath)).mtimeMs;
+
+  assert.equal(agentsContent.match(/BEGIN QUBE BOOTSTRAP MANAGED SECTION/gu)?.length, 1);
+  assert.equal(claudeContent.match(/BEGIN QUBE BOOTSTRAP MANAGED SECTION/gu)?.length, 1);
+  assert.match(agentsContent, /Keep this text\./);
+  assert.match(claudeContent, /Keep this text too\./);
+  assert.match(agentsContent, /The `aib` state machine is the shared planning record/);
+  assert.match(claudeContent, /The `aib` state machine is the shared planning record/);
+  for (const host of ["OpenCode", "Codex", "Grok Build", "Cursor"]) assert.match(agentsContent, new RegExp(`## ${host}`));
+  assert.doesNotMatch(agentsContent, /## Claude Code/);
+  assert.match(claudeContent, /## Claude Code/);
+  assert.doesNotMatch(claudeContent, /## (?:OpenCode|Codex|Grok Build|Cursor)/);
+  const hostSection = (content, host) => content.split(`## ${host}\n`)[1].split("\n## ")[0];
+  for (const host of ["OpenCode", "Codex"]) assert.match(hostSection(agentsContent, host), /native task-list operations/);
+  for (const host of ["Grok Build", "Cursor"]) {
+    const section = hostSection(agentsContent, host);
+    assert.match(section, /visible checklist/);
+    assert.doesNotMatch(section, /native task-list operations/);
+  }
+  assert.match(hostSection(claudeContent, "Claude Code"), /native task-list operations/);
+  assert.deepEqual(first.agentAssets.map((file) => file.path), [agentsPath, claudePath]);
+  assert.deepEqual(first.plannedAgentFiles.map((file) => file.hosts.map((host) => host.id)), [
+    ["opencode", "codex", "grok-build", "cursor"],
+    ["claude-code"]
+  ]);
+  assert.deepEqual(first.agentAssets.map((file) => file.hosts.map((host) => host.workflow)), [
+    ["native", "native", "checklist", "checklist"],
+    ["native"]
+  ]);
+  assert.equal(first.state.agent.host, "codex");
 
   const second = parseJsonStdout(runAib(args));
 
@@ -340,9 +376,11 @@ test("init applies once and an identical rerun writes nothing", async () => {
   assert.ok(second.actions.every((action) => action.operation === "skip"));
   assert.deepEqual(second.written, []);
   assert.equal(await readFile(statePath, "utf8"), stateContent);
-  assert.equal(await readFile(instructionPath, "utf8"), instructionContent);
+  assert.equal(await readFile(agentsPath, "utf8"), agentsContent);
+  assert.equal(await readFile(claudePath, "utf8"), claudeContent);
   assert.equal((await stat(statePath)).mtimeMs, stateTime);
-  assert.equal((await stat(instructionPath)).mtimeMs, instructionTime);
+  assert.equal((await stat(agentsPath)).mtimeMs, agentsTime);
+  assert.equal((await stat(claudePath)).mtimeMs, claudeTime);
 });
 
 test("init preserves valid progressed and custom Bootstrap state verbatim", async () => {
@@ -406,6 +444,12 @@ test("init rejects agent harnesses outside the canonical profile registry", () =
     assert.equal(body.ok, false, agent);
     assert.match(body.error.likelyCause, /Expected --agent=/, agent);
   }
+
+  const surfaces = runAib(["init", ".", "--surfaces", "codex,gemini", "--dry-run", "--json"]);
+  assert.notEqual(surfaces.status, 0);
+  const body = JSON.parse(surfaces.stdout);
+  assert.equal(body.ok, false);
+  assert.match(body.error.likelyCause, /Unsupported agent harness "gemini" in --surfaces/);
 });
 
 test("init dry-run does not write state", async () => {
