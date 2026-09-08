@@ -5281,8 +5281,8 @@ function renderAutoresearchArtifact(
     "## Candidate Output",
     "",
     `This sandboxed candidate was evaluated against ${state.goal}.`,
-    "It remains inside the QUBE autoresearch run directory until explicit promotion.",
-    "Promotion copies only this selected artifact back to the requested output path."
+    "Promotion applies the accepted file changes to the target.",
+    "This report stays in the QUBE autoresearch run directory."
   ].join("\n") + "\n";
 }
 
