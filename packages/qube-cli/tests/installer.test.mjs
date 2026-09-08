@@ -112,7 +112,7 @@ describe("installer choice helpers", () => {
   });
 
   it("rejects unavailable explicit and default installer choices", async () => {
-    const { defineInstallerChoiceGroup, promptInstallerChoice } = await import("../dist/index.js");
+    const { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices } = await import("../dist/index.js");
     const choices = [
       { value: "local", label: "Project-local" },
       {
@@ -158,6 +158,28 @@ describe("installer choice helpers", () => {
         defaultValue: "remote",
         yes: true,
         terminal: nonTtyTerminal
+      }),
+      unavailable
+    );
+    await assert.rejects(
+      () => promptInstallerChoice({
+        command: "install",
+        promptName: "install scope",
+        message: "Install scope?",
+        choices,
+        initialValue: "remote",
+        terminal: interactiveTerminal
+      }),
+      unavailable
+    );
+    await assert.rejects(
+      () => promptInstallerChoices({
+        command: "install",
+        promptName: "install scopes",
+        message: "Install scopes?",
+        choices,
+        initialValues: ["remote"],
+        terminal: interactiveTerminal
       }),
       unavailable
     );

@@ -6,7 +6,6 @@ import {
   INIT_ACTION_LABELS,
   publicInitActionLabel,
   renderInitFailure,
-  renderInitQuestion,
   renderInitOutput,
 } from "../dist/init_output.js";
 
@@ -31,7 +30,7 @@ const primaryHarness = Object.freeze({
 });
 
 describe("public QUBE init output", () => {
-  it("renders prerequisites before choices from the same typed result", () => {
+  it("omits healthy prerequisites from normal terminal output", () => {
     const output = renderInitOutput({
       scope: "global",
       mode: "plan",
@@ -40,32 +39,48 @@ describe("public QUBE init output", () => {
       answers,
     });
 
-    assert.ok(output.indexOf("Prerequisites:") < output.indexOf("Choices:"));
-    assert.match(output, /git: not-required/u);
-    assert.match(output, /Required for: local-setup, issue-workflow/u);
+    assert.match(output, /Choices:/u);
+    assert.doesNotMatch(output, /Prerequisites:|git: not-required|Required for:|https?:\/\//u);
   });
 
-  it("shows every layer fact with a separate recommendation reason before an edited question", () => {
-    const output = renderInitQuestion({
-      step: 6,
-      label: "Quality checks",
-      explanation: "Choose the checks for this repository.",
-      userGlobal: "—",
-      repository: "—",
-      effective: "Unit tests",
-      source: "QUBE default",
-      recommendation: "Unit tests",
-      reason: "Use the cumulative baseline.",
-      docsUrl: "https://example.test/qube-init#quality",
-    });
+  it("shows only the problem and next action for an unavailable prerequisite", () => {
+    const baseline = notRequiredGitPrerequisites();
+    const prerequisites = {
+      ...baseline,
+      status: "needs-action",
+      checks: baseline.checks.map((check, index) => index === 0 ? {
+        ...check,
+        status: "needs-action",
+        reasonCode: "git-not-found",
+        summary: "Git is not installed.",
+        nextAction: "Install Git, then run qube init again.",
+        docsUrl: "https://example.test/git",
+      } : check),
+    };
+    const output = renderInitOutput({ scope: "repository", mode: "apply", changed: false, prerequisites, answers: [] });
 
-    assert.match(output, /User-global: —/);
-    assert.match(output, /Repository: —/);
-    assert.match(output, /Effective: Unit tests/);
-    assert.match(output, /Source: QUBE default/);
-    assert.match(output, /Recommended: Unit tests/);
-    assert.match(output, /Reason: Use the cumulative baseline\./);
-    assert.match(output, /Documentation: https:\/\/example\.test\/qube-init#quality/);
+    assert.match(output, /^Repository QUBE initialization is complete\./u);
+    assert.match(output, /Repository setup needs attention:\n- Git is not installed\.\n  Next: Install Git, then run qube init again\./u);
+    assert.doesNotMatch(output, /git-not-found|Required for:|https?:\/\//u);
+  });
+
+  it("keeps later workflow prerequisites quiet for a fresh repository", () => {
+    const baseline = notRequiredGitPrerequisites();
+    const prerequisites = {
+      ...baseline,
+      status: "needs-action",
+      checks: baseline.checks.map(check => check.id === "head" ? {
+        ...check,
+        status: "needs-action",
+        reasonCode: "head-missing",
+        summary: "The repository does not have a commit yet.",
+        nextAction: "Create the first commit before issue work.",
+      } : check),
+    };
+    const output = renderInitOutput({ scope: "repository", mode: "apply", changed: false, prerequisites, answers: [] });
+
+    assert.equal(output, "Repository QUBE initialization is already current.\n");
+    assert.doesNotMatch(output, /commit|head|needs attention/iu);
   });
 
   it("confirms a plan with public answers and no apply instructions", () => {
@@ -83,14 +98,11 @@ describe("public QUBE init output", () => {
     });
 
     assert.match(output, /^Repository QUBE initialization plan is ready\./u);
-    assert.match(output, /Mode: plan\./u);
-    assert.match(output, /Persistent values changed: yes\./u);
     assert.match(output, /- Agent harnesses: Codex and OpenCode/u);
-    assert.match(output, /Reason: Use the installed harnesses that support this workflow\./u);
     assert.match(output, /- Review source: Another installed harness/u);
-    assert.match(output, /GitHub review publisher: not configured\./u);
+    assert.match(output, /Review publisher: not configured\./u);
     assert.doesNotMatch(output, /setup is complete|Start a new|\$make-it-so|qube review setup/u);
-    assert.doesNotMatch(output, /hosts|review\.mode/u);
+    assert.doesNotMatch(output, /hosts|review\.mode|Mode:|Persistent values|Reason:/u);
   });
 
   it("shows a changed apply, a new-session instruction, and applicable follow-ups", () => {
@@ -112,11 +124,10 @@ describe("public QUBE init output", () => {
     });
 
     assert.match(output, /^Repository QUBE initialization is complete\./u);
-    assert.match(output, /Mode: apply\./u);
     assert.match(output, /Choices:\n- Agent harnesses: Codex and OpenCode/u);
     assert.match(output, /Start a new Codex session so it loads the setup\./u);
     assert.match(output, /In the new session, run `\$make-it-so`\./u);
-    assert.match(output, /GitHub review publisher: needs attention\./u);
+    assert.match(output, /Review publisher: needs attention\./u);
     assert.match(output, /Next actions:\n- Rerun `qube init` to continue Reviewer App setup\./u);
     assert.match(output, /- Run `qube review doctor --json` after you update the publisher\./u);
     assert.equal(output.match(/Rerun `qube init`/gu)?.length, 1);
@@ -147,8 +158,7 @@ describe("public QUBE init output", () => {
       },
     });
 
-    assert.match(output, /GitHub review publisher: ready\./u);
-    assert.doesNotMatch(output, /Next actions|must not become/u);
+    assert.doesNotMatch(output, /Review publisher|Next actions|must not become/u);
   });
 
   it("does not expose implementation details from normalized answer IDs", () => {
@@ -185,11 +195,10 @@ describe("public QUBE init output", () => {
     });
 
     assert.match(output, /^Global QUBE initialization is complete\./u);
-    assert.match(output, /Persistent values changed: yes\./u);
-    assert.doesNotMatch(output, /Start a new|make-it-so/u);
+    assert.doesNotMatch(output, /Persistent values|Start a new|make-it-so/u);
   });
 
-  it("renders a narrow source table and an edit path without color", () => {
+  it("omits configuration layers and field plans from terminal output", () => {
     const output = renderInitOutput({
       scope: "repository",
       mode: "plan",
@@ -217,17 +226,12 @@ describe("public QUBE init output", () => {
       },
     });
 
-    assert.match(output, /Setup scope: This repository/u);
-    assert.match(output, /User-global setup: Found/u);
-    assert.match(output, /Review or customize this repository/u);
-    assert.match(output, /Inherit all user-global settings/u);
-    assert.match(output, /Configuration action: inherit/u);
-    assert.match(output, /- quality\.stages\n  User-global: unit, build\n  Repository: unit\n  Effective: unit, build\n  Source: user-global\n  Plan: remove/u);
-    assert.match(output, /Source: derived from review\.mode, hosts/u);
+    assert.equal(output, "Repository QUBE initialization plan is ready.\n");
+    assert.doesNotMatch(output, /Setup scope|User-global|Repository overrides|Configuration|quality\.stages|review\.harness/u);
     assert.doesNotMatch(output, /\u001b\[/u);
   });
 
-  it("recommends completing repository setup when user-global fields are missing", () => {
+  it("does not print configuration recommendations when global fields are missing", () => {
     const output = renderInitOutput({
       scope: "repository",
       mode: "plan",
@@ -246,8 +250,8 @@ describe("public QUBE init output", () => {
       },
     });
 
-    assert.match(output, /Complete repository setup \(recommended\)/u);
-    assert.doesNotMatch(output, /Use user-global setup \(recommended\)/u);
+    assert.equal(output, "Repository QUBE initialization plan is ready.\n");
+    assert.doesNotMatch(output, /recommended|user-global|quality\.stages/iu);
   });
 });
 

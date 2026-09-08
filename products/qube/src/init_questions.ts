@@ -130,6 +130,8 @@ export interface GuidedInitQuestionInput {
   readonly defaults?: GuidedInitAnswers;
   /** Select recommendations without prompts. Use this for --yes and --defaults. */
   readonly resolveDefaults?: boolean;
+  /** Ask again for editable saved values while keeping them preselected. */
+  readonly promptCurrent?: boolean;
 }
 
 export interface GuidedInitAnswerSummary {
@@ -235,6 +237,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
   const current = input.current ?? {};
   const defaults = input.defaults ?? {};
   const resolveDefaults = input.resolveDefaults === true;
+  const promptCurrent = input.promptCurrent === true;
   const questions: GuidedInitQuestion[] = [];
 
   const harnessOptions = capabilities.agentHarnesses;
@@ -253,6 +256,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: harnessRecommendation,
     recommendationReason: "Select the harness for the next session. Add another only when you plan to use it for work or Review. The first harness is the primary harness.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(agentHarnessQuestion);
   const selectedHarnesses = selectedList(agentHarnessQuestion);
@@ -273,6 +277,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: trackerRecommendation,
     recommendationReason: "Use the issue tracker that owns this repository's active work queue.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(trackerQuestion);
   const selectedTracker = selectedString(trackerQuestion);
@@ -298,6 +303,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
       ? "Use the same provider as the issue tracker because it can report this repository's checks directly."
       : "Use the provider that reports the required checks for this repository.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(checkQuestion);
 
@@ -327,6 +333,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
       ? "Keep Continuous Shipping on so QUBE can complete the full development cycle without routine pauses."
       : "Keep Continuous Shipping off because the supplied repository default requires a pause after each issue.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(shippingQuestion);
 
@@ -348,6 +355,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
       ? "Use Ready issues only. This keeps continuation inside the reviewed issue queue."
       : "Use the supplied repository default because it preserves the current valid Umpire scope.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(umpireQuestion);
 
@@ -367,6 +375,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: stageRecommendation,
     recommendationReason: "Use the recommended stage as a cumulative baseline. Select multiple stages only when the repository needs an exact set.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(qualityQuestion);
 
@@ -409,6 +418,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: reviewSourceRecommendation,
     recommendationReason: reviewSourceReason(reviewSourceRecommendation, primaryHarnessChoice, separateHarnesses[0]),
     resolveDefaults,
+    promptCurrent,
   });
   if (reviewSourceOptions.length === 0) {
     reviewSourceQuestion = {
@@ -434,6 +444,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: listRecommendation(defaults.externalReviewers, externalReviewers),
     recommendationReason: "Use a service that is already enabled for this repository. Its own plan pays for review work.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(externalQuestion);
 
@@ -453,6 +464,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
       ? `Use ${separateHarnesses[0].label} so Review usage goes to the account used by that harness instead of the primary harness account.`
       : "Use another selected harness that can run Review in a separate session.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(reviewHarnessQuestion);
 
@@ -482,6 +494,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: defaultModel,
     recommendationReason: modelState.recommendationReason,
     resolveDefaults,
+    promptCurrent,
     autoSelectOnlyChoice: modelState.kind === "unpinned",
   });
   if ((selectedReviewSource === "primary" || selectedReviewSource === "harness") && modelState.kind === "unavailable") {
@@ -530,6 +543,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: backupHarnessDefaultValue(defaults, backupOptions),
     recommendationReason: "Select None unless this repository needs Review to retry on another installed harness.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(backupHarnessQuestion);
 
@@ -556,6 +570,8 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: singleRecommendation(defaults.reviewBackupModel, backupModelState.options),
     recommendationReason: "The first native model is the default choice. Select another listed model when this repository requires it.",
     resolveDefaults,
+    promptCurrent,
+    autoSelectOnlyChoice: false,
   });
   if (backupHarnessChoice && backupModelState.error) {
     backupModelQuestion = {
@@ -583,6 +599,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: singleRecommendation(defaults.reviewBackupEffort ?? undefined, REVIEW_EFFORT_OPTIONS),
     recommendationReason: "Use Medium unless this repository needs a different reasoning effort for backup Review.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(backupEffortQuestion);
 
@@ -601,6 +618,7 @@ export function buildGuidedInitQuestions(input: GuidedInitQuestionInput): readon
     recommendedValue: singleRecommendation(defaults.reviewPublisher ?? "user", publisherOptions),
     recommendationReason: "Use the current GitHub account when a separate review identity is not required. It needs no additional credentials.",
     resolveDefaults,
+    promptCurrent,
   });
   questions.push(publisherQuestion);
 
@@ -701,6 +719,7 @@ interface ResolveQuestionInput {
   readonly recommendedValue: GuidedInitQuestionValue;
   readonly recommendationReason: string;
   readonly resolveDefaults: boolean;
+  readonly promptCurrent: boolean;
   readonly autoSelectOnlyChoice?: boolean;
 }
 
@@ -778,7 +797,10 @@ function resolveQuestion(input: ResolveQuestionInput): GuidedInitQuestion {
   if (enabledOptions.length === 0 && options.length > 0 && !validationError) {
     validationError = `${input.label}: ${options[0]!.description ?? "No available choice."}`;
   }
-  const promptNeeded = selectedValue === null && (options.length === 0 || enabledOptions.length > 0);
+  const promptNeeded = (
+    selectedValue === null
+    || (input.promptCurrent && answeredBy === "current" && enabledOptions.length > 1)
+  ) && (options.length === 0 || enabledOptions.length > 0);
   return {
     id: input.id,
     step: input.step,

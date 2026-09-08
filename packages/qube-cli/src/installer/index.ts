@@ -22,11 +22,13 @@ export interface InstallerChoiceGroup<Value extends string = string> {
 export interface InstallerChoicePromptOptions<Value extends string = string> extends PromptGateOptions<Value> {
   readonly message: string;
   readonly choices: readonly InstallerChoice<Value>[];
+  readonly initialValue?: Value;
 }
 
 export interface InstallerChoicesPromptOptions<Value extends string = string> extends PromptGateOptions<readonly Value[]> {
   readonly message: string;
   readonly choices: readonly InstallerChoice<Value>[];
+  readonly initialValues?: readonly Value[];
   readonly required?: boolean;
 }
 
@@ -119,9 +121,16 @@ export async function promptInstallerChoice<Value extends string>(
     };
     return choice.description ? { ...base, hint: choice.description } : base;
   });
+  if (options.initialValue !== undefined) {
+    requireChoiceMatch(options.initialValue, options.choices, {
+      command: commandName(options.command),
+      promptName: options.promptName ?? "installer choice"
+    });
+  }
   const selected = await select<string>({
     message: options.message,
-    options: selectOptions
+    options: selectOptions,
+    ...(options.initialValue === undefined ? {} : { initialValue: options.initialValue })
   });
   if (isPromptCancel(selected)) {
     throw createCliError({
@@ -176,13 +185,19 @@ export async function promptInstallerChoices<Value extends string>(
     };
     return choice.description ? { ...base, hint: choice.description } : base;
   });
-  const initialValues = options.choices
+  if (options.initialValues !== undefined) {
+    requireChoicesMatch(options.initialValues, options.choices, {
+      command: commandName(options.command),
+      promptName: options.promptName ?? "installer choices"
+    });
+  }
+  const initialValues = options.initialValues ?? options.choices
     .filter(choice => choice.recommended === true && choice.disabled !== true)
     .map(choice => choice.value);
   const selected = await multiselect<string>({
     message: options.message,
     options: selectOptions,
-    ...(initialValues.length > 0 ? { initialValues } : {}),
+    ...(initialValues.length > 0 ? { initialValues: [...initialValues] } : {}),
     required: options.required ?? true
   });
   if (isPromptCancel(selected)) {

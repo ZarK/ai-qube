@@ -319,11 +319,11 @@ in, and a read-only Git probe never claims write permission.
 
 ### GitHub connection prerequisite
 
-After repository provider choices resolve, QUBE shows a GitHub connection
-section only when work, review, CI, setup-source, or a pending provider action
-uses GitHub. The section reports the selected roles, derived host and
-repository, CLI version, safe credential source, active account, capability
-rows, stable reason code, and one next action. User-global and fully non-GitHub
+After repository provider choices resolve, QUBE checks the GitHub connection
+only when work, review, CI, setup-source, or a pending provider action uses
+GitHub. Normal terminal output shows only a problem and its next action.
+Structured JSON includes the selected roles, host, repository, safe credential
+source, capability rows, and reason code. User-global and fully non-GitHub
 initialization do not invoke `gh`.
 
 Missing or invalid GitHub readiness does not undo safe local setup. Dependent
@@ -383,12 +383,9 @@ one exact npm or pnpm command for the detected package placement, and tells you
 to rerun `qube init`.
 
 The guided flow has eight steps. Review details appear only when they apply.
-QUBE keeps a valid effective answer unless you choose to review that setting.
-The repository summary always gives an edit path, including when all values are
-inherited. Before each edited question, QUBE shows the user-global, repository,
-and effective values and names the effective source. It then explains the
-choice, gives the recommendation and reason, and links to the applicable
-section in this guide.
+Each applicable choice appears once. A short explanation appears only when it
+helps you make the choice. Prompts do not show configuration layers,
+recommendation labels, or raw documentation links.
 
 QUBE initializes the complete system. Bootstrap prepares planning. Executor
 prepares issue work and review. Quality prepares checks. Umpire prepares
@@ -400,11 +397,13 @@ controls repository trust, account authentication, permissions, agent sessions,
 and model access. QUBE cannot bypass these controls.
 
 On a rerun, QUBE preselects a valid repository override. If no repository value
-exists, it recommends the user-global value. QUBE asks only for a selected,
-missing, or conflicting required value. A normalized no-change run performs no
-configuration write.
+exists, it preselects the user-global value. You can keep or change each saved
+choice. A normalized no-change run performs no configuration write.
 
-Use `--yes` or `--defaults` to accept the same recommended values without
+If the saved review model is unavailable in the selected review interface,
+QUBE marks it unavailable and asks you to select a supported model.
+
+Use `--yes` or `--defaults` to accept the default values without
 prompts. Use `--json` to get the resolved answers and the reason for each
 answer. Add `--dry-run` to inspect the result without changing the repository.
 If an action fails, QUBE names the action, keeps the original reason, and gives
