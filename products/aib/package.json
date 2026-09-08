@@ -43,7 +43,7 @@
   ],
   "dependencies": {
     "@tjalve/aie": "workspace:*",
-    "@tjalve/qube-cli": "0.2.2",
+    "@tjalve/qube-cli": "0.2.3",
     "@tjalve/qube-core": "0.2.10"
   },
   "scripts": {

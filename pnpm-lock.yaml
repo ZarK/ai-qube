@@ -203,7 +203,7 @@ importers:
         specifier: workspace:*
         version: link:../aie
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
         specifier: 0.2.10
@@ -243,7 +243,7 @@ importers:
         specifier: 0.1.8
         version: link:../../adapters/opencode
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
         specifier: 0.2.10
@@ -309,7 +309,7 @@ importers:
         specifier: 1.9.4
         version: 1.9.4
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../../../packages/qube-cli
       htmlhint:
         specifier: 1.9.2
@@ -371,22 +371,22 @@ importers:
         specifier: 3.0.1
         version: 3.0.1
       '@tjalve/aiq':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../cli
 
   products/aiq/packages/hook:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../cli
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../../../packages/qube-cli
 
   products/aiq/packages/lsp:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../cli
 
   products/aiq/packages/model: {}
@@ -397,7 +397,7 @@ importers:
         specifier: 1.3.0
         version: 1.3.0
       '@tjalve/aiq':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../cli
 
   products/aiq/packages/reporters: {}
@@ -420,7 +420,7 @@ importers:
         specifier: 0.1.8
         version: link:../../adapters/opencode
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
         specifier: 0.2.10
@@ -442,7 +442,7 @@ importers:
         specifier: 0.2.13
         version: link:../aie
       '@tjalve/aiq':
-        specifier: 0.2.6
+        specifier: 0.2.7
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
         specifier: 0.0.14
@@ -451,10 +451,10 @@ importers:
         specifier: 0.1.11
         version: link:../../adapters/codex
       '@tjalve/qube-adapter-github':
-        specifier: 0.1.8
+        specifier: 0.1.9
         version: link:../../adapters/github
       '@tjalve/qube-cli':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
         specifier: 0.2.10

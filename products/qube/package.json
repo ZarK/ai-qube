@@ -49,11 +49,11 @@
   "dependencies": {
     "@tjalve/aib": "0.2.13",
     "@tjalve/aie": "0.2.13",
-    "@tjalve/aiq": "0.2.6",
+    "@tjalve/aiq": "0.2.7",
     "@tjalve/aiu": "0.0.14",
     "@tjalve/qube-adapter-codex": "0.1.11",
-    "@tjalve/qube-adapter-github": "0.1.8",
-    "@tjalve/qube-cli": "0.2.2",
+    "@tjalve/qube-adapter-github": "0.1.9",
+    "@tjalve/qube-cli": "0.2.3",
     "@tjalve/qube-core": "0.2.10"
   },
   "scripts": {
