@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, realpathSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -161,9 +161,7 @@ type AutoresearchPhase = "initialized" | "baselined" | "ran" | "promoted";
 interface AutoresearchFlags {
   readonly json: boolean;
   readonly dryRun: boolean;
-  readonly force: boolean;
   readonly runId?: string;
-  readonly output?: string;
 }
 
 interface AutoresearchRequest {
@@ -264,8 +262,9 @@ interface AutoresearchContinuation {
 
 interface AutoresearchPromotion {
   readonly candidateId: string;
-  readonly outputPath: string;
-  readonly sourcePath: string;
+  readonly targetPath: string;
+  readonly changedFiles: readonly AutoresearchWorkspaceChange[];
+  readonly reportPath: string;
   readonly promotedAt: string;
 }
 
@@ -472,16 +471,6 @@ const autoresearchCommand = defineCommand({
       description: "Autoresearch run id for lifecycle commands.",
       type: "string"
     }),
-    defineFlag({
-      name: "output",
-      description: "Promotion output path. Defaults to <target>/autoresearch-result.md.",
-      type: "string"
-    }),
-    defineFlag({
-      name: "force",
-      description: "Allow promotion to replace an existing output file.",
-      type: "boolean"
-    })
   ],
   examples: [
     {
@@ -505,8 +494,8 @@ const autoresearchCommand = defineCommand({
       command: "qube autoresearch status --json"
     },
     {
-      description: "promote is the only command that copies the selected best candidate to target or --output.",
-      command: "qube autoresearch promote --output ./scratch/autoresearch-result.md"
+      description: "Apply the accepted file changes to the target. JSON includes changedFiles and the existing reportPath.",
+      command: "qube autoresearch promote --json"
     }
   ],
   output: {
@@ -3882,7 +3871,7 @@ function executeAutoresearchRequest(
     }
     return { payload: { ...summarizeAutoresearch(context, "dashboard"), dashboardPath: path.join(context.runDirectory, "dashboard.html"), dashboardDataPath: path.join(context.runDirectory, "dashboard-data.json") } };
   }
-  return promoteAutoresearch(context, request, environment, dryRun);
+  return promoteAutoresearch(context, dryRun);
 }
 
 function initAutoresearch(
@@ -4211,8 +4200,6 @@ function runAutoresearchCandidate(
 
 function promoteAutoresearch(
   context: AutoresearchContext,
-  request: AutoresearchRequest,
-  environment: CliEnvironment,
   dryRun: boolean
 ): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
   if (context.evaluator.acceptancePolicy.promotionRequiresHuman) {
@@ -4222,45 +4209,78 @@ function promoteAutoresearch(
   if (!best) {
     return { error: "No accepted autoresearch candidate is available to promote." };
   }
-  const candidateRoot = path.join(context.runDirectory, "sandbox", "candidates");
-  if (!existsSync(candidateRoot) || !existsSync(best.workspacePath) || !isPathInside(realpathSync(candidateRoot), realpathSync(best.workspacePath))) {
-    return { error: "Selected autoresearch candidate workspace is missing or outside the sandbox." };
+  const matchingAttempts = context.state.attempts.filter(attempt => attempt.id === best.id);
+  const matchingAttempt = matchingAttempts[0];
+  if (
+    matchingAttempts.length !== 1 || !matchingAttempt || !best.accepted || !matchingAttempt.accepted
+    || best.referee.status !== "passed" || matchingAttempt.referee.status !== "passed"
+    || best.evaluation.evaluatorHash !== context.evaluator.hash
+    || stableJson(best) !== stableJson(matchingAttempt)
+  ) {
+    return { error: "The selected current-best candidate does not match one accepted attempt with a passed referee and the current evaluator." };
   }
+  const baselinePath = autoresearchBaselineWorkspacePath(context);
+  const currentBestPath = autoresearchCurrentBestWorkspacePath(context);
+  const expectedCandidatePath = path.join(context.runDirectory, "sandbox", "candidates", best.id, "workspace");
+  const rootError = validateAutoresearchPromotionRoots(context, {
+    baselinePath,
+    candidatePath: best.workspacePath,
+    currentBestPath,
+    expectedCandidatePath
+  });
+  if (rootError) return { error: rootError };
+  const sizeErrors = [
+    ...validateAutoresearchWorkspaceSize(baselinePath, "Autoresearch baseline workspace"),
+    ...validateAutoresearchWorkspaceSize(best.workspacePath, "Autoresearch selected candidate workspace"),
+    ...validateAutoresearchWorkspaceSize(currentBestPath, "Autoresearch current-best workspace")
+  ];
+  if (sizeErrors.length > 0) return { error: sizeErrors.join(" ") };
   const inputError = validateAutoresearchInputRoot(context.evaluator, best.workspacePath, "selected candidate before promotion");
-  if (inputError) {
-    return { error: inputError };
+  if (inputError) return { error: inputError };
+  const currentBestDrift = collectAutoresearchWorkspaceChanges(best.workspacePath, currentBestPath);
+  if (currentBestDrift.length > 0) {
+    return { error: "The selected candidate workspace does not match the recorded current-best workspace." };
   }
-  const outputPath = request.flags.output
-    ? path.resolve(environment.cwd, request.flags.output)
-    : path.join(context.state.targetPath, "autoresearch-result.md");
-  const mutableSurfaceError = validateAutoresearchPromotionOutput(context, outputPath);
-  if (mutableSurfaceError) {
-    return { error: mutableSurfaceError };
-  }
-  if (existsSync(outputPath) && !request.flags.force) {
-    return { error: `Promotion output already exists: ${outputPath}. Pass --force to replace it.` };
-  }
-  const sourcePath = validateAutoresearchCandidateArtifact(context, best);
-  if (typeof sourcePath !== "string") {
-    return sourcePath;
-  }
+  const changedFiles = collectAutoresearchWorkspaceChanges(baselinePath, best.workspacePath);
+  const boundaryErrors = validateAutoresearchCandidateBoundary(context, changedFiles);
+  if (boundaryErrors.length > 0) return { error: boundaryErrors.join(" ") };
+  const reportPath = validateAutoresearchCandidateArtifact(context, best);
+  if (typeof reportPath !== "string") return reportPath;
+  const prepared = prepareAutoresearchPromotion(context, baselinePath, best.workspacePath, changedFiles);
+  if ("error" in prepared) return prepared;
   const promotion: AutoresearchPromotion = {
     candidateId: best.id,
-    outputPath,
-    sourcePath,
+    targetPath: context.state.targetPath,
+    changedFiles,
+    reportPath,
     promotedAt: new Date().toISOString()
   };
+  if (dryRun) {
+    return {
+      payload: {
+        action: "promote",
+        runId: context.state.runId,
+        phase: context.state.phase,
+        planned: true,
+        promotion,
+        nextAction: `Run qube autoresearch promote --run ${context.state.runId} without --dry-run to apply the accepted file changes.`
+      }
+    };
+  }
+  const applyError = applyAutoresearchPromotion(context.state.targetPath, prepared.changes);
+  if (applyError) return { error: applyError };
   const state = updateAutoresearchState(context.state, {
     phase: "promoted",
     promoted: promotion,
-    nextAction: "Promotion complete. Review the output and keep the autoresearch evidence with the run."
+    nextAction: "Promotion complete. Review the applied files. The report remains in the run directory."
   });
-  if (!dryRun) {
-    mkdirSync(path.dirname(outputPath), { recursive: true });
-    copyFileSync(sourcePath, outputPath);
-    writeJsonFile(path.join(context.runDirectory, "promotion.json"), promotion);
-    writeJsonFile(path.join(context.runDirectory, "state.json"), state);
+  try {
+    writeAutoresearchJsonAtomic(path.join(context.runDirectory, "promotion.json"), promotion);
+    writeAutoresearchJsonAtomic(path.join(context.runDirectory, "state.json"), state);
     writeAutoresearchDashboard({ ...context, state });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { error: `Accepted files were applied, but promotion records could not be completed: ${reason}` };
   }
   return {
     payload: {
@@ -4273,42 +4293,219 @@ function promoteAutoresearch(
   };
 }
 
-function validateAutoresearchPromotionOutput(context: AutoresearchContext, outputPath: string): string | undefined {
-  const output = path.resolve(outputPath);
-  const targetRoot = path.resolve(context.state.targetPath);
-  const realTargetRoot = realpathSync(targetRoot);
-  const realOutputAnchor = realAutoresearchOutputAnchor(output);
-  const allowedSurfaces = context.arena.mutableSurfaces.filter(surface => (
-    surface.kind === "directory"
-    && surface.permission === "read-write"
-    && isPathInside(targetRoot, path.resolve(surface.path))
-    && existsSync(surface.path)
-    && isPathInside(realTargetRoot, realpathSync(surface.path))
-  ));
-  if (allowedSurfaces.some(surface => {
-    const surfacePath = path.resolve(surface.path);
-    const realSurfacePath = realpathSync(surfacePath);
-    return isPathInside(surfacePath, output) && isPathInside(realSurfacePath, realOutputAnchor);
-  })) {
-    return undefined;
-  }
-  const surfaces = allowedSurfaces.map(surface => surface.path).join(", ");
-  return `Promotion output is outside declared mutable surfaces: ${output}. Allowed surfaces: ${surfaces || "none"}.`;
+interface AutoresearchPromotionRootPaths {
+  readonly baselinePath: string;
+  readonly candidatePath: string;
+  readonly currentBestPath: string;
+  readonly expectedCandidatePath: string;
 }
 
-function realAutoresearchOutputAnchor(outputPath: string): string {
-  if (existsSync(outputPath)) {
-    return realpathSync(outputPath);
-  }
-  let currentPath = path.dirname(outputPath);
-  while (!existsSync(currentPath)) {
-    const parentPath = path.dirname(currentPath);
-    if (parentPath === currentPath) {
-      return realpathSync(parentPath);
+interface AutoresearchPreparedChange {
+  readonly change: AutoresearchWorkspaceChange;
+  readonly targetPath: string;
+  readonly candidateBytes: Buffer | null;
+  readonly candidateMode: number | null;
+  readonly beforeBytes: Buffer | null;
+  readonly beforeMode: number | null;
+  readonly alreadyApplied: boolean;
+}
+
+function validateAutoresearchPromotionRoots(context: AutoresearchContext, roots: AutoresearchPromotionRootPaths): string | undefined {
+  try {
+    const runRoot = realpathSync(context.runDirectory);
+    const expectedRoots = [
+      [roots.baselinePath, "baseline"],
+      [roots.candidatePath, "selected candidate"],
+      [roots.currentBestPath, "current best"]
+    ] as const;
+    if (path.resolve(roots.candidatePath) !== path.resolve(roots.expectedCandidatePath)) {
+      return "The selected candidate workspace path does not match its candidate id.";
     }
-    currentPath = parentPath;
+    for (const [rootPath, label] of expectedRoots) {
+      if (!existsSync(rootPath) || lstatSync(rootPath).isSymbolicLink() || !statSync(rootPath).isDirectory()) {
+        return `The autoresearch ${label} workspace is missing or is not a plain directory.`;
+      }
+      const realRoot = realpathSync(rootPath);
+      if (!isPathInside(runRoot, realRoot)) return `The autoresearch ${label} workspace is outside the run directory.`;
+    }
+    const targetPath = context.state.targetPath;
+    if (!existsSync(targetPath) || lstatSync(targetPath).isSymbolicLink() || !statSync(targetPath).isDirectory()) {
+      return "The autoresearch target is missing or is not a plain directory.";
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return `Autoresearch promotion roots could not be validated: ${reason}`;
   }
-  return realpathSync(currentPath);
+  return undefined;
+}
+
+function prepareAutoresearchPromotion(
+  context: AutoresearchContext,
+  baselinePath: string,
+  candidatePath: string,
+  changes: readonly AutoresearchWorkspaceChange[]
+): { readonly changes: readonly AutoresearchPreparedChange[] } | { readonly error: string } {
+  const prepared: AutoresearchPreparedChange[] = [];
+  try {
+    for (const change of changes) {
+      const relativePath = validateAutoresearchRelativeFilePath(change.path);
+      if (!relativePath) return { error: `Promotion path is invalid: ${change.path}.` };
+      const baselineFile = path.resolve(baselinePath, relativePath);
+      const candidateFile = path.resolve(candidatePath, relativePath);
+      const targetFile = path.resolve(context.state.targetPath, relativePath);
+      const pathError = validateAutoresearchPromotionFilePaths(
+        context.state.targetPath,
+        baselinePath,
+        candidatePath,
+        relativePath,
+        change
+      );
+      if (pathError) return { error: pathError };
+      const baselineBytes = change.kind === "added" ? null : readFileSync(baselineFile);
+      const candidateBytes = change.kind === "deleted" ? null : readFileSync(candidateFile);
+      const beforeBytes = existsSync(targetFile) ? readFileSync(targetFile) : null;
+      const candidateMode = candidateBytes === null ? null : statSync(candidateFile).mode & 0o777;
+      const beforeMode = beforeBytes === null ? null : statSync(targetFile).mode & 0o777;
+      if (!sameAutoresearchFileState(beforeBytes, baselineBytes) && !sameAutoresearchFileState(beforeBytes, candidateBytes)) {
+        return { error: `Target file conflicts with the baseline and accepted candidate: ${relativePath}.` };
+      }
+      prepared.push({
+        change: { path: relativePath, kind: change.kind },
+        targetPath: targetFile,
+        candidateBytes,
+        candidateMode,
+        beforeBytes,
+        beforeMode,
+        alreadyApplied: sameAutoresearchFileState(beforeBytes, candidateBytes)
+          && (candidateMode === null || beforeMode === candidateMode)
+      });
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { error: `Promotion files could not be staged: ${reason}` };
+  }
+  return { changes: prepared };
+}
+
+function validateAutoresearchRelativeFilePath(value: string): string | undefined {
+  if (value.length === 0 || path.isAbsolute(value)) return undefined;
+  const normalized = path.normalize(value);
+  if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) return undefined;
+  return normalized;
+}
+
+function validateAutoresearchPromotionFilePaths(
+  targetRoot: string,
+  baselineRoot: string,
+  candidateRoot: string,
+  relativePath: string,
+  change: AutoresearchWorkspaceChange
+): string | undefined {
+  const sourceChecks: Array<readonly [string, string]> = [];
+  if (change.kind !== "added") sourceChecks.push([baselineRoot, "baseline"]);
+  if (change.kind !== "deleted") sourceChecks.push([candidateRoot, "candidate"]);
+  for (const [root, label] of sourceChecks) {
+    const error = validateAutoresearchPlainFilePath(root, relativePath, true);
+    if (error) return `${label} ${error}`;
+  }
+  const targetError = validateAutoresearchPlainFilePath(targetRoot, relativePath, false);
+  return targetError ? `target ${targetError}` : undefined;
+}
+
+function validateAutoresearchPlainFilePath(root: string, relativePath: string, requireFile: boolean): string | undefined {
+  const resolvedRoot = path.resolve(root);
+  const rootStats = lstatSync(resolvedRoot);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) return "root is not a plain directory.";
+  const resolvedFile = path.resolve(resolvedRoot, relativePath);
+  if (!isPathInside(resolvedRoot, resolvedFile)) return `path escapes its root: ${relativePath}.`;
+  const parts = path.relative(resolvedRoot, resolvedFile).split(path.sep).filter(Boolean);
+  let current = resolvedRoot;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = path.join(current, parts[index]!);
+    if (!existsSync(current)) {
+      if (requireFile) return `file is missing: ${relativePath}.`;
+      break;
+    }
+    const stats = lstatSync(current);
+    if (stats.isSymbolicLink()) return `path uses a symbolic link or junction: ${relativePath}.`;
+    const leaf = index === parts.length - 1;
+    if (leaf && !stats.isFile()) return `path is not a regular file: ${relativePath}.`;
+    if (!leaf && !stats.isDirectory()) return `parent path is not a directory: ${relativePath}.`;
+  }
+  return undefined;
+}
+
+function sameAutoresearchFileState(left: Buffer | null, right: Buffer | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.equals(right);
+}
+
+function applyAutoresearchPromotion(targetRoot: string, changes: readonly AutoresearchPreparedChange[]): string | undefined {
+  const applied: AutoresearchPreparedChange[] = [];
+  try {
+    for (const prepared of changes) {
+      const pathError = validateAutoresearchPlainFilePath(targetRoot, prepared.change.path, false);
+      if (pathError) throw new Error(`target ${pathError}`);
+      const currentBytes = existsSync(prepared.targetPath) ? readFileSync(prepared.targetPath) : null;
+      if (!sameAutoresearchFileState(currentBytes, prepared.beforeBytes)) {
+        throw new Error(`Target file changed while promotion was prepared: ${prepared.change.path}.`);
+      }
+      if (prepared.alreadyApplied) continue;
+      if (prepared.candidateBytes === null) {
+        unlinkSync(prepared.targetPath);
+      } else {
+        mkdirSync(path.dirname(prepared.targetPath), { recursive: true });
+        replaceAutoresearchFile(prepared.targetPath, prepared.candidateBytes, prepared.candidateMode ?? 0o600);
+      }
+      applied.push(prepared);
+    }
+    return undefined;
+  } catch (error) {
+    const applyReason = error instanceof Error ? error.message : String(error);
+    const rollbackErrors: string[] = [];
+    for (const prepared of [...applied].reverse()) {
+      try {
+        const pathError = validateAutoresearchPlainFilePath(targetRoot, prepared.change.path, false);
+        if (pathError) throw new Error(`target ${pathError}`);
+        const currentBytes = existsSync(prepared.targetPath) ? readFileSync(prepared.targetPath) : null;
+        if (!sameAutoresearchFileState(currentBytes, prepared.candidateBytes)) {
+          throw new Error(`Target file changed before rollback: ${prepared.change.path}.`);
+        }
+        if (prepared.beforeBytes === null) {
+          if (existsSync(prepared.targetPath)) unlinkSync(prepared.targetPath);
+        } else {
+          replaceAutoresearchFile(prepared.targetPath, prepared.beforeBytes, prepared.beforeMode ?? 0o600);
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+      }
+    }
+    return rollbackErrors.length === 0
+      ? `Promotion failed and affected files were restored: ${applyReason}`
+      : `Promotion failed: ${applyReason} Rollback also failed: ${rollbackErrors.join(" ")}`;
+  }
+}
+
+function replaceAutoresearchFile(filePath: string, bytes: Buffer, mode: number): void {
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(temporaryPath, "wx", mode);
+    writeFileSync(descriptor, bytes);
+    fchmodSync(descriptor, mode);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporaryPath, filePath);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+  }
+}
+
+function writeAutoresearchJsonAtomic(filePath: string, value: unknown): void {
+  const mode = existsSync(filePath) ? statSync(filePath).mode & 0o777 : 0o600;
+  replaceAutoresearchFile(filePath, Buffer.from(`${JSON.stringify(value)}\n`, "utf8"), mode);
 }
 
 function isPathInside(rootPath: string, candidatePath: string): boolean {
@@ -4352,10 +4549,9 @@ function validateAutoresearchCandidateArtifact(
 function parseAutoresearchArgs(args: readonly string[]):
   | { readonly request: AutoresearchRequest }
   | { readonly error: CliExecution } {
-  const flags: { json: boolean; dryRun: boolean; force: boolean; runId?: string; output?: string } = {
+  const flags: { json: boolean; dryRun: boolean; runId?: string } = {
     json: false,
-    dryRun: false,
-    force: false
+    dryRun: false
   };
   const positionals: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -4373,17 +4569,12 @@ function parseAutoresearchArgs(args: readonly string[]):
       flags.dryRun = true;
       continue;
     }
-    if (token === "--force") {
-      flags.force = true;
-      continue;
-    }
     const option = parseAutoresearchOption(args, index);
     if (option?.kind === "missing-value") {
       return { error: autoresearchError(`Missing value for autoresearch option --${option.key}.`, hasTopLevelJsonFlag(args)) };
     }
     if (option?.kind === "parsed") {
       if (option.key === "run") flags.runId = option.value;
-      if (option.key === "output") flags.output = option.value;
       index = option.nextIndex;
       continue;
     }
@@ -4415,12 +4606,12 @@ function parseAutoresearchOption(
   args: readonly string[],
   index: number
 ):
-  | { readonly kind: "parsed"; readonly key: "run" | "output"; readonly value: string; readonly nextIndex: number }
-  | { readonly kind: "missing-value"; readonly key: "run" | "output" }
+  | { readonly kind: "parsed"; readonly key: "run"; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: "run" }
   | undefined {
   const token = args[index];
   if (!token) return undefined;
-  for (const key of ["run", "output"] as const) {
+  for (const key of ["run"] as const) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -5290,7 +5481,7 @@ function renderAutoresearchHelp(): string {
     "  qube autoresearch run [--run <id>] [--json] [--dry-run]",
     "  qube autoresearch status [--run <id>] [--json]",
     "  qube autoresearch dashboard [--run <id>] [--json] [--dry-run]",
-    "  qube autoresearch promote [--run <id>] [--output <path>] [--force] [--json] [--dry-run]",
+    "  qube autoresearch promote [--run <id>] [--json] [--dry-run]",
     "  qube autoresearch <target-directory> <goal> [--json] [--dry-run]",
     "",
     "Agent entry:",
@@ -5320,7 +5511,8 @@ function renderAutoresearchHelp(): string {
     "  init creates the arena and evaluator without target mutation.",
     "  baseline records immutable fixed-evaluator evidence.",
     "  run writes sandboxed candidates under .qube/autoresearch/ and records AIE execution, AIQ evaluation, and AIU continuation ownership.",
-    "  promote is the only command that copies the selected best candidate to the target workspace or --output path.",
+    "  promote applies the accepted current-best file changes to the target workspace.",
+    "  Promotion JSON includes changedFiles and the existing reportPath. The report remains in the run directory.",
     "  evaluator.json changes after init stop lifecycle commands until a new arena is created.",
     "",
     "Examples:",
@@ -5329,7 +5521,7 @@ function renderAutoresearchHelp(): string {
     "  qube autoresearch run --json",
     "  qube autoresearch status --json",
     "  qube autoresearch dashboard --json",
-    "  qube autoresearch promote --output ./scratch/autoresearch-result.md",
+    "  qube autoresearch promote --json",
     "",
     "Behavior:",
     "  JSON output: supported",
