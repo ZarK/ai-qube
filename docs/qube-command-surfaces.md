@@ -1,5 +1,9 @@
 # QUBE Command Surfaces
 
+This reference describes the development checkout. Run its commands with `node products/qube/bin/run` from the repository root.
+
+For the published package, use the [QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md). New development commands may not exist in that release.
+
 Generated from the composer command registry. Do not edit by hand; regenerate with `pnpm --dir products/qube run docs:surfaces` after a build.
 
 See also the static command-flow visual: [QUBE Command Surface: Idea to Complete Implementation](./qube-command-surface-visual.html).

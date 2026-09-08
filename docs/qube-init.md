@@ -10,10 +10,27 @@ npm install --global --ignore-scripts @tjalve/qube@0.2.12
 pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
 
+For a project installation, run the published CLI through the package manager:
+
+```sh
+npm exec -- qube init
+pnpm exec qube init
+```
+
+For a global installation, run `qube init`. See the
+[QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
+for the commands in this release.
+
+## Current development guide
+
+The remaining sections describe the current source checkout. They can include
+changes that are not in QUBE 0.2.12. In a source checkout, replace `qube` in
+the examples with `node products/qube/bin/run`. Plain `qube` examples require a
+global installation of the current development version.
+
 Package placement and configuration scope are independent. A project package
 can write user-global settings, and a global package can initialize a
-repository. After the `qube` command is available, use `qube init` for all
-normal setup and resume work:
+repository. Use one of these current development commands:
 
 ```sh
 qube init --global

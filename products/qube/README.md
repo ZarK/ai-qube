@@ -25,21 +25,16 @@ npm install --global --ignore-scripts @tjalve/qube@0.2.12
 pnpm add --global --ignore-scripts @tjalve/qube@0.2.12
 ```
 
-Package placement and QUBE configuration scope are independent. After the
-`qube` command is available, use one setup entry point:
+For a project installation, run the published CLI through the package manager:
 
 ```sh
-qube init --global
-qube init
-qube init <target>
-qube init <target> --git-init
+npm exec -- qube init
+pnpm exec qube init
 ```
 
-`qube init --global` never invokes Git. Repository setup reports staged Git
-readiness and can complete safe local setup before an initial commit or remote
-exists. See [Git prerequisites](../../docs/qube-init.md#git-prerequisites).
-When a repository selects GitHub, init and doctor share the role-aware
-[GitHub provider readiness contract](../../docs/qube-github-provider-support.md).
+For a global installation, run `qube init`. See the
+[QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
+for the commands in this release.
 
 ## Components
 
@@ -50,7 +45,14 @@ When a repository selects GitHub, init and doctor share the role-aware
 | `aiq` | `@tjalve/aiq` | `aiq` | Staged quality gates and evidence. |
 | `aiu` | `@tjalve/aiu` | `aiu` | Continuation policy from trusted local state. |
 
-## Usage
+## Current development commands
+
+This section describes the current source checkout. These commands can include
+changes that are not in QUBE 0.2.12. In a source checkout, replace `qube` in
+the examples with `node products/qube/bin/run`. Plain `qube` examples require a
+global installation of the current development version.
+
+### Usage
 
 ```sh
 qube --help

@@ -714,7 +714,7 @@
           <div class="terminal-row"><span class="terminal-tag">AIB</span><code>qube idea "Ship a local notes CLI"</code></div>
           <div class="terminal-row"><span class="terminal-tag">AIE</span><code>qube start next --json</code></div>
           <div class="terminal-row"><span class="terminal-tag">AIQ</span><code>qube check src --json</code></div>
-          <div class="terminal-row"><span class="terminal-tag">AIU</span><code>qube status --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">AIU</span><code>qube continue --json</code></div>
         </div>
       </div>
     </section>
@@ -795,32 +795,33 @@
     <section id="install" class="section alt">
       <div class="container">
         <h2 class="section-heading">Install the deck or only the station you need.</h2>
-        <p class="section-copy">Use exact package versions, keep lifecycle scripts disabled where possible, and prefer project-local installs for reproducible agent automation.</p>
+        <p class="section-copy">Use exact package versions and keep lifecycle scripts disabled where possible. The plain <code>qube</code> examples on this page require a global installation. For a project installation, use <code>pnpm exec qube</code>.</p>
         <div class="install-panel">
           <div class="install-row">
             <strong>Project-local QUBE</strong>
             <div>
               <p>Recommended for agents, hooks, CI, and repository instructions.</p>
-              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1</code>
+              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.12</code>
             </div>
           </div>
           <div class="install-row">
             <strong>Guided plan</strong>
             <div>
               <p>Choose an agent harness, issue tracker, automated checks (CI), review mode, and package manager without installing hidden dependencies.</p>
-              <code>qube init . --host codex --work-provider github --yes --dry-run --json</code>
+              <code>pnpm exec qube init</code>
             </div>
           </div>
           <div class="install-row">
             <strong>Single package</strong>
             <div>
               <p>Install a component directly when you only need that package. Repository state still uses QUBE-owned paths.</p>
-              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.1.4</code>
+              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.2.9</code>
             </div>
           </div>
         </div>
         <div class="docs-links" aria-label="Documentation links">
-          <a href="qube-command-surfaces.md">Command surfaces</a>
+          <a href="https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md">QUBE 0.2.12 commands</a>
+          <a href="qube-command-surfaces.md">Development command surfaces</a>
           <a href="qube-host-surfaces.md">Agent harnesses</a>
           <a href="qube-paths-and-artifacts.md">Paths and artifacts</a>
           <a href="qube-github-provider-support.md">GitHub provider</a>
