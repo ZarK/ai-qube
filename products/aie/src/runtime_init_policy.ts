@@ -93,6 +93,17 @@ function addReviewGuidePolicy(context: RuntimeCommandContext, policy: InitPolicy
   }
   const isolatedReviewAgent = stringFlag(context, 'isolated-review-agent');
   if (isolatedReviewAgent !== undefined) policy.isolatedReviewAgent = isolatedReviewAgent;
+  const reviewBackupHarness = stringFlag(context, 'review-backup-harness');
+  const reviewBackupModel = stringFlag(context, 'review-backup-model');
+  const reviewBackupEffort = stringFlag(context, 'review-backup-effort');
+  if (reviewBackupHarness !== undefined) policy.reviewBackupHarness = reviewBackupHarness;
+  if (reviewBackupModel !== undefined) policy.reviewBackupModel = reviewBackupModel;
+  if (reviewBackupEffort !== undefined) {
+    if (reviewBackupEffort !== 'low' && reviewBackupEffort !== 'medium' && reviewBackupEffort !== 'high') {
+      throw new Error('--review-backup-effort must be low, medium, or high.');
+    }
+    policy.reviewBackupEffort = reviewBackupEffort;
+  }
   const publisher = stringFlag(context, 'publisher');
   if (publisher !== undefined) {
     if (publisher !== 'user' && publisher !== 'github-app') {

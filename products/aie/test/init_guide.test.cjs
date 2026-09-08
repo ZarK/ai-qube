@@ -16,7 +16,7 @@ const {
   classifyFromSpec,
 } = require('../dist/init/index.js');
 const { applyQuestionAnswersToPolicy, buildInitQuestions, detectGuideMachine, isolatedReviewHostsOnMachine, recommendedReviewMode } = require('../dist/init/questions.js');
-const { listInitExternalReviewers, resolveInitExternalReviewers, resolveInitReviewModels } = require('../dist/init/review_selections.js');
+const { listInitExternalReviewers, resolveInitExternalReviewers, resolveInitReviewBackup, resolveInitReviewModels } = require('../dist/init/review_selections.js');
 const { configToFileShape, formatUserReviewPublisherFile, getDefaults, userReviewPublisherPath, validateConfig } = require('../dist/config/index.js');
 
 function makeGitRepo() {
@@ -215,6 +215,65 @@ describe('init guide questions', () => {
     assert.deepEqual(unavailable.values, {});
     assert.match(unavailable.errors[0], /live codex model catalog is unavailable/);
     assert.deepEqual(unavailable.warnings, []);
+  });
+
+  it('validates an explicit backup reviewer from the selected live host catalog', () => {
+    const catalogs = {
+      codex: { host: 'codex', status: 'ready', models: ['gpt-review'], diagnostic: null },
+      cursor: { host: 'cursor', status: 'ready', models: ['cursor-review-high'], diagnostic: null },
+    };
+    const codex = resolveInitReviewBackup({
+      requestedHarness: 'codex',
+      requestedModel: 'gpt-review',
+      requestedEffort: 'high',
+      mainHost: 'cursor',
+      selectedHosts: ['codex', 'cursor'],
+      installedHosts: ['codex', 'cursor'],
+      catalogs,
+    });
+    assert.deepEqual(codex.values, { host: 'codex', binding: { model: 'gpt-review', effort: 'high' } });
+    assert.deepEqual(codex.errors, []);
+
+    const cursor = resolveInitReviewBackup({
+      requestedHarness: 'cursor',
+      requestedModel: 'cursor-review-high',
+      mainHost: 'codex',
+      selectedHosts: ['codex', 'cursor'],
+      installedHosts: ['codex', 'cursor'],
+      catalogs,
+    });
+    assert.deepEqual(cursor.values, { host: 'cursor', binding: { model: 'cursor-review-high', effort: null } });
+    assert.deepEqual(cursor.errors, []);
+
+    const none = resolveInitReviewBackup({
+      requestedHarness: 'none',
+      mainHost: 'codex',
+      selectedHosts: ['codex'],
+      installedHosts: ['codex'],
+      catalogs,
+    });
+    assert.equal(none.values, null);
+    assert.deepEqual(none.errors, []);
+  });
+
+  it('rejects incomplete, conflicting, unavailable, and unsupported backup reviewers', () => {
+    const catalogs = {
+      codex: { host: 'codex', status: 'ready', models: ['gpt-review'], diagnostic: null },
+      cursor: { host: 'cursor', status: 'unavailable', models: [], diagnostic: 'No catalog.' },
+    };
+    const base = {
+      requestedHarness: 'codex',
+      mainHost: 'cursor',
+      selectedHosts: ['codex', 'cursor'],
+      installedHosts: ['codex', 'cursor'],
+      catalogs,
+    };
+    assert.match(resolveInitReviewBackup(base).errors.join('\n'), /requires --review-backup-model.*requires --review-backup-effort/s);
+    assert.match(resolveInitReviewBackup({ ...base, requestedModel: 'gpt-review', requestedEffort: 'high', mainHost: 'codex' }).errors.join('\n'), /must differ from the main/);
+    assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'cursor', requestedModel: 'cursor-review-high' }).errors.join('\n'), /catalog is unavailable/);
+    assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'opencode', requestedModel: 'model', requestedEffort: 'low', selectedHosts: ['opencode'], installedHosts: ['opencode'] }).errors.join('\n'), /does not support isolated review/);
+    assert.match(resolveInitReviewBackup({ ...base, requestedModel: 'gpt-review' }).errors.join('\n'), /requires --review-backup-effort/);
+    assert.match(resolveInitReviewBackup({ ...base, requestedHarness: 'none', requestedModel: 'gpt-review' }).errors.join('\n'), /None disables failover/);
   });
 
   it('does not recommend isolated when no review host is installed', () => {

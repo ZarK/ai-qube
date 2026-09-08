@@ -66,6 +66,7 @@ import {
   type QubeExternalReviewer,
   type QubeInitConfig,
   type QubeInitField,
+  type QubeReviewBackup,
   type QubeReviewMode,
   type QubeReviewPublisher,
   type QubeUmpireScope,
@@ -81,8 +82,10 @@ import {
 } from "./init_output.js";
 import {
   GUIDED_INIT_UNPINNED_MODEL,
+  GUIDED_INIT_NO_BACKUP,
   buildGuidedInitQuestions,
   normalizeGuidedInitAnswers,
+  sortReviewModels,
   type GuidedHarnessChoice,
   type GuidedInitAnswers,
   type GuidedInitCapabilities,
@@ -813,6 +816,22 @@ const initCommand = defineCommand({
       type: "string"
     }),
     defineFlag({
+      name: "review-backup-harness",
+      description: "Backup harness for isolated review, or none to disable the backup.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "review-backup-model",
+      description: "Exact model for the backup reviewer.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "review-backup-effort",
+      description: "Backup model effort. Omit for Cursor, whose model ID includes the effort choice.",
+      type: "option",
+      options: ["low", "medium", "high"]
+    }),
+    defineFlag({
       name: "external-reviewer",
       description: "Comma-separated external reviewers. Use one or more of: coderabbit, copilot, cubic.",
       type: "string"
@@ -1363,7 +1382,7 @@ async function collectComposerConfiguration(environment: CliEnvironment): Promis
     continuousShipping: true,
     umpire: Object.freeze({ scope: "ready" as const }),
     quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
-    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user" as const }),
+    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user" as const, backup: null }),
     mcp: Object.freeze({ optIn: false }),
   });
   const resolved = resolveQubeInitConfig({ globalConfig: userGlobal.config, repoConfig: repository.config, defaults });
@@ -1561,7 +1580,7 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly prospectiveRoot?: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly publisher?: QubeReviewPublisher; readonly configScope?: 'repo' | 'global'; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly prospectiveRoot?: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly reviewMode?: string; readonly reviewAgents?: readonly string[]; readonly localReviewAgents?: readonly string[]; readonly isolatedReviewAgent?: string; readonly reviewModels?: readonly string[]; readonly reviewBackup?: QubeReviewBackup | null; readonly publisher?: QubeReviewPublisher; readonly configScope?: 'repo' | 'global'; readonly continuousShipping?: boolean; readonly uiAuditEvidenceRoot?: string; readonly creditWarning?: boolean }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
   if (options.workProvider) args.push("--work-provider", options.workProvider);
@@ -1573,6 +1592,13 @@ function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options
   if (options.localReviewAgents && options.localReviewAgents.length > 0) args.push("--local-review-agent", options.localReviewAgents.join(","));
   if (options.isolatedReviewAgent) args.push("--isolated-review-agent", options.isolatedReviewAgent);
   if (options.reviewModels && options.reviewModels.length > 0) args.push("--review-model", options.reviewModels.join(","));
+  if (options.reviewBackup !== undefined) {
+    args.push("--review-backup-harness", options.reviewBackup?.harness ?? "none");
+    if (options.reviewBackup) {
+      args.push("--review-backup-model", options.reviewBackup.model);
+      if (options.reviewBackup.effort !== null) args.push("--review-backup-effort", options.reviewBackup.effort);
+    }
+  }
   if (options.publisher) args.push("--publisher", options.publisher);
   if (options.configScope) args.push("--config-scope", options.configScope);
   if (options.continuousShipping === true) args.push("--autonomous");
@@ -1643,6 +1669,9 @@ const GUIDED_INIT_QUESTION_ORDER: readonly GuidedInitQuestionId[] = Object.freez
   "external-reviewer",
   "review-harness",
   "review-model",
+  "review-backup-harness",
+  "review-backup-model",
+  "review-backup-effort",
   "review-publisher",
 ]);
 
@@ -1691,6 +1720,9 @@ function guidedAnswersFromFlags(
   const ciProviders = readOptionList<string>(flags, "ci-provider");
   const reviewMode = readOption<QubeReviewMode>(flags, "review-mode");
   const reviewHarness = readOption<string>(flags, "review-harness");
+  const reviewBackupHarness = readOption<string>(flags, "review-backup-harness");
+  const reviewBackupModel = readOption<string>(flags, "review-backup-model");
+  const reviewBackupEffort = readOption<Exclude<QubeReviewBackup["effort"], null>>(flags, "review-backup-effort");
   const externalReviewers = readOptionList<string>(flags, "external-reviewer");
   const canonicalExternalReviewers = externalReviewers
     ? Object.freeze([...new Set(externalReviewers.map(raw => {
@@ -1718,6 +1750,9 @@ function guidedAnswersFromFlags(
     ...(reviewMode ? { reviewSource: guidedReviewSource(reviewMode) } : {}),
     ...(canonicalExternalReviewers ? { externalReviewers: canonicalExternalReviewers } : {}),
     ...(reviewHarness ? { reviewHarness } : {}),
+    ...(reviewBackupHarness !== undefined ? { reviewBackupHarness: reviewBackupHarness === GUIDED_INIT_NO_BACKUP ? null : reviewBackupHarness } : {}),
+    ...(reviewBackupModel !== undefined ? { reviewBackupModel } : {}),
+    ...(reviewBackupEffort !== undefined ? { reviewBackupEffort } : {}),
     ...(publisher ? { reviewPublisher: publisher } : {}),
   });
 }
@@ -1733,6 +1768,20 @@ function explicitGuidedReviewError(flags: Readonly<Record<string, unknown>>, inh
     ?? inherited.workProviders?.[0]
     ?? "github";
   const reviewProvider = workProvider === "github" ? "github" : "gitlab";
+  const backupHarness = readOption<string>(flags, "review-backup-harness");
+  const backupModel = readOption<string>(flags, "review-backup-model");
+  const backupEffort = readOption<string>(flags, "review-backup-effort");
+  if ([backupHarness, backupModel, backupEffort].some(value => value !== undefined)) {
+    const effectiveMode = mode ?? inherited.review?.mode;
+    if (effectiveMode !== undefined && effectiveMode !== "isolated") return "A backup reviewer requires isolated review mode.";
+    const selectedBackup = backupHarness ?? inherited.review?.backup?.harness;
+    if ((backupModel !== undefined || backupEffort !== undefined) && (!selectedBackup || selectedBackup === "none")) {
+      return "Select a backup harness before its model or effort. None does not use a model or effort.";
+    }
+    if (selectedBackup === "cursor" && backupEffort !== undefined) {
+      return "Cursor uses the effort in its model ID. Omit --review-backup-effort.";
+    }
+  }
   if (publisher && reviewProvider !== "github") {
     return "Review publisher selection applies only when GitHub publishes reviews.";
   }
@@ -1799,6 +1848,13 @@ function guidedAnswersFromConfig(config: QubeInitConfig | null, detectedCi: read
       ? { externalReviewers: config.review.externalReviewers }
       : {}),
     ...(reviewSource === "harness" && reviewHarness ? { reviewHarness } : {}),
+    ...(config.review?.backup === undefined ? {} : config.review.backup === null
+      ? { reviewBackupHarness: null }
+      : {
+          reviewBackupHarness: config.review.backup.harness,
+          reviewBackupModel: config.review.backup.model,
+          reviewBackupEffort: config.review.backup.effort,
+        }),
     ...(reviewSource && reviewSource !== "external"
       ? { reviewModel: reviewModel ?? null }
       : {}),
@@ -1838,6 +1894,13 @@ function normalizedExplicitGuidedAnswers(
       ? { reviewHarness: resolved.reviewHarness }
       : {}),
     ...(Object.hasOwn(explicit, "reviewModel") ? { reviewModel: resolved.reviewModel ?? null } : {}),
+    ...(["reviewBackupHarness", "reviewBackupModel", "reviewBackupEffort"].some(key => Object.hasOwn(explicit, key))
+      ? {
+          reviewBackupHarness: resolved.reviewBackupHarness ?? null,
+          ...(resolved.reviewBackupModel ? { reviewBackupModel: resolved.reviewBackupModel } : {}),
+          ...(resolved.reviewBackupHarness ? { reviewBackupEffort: resolved.reviewBackupEffort ?? null } : {}),
+        }
+      : {}),
     ...(Object.hasOwn(explicit, "reviewPublisher") && resolved.reviewPublisher
       ? { reviewPublisher: resolved.reviewPublisher }
       : {}),
@@ -1895,6 +1958,7 @@ function guidedConfigFromAnswers(
   const reviewModels = reviewModelAnswered
     ? Object.freeze(resolved.reviewModel && reviewHost ? [`${reviewHost}:${resolved.reviewModel}`] : [])
     : undefined;
+  const backupAnswered = Object.hasOwn(answers, "reviewBackupHarness");
   return Object.freeze({
     version: 1,
     ...(answers.agentHarnesses ? { hosts: Object.freeze([...answers.agentHarnesses]) } : {}),
@@ -1903,7 +1967,7 @@ function guidedConfigFromAnswers(
     ...(answers.continuousShipping === undefined ? {} : { continuousShipping: answers.continuousShipping }),
     ...(answers.umpireScope ? { umpire: Object.freeze({ scope: answers.umpireScope }) } : {}),
     ...(answers.qualityStages ? { quality: Object.freeze({ stages: Object.freeze([...answers.qualityStages]) }) } : {}),
-    ...(reviewSource || answers.reviewHarness || answers.externalReviewers || answers.reviewPublisher || reviewModels
+    ...(reviewSource || answers.reviewHarness || answers.externalReviewers || answers.reviewPublisher || reviewModels || backupAnswered
       ? {
           review: Object.freeze({
             ...(reviewSource ? { mode: guidedReviewMode(reviewSource) } : {}),
@@ -1913,6 +1977,7 @@ function guidedConfigFromAnswers(
               : {}),
             ...(answers.reviewPublisher ? { publisher: answers.reviewPublisher } : {}),
             ...(reviewModels ? { models: reviewModels } : {}),
+            ...(backupAnswered ? { backup: resolvedReviewBackup(resolved) } : {}),
           }),
         }
       : {}),
@@ -1920,9 +1985,19 @@ function guidedConfigFromAnswers(
   });
 }
 
+function resolvedReviewBackup(answers: NonNullable<GuidedInitNormalization["answers"]>): QubeReviewBackup | null {
+  if (!answers.reviewBackupHarness) return null;
+  if (!answers.reviewBackupModel) throw new Error("The backup reviewer requires an explicit model.");
+  return Object.freeze({
+    harness: answers.reviewBackupHarness,
+    model: answers.reviewBackupModel,
+    effort: answers.reviewBackupEffort ?? null,
+  });
+}
+
 function guidedModelCapability(
   host: AgentHostId,
-  requestedHost: AgentHostId | undefined,
+  requestedHosts: readonly AgentHostId[],
   listings: Map<AgentHostId, ReturnType<typeof listHostModels>>,
 ): GuidedReviewModelCapability {
   const profile = getAgentHostProfileSync(host);
@@ -1933,7 +2008,7 @@ function guidedModelCapability(
       reason: `${profile.displayName} does not provide a live model list. Leave Review unpinned.`,
     });
   }
-  if (requestedHost !== host) {
+  if (!requestedHosts.includes(host)) {
     return Object.freeze({ kind: "unavailable", reason: "Select this harness before QUBE loads its live model list." });
   }
   let listing = listings.get(host);
@@ -1949,14 +2024,14 @@ function guidedModelCapability(
   }
   return Object.freeze({
     kind: "live",
-    models: Object.freeze(listing.models.map(model => Object.freeze({ value: model, label: model }))),
+    models: sortReviewModels(host, listing.models.map(model => Object.freeze({ value: model, label: model }))),
   });
 }
 
 function createGuidedInitCapabilities(input: {
   readonly environment: CliEnvironment;
   readonly registeredReviewers: readonly { readonly id: string; readonly label: string }[];
-  readonly modelHost?: AgentHostId;
+  readonly modelHosts?: readonly AgentHostId[];
   readonly modelListings: Map<AgentHostId, ReturnType<typeof listHostModels>>;
 }): GuidedInitCapabilities {
   const installedReviewHosts = new Set(detectInstalledReviewHostsOnPath(command => (
@@ -1973,7 +2048,7 @@ function createGuidedInitCapabilities(input: {
       recommended: option.default,
       canRunPrimaryReview: declared.capabilities["review-host-guided"].support !== "unsupported",
       canRunSeparateReview: availableForSeparateReview && declared.capabilities["review-isolated"].support !== "unsupported",
-      reviewModels: guidedModelCapability(profile.id, input.modelHost, input.modelListings),
+      reviewModels: guidedModelCapability(profile.id, input.modelHosts ?? [], input.modelListings),
     });
   }));
   const issueTrackers: readonly GuidedIssueTrackerChoice[] = Object.freeze(executorWorkProviders.map(option => Object.freeze({
@@ -2039,18 +2114,21 @@ function createGuidedInitCapabilities(input: {
   });
 }
 
-function selectedGuidedModelHost(questions: readonly GuidedInitQuestion[]): AgentHostId | undefined {
+function selectedGuidedModelHosts(questions: readonly GuidedInitQuestion[]): readonly AgentHostId[] {
   const byId = new Map(questions.map(question => [question.id, question]));
   const source = byId.get("review-source")?.selectedValue;
+  const selected: AgentHostId[] = [];
   if (source === "primary") {
     const hosts = byId.get("agent-harnesses")?.selectedValue;
-    return Array.isArray(hosts) ? hosts[0] as AgentHostId | undefined : undefined;
+    if (Array.isArray(hosts) && hosts[0]) selected.push(hosts[0] as AgentHostId);
   }
   if (source === "harness") {
     const harness = byId.get("review-harness")?.selectedValue;
-    return typeof harness === "string" ? harness as AgentHostId : undefined;
+    if (typeof harness === "string") selected.push(harness as AgentHostId);
+    const backup = byId.get("review-backup-harness")?.selectedValue;
+    if (typeof backup === "string" && backup !== GUIDED_INIT_NO_BACKUP) selected.push(backup as AgentHostId);
   }
-  return undefined;
+  return Object.freeze([...new Set(selected)]);
 }
 
 function guidedQuestionChoices(question: GuidedInitQuestion): {
@@ -2112,6 +2190,12 @@ function guidedQuestionLayerValue(
       present: Object.hasOwn(answers, "reviewModel"),
       value: answers.reviewModel === undefined ? null : answers.reviewModel ?? GUIDED_INIT_UNPINNED_MODEL,
     };
+    case "review-backup-harness": return {
+      present: Object.hasOwn(answers, "reviewBackupHarness"),
+      value: answers.reviewBackupHarness === undefined ? null : answers.reviewBackupHarness ?? GUIDED_INIT_NO_BACKUP,
+    };
+    case "review-backup-model": return { present: Object.hasOwn(answers, "reviewBackupModel"), value: answers.reviewBackupModel ?? null };
+    case "review-backup-effort": return { present: Object.hasOwn(answers, "reviewBackupEffort"), value: answers.reviewBackupEffort ?? null };
     case "review-publisher": return { present: Object.hasOwn(answers, "reviewPublisher"), value: answers.reviewPublisher ?? null };
   }
 }
@@ -2198,6 +2282,9 @@ function addGuidedAnswer(answers: GuidedInitAnswers, question: GuidedInitQuestio
     case "external-reviewer": return Object.freeze({ ...answers, externalReviewers: list });
     case "review-harness": return Object.freeze({ ...answers, reviewHarness: selected });
     case "review-model": return Object.freeze({ ...answers, reviewModel: selected === GUIDED_INIT_UNPINNED_MODEL ? null : selected });
+    case "review-backup-harness": return Object.freeze({ ...answers, reviewBackupHarness: selected === GUIDED_INIT_NO_BACKUP ? null : selected });
+    case "review-backup-model": return Object.freeze({ ...answers, reviewBackupModel: selected });
+    case "review-backup-effort": return Object.freeze({ ...answers, reviewBackupEffort: selected as QubeReviewBackup["effort"] });
     case "review-publisher": return Object.freeze({ ...answers, reviewPublisher: selected as QubeReviewPublisher });
   }
 }
@@ -2214,6 +2301,9 @@ function hasGuidedAnswer(answers: GuidedInitAnswers, id: GuidedInitQuestionId): 
     "external-reviewer": "externalReviewers",
     "review-harness": "reviewHarness",
     "review-model": "reviewModel",
+    "review-backup-harness": "reviewBackupHarness",
+    "review-backup-model": "reviewBackupModel",
+    "review-backup-effort": "reviewBackupEffort",
     "review-publisher": "reviewPublisher",
   });
   return Object.hasOwn(answers, keys[id]);
@@ -2232,6 +2322,9 @@ function omitGuidedAnswer(answers: GuidedInitAnswers, id: GuidedInitQuestionId):
     "external-reviewer": "externalReviewers",
     "review-harness": "reviewHarness",
     "review-model": "reviewModel",
+    "review-backup-harness": "reviewBackupHarness",
+    "review-backup-model": "reviewBackupModel",
+    "review-backup-effort": "reviewBackupEffort",
     "review-publisher": "reviewPublisher",
   });
   delete mutable[keys[id]];
@@ -2264,11 +2357,11 @@ async function collectGuidedInitAnswers(input: {
       defaults: input.defaults,
       resolveDefaults: input.resolveDefaults,
     });
-    const modelHost = selectedGuidedModelHost(firstQuestions);
+    const modelHosts = selectedGuidedModelHosts(firstQuestions);
     const capabilities = createGuidedInitCapabilities({
       environment: input.environment,
       registeredReviewers: input.registeredReviewers,
-      ...(modelHost ? { modelHost } : {}),
+      modelHosts,
       modelListings,
     });
     return buildGuidedInitQuestions({
@@ -2305,7 +2398,7 @@ async function collectGuidedInitAnswers(input: {
   const finalCapabilities = createGuidedInitCapabilities({
     environment: input.environment,
     registeredReviewers: input.registeredReviewers,
-    ...(selectedGuidedModelHost(finalQuestions) ? { modelHost: selectedGuidedModelHost(finalQuestions) } : {}),
+    modelHosts: selectedGuidedModelHosts(finalQuestions),
     modelListings,
   });
   return Object.freeze({
@@ -2575,6 +2668,7 @@ const QUBE_INIT_FIELD_FLAGS: Readonly<Partial<Record<QubeInitField, string>>> = 
   "quality.stages": "quality-stage",
   "review.mode": "review-mode",
   "review.harness": "review-harness",
+  "review.backup": "review-backup-harness",
   "review.externalReviewers": "external-reviewer",
   "review.publisher": "review-publisher",
   "mcp.optIn": "mcp",
@@ -2626,7 +2720,9 @@ function resolveQubeInitInheritance(
   }
   const fields = Object.freeze((inheritAll ? QUBE_INIT_FIELDS : [...new Set(requested)]) as readonly QubeInitField[]);
   for (const field of fields) {
-    const selectionFlag = QUBE_INIT_FIELD_FLAGS[field];
+    const selectionFlag = field === "review.backup"
+      ? ["review-backup-harness", "review-backup-model", "review-backup-effort"].find(flag => flags[flag] !== undefined)
+      : QUBE_INIT_FIELD_FLAGS[field];
     if (selectionFlag && flags[selectionFlag] !== undefined) {
       return {
         inheritance: fallback,
@@ -3118,7 +3214,10 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const requestedReviewHarness = readOption<string>(flags, "review-harness");
   const requestedPublisher = readOption<QubeReviewPublisher>(flags, "review-publisher");
   let explicitReviewError: string | undefined;
-  if (requestedPublisher && guidedAnswers.issueTracker === "gitlab") {
+  if (["review-backup-harness", "review-backup-model", "review-backup-effort"].some(flag => flags[flag] !== undefined)
+    && guidedAnswers.reviewSource !== "harness") {
+    explicitReviewError = "A backup reviewer requires isolated review mode.";
+  } else if (requestedPublisher && guidedAnswers.issueTracker === "gitlab") {
     explicitReviewError = "Review publisher selection applies only when GitHub publishes reviews.";
   } else if (requestedExternalReviewers && guidedAnswers.reviewSource !== "external") {
     explicitReviewError = "External reviewer services require external review mode.";
@@ -3159,6 +3258,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       ...(guidedMode !== "external" && guidedReviewHarness ? { harness: guidedReviewHarness } : {}),
       externalReviewers: Object.freeze(guidedAnswers.externalReviewers ?? (recommendedReviewer ? [recommendedReviewer.id] : [])),
       publisher: guidedAnswers.reviewPublisher ?? "user",
+      backup: guidedMode === "isolated" ? resolvedReviewBackup(guidedAnswers) : null,
       ...(guidedMode !== "external" && guidedReviewHarness && guidedAnswers.reviewModel
         ? { models: Object.freeze([`${guidedReviewHarness}:${guidedAnswers.reviewModel}`]) }
         : {}),
@@ -3395,6 +3495,9 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         reviewModels: setup.review.mode === "external"
           ? undefined
           : repositorySelection("review.models", setup.review.models),
+        reviewBackup: setup.review.mode === "isolated"
+          ? repositorySelection("review.backup", setup.review.backup ?? null)
+          : undefined,
         publisher: reviewProvider === "github"
           ? repositorySelection("review.publisher", setup.review.publisher)
           : undefined,
@@ -7034,7 +7137,7 @@ function parseInitOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["host", "work-provider", "ci-provider", "review-mode", "review-harness", "ui-audit-evidence-root", "config-scope", "umpire-scope", "quality-stage", "external-reviewer", "review-publisher"]) {
+  for (const key of ["host", "work-provider", "ci-provider", "review-mode", "review-harness", "review-backup-harness", "review-backup-model", "review-backup-effort", "ui-audit-evidence-root", "config-scope", "umpire-scope", "quality-stage", "external-reviewer", "review-publisher"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };

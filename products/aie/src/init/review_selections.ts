@@ -1,6 +1,6 @@
 import { getAgentHostCapabilityProfile } from '@tjalve/qube-core';
 import type { HostModelListing } from '../app/model_catalog.js';
-import type { ReviewModelHostId, ReviewModelsPolicy } from '../core/policy.js';
+import type { ReviewModelBinding, ReviewModelHostId, ReviewModelsPolicy } from '../core/policy.js';
 import { REVIEW_MODEL_HOST_IDS } from '../core/policy.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 
@@ -165,4 +165,49 @@ export function resolveInitReviewModels(
     values[parsed.host] = { model: parsed.model, effort: null };
   }
   return { values, errors: Object.freeze(errors), warnings: Object.freeze(warnings) };
+}
+
+export function resolveInitReviewBackup(input: {
+  requestedHarness: string;
+  requestedModel?: string;
+  requestedEffort?: 'low' | 'medium' | 'high';
+  mainHost: string | null;
+  selectedHosts: readonly string[];
+  installedHosts: readonly ReviewModelHostId[];
+  catalogs: Readonly<Partial<Record<ReviewModelHostId, HostModelListing>>>;
+}): InitSelectionResult<{ host: ReviewModelHostId; binding: ReviewModelBinding } | null> {
+  const requestedHarness = input.requestedHarness.trim();
+  if (requestedHarness === 'none') {
+    const errors = input.requestedModel !== undefined || input.requestedEffort !== undefined
+      ? ['Backup review model and effort require a backup harness. None disables failover.']
+      : [];
+    return { values: null, errors: Object.freeze(errors), warnings: Object.freeze([]) };
+  }
+  const hostSelection = resolveInitIsolatedReviewer(requestedHarness, input.selectedHosts, input.installedHosts);
+  if (!hostSelection.values) return { values: null, errors: hostSelection.errors, warnings: hostSelection.warnings };
+  const host = hostSelection.values;
+  const errors: string[] = [];
+  const model = input.requestedModel?.trim();
+  if (!model) errors.push(`Backup review harness "${host}" requires --review-backup-model.`);
+  if (host === input.mainHost) errors.push(`Backup review harness "${host}" must differ from the main isolated review harness.`);
+  if (host === 'cursor' && input.requestedEffort !== undefined) {
+    errors.push('Cursor review model ids include effort. Omit --review-backup-effort.');
+  }
+  if (host !== 'cursor' && input.requestedEffort === undefined) {
+    errors.push(`Backup review harness "${host}" requires --review-backup-effort.`);
+  }
+  const catalog = input.catalogs[host];
+  if (model && (!catalog || catalog.status !== 'ready')) {
+    errors.push(`Backup review model "${model}" cannot be validated because the live ${host} model catalog is unavailable.`);
+  } else if (model && catalog && !catalog.models.includes(model)) {
+    errors.push(`Backup review model "${model}" is not in the live ${host} model catalog.`);
+  }
+  if (errors.length > 0 || !model) {
+    return { values: null, errors: Object.freeze(errors), warnings: Object.freeze([]) };
+  }
+  return {
+    values: { host, binding: { model, effort: host === 'cursor' ? null : input.requestedEffort ?? null } },
+    errors: Object.freeze([]),
+    warnings: Object.freeze([]),
+  };
 }

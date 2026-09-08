@@ -26,6 +26,7 @@ import {
   userQubeConfigPath,
   writeQubeInitConfig,
   type QubeInitConfig,
+  type QubeReviewBackup,
   type RequiredQubeInitConfig,
   type QubeReviewMode,
   type QubeReviewPublisher,
@@ -152,6 +153,7 @@ export interface QubeInitRecord extends QubeInitConfig {
     readonly externalReviewers?: readonly string[];
     readonly publisher: QubeReviewPublisher;
     readonly models?: readonly string[];
+    readonly backup?: QubeReviewBackup | null;
   };
   readonly mcp: { readonly optIn: boolean };
 }
@@ -388,6 +390,7 @@ export function createInitRecord(input: {
   readonly externalReviewers?: readonly string[];
   readonly reviewPublisher?: QubeReviewPublisher;
   readonly reviewModels?: readonly string[];
+  readonly reviewBackup?: QubeReviewBackup | null;
 }): QubeInitRecord {
   if (input.hosts.length === 0) throw new TypeError("QUBE init record requires at least one agent harness.");
   const defaultReview = defaultReviewSelection(input.hosts);
@@ -412,6 +415,7 @@ export function createInitRecord(input: {
       ...(input.reviewModels && input.reviewModels.length > 0
         ? { models: Object.freeze([...input.reviewModels]) }
         : {}),
+      ...(input.reviewBackup === undefined ? {} : { backup: input.reviewBackup }),
     }),
     mcp: Object.freeze({ optIn: input.mcpOptIn }),
   }));
@@ -442,7 +446,7 @@ export function readInitRecord(cwd: string, env: NodeJS.ProcessEnv = process.env
     continuousShipping: true,
     umpire: Object.freeze({ scope: "ready" }),
     quality: Object.freeze({ stages: Object.freeze(["unit"]) }),
-    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user" }),
+    review: Object.freeze({ mode: review.mode, ...(review.harness ? { harness: review.harness } : {}), publisher: "user", backup: null }),
     mcp: Object.freeze({ optIn: false }),
   });
   const resolved = resolveQubeInitConfig({
@@ -491,6 +495,9 @@ function completeInitRecord(config: QubeInitConfig): QubeInitRecord | null {
       ...(config.review.externalReviewers ? { externalReviewers: Object.freeze([...config.review.externalReviewers]) } : {}),
       publisher: config.review.publisher,
       ...(config.review.models ? { models: Object.freeze([...config.review.models]) } : {}),
+      ...(config.review.mode !== "isolated" || config.review.backup === undefined ? {} : {
+        backup: config.review.backup === null ? null : Object.freeze({ ...config.review.backup }),
+      }),
     }),
     mcp: Object.freeze({ optIn: config.mcp.optIn }),
   });

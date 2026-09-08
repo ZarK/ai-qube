@@ -417,12 +417,33 @@ When the selected harness provides a live model catalog, QUBE offers only the
 model IDs that the active review transport can execute with the same model,
 reasoning effort, and speed. For example, native Windows Cursor review uses
 ACP. QUBE omits a Cursor CLI model when ACP cannot preserve its exact
-semantics. It recommends the first compatible entry because the catalog does
-not include comparable price or quality data. Check the harness for current
-price and model details. Normal setup has no free-text model field.
+semantics. Native models appear first. QUBE sorts native models and other models
+alphabetically within each group. This order does not compare price or quality.
+Check the harness for current price and model details. Normal setup has no
+free-text model field.
 If the harness does not support model discovery, QUBE leaves Review unpinned.
 If a supported catalog is blocked or unavailable, setup stops and gives the
 next action.
+
+<a id="review-backup-harness"></a>
+<a id="review-backup-model"></a>
+<a id="review-backup-effort"></a>
+
+For isolated review, choose a **Backup reviewer** or **None**. QUBE offers only
+eligible installed harnesses that differ from the main reviewer. An option
+that uses the implementation harness says so before selection. It still runs
+an isolated review, but uses the implementation harness's account.
+
+An enabled backup requires a model and effort. Choose low, medium, or high
+effort. Cursor uses the effort in its exact model ID and stores no separate
+effort value. QUBE does not select a backup automatically.
+
+Use `--review-backup-harness`, `--review-backup-model`, and
+`--review-backup-effort` to supply these choices without questions. Omit the
+effort flag for Cursor. Use `--review-backup-harness none` to disable the backup.
+Global setup saves the choice for later repositories. A repository choice
+overrides the global choice. Saved choices do not cause repeated questions.
+Run `qube init` in an existing repository to apply a changed global backup.
 
 For GitHub review publishing, QUBE can use the current GitHub account or the
 QUBE Reviewer App.

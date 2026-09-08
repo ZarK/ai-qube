@@ -3,10 +3,12 @@ import { describe, it } from "node:test";
 
 import {
   GUIDED_INIT_DOCS_BASE_URL,
+  GUIDED_INIT_NO_BACKUP,
   GUIDED_INIT_UNPINNED_MODEL,
   buildGuidedInitAnswerSummary,
   buildGuidedInitQuestions,
   normalizeGuidedInitAnswers,
+  sortReviewModels,
   validateGuidedInitQuestions,
 } from "../dist/init_questions.js";
 
@@ -88,6 +90,7 @@ const completeHarnessAnswers = Object.freeze({
   reviewSource: "harness",
   reviewHarness: "claude-code",
   reviewModel: null,
+  reviewBackupHarness: null,
   reviewPublisher: "user",
 });
 
@@ -106,9 +109,12 @@ describe("guided QUBE init questions", () => {
       "external-reviewer",
       "review-harness",
       "review-model",
+      "review-backup-harness",
+      "review-backup-model",
+      "review-backup-effort",
       "review-publisher",
     ]);
-    assert.deepEqual(questions.map(question => question.step), [1, 2, 3, 4, 5, 6, 7, 8, 8, 8, 8]);
+    assert.deepEqual(questions.map(question => question.step), [1, 2, 3, 4, 5, 6, 7, 8, 8, 8, 8, 8, 8, 8]);
     for (const question of questions) {
       assert.ok(question.explanation.length > 20, question.id);
       assert.ok(question.recommendationReason.length > 20, question.id);
@@ -118,6 +124,7 @@ describe("guided QUBE init questions", () => {
     assert.equal(questions.find(question => question.id === "external-reviewer").applicable, false);
     assert.equal(questions.find(question => question.id === "review-harness").applicable, true);
     assert.equal(questions.find(question => question.id === "review-model").answerLabel, "Claude Code default (not pinned)");
+    assert.equal(questions.find(question => question.id === "review-backup-harness").answerLabel, "None");
   });
 
   it("filters unavailable capabilities and exposes only supported review sources", () => {
@@ -328,7 +335,7 @@ describe("guided QUBE init questions", () => {
       assert.equal(question.reason, "The current valid setup is preserved.", question.id);
       assert.deepEqual(question.preselectedValue, question.currentValue, question.id);
     }
-    assert.equal(buildGuidedInitAnswerSummary(questions).length, 10);
+    assert.equal(buildGuidedInitAnswerSummary(questions).length, 11);
   });
 
   it("resolves noninteractive defaults through the same question model", () => {
@@ -354,6 +361,150 @@ describe("guided QUBE init questions", () => {
     assert.equal(harnesses.currentValue, null);
     assert.equal(harnesses.promptNeeded, true);
     assert.match(harnesses.validationError, /current value includes unavailable choice: cursor/);
+  });
+
+  it("puts native model IDs first and sorts both groups", () => {
+    const choices = [
+      { value: "zeta/model", label: "Zeta" },
+      { value: "composer-2", label: "Composer 2" },
+      { value: "alpha/model", label: "Alpha" },
+      { value: "cursor-grok-4.6", label: "Grok" },
+    ];
+
+    assert.deepEqual(sortReviewModels("cursor", choices).map(choice => choice.value), [
+      "composer-2",
+      "cursor-grok-4.6",
+      "alpha/model",
+      "zeta/model",
+    ]);
+    assert.deepEqual(sortReviewModels("codex", [
+      { value: "vendor/model", label: "Vendor" },
+      { value: "o3", label: "o3" },
+      { value: "gpt-5.6", label: "GPT" },
+    ]).map(choice => choice.value), ["gpt-5.6", "o3", "vendor/model"]);
+    assert.deepEqual(choices.map(choice => choice.value), ["zeta/model", "composer-2", "alpha/model", "cursor-grok-4.6"]);
+  });
+
+  it("selects an explicit backup model and effort and warns for the implementation host", () => {
+    const result = normalizeGuidedInitAnswers({
+      capabilities,
+      answers: {
+        ...completeHarnessAnswers,
+        reviewBackupHarness: "codex",
+        reviewBackupModel: "gpt-5.6-mini",
+        reviewBackupEffort: "high",
+      },
+    });
+
+    assert.equal(result.validation.ok, true);
+    assert.equal(result.answers.reviewBackupHarness, "codex");
+    assert.equal(result.answers.reviewBackupModel, "gpt-5.6-mini");
+    assert.equal(result.answers.reviewBackupEffort, "high");
+    const backup = result.questions.find(question => question.id === "review-backup-harness");
+    const implementationHost = backup.options.find(option => option.value === "codex");
+    assert.match(implementationHost.label, /implementation host/i);
+    assert.match(implementationHost.description, /implementation work/i);
+    assert.equal(backup.options[0].value, GUIDED_INIT_NO_BACKUP);
+    assert.equal(backup.options[0].recommended, true);
+    assert.deepEqual(
+      result.questions.find(question => question.id === "review-backup-effort").options.map(option => option.value),
+      ["low", "medium", "high"],
+    );
+  });
+
+  it("rejects an unavailable backup model and effort", () => {
+    const result = normalizeGuidedInitAnswers({
+      capabilities,
+      answers: {
+        ...completeHarnessAnswers,
+        reviewBackupHarness: "codex",
+        reviewBackupModel: "invented-model",
+        reviewBackupEffort: "extreme",
+      },
+    });
+
+    assert.equal(result.validation.ok, false);
+    assert.match(result.validation.errors.find(error => error.questionId === "review-backup-model")?.message, /invented-model/);
+    assert.match(result.validation.errors.find(error => error.questionId === "review-backup-effort")?.message, /extreme/);
+  });
+
+  it("rejects a backup harness that is not an eligible selected host", () => {
+    const questions = buildGuidedInitQuestions({
+      capabilities,
+      answers: { ...completeHarnessAnswers, reviewBackupHarness: "cursor" },
+    });
+
+    assert.match(
+      questions.find(question => question.id === "review-backup-harness").validationError,
+      /unavailable choice: cursor/,
+    );
+  });
+
+  it("clears saved model and effort values when the backup harness changes", () => {
+    const questions = buildGuidedInitQuestions({
+      capabilities,
+      answers: { reviewBackupHarness: "codex" },
+      current: {
+        ...completeHarnessAnswers,
+        reviewBackupHarness: "claude-code",
+        reviewBackupModel: "gpt-5.6",
+        reviewBackupEffort: "high",
+      },
+    });
+    const model = questions.find(question => question.id === "review-backup-model");
+    const effort = questions.find(question => question.id === "review-backup-effort");
+
+    assert.equal(model.currentValue, null);
+    assert.equal(model.promptNeeded, true);
+    assert.equal(effort.currentValue, null);
+    assert.equal(effort.promptNeeded, true);
+  });
+
+  it("requires a live model list for a backup harness", () => {
+    const result = normalizeGuidedInitAnswers({
+      capabilities,
+      answers: {
+        ...completeHarnessAnswers,
+        agentHarnesses: ["claude-code", "codex"],
+        reviewHarness: "codex",
+        reviewModel: "gpt-5.6",
+        reviewBackupHarness: "claude-code",
+      },
+    });
+
+    assert.equal(result.validation.ok, false);
+    assert.match(result.validation.errors.find(error => error.questionId === "review-backup-model")?.message, /live model list/);
+  });
+
+  it("does not ask for separate effort when the Cursor model ID carries it", () => {
+    const cursorCapabilities = {
+      ...capabilities,
+      agentHarnesses: [
+        ...capabilities.agentHarnesses.filter(harness => harness.value !== "cursor"),
+        {
+          value: "cursor",
+          label: "Cursor",
+          canRunPrimaryReview: false,
+          canRunSeparateReview: true,
+          reviewModels: { kind: "live", models: [{ value: "cursor-grok-4.6-high-fast", label: "Grok high fast" }] },
+        },
+      ],
+    };
+    const result = normalizeGuidedInitAnswers({
+      capabilities: cursorCapabilities,
+      answers: {
+        ...completeHarnessAnswers,
+        agentHarnesses: ["claude-code", "codex", "cursor"],
+        reviewHarness: "codex",
+        reviewModel: "gpt-5.6",
+        reviewBackupHarness: "cursor",
+        reviewBackupModel: "cursor-grok-4.6-high-fast",
+      },
+    });
+
+    assert.equal(result.validation.ok, true);
+    assert.equal(result.answers.reviewBackupEffort, null);
+    assert.equal(result.questions.find(question => question.id === "review-backup-effort").applicable, false);
   });
 });
 

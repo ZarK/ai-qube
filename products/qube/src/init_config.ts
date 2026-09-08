@@ -13,6 +13,11 @@ export type QubeUmpireScope = (typeof QUBE_UMPIRE_SCOPES)[number];
 export type QubeReviewMode = (typeof QUBE_REVIEW_MODES)[number];
 export type QubeReviewPublisher = (typeof QUBE_REVIEW_PUBLISHERS)[number];
 export type QubeExternalReviewer = string;
+export interface QubeReviewBackup {
+  readonly harness: string;
+  readonly model: string;
+  readonly effort: "low" | "medium" | "high" | null;
+}
 
 export interface QubeInitConfig {
   readonly version: 1;
@@ -32,6 +37,7 @@ export interface QubeInitConfig {
     readonly externalReviewers?: readonly QubeExternalReviewer[];
     readonly publisher?: QubeReviewPublisher;
     readonly models?: readonly string[];
+    readonly backup?: QubeReviewBackup | null;
   };
   readonly mcp?: {
     readonly optIn?: boolean;
@@ -66,6 +72,7 @@ export type QubeInitField =
   | "review.externalReviewers"
   | "review.publisher"
   | "review.models"
+  | "review.backup"
   | "mcp.optIn";
 
 export const QUBE_INIT_FIELDS = Object.freeze([
@@ -80,6 +87,7 @@ export const QUBE_INIT_FIELDS = Object.freeze([
   "review.externalReviewers",
   "review.publisher",
   "review.models",
+  "review.backup",
   "mcp.optIn",
 ] as const satisfies readonly QubeInitField[]);
 
@@ -107,6 +115,7 @@ export interface RequiredQubeInitConfig extends QubeInitConfig {
     readonly externalReviewers?: readonly QubeExternalReviewer[];
     readonly publisher: QubeReviewPublisher;
     readonly models?: readonly string[];
+    readonly backup: QubeReviewBackup | null;
   };
   readonly mcp: { readonly optIn: boolean };
 }
@@ -176,7 +185,7 @@ export function parseQubeInitConfig(value: unknown): QubeInitConfig {
   const quality = optionalRecord(record.quality, "QUBE config quality");
   if (quality) rejectUnknownKeys(quality, ["stages"], "QUBE config quality");
   const review = optionalRecord(record.review, "QUBE config review");
-  if (review) rejectUnknownKeys(review, ["mode", "harness", "externalReviewers", "publisher", "models"], "QUBE config review");
+  if (review) rejectUnknownKeys(review, ["mode", "harness", "externalReviewers", "publisher", "models", "backup"], "QUBE config review");
   const mcp = optionalRecord(record.mcp, "QUBE config mcp");
   if (mcp) rejectUnknownKeys(mcp, ["optIn"], "QUBE config mcp");
 
@@ -195,6 +204,7 @@ export function parseQubeInitConfig(value: unknown): QubeInitConfig {
         ...(review.externalReviewers === undefined ? {} : { externalReviewers: readStringList(review.externalReviewers, "QUBE config review.externalReviewers") }),
         ...(review.publisher === undefined ? {} : { publisher: readChoice(review.publisher, QUBE_REVIEW_PUBLISHERS, "QUBE config review.publisher") }),
         ...(review.models === undefined ? {} : { models: readStringList(review.models, "QUBE config review.models", true) }),
+        ...(review.backup === undefined ? {} : { backup: readReviewBackup(review.backup) }),
       }),
     }),
     ...(mcp?.optIn === undefined ? {} : { mcp: Object.freeze({ optIn: readBoolean(mcp.optIn, "QUBE config mcp.optIn") }) }),
@@ -293,6 +303,9 @@ export function resolveQubeInitConfig(input: {
   const reviewModels = reviewMode.value === "external"
     ? { value: Object.freeze([]) as readonly string[], source: derivedReviewSource }
     : selected("review.models", config => config.review?.models ?? (config === input.defaults ? [] : undefined));
+  const reviewBackup = reviewMode.value === "isolated"
+    ? selected("review.backup", config => config.review?.backup === undefined ? (config === input.defaults ? null : undefined) : config.review.backup)
+    : { value: null, source: derivedReviewSource };
   const mcpOptIn = selected("mcp.optIn", config => config.mcp?.optIn);
 
   const config: RequiredQubeInitConfig = Object.freeze({
@@ -313,6 +326,7 @@ export function resolveQubeInitConfig(input: {
       ...(reviewModels.value.length > 0 || reviewModels.source !== "default"
         ? { models: Object.freeze([...reviewModels.value]) }
         : {}),
+      backup: cloneReviewBackup(reviewBackup.value),
     }),
     mcp: Object.freeze({ optIn: mcpOptIn.value }),
   });
@@ -328,6 +342,7 @@ export function resolveQubeInitConfig(input: {
     "review.externalReviewers": externalReviewers.source,
     "review.publisher": reviewPublisher.source,
     "review.models": reviewModels.source,
+    "review.backup": reviewBackup.source,
     "mcp.optIn": mcpOptIn.source,
   }) satisfies Readonly<Record<QubeInitField, QubeInitFieldSource>>;
   const derivedFrom = Object.freeze({
@@ -335,6 +350,7 @@ export function resolveQubeInitConfig(input: {
     ...(reviewHarness.source === "derived" ? { "review.harness": Object.freeze(["review.mode", "hosts"] as const) } : {}),
     ...(externalReviewers.source === "derived" ? { "review.externalReviewers": Object.freeze(["review.mode", "hosts"] as const) } : {}),
     ...(reviewModels.source === "derived" ? { "review.models": Object.freeze(["review.mode"] as const) } : {}),
+    ...(reviewBackup.source === "derived" ? { "review.backup": Object.freeze(["review.mode"] as const) } : {}),
   }) satisfies Readonly<Partial<Record<QubeInitField, readonly QubeInitField[]>>>;
   const deviations = Object.freeze((Object.keys(sources) as QubeInitField[]).filter(field => {
     return !sameQubeInitFieldValue(field, readField(config, field), readField(input.defaults, field));
@@ -359,7 +375,7 @@ export function configForQubeScope(
       ...(useResolved("umpire.scope") ? { umpire: resolved.config.umpire } : existingGlobal?.umpire ? { umpire: existingGlobal.umpire } : {}),
       ...(useResolved("quality.stages") ? { quality: resolved.config.quality } : existingGlobal?.quality ? { quality: existingGlobal.quality } : {}),
       ...(
-        useResolved("review.mode") || useResolved("review.harness") || useResolved("review.externalReviewers") || useResolved("review.publisher") || useResolved("review.models")
+        useResolved("review.mode") || useResolved("review.harness") || useResolved("review.externalReviewers") || useResolved("review.publisher") || useResolved("review.models") || useResolved("review.backup")
           ? {
               review: Object.freeze({
                 ...(useResolved("review.mode") ? { mode: resolved.config.review.mode } : existingGlobal?.review?.mode ? { mode: existingGlobal.review.mode } : {}),
@@ -378,6 +394,11 @@ export function configForQubeScope(
                   ? useResolved("review.models")
                     ? resolved.config.review.models ? { models: resolved.config.review.models } : {}
                     : existingGlobal?.review?.models ? { models: existingGlobal.review.models } : {}
+                  : {}),
+                ...(globalReviewMode === "isolated"
+                  ? useResolved("review.backup")
+                    ? { backup: resolved.config.review.backup }
+                    : existingGlobal?.review?.backup === undefined ? {} : { backup: existingGlobal.review.backup }
                   : {}),
               }),
             }
@@ -410,6 +431,7 @@ export function configForQubeScope(
       (include("review.externalReviewers") && resolved.config.review.externalReviewers !== undefined) ||
       include("review.publisher") ||
       (include("review.models") && resolved.config.review.models !== undefined)
+      || include("review.backup")
         ? {
             review: Object.freeze({
               ...(include("review.mode") ? { mode: resolved.config.review.mode } : {}),
@@ -417,6 +439,7 @@ export function configForQubeScope(
               ...(include("review.externalReviewers") && resolved.config.review.externalReviewers ? { externalReviewers: resolved.config.review.externalReviewers } : {}),
               ...(include("review.publisher") ? { publisher: resolved.config.review.publisher } : {}),
               ...(include("review.models") && resolved.config.review.models ? { models: resolved.config.review.models } : {}),
+              ...(include("review.backup") ? { backup: resolved.config.review.backup } : {}),
             }),
           }
         : {}
@@ -482,7 +505,7 @@ export function omitQubeInitFields(
     ...(include("umpire.scope") ? { umpire: Object.freeze({ scope: config.umpire!.scope }) } : {}),
     ...(include("quality.stages") ? { quality: Object.freeze({ stages: config.quality!.stages }) } : {}),
     ...(
-      include("review.mode") || include("review.harness") || include("review.externalReviewers") || include("review.publisher") || include("review.models")
+      include("review.mode") || include("review.harness") || include("review.externalReviewers") || include("review.publisher") || include("review.models") || include("review.backup")
         ? {
             review: Object.freeze({
               ...(include("review.mode") ? { mode: config.review!.mode } : {}),
@@ -490,6 +513,7 @@ export function omitQubeInitFields(
               ...(include("review.externalReviewers") ? { externalReviewers: config.review!.externalReviewers } : {}),
               ...(include("review.publisher") ? { publisher: config.review!.publisher } : {}),
               ...(include("review.models") ? { models: config.review!.models } : {}),
+              ...(include("review.backup") ? { backup: config.review!.backup } : {}),
             }),
           }
         : {}
@@ -607,7 +631,12 @@ function cloneReview(review: NonNullable<QubeInitConfig["review"]>): NonNullable
     ...review,
     ...(review.externalReviewers ? { externalReviewers: Object.freeze([...review.externalReviewers]) } : {}),
     ...(review.models ? { models: Object.freeze([...review.models]) } : {}),
+    ...(review.backup === undefined ? {} : { backup: cloneReviewBackup(review.backup) }),
   });
+}
+
+function cloneReviewBackup(backup: QubeReviewBackup | null): QubeReviewBackup | null {
+  return backup === null ? null : Object.freeze({ ...backup });
 }
 
 export function isEmptyQubeInitConfig(config: QubeInitConfig): boolean {
@@ -623,6 +652,7 @@ function isQubeInitFieldApplicable(config: RequiredQubeInitConfig, field: QubeIn
   if (field === "review.harness") return config.review.mode === "isolated";
   if (field === "review.externalReviewers") return config.review.mode === "external";
   if (field === "review.models") return config.review.mode !== "external";
+  if (field === "review.backup") return config.review.mode === "isolated";
   return true;
 }
 
@@ -653,6 +683,7 @@ function readField(config: QubeInitConfig, field: QubeInitField): unknown {
     case "review.externalReviewers": return config.review?.externalReviewers;
     case "review.publisher": return config.review?.publisher;
     case "review.models": return config.review?.models;
+    case "review.backup": return config.review?.backup;
     case "mcp.optIn": return config.mcp?.optIn;
   }
 }
@@ -681,6 +712,20 @@ function readStringList(value: unknown, name: string, allowEmpty = false): reado
 function readNonEmptyString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${name} must be a non-empty string.`);
   return value.trim();
+}
+
+function readReviewBackup(value: unknown): QubeReviewBackup | null {
+  if (value === null) return null;
+  const backup = requireRecord(value, "QUBE config review.backup");
+  rejectUnknownKeys(backup, ["harness", "model", "effort"], "QUBE config review.backup");
+  if (backup.harness === undefined || backup.model === undefined || backup.effort === undefined) {
+    throw new TypeError("QUBE config review.backup requires harness, model, and effort.");
+  }
+  return Object.freeze({
+    harness: readNonEmptyString(backup.harness, "QUBE config review.backup.harness"),
+    model: readNonEmptyString(backup.model, "QUBE config review.backup.model"),
+    effort: backup.effort === null ? null : readChoice(backup.effort, ["low", "medium", "high"] as const, "QUBE config review.backup.effort"),
+  });
 }
 
 function readChoice<Value extends string>(value: unknown, values: readonly Value[], name: string): Value {
