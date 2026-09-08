@@ -30,6 +30,7 @@ import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tja
 import {
   AGENT_HOST_IDS,
   getAgentHostCapabilityProfile,
+  hashEvaluatorInputs,
   observeAgentHostReadiness,
   QUBE_INIT_LAYER_CONTEXT_ENV,
   qubeCommandSurfaceContracts,
@@ -229,7 +230,7 @@ interface AutoresearchReferee {
   readonly reasons: readonly string[];
   readonly evaluatorImmutable: boolean;
   readonly gatesPassed: boolean;
-  readonly antiGamingPassed: boolean;
+  readonly outputBoundsPassed: boolean;
   readonly provenance: {
     readonly evaluatorHash: string;
     readonly command?: string;
@@ -4221,6 +4222,14 @@ function promoteAutoresearch(
   if (!best) {
     return { error: "No accepted autoresearch candidate is available to promote." };
   }
+  const candidateRoot = path.join(context.runDirectory, "sandbox", "candidates");
+  if (!existsSync(candidateRoot) || !existsSync(best.workspacePath) || !isPathInside(realpathSync(candidateRoot), realpathSync(best.workspacePath))) {
+    return { error: "Selected autoresearch candidate workspace is missing or outside the sandbox." };
+  }
+  const inputError = validateAutoresearchInputRoot(context.evaluator, best.workspacePath, "selected candidate before promotion");
+  if (inputError) {
+    return { error: inputError };
+  }
   const outputPath = request.flags.output
     ? path.resolve(environment.cwd, request.flags.output)
     : path.join(context.state.targetPath, "autoresearch-result.md");
@@ -4496,7 +4505,7 @@ function validateAutoresearchEvaluator(state: AutoresearchState, evaluator: Auto
   if (evaluator.hash !== hash || state.evaluatorHash !== hash) {
     return "Autoresearch evaluator changed after arena creation. Refusing to continue until a new arena is initialized.";
   }
-  return undefined;
+  return validateAutoresearchInputRoot(evaluator, state.targetPath, "source target");
 }
 
 function hashAutoresearchEvaluator(evaluator: AutoresearchEvaluator): string {
@@ -4803,13 +4812,13 @@ function createAutoresearchRejectedEvaluation(
     score,
     stdout: "",
     stderr: ""
-  }, reasons);
+  }, reasons, undefined, false);
   return {
     score,
     matchedTerms: [],
     missingTerms: [],
     evaluatorHash: context.evaluator.hash,
-    summary: `Candidate rejected before evaluator command: ${referee.reasons.join(" ")}`,
+    summary: `Evaluation rejected before evaluator command: ${referee.reasons.join(" ")}`,
     command: context.evaluator.command,
     exitCode: null,
     stdout: "",
@@ -4833,7 +4842,7 @@ function createAutoresearchHumanGatedEvaluation(
     reasons,
     evaluatorImmutable: validateAutoresearchEvaluator(context.state, context.evaluator) === undefined,
     gatesPassed: false,
-    antiGamingPassed: true,
+    outputBoundsPassed: true,
     provenance: {
       evaluatorHash: context.evaluator.hash,
       command: context.evaluator.command,
@@ -4860,6 +4869,10 @@ function createAutoresearchHumanGatedEvaluation(
 const autoresearchEvidenceOutputLimit = 16_000;
 
 function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath: string): AutoresearchEvaluation {
+  const inputReasons = validateAutoresearchEvaluationInputs(context, workspacePath, "before execution");
+  if (inputReasons.length > 0) {
+    return createAutoresearchRejectedEvaluation(context, workspacePath, 0, inputReasons);
+  }
   const started = Date.now();
   const commandPlan = buildShellCommandPlan(context.evaluator.command ?? "");
   const result = spawnSync(commandPlan.executable, commandPlan.args, {
@@ -4869,7 +4882,7 @@ function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath
     windowsVerbatimArguments: commandPlan.windowsVerbatimArguments,
     windowsHide: true,
     timeout: 120_000,
-    env: { ...process.env, QUBE_AUTORESEARCH: "1" }
+    env: autoresearchEvaluatorEnvironment(process.env)
   });
   const durationMs = Date.now() - started;
   const rawStdout = result.stdout ?? "";
@@ -4880,15 +4893,17 @@ function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath
   const reasons: string[] = [];
   if (result.error) reasons.push(result.error.message);
   if (score === null) reasons.push("Evaluator command did not emit a scalar score.");
-  if (rawStdout.length > autoresearchEvidenceOutputLimit || rawStderr.length > autoresearchEvidenceOutputLimit) {
-    reasons.push("Evaluator output exceeded bounded evidence limits.");
-  }
+  const outputTruncated = rawStdout.length > autoresearchEvidenceOutputLimit || rawStderr.length > autoresearchEvidenceOutputLimit;
+  const evaluatorCheck = validateAutoresearchEvaluatorAfterExecution(context);
+  reasons.push(...evaluatorCheck.reasons);
+  reasons.push(...validateAutoresearchEvaluationInputs(context, workspacePath, "after execution"));
   const referee = runAiqAutoresearchReferee(context, {
     exitCode: result.status,
     score: score ?? 0,
     stdout,
-    stderr
-  }, reasons);
+    stderr,
+    outputTruncated
+  }, reasons, evaluatorCheck.immutable);
   return {
     score: score ?? 0,
     matchedTerms: [],
@@ -4903,15 +4918,71 @@ function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath
     stderr,
     durationMs,
     workspacePath,
-    outputTruncated: rawStdout !== stdout || rawStderr !== stderr,
+    outputTruncated,
     referee,
     recordedAt: new Date().toISOString()
   };
 }
 
+function validateAutoresearchEvaluationInputs(
+  context: AutoresearchContext,
+  workspacePath: string,
+  phase: "before execution" | "after execution"
+): readonly string[] {
+  return [
+    validateAutoresearchInputRoot(context.evaluator, context.state.targetPath, `source target ${phase}`),
+    validateAutoresearchInputRoot(context.evaluator, workspacePath, `evaluated workspace ${phase}`)
+  ].filter((reason): reason is string => reason !== undefined);
+}
+
+function validateAutoresearchInputRoot(
+  evaluator: AutoresearchEvaluator,
+  root: string,
+  label: string
+): string | undefined {
+  try {
+    const actual = hashEvaluatorInputs(root, evaluator.inputs.map(input => input.path));
+    if (stableJson(actual) !== stableJson(evaluator.inputs)) {
+      return `Autoresearch evaluator inputs changed in the ${label}.`;
+    }
+    return undefined;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return `Autoresearch evaluator inputs are invalid in the ${label}: ${reason}`;
+  }
+}
+
+function validateAutoresearchEvaluatorAfterExecution(
+  context: AutoresearchContext
+): { readonly immutable: boolean; readonly reasons: readonly string[] } {
+  try {
+    const evaluator = readJsonFile<AutoresearchEvaluator>(path.join(context.runDirectory, "evaluator.json"));
+    const reason = validateAutoresearchEvaluator(context.state, evaluator);
+    return { immutable: reason === undefined, reasons: reason ? [reason] : [] };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { immutable: false, reasons: [`Autoresearch evaluator could not be verified after execution: ${reason}`] };
+  }
+}
+
+function autoresearchEvaluatorEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowedNames = new Set([
+    "APPDATA", "CI", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432",
+    "COMSPEC", "HOME", "HOMEDRIVE", "HOMEPATH", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
+    "LOCALAPPDATA", "PATH", "PATHEXT", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+    "PROGRAMW6432", "SHELL", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "TZ",
+    "USERPROFILE", "WINDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"
+  ]);
+  const filtered: NodeJS.ProcessEnv = { QUBE_AUTORESEARCH: "1" };
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined && allowedNames.has(name.toUpperCase())) filtered[name] = value;
+  }
+  return filtered;
+}
+
 function limitAutoresearchOutput(text: string): string {
   if (text.length <= autoresearchEvidenceOutputLimit) return text;
-  return `${text.slice(0, autoresearchEvidenceOutputLimit)}\n[truncated ${text.length - autoresearchEvidenceOutputLimit} bytes]\n`;
+  return `${text.slice(0, autoresearchEvidenceOutputLimit)}\n[truncated ${text.length - autoresearchEvidenceOutputLimit} characters]\n`;
 }
 
 function parseAutoresearchScore(stdout: string): number | null {
@@ -4950,16 +5021,18 @@ function readAutoresearchScore(value: unknown): number | null {
 
 function runAiqAutoresearchReferee(
   context: AutoresearchContext,
-  evaluation: Pick<AutoresearchEvaluation, "score" | "exitCode" | "stdout" | "stderr">,
-  extraReasons: readonly string[] = []
+  evaluation: Pick<AutoresearchEvaluation, "score" | "exitCode" | "stdout" | "stderr" | "outputTruncated">,
+  extraReasons: readonly string[] = [],
+  evaluatorImmutableOverride?: boolean,
+  commandExecuted = true
 ): AutoresearchReferee {
-  const evaluatorImmutable = validateAutoresearchEvaluator(context.state, context.evaluator) === undefined;
-  const gatesPassed = evaluation.exitCode === 0;
-  const antiGamingPassed = evaluation.stdout !== undefined && evaluation.stdout.length < 64_000 && (evaluation.stderr?.length ?? 0) < 64_000;
+  const evaluatorImmutable = evaluatorImmutableOverride ?? validateAutoresearchEvaluator(context.state, context.evaluator) === undefined;
+  const gatesPassed = commandExecuted && evaluation.exitCode === 0;
+  const outputBoundsPassed = evaluation.outputTruncated !== true;
   const reasons = [
     ...(!evaluatorImmutable ? ["Evaluator hash changed after arena creation."] : []),
-    ...(!gatesPassed ? [`Evaluator command exited with ${evaluation.exitCode ?? "unknown status"}.`] : []),
-    ...(!antiGamingPassed ? ["Evaluator output exceeded bounded evidence limits."] : []),
+    ...(commandExecuted && !gatesPassed ? [`Evaluator command exited with ${evaluation.exitCode ?? "unknown status"}.`] : []),
+    ...(!outputBoundsPassed ? ["Evaluator output exceeded bounded evidence limits."] : []),
     ...extraReasons
   ];
   return {
@@ -4969,7 +5042,7 @@ function runAiqAutoresearchReferee(
     reasons,
     evaluatorImmutable,
     gatesPassed,
-    antiGamingPassed,
+    outputBoundsPassed,
     provenance: {
       evaluatorHash: context.evaluator.hash,
       command: context.evaluator.command,
@@ -5010,6 +5083,7 @@ function renderAutoresearchArtifact(
     "",
     `- evaluator hash: ${evaluation.evaluatorHash}`,
     `- command exit: ${evaluation.exitCode ?? "unknown"}`,
+    `- output bounds: ${referee.outputBoundsPassed ? "passed" : "failed"}`,
     `- duration ms: ${evaluation.durationMs ?? 0}`,
     ...referee.reasons.map(reason => `- referee reason: ${reason}`),
     "",

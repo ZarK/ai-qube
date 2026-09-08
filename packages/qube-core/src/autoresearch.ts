@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+
 export const AUTORESEARCH_TARGET_KINDS = [
   "code",
   "document-corpus",
@@ -69,6 +73,7 @@ export interface AutoresearchEvaluator {
   readonly objective: AutoresearchObjective;
   readonly direction: AutoresearchObjectiveDirection;
   readonly command?: string;
+  readonly inputs: readonly AutoresearchEvaluatorInput[];
   readonly rubric?: readonly string[];
   readonly signals: readonly string[];
   readonly invariants: readonly AutoresearchInvariant[];
@@ -78,6 +83,11 @@ export interface AutoresearchEvaluator {
     readonly targetKind: AutoresearchTargetKind;
   };
   readonly hash: string;
+}
+
+export interface AutoresearchEvaluatorInput {
+  readonly path: string;
+  readonly sha256: string;
 }
 
 export interface AutoresearchArena {
@@ -135,4 +145,74 @@ export function autoresearchReadinessChecklist(plan: AutoresearchArenaPlan): rea
     plan.blockingQuestions.length === 0 ? "no blocking questions" : "blocking questions open",
   ];
   return Object.freeze(checks);
+}
+
+export function hashEvaluatorInputs(
+  root: string,
+  inputPaths: readonly string[],
+): readonly AutoresearchEvaluatorInput[] {
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(root);
+  } catch (error) {
+    throw new TypeError(`Evaluator input root cannot be read: ${root}. ${readErrorMessage(error)}`);
+  }
+
+  const inputs = new Map<string, AutoresearchEvaluatorInput>();
+  for (const inputPath of inputPaths) {
+    if (typeof inputPath !== "string" || inputPath.trim().length === 0) {
+      throw new TypeError("Evaluator input paths must be non-empty strings.");
+    }
+    if (path.isAbsolute(inputPath)) {
+      throw new TypeError(`Evaluator input must be relative to the target: ${inputPath}`);
+    }
+    const segments = inputPath.replaceAll("\\", "/").split("/");
+    if (segments.includes("..")) {
+      throw new TypeError(`Evaluator input must not contain parent traversal: ${inputPath}`);
+    }
+
+    const resolvedPath = path.resolve(realRoot, inputPath);
+    const relativePath = path.relative(realRoot, resolvedPath).replaceAll("\\", "/");
+    if (relativePath.length === 0 || relativePath === ".." || relativePath.startsWith("../")) {
+      throw new TypeError(`Evaluator input must name a file inside the target: ${inputPath}`);
+    }
+
+    let realInputPath: string;
+    try {
+      realInputPath = realpathSync(resolvedPath);
+      if (!statSync(realInputPath).isFile()) {
+        throw new TypeError(`Evaluator input is not a regular file: ${relativePath}`);
+      }
+    } catch (error) {
+      if (error instanceof TypeError) throw error;
+      throw new TypeError(
+        `Evaluator input cannot be read: ${relativePath}. ${readErrorMessage(error)}`,
+      );
+    }
+    const realRelativePath = path.relative(realRoot, realInputPath);
+    if (
+      realRelativePath.length === 0 ||
+      realRelativePath === ".." ||
+      realRelativePath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(realRelativePath)
+    ) {
+      throw new TypeError(`Evaluator input resolves outside the target: ${relativePath}`);
+    }
+
+    try {
+      const sha256 = createHash("sha256").update(readFileSync(realInputPath)).digest("hex");
+      const dedupeKey = process.platform === "win32" ? relativePath.toLowerCase() : relativePath;
+      inputs.set(dedupeKey, { path: relativePath, sha256 });
+    } catch (error) {
+      throw new TypeError(
+        `Evaluator input cannot be read: ${relativePath}. ${readErrorMessage(error)}`,
+      );
+    }
+  }
+
+  return [...inputs.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function readErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

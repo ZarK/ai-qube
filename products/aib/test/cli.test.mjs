@@ -122,9 +122,70 @@ test("arena synthesize returns a complete code target plan without questions", a
   assert.equal(result.target.kind, "code");
   assert.equal(result.evaluator.kind, "command-metric");
   assert.equal(result.evaluator.command, "pnpm test");
+  assert.deepEqual(result.evaluator.inputs.map((input) => input.path), ["package.json"]);
   assert.equal(result.objective.shape, "direct-metric");
   assert.ok(result.arenaMarkdown.includes("# Autoresearch Arena"));
   assert.ok(result.readinessChecklist.includes("no blocking questions"));
+});
+
+test("arena synthesize hashes declared evaluator inputs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-inputs-"));
+  await mkdir(join(dir, "scripts"));
+  await mkdir(join(dir, "data"));
+  await writeFile(join(dir, "scripts", "score.mjs"), "console.log(1);\n", "utf8");
+  await writeFile(join(dir, "data", "cases.json"), "[]\n", "utf8");
+  await writeFile(join(dir, "package.json"), JSON.stringify({
+    private: true,
+    packageManager: "pnpm@11.0.4",
+    scripts: { test: "node scripts/score.mjs" },
+    autoresearch: {
+      evaluatorInputs: ["scripts/score.mjs", "data/cases.json", "scripts/score.mjs"]
+    }
+  }), "utf8");
+
+  const first = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.deepEqual(first.evaluator.inputs.map((input) => input.path), [
+    "data/cases.json",
+    "package.json",
+    "scripts/score.mjs"
+  ]);
+  assert.ok(first.evaluator.inputs.every((input) => /^[a-f0-9]{64}$/.test(input.sha256)));
+
+  await writeFile(join(dir, "scripts", "score.mjs"), "console.log(2);\n", "utf8");
+  const second = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.notEqual(
+    first.evaluator.inputs.find((input) => input.path === "scripts/score.mjs").sha256,
+    second.evaluator.inputs.find((input) => input.path === "scripts/score.mjs").sha256
+  );
+  assert.notEqual(first.evaluator.hash, second.evaluator.hash);
+});
+
+test("arena synthesize reports invalid evaluator input declarations", async () => {
+  const cases = [
+    ["missing file", ["missing.mjs"], /cannot be read.*missing\.mjs/i],
+    ["absolute path", [join(tmpdir(), "score.mjs")], /must be relative/i],
+    ["parent traversal", ["../score.mjs"], /must not contain parent traversal/i],
+    ["non-string path", [1], /evaluatorInputs\[0\] must be a string/i]
+  ];
+
+  for (const [name, evaluatorInputs, reasonPattern] of cases) {
+    const dir = await mkdtemp(join(tmpdir(), "aib-arena-invalid-input-"));
+    await writeFile(join(dir, "package.json"), JSON.stringify({
+      private: true,
+      packageManager: "pnpm@11.0.4",
+      scripts: { test: "node --test" },
+      autoresearch: { evaluatorInputs }
+    }), "utf8");
+    await mkdir(join(dir, "src"));
+
+    const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+    assert.equal(result.classification, "needs-clarification", name);
+    const inputError = result.blockingQuestions.find((question) => question.id === "target.evaluatorInputs");
+    assert.ok(inputError, name);
+    assert.match(inputError.text, reasonPattern, name);
+    assert.match(inputError.reason, reasonPattern, name);
+    assert.equal(result.blockingQuestions.some((question) => question.id === "target.packageManager"), false, name);
+  }
 });
 
 test("arena synthesize uses explicit JavaScript package-manager commands", async () => {
@@ -203,6 +264,7 @@ test("arena synthesize classifies prompt pack names before generic documents", a
   assert.equal(result.classification, "autoresearch");
   assert.equal(result.target.kind, "prompt-pack");
   assert.equal(result.evaluator.kind, "rubric-review");
+  assert.deepEqual(result.evaluator.inputs, []);
   assert.deepEqual(result.blockingQuestions, []);
 });
 

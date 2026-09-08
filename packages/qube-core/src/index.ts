@@ -4,6 +4,7 @@ export type {
   AutoresearchArenaPlan,
   AutoresearchBlockingQuestion,
   AutoresearchEvaluator,
+  AutoresearchEvaluatorInput,
   AutoresearchEvaluatorKind,
   AutoresearchInvariant,
   AutoresearchMutableSurface,
@@ -19,6 +20,7 @@ export {
   AUTORESEARCH_OBJECTIVE_SHAPES,
   AUTORESEARCH_TARGET_KINDS,
   autoresearchReadinessChecklist,
+  hashEvaluatorInputs,
 } from "./autoresearch.js";
 export type { JsonObject, JsonValue } from "./json_value.js";
 export type {

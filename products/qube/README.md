@@ -187,6 +187,26 @@ The compact form `qube autoresearch <target-directory> <goal>` is a safe alias
 for `init`: it creates the arena and fixed evaluator, but it does not start a
 candidate loop or mutate the target.
 
+For code targets, list fixed evaluator scripts and data in the target
+`package.json` before `init`:
+
+```json
+{
+  "autoresearch": {
+    "evaluatorInputs": ["scripts/score.mjs", "data/cases.json"]
+  }
+}
+```
+
+Use file paths relative to the target directory. QUBE records hashes for
+`package.json` and the listed files. It checks them before and after evaluation.
+A changed or unreadable input rejects the result. Other source files can change.
+If the list is absent, QUBE checks only `package.json`.
+
+The evaluator receives the system environment values needed to run local tools.
+It does not receive inherited tokens or other application settings. The
+`outputBoundsPassed` result checks the output length before truncation.
+
 - `init` writes `arena.json`, `evaluator.json`, `state.json`, `attempts.jsonl`,
   and dashboard files under `.qube/autoresearch/runs/<run-id>/`.
 - `baseline` records immutable evidence from the fixed evaluator. Later changes

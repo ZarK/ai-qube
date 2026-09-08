@@ -316,6 +316,7 @@ function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   writeFileSync(path.join(target, "package.json"), `${JSON.stringify({
     private: true,
     packageManager: "npm@10.0.0",
+    ...(options.evaluatorInputs ? { autoresearch: { evaluatorInputs: options.evaluatorInputs } } : {}),
     scripts: {
       test: "node metric.mjs"
     }
@@ -1223,6 +1224,8 @@ describe("qube composer CLI", () => {
     assert.equal(baselined.evaluation.command, "npm test");
     assert.equal(baselined.evaluation.referee.owner, "aiq");
     assert.equal(baselined.evaluation.referee.status, "passed");
+    assert.equal(baselined.evaluation.referee.outputBoundsPassed, true);
+    assert.equal(Object.hasOwn(baselined.evaluation.referee, "antiGamingPassed"), false);
     assert.ok(existsSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json")));
     assert.ok(existsSync(path.join(initialized.stateDirectory, "sandbox", "baseline", "workspace", "score.json")));
 
@@ -1240,6 +1243,7 @@ describe("qube composer CLI", () => {
     assert.ok(ran.candidate.artifactPath.includes(path.join(".qube", "autoresearch")));
     assert.ok(ran.candidate.workspacePath.includes(path.join(".qube", "autoresearch")));
     assert.ok(existsSync(ran.candidate.artifactPath));
+    assert.match(readFileSync(ran.candidate.artifactPath, "utf8"), /output bounds: passed/);
     assert.equal(JSON.parse(readFileSync(path.join(target, "score.json"), "utf8")).score, 10);
     assert.equal(existsSync(path.join(target, "autoresearch-result.md")), false);
 
@@ -1532,6 +1536,194 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.ok, false);
     assert.match(parsed.error.likelyCause, /did not emit a scalar score/);
     assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+  });
+
+  it("rejects changed or missing declared autoresearch inputs before execution", () => {
+    for (const file of ["metric.mjs", "cases.json", "package.json", "missing"]) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-input-"));
+      const marker = path.join(cwd, "executed.json");
+      const target = createAutoresearchPackageTarget(cwd, 10, {
+        evaluatorInputs: ["metric.mjs", "cases.json"], sideEffectPath: marker,
+      });
+      writeFileSync(path.join(target, "cases.json"), "[]\n");
+      const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+      assert.equal(init.status, 0, init.stdout);
+      const initialized = JSON.parse(init.stdout).autoresearch;
+      const inputPath = path.join(target, file === "missing" ? "cases.json" : file);
+      if (file === "missing") unlinkSync(inputPath);
+      else writeFileSync(inputPath, `${readFileSync(inputPath, "utf8")}\n`);
+
+      const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+      assert.equal(baseline.status, 2, file);
+      assert.match(JSON.parse(baseline.stdout).error.likelyCause, /input|evaluator/i);
+      assert.equal(existsSync(marker), false, file);
+      assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+    }
+  });
+
+  it("rejects autoresearch candidates that change a declared evaluator file", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-candidate-input-"));
+    const target = createAutoresearchPackageTarget(cwd, 10, { evaluatorInputs: ["metric.mjs"] });
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0, init.stdout);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    writeFileSync(path.join(target, "notes.txt"), "An unrelated user edit.\n");
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 5);
+    const script = path.join(initialized.stateDirectory, "sandbox", "workspace", "metric.mjs");
+    writeFileSync(script, "console.log(1);\n");
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 0, run.stdout);
+    const result = JSON.parse(run.stdout).autoresearch;
+    assert.equal(result.candidate.accepted, false);
+    assert.equal(result.currentBest, null);
+    assert.match(result.candidate.referee.reasons.join("\n"), /input|evaluator/i);
+    assert.equal(readFileSync(script, "utf8"), readFileSync(path.join(target, "metric.mjs"), "utf8"));
+    assert.equal(readFileSync(path.join(target, "notes.txt"), "utf8"), "An unrelated user edit.\n");
+  });
+
+  it("rejects an unreadable declared autoresearch input", {
+    skip: process.platform === "win32" || process.getuid?.() === 0,
+  }, () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-unreadable-"));
+    const target = createAutoresearchPackageTarget(cwd, 10, { evaluatorInputs: ["metric.mjs"] });
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0, init.stdout);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    const scriptPath = path.join(target, "metric.mjs");
+    chmodSync(scriptPath, 0o000);
+    try {
+      const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+      assert.notEqual(baseline.status, 0);
+      assert.match(baseline.stdout + baseline.stderr, /EACCES|cannot be read|permission denied/i);
+      assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+    } finally {
+      chmodSync(scriptPath, 0o644);
+    }
+  });
+
+  it("rejects stored autoresearch results after an evaluator input changes", () => {
+    for (const changeTarget of [true, false]) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-stored-input-"));
+      const { target, initialized } = createAcceptedAutoresearchRun(cwd);
+      const root = changeTarget ? target : path.join(initialized.stateDirectory, "sandbox", "candidates", "candidate-001", "workspace");
+      const manifestPath = path.join(root, "package.json");
+      writeFileSync(manifestPath, `${readFileSync(manifestPath, "utf8")}\n`);
+      for (const command of changeTarget ? ["status", "promote"] : ["promote"]) {
+        const result = runCli(["autoresearch", command, "--json"], { cwd });
+        assert.equal(result.status, 2, result.stdout);
+        assert.match(JSON.parse(result.stdout).error.likelyCause, /evaluator inputs changed/);
+      }
+      assert.equal(existsSync(path.join(initialized.stateDirectory, "promotion.json")), false);
+    }
+  });
+
+  it("rejects autoresearch evaluator changes made during execution", () => {
+    for (const changedFile of ["cases.json", "evaluator.json"]) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-running-input-"));
+      const target = createAutoresearchPackageTarget(cwd, 10, { evaluatorInputs: ["metric.mjs", "cases.json"] });
+      writeFileSync(path.join(target, "cases.json"), "[]\n");
+      writeFileSync(path.join(target, "metric.mjs"), [
+        "import { readFileSync, writeFileSync } from 'node:fs';",
+        "import path from 'node:path';",
+        `const file = ${changedFile === "cases.json" ? "'cases.json'" : "path.resolve('../..', 'evaluator.json')"};`,
+        changedFile === "evaluator.json"
+          ? "const evaluator = JSON.parse(readFileSync(file, 'utf8')); evaluator.goal = 'changed goal'; writeFileSync(file, JSON.stringify(evaluator));"
+          : "writeFileSync(file, readFileSync(file, 'utf8') + '\\n');",
+        "console.log(10);",
+      ].join("\n"));
+      const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+      assert.equal(init.status, 0, init.stdout);
+      const initialized = JSON.parse(init.stdout).autoresearch;
+      const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+      assert.equal(baseline.status, 2, `${changedFile}: ${baseline.stdout}`);
+      assert.match(JSON.parse(baseline.stdout).error.likelyCause, /input|evaluator/i);
+      assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+    }
+  });
+
+  it("keeps inherited secrets out of autoresearch output and records", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-env-"));
+    const target = createAutoresearchPackageTarget(cwd, 10, { evaluatorInputs: ["metric.mjs"] });
+    writeFileSync(path.join(target, "metric.mjs"), [
+      "import { readFileSync } from 'node:fs';",
+      "console.log(JSON.stringify({ token: process.env.GITHUB_TOKEN, setting: process.env.QUBE_TEST_PRIVATE_VALUE }));",
+      "console.log(readFileSync('score.json', 'utf8'));",
+    ].join("\n"));
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0, init.stdout);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    const secret = "private-evaluator-test-value";
+    const options = { cwd, env: { GITHUB_TOKEN: secret, QUBE_TEST_PRIVATE_VALUE: secret } };
+    const baseline = runCli(["autoresearch", "baseline", "--json"], options);
+    assert.equal(baseline.status, 0, baseline.stdout);
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 5);
+    const run = runCli(["autoresearch", "run", "--json"], options);
+    assert.equal(run.status, 0, run.stdout);
+    const result = JSON.parse(run.stdout).autoresearch;
+    assert.equal(result.candidate.accepted, true);
+    const records = ["baseline.json", "state.json", "attempts.jsonl", "dashboard-data.json"]
+      .map(file => readFileSync(path.join(initialized.stateDirectory, file), "utf8"));
+    records.push(baseline.stdout, run.stdout, readFileSync(result.candidate.artifactPath, "utf8"));
+    assert.ok(records.every(record => !record.includes(secret)));
+  });
+
+  it("checks raw autoresearch output bounds before truncation", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-output-"));
+    const target = createAutoresearchPackageTarget(cwd);
+    writeFileSync(path.join(target, "metric.mjs"), "process.stdout.write(' '.repeat(15000) + '10');\n");
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0, init.stdout);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 0, baseline.stdout);
+    assert.equal(JSON.parse(baseline.stdout).autoresearch.evaluation.referee.outputBoundsPassed, true);
+    writeFileSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "metric.mjs"),
+      "process.stdout.write(' '.repeat(17000) + '5');\n");
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 0, run.stdout);
+    const candidate = JSON.parse(run.stdout).autoresearch.candidate;
+    assert.equal(candidate.accepted, false);
+    assert.equal(candidate.referee.outputBoundsPassed, false);
+    assert.equal(candidate.evaluation.outputTruncated, true);
+  });
+
+  it("rejects a nonzero autoresearch evaluator even when it prints a score", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-exit-"));
+    const target = createAutoresearchPackageTarget(cwd);
+    writeFileSync(path.join(target, "metric.mjs"), "console.log(10); process.exit(7);\n");
+    assert.equal(runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd }).status, 0);
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 2, baseline.stdout);
+    assert.match(JSON.parse(baseline.stdout).error.likelyCause, /exited with 7/);
+  });
+
+  it("rejects timed-out and canceled autoresearch evaluator results", () => {
+    for (const timedOut of [true, false]) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-stopped-"));
+      createAutoresearchPackageTarget(cwd);
+      const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+      assert.equal(init.status, 0, init.stdout);
+      const initialized = JSON.parse(init.stdout).autoresearch;
+      const script = [
+        "import childProcess from 'node:child_process';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        `const { runQubeCli } = await import(${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)});`,
+        "const original = childProcess.spawnSync;",
+        "childProcess.spawnSync = (command, args, options) => {",
+        "  if (options?.env?.QUBE_AUTORESEARCH !== '1') return original(command, args, options);",
+        "  if (!(options.timeout > 0)) throw new Error('Evaluator timeout is missing.');",
+        `  return { status: null, signal: 'SIGTERM', stdout: '10', stderr: '', error: ${timedOut ? "Object.assign(new Error('Evaluator timed out'), { code: 'ETIMEDOUT' })" : "undefined"} };`,
+        "};",
+        "syncBuiltinESMExports();",
+        "await runQubeCli(['autoresearch', 'baseline', '--json']);",
+      ].join("\n");
+      const baseline = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { cwd, encoding: "utf8" });
+      assert.equal(baseline.status, 2, baseline.stdout + baseline.stderr);
+      assert.match(JSON.parse(baseline.stdout).error.likelyCause, timedOut ? /timed out/ : /exited with/);
+      assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+    }
   });
 
   it("refuses autoresearch when the fixed evaluator changes", () => {
