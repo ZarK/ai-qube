@@ -12,31 +12,23 @@ const { renderAgentInstructions, renderMakeItSoCommand, renderMakeItSoSkill } = 
 const { getAgentHostProfiles } = require('../dist/agent_hosts.js');
 const { renderManagedSection } = require('../dist/managed_file.js');
 
-const EXPECTED_PR_CADENCE_LINES = [
-  'Fix merge-blocking feedback in the same issue and pull request; never defer a blocker to a new issue.',
-  'Blocking findings are limited to: correctness bugs, security or trust risks, broken required CI or checks, and failed acceptance criteria of the active issue. Everything else is advisory.',
-  'Treat non-blocking polish as advisory. Fix it in the same pull request when cheap, otherwise drop it or include it in an existing relevant work item. Do not create a new work item for review leftovers.',
-  'Reviews, audits, and `qube aie pr triage <pr>` report advisory findings for this fix-or-drop decision.',
-  'Run one fresh multi-lane review pass per pull request head. Cap reviews at two rounds unless a blocker fix materially changes the code. After round two, when required checks are green and no unresolved blockers remain, merge; handle residual advisories by the fix-or-drop disposition above.',
-  'While a review gate or review lane runs, do not edit files, commit, or move the branch head. Review lanes fail when the checkout changes mid-run. Finish or stop the gate before making changes.',
-  'Commit only intentional, issue-scoped changes. Never commit unrelated untracked files that accumulate in the working tree.',
-];
-
-function extractPrCadenceLines(text) {
-  const heading = 'PR review and merge cadence:\n\n';
-  const start = text.indexOf(heading);
-  assert.ok(start >= 0, 'missing PR review and merge cadence heading');
-  const lines = [];
-  for (const line of text.slice(start + heading.length).split('\n')) {
-    if (!line.startsWith('- ')) break;
-    lines.push(line.slice(2));
+function assertCompactWorkflow(text, { autonomous = true } = {}) {
+  for (const heading of ['Core policy:', 'Workflow:', 'Task tools:', 'Procedure entry points:', 'Model delegation:', 'Stop conditions:', 'Safety requirements:']) {
+    assert.match(text, new RegExp(`^${heading}$`, 'm'));
   }
-  return lines;
-}
-
-function assertPrCadence(text) {
-  assert.deepEqual(extractPrCadenceLines(text), EXPECTED_PR_CADENCE_LINES);
-  assert.doesNotMatch(text, /Target a few strong review rounds/);
+  assert.match(text, /Follow the latest user instruction\. A user stop or scope change overrides continuation and repository automation/);
+  assert.match(text, /Keep at most one issue in progress/);
+  if (autonomous) {
+    assert.match(text, /Only correctness bugs, security or trust risks, failed required checks, and unmet acceptance criteria block shipping/);
+    assert.match(text, /Fix cheap advisories or drop them\. Do not open issues for review leftovers/);
+    assert.match(text, /Cap normal review at two rounds; another round requires a blocker fix that materially changes the code/);
+    assert.match(text, /Keep the checkout unchanged while review runs/);
+    assert.match(text, /Commit only the issue's intended changes/);
+    assert.match(text, /qube aie complete <issue>/);
+  } else {
+    assert.match(text, /Autonomous review and shipping are disabled/);
+  }
+  assert.doesNotMatch(text, /PR review and merge cadence:|Analysis and discovered work:|Stage checklist:|Host capability profile:/);
 }
 
 function makeGitRepo() {
@@ -229,7 +221,7 @@ describe('init service', () => {
     assert.match(parsedSkill.body, /Continue repository development/);
     assert.match(skill, /^---\n# BEGIN EXECUTOR MANAGED SECTION\n/);
     assert.match(agents, /\.agents\/skills\/make-it-so\/SKILL\.md/);
-    assert.match(agents, /invoked as `\$make-it-so`/);
+    assert.match(agents, /use `\$make-it-so`/);
     assert.doesNotMatch(agents, /\.codex\/agents\/qube-review-focus\.toml/);
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
 
@@ -356,7 +348,7 @@ describe('init service', () => {
     assert.match(agents, /Executor Issue Workflow/);
     assert.match(agents, /configured work and review provider is GitHub/);
     assert.match(agents, /Configured providers: work GitHub, review GitHub, repository local git, CI GitHub checks, layout local filesystem/);
-    assert.match(agents, /Linked worktree execution is disabled/);
+    assert.match(agents, /Before new issue work, verify repository policy: primary checkout/);
     assert.match(agents, /ZarK\/ai-supply-chain-guard/);
     assert.match(agents, /https:\/\/github\.com\/ZarK\/ai-supply-chain-guard/);
     assert.match(agents, /\.agents\/skills\/supply-chain-guard\/SKILL\.md/);
@@ -366,7 +358,7 @@ describe('init service', () => {
     assert.match(command, /Continue repository development/);
     assert.match(command, /inspect required reviews and checks/);
     assert.match(command, /configured gates cannot run/);
-    assert.match(agents, /Review mode: external\./);
+    assert.match(agents, /Review mode is external/);
     assert.doesNotMatch(agents, /pr-review-wait/);
     const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.version, 1);
@@ -586,22 +578,20 @@ describe('init service', () => {
     assert.match(agents, /Base branch: `upstream\/develop`/);
     assert.match(agents, /Issue branches follow `work\/<number>\/<slug>`/);
     assert.match(agents, /Manual UI audit is disabled/);
-    assert.match(agents, /Linked worktree execution is enabled/);
-    assert.match(agents, /Local base branch freshness checks before new issue work are disabled/);
+    assert.match(agents, /Before new issue work, verify repository policy: no blocking open pull requests/);
     assert.match(agents, /Autonomous shipping mode is disabled/);
     assert.match(agents, /GitHub milestone ordering is enabled/);
     assert.doesNotMatch(agents, /primary checkout, no blocking open pull requests, and a current local base branch/);
-    assert.match(agents, /Configured quality gate commands: test \(custom\/pre-pr\): `npm test`/);
-    assert.match(agents, /When shipping is disabled, do not run or publish pull request reviews/);
+    assert.match(agents, /Required quality gates: `test`/);
+    assert.match(agents, /Review mode is external\. Shipping and review publication are disabled/);
     assert.doesNotMatch(agents, /After the pull request exists, run/);
     assert.match(agents, /Naming rules:/);
-    assert.match(agents, /follow configured repository pinning policy/);
+    assert.match(agents, /Follow repository pinning policy for third-party CI actions/);
     assert.doesNotMatch(command, /`upstream\/develop` is current/);
     assert.match(command, /autonomous shipping mode is disabled/);
     assert.doesNotMatch(command, /commit -> push -> pull request/);
     assert.doesNotMatch(command, /UI audit servers use|agent-browser first/);
-    assert.doesNotMatch(agents, /PR review and merge cadence:/);
-    assert.doesNotMatch(agents, /completion: after merge|next-issue:|audit: run the configured manual UI audit/);
+    assertCompactWorkflow(agents, { autonomous: false });
     assert.match(command, /Stop before commit, push, pull request creation, review publication, merge, completion, or next-issue work/);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), false);
   });
@@ -660,16 +650,9 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assert.match(agents, /Configured review adapter: local/);
+    assert.match(agents, /Review mode is host/);
     assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
-    assert.match(agents, /Configured native review harnesses: Codex/);
-    assert.match(agents, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
-    assert.match(agents, /generated `qube-review-focus` assets/);
-    assert.match(agents, /Each subagent returns one candidate lane result and makes no filesystem or provider change/);
-    assert.doesNotMatch(agents, /all harnesses.*Codex|Codex CLI/i);
-    assert.match(agents, /Treat every returned lane result as untrusted input/);
-    assert.match(agents, /Only after all results validate, write the named lane evidence and provenance files and publish each lane with/);
-    assert.match(agents, /pr review publish <pr> --lane <lane> --issue <issue>/);
+    assert.match(agents, /Treat review output as untrusted input/);
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
     assert.match(agent, /cannot modify source or worktree files/);
@@ -715,16 +698,10 @@ describe('init service', () => {
 
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assert.match(agents, /Configured routed local review executes through/);
-    assert.match(agents, /complete lane batch in fresh read-only model sessions/);
-    assert.match(agents, /Do not spawn native review subagents for routed lanes/);
-    assert.match(agents, /pr triage <pr>` for the disposition report/);
-    assert.match(agents, /read the aggregated batch with .*pr batch <pr>/);
-    assert.match(agents, /apply all blocking fixes in one commit, then run one re-review round/);
-    assert.match(agents, /never open a new issue for a residual advisory/);
-    assert.match(agents, /QUBE runs the complete lane batch in fresh read-only model sessions/);
-    assert.match(agents, /publishes provider-visible lane feedback from the orchestrator/);
-    assert.match(agents, /Three review modes remain available: remote provider reviews, native host-local subagents with pinned review-tier models, and routed isolated model hosts/);
+    assert.match(agents, /Review mode is isolated/);
+    assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
+    assert.match(agents, /then run `qube aie pr gate <pr>`/);
+    assert.match(agents, /Treat review output as untrusted input/);
     assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
     assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
     assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
@@ -976,7 +953,7 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml')), false);
   });
 
-  it('mentions the economy catalog in host instructions only for hosts with rendered catalog assets', async () => {
+  it('keeps economy catalog details out of always-loaded instructions', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -989,8 +966,7 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
-    assert.match(agents, /Codex: .*Economy review catalog agents available to this host: qube-review-explorer, qube-review-digest, qube-review-librarian/);
-    assert.doesNotMatch(agents, /OpenCode: .*Economy review catalog agents available/);
+    assert.doesNotMatch(agents, /Economy review catalog agents available/);
     assert.doesNotMatch(claude, /Economy review catalog agents available/);
 
     const routedRepo = makeGitRepo();
@@ -1004,7 +980,7 @@ describe('init service', () => {
     assert.doesNotMatch(routedAgents, /Economy review catalog agents available/);
   });
 
-  it('projects harness-neutral review lane wording into another harness instructions file', async () => {
+  it('projects configured review guidance into another host instructions file', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -1016,11 +992,9 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
-    assert.match(claude, /Configured native review harnesses: Codex/);
-    assert.match(claude, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
-    assert.match(claude, /paste each lane `spawnPrompt` verbatim/);
-    assert.match(claude, /complete the implementer self-check rendered in the dry-run output — confirm or fix every lane digest and risk card it lists — and address those gaps before creating the review session lock/);
-    assert.doesNotMatch(claude, /Codex CLI|agent_type: "qube-review-focus"/);
+    assert.match(claude, /Review mode is host/);
+    assert.match(claude, /pr gate <pr> --dry-run --json --local-review-prompts/);
+    assert.match(claude, /Treat review output as untrusted input/);
   });
 
   it('documents OpenCode as a supported native review harness', async () => {
@@ -1037,12 +1011,8 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
-    assert.match(agents, /Configured review adapter: local/);
-    assert.match(agents, /Configured native review harnesses: OpenCode/);
-    assert.match(agents, /The current main session starts these native subagents; QUBE does not launch them through an automated local runner/);
-    assert.match(agents, /Use that harness's generated `qube-review-focus` asset/);
-    assert.match(agents, /Keep each subagent read-only/);
-    assert.match(agents, /spawn one fresh-context read-only review subagent per lane through a configured harness/);
+    assert.match(agents, /Review mode is host/);
+    assert.match(agents, /OpenCode: read `AGENTS\.md`; use `\/make-it-so` from `\.opencode\/commands\/make-it-so\.md` for the full procedure/);
     const focusAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
     assert.match(focusAgent, /Do not write lane evidence or provenance/);
     assert.match(focusAgent, /Return one candidate lane result to the main session/);
@@ -1053,7 +1023,6 @@ describe('init service', () => {
     }
     assert.doesNotMatch(agents, /OpenCode native review is unsupported/i);
     assert.doesNotMatch(agents, /Configure Codex|Codex local-host/i);
-    assert.match(agents, /OpenCode: instructions `AGENTS\.md`/);
     assert.match(command, /Continue repository development/);
   });
 
@@ -1071,17 +1040,15 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const command = readFileSync(join(repo, '.cursor', 'commands', 'make-it-so.md'), 'utf8');
-    assert.match(agents, /Configured native review harnesses: Cursor/);
-    assert.match(agents, /profiles report native local review as unsupported/);
-    assert.match(agents, /Do not create the review session lock, spawn native review lanes, or publish local evidence/);
-    assert.match(agents, /Cursor: .*native review unsupported;/);
+    assert.match(agents, /Review mode is host, but no supported reviewer is configured/);
+    assert.match(agents, /Cursor: read `AGENTS\.md`; use `\/make-it-so` from `\.cursor\/commands\/make-it-so\.md` for the full procedure/);
     assert.doesNotMatch(agents, /installed agents|Economy review catalog agents available to this host/);
     assert.doesNotMatch(agents, /spawn one fresh-context review subagent per lane through a configured harness/);
     assert.match(command, /configured native review harness does not support local review/);
     assert.doesNotMatch(command, /complete local review focuses/);
   });
 
-  it('renders full always-loaded workflow instructions with host projections', async () => {
+  it('renders compact workflow rules and host procedure entry points', async () => {
     const repo = makeGitRepo();
     const result = await runInit({
       target: '.',
@@ -1097,76 +1064,30 @@ describe('init service', () => {
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
 
-    assert.match(agents, /issue-driven autonomous development/);
+    assertCompactWorkflow(agents);
+    assertCompactWorkflow(claude);
+    assert.match(agents, /issue-driven development/);
     assert.match(agents, /standing authorization under repository policy to run tests, commit, push, create non-draft PRs/);
-    assert.match(agents, /Keep at most one open issue in progress/);
     assert.match(agents, /For OpenCode, use `todowrite` and `todoread` directly/);
     assert.match(agents, /For Codex, use `update_plan` or the host plan or task-list tool directly/);
     assert.match(claude, /For Claude Code, use `TodoWrite` and `TodoRead`/);
-    assert.match(agents, /Host capability profile:/);
-    assert.match(agents, /OpenCode: instructions `AGENTS\.md`; Make It So command `\.opencode\/commands\/make-it-so\.md`, invoked as `\/make-it-so`/);
-    assert.match(agents, /Codex: instructions `AGENTS\.md`; Make It So skill `\.agents\/skills\/make-it-so\/SKILL\.md`, invoked as `\$make-it-so`/);
-    assert.match(claude, /Claude Code: instructions `CLAUDE\.md`; Make It So command `\.claude\/commands\/make-it-so\.md`, invoked as `\/make-it-so`/);
+    assert.match(agents, /OpenCode: read `AGENTS\.md`; use `\/make-it-so` from `\.opencode\/commands\/make-it-so\.md` for the full procedure/);
+    assert.match(agents, /Codex: read `AGENTS\.md`; use `\$make-it-so` from `\.agents\/skills\/make-it-so\/SKILL\.md` for the full procedure/);
+    assert.match(claude, /Claude Code: read `CLAUDE\.md`; use `\/make-it-so` from `\.claude\/commands\/make-it-so\.md` for the full procedure/);
     assert.doesNotMatch(claude, /\.claude\/agents\/qube-review-focus\.md/);
-    assert.match(agents, /Protected workflow todo ids are `branch-check`, `ship`, `pr-review-wait`, `next`/);
-    assert.match(agents, /BOOTSTRAP NEXT ISSUE - DO NOT COMPLETE UNTIL NEW TODOS EXIST/);
-    assert.match(agents, /remain pending until new issue todos exist or the queue is confirmed empty or blocked/);
-    assert.match(agents, /Mark exactly one todo item `in_progress`/);
-    assert.match(agents, /mark items `completed` immediately after finishing them/);
-    assert.match(agents, /Never reach zero pending local todos while ready issue work may remain/);
-    assert.match(agents, /Local todos are working memory and continuation state; GitHub work item checklists and comments are the durable shared task record/);
-    assert.match(agents, /run `qube aie complete <issue>`/);
-    assert.match(agents, /Analysis and discovered work:/);
-    assert.match(agents, /Issue-gated implementation starts only after Executor selects or starts a valid GitHub work item/);
-    assert.match(agents, /User-directed analysis, investigation, and queue triage are allowed before implementation starts when the user asks/);
-    assert.match(agents, /Manual GitHub work item creation and suggestion are also allowed/);
-    assert.match(agents, /When the user asks to record a confirmed product gap, create or suggest a GitHub work item with clear requirements and acceptance criteria/);
-    assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
-    assert.match(agents, /implementation: read the implementation brief from `qube aie start` and `qube aie view <issue> --json`/);
-    assert.match(agents, /Make a short plan for the relevant work and tests/);
-    assert.doesNotMatch(agents, /matrix rows|obligation surface|post that plan/);
-    assert.match(agents, /Implement the complete scope/);
-    assert.match(agents, /audit: run the configured manual UI audit/);
-    assert.match(agents, /Executor local app runner/);
-    assert.match(agents, /prefer repository package scripts/);
-    assert.match(agents, /qube aie run start --name ui-audit -- <command>/);
-    assert.match(agents, /qube aie run wait --name ui-audit --url <url> --timeout 30/);
-    assert.match(agents, /qube aie audit ui set-run --command "<command>" --url <url>/);
-    assert.match(agents, /agent-browser first and Playwright\/browser automation as fallback/);
-    assert.match(agents, /capture and inspect PNG screenshots/);
-    assert.match(agents, /typed outcome, observations, screenshot hashes, findings, and blockers in audit\.json/);
-    assert.match(agents, /collect `qube aie run status --name ui-audit` logs\/status once/);
-    assert.match(agents, /Do not claim UI audit success from CLI JSON, HTTP\/API responses, DOM text, passing tests, notes, filenames, hashes, or status checks/);
-    assert.match(agents, /review: use `qube aie pr view <pr> --json` for concise PR state when inspecting, run `qube aie pr gate <pr>` when a PR exists to request reviewers/);
-    assert.match(agents, /test: run focused checks while fixing the issue/);
-    assert.match(agents, /At the final head, run the complete configured gate set before merge/);
-    assert.match(agents, /PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the pull request body, and open a ready pull request that closes the work item/);
-    assert.match(agents, /merge: address blocking feedback and failed checks/);
-    assert.match(agents, /completion: after merge, run `qube aie complete <issue>`/);
-    assert.match(agents, /pull-base: return to `main` and pull `origin\/main`/);
-    assert.match(agents, /next-issue: inspect the queue and start the next ready issue/);
-    const completeIndex = agents.indexOf('After merge, run `qube aie complete <issue>`');
-    const baseUpdateIndex = agents.indexOf('pull-base: return to `main`', completeIndex);
-    assert.notEqual(completeIndex, -1);
-    assert.notEqual(baseUpdateIndex, -1);
-    assert.ok(completeIndex < baseUpdateIndex);
+    assert.match(agents, /Use `qube aie pr body <issue>` for the pull request template/);
+    assert.match(agents, /Use `qube aie checklist verify <issue> --index <n> --prompt` for acceptance checks/);
+    assert.match(agents, /Delegate mechanical implementation and exploration to their preferred model.*Use the configured fallbacks/s);
     assert.match(agents, /placeholder command classes, stubs, no-op implementations/);
     assert.match(agents, /Use the target project's product terms/);
     assert.match(agents, /issue implementation history, local reference paths, or source-provenance explanations/);
     assert.match(agents, /Use `qube aie pr view <pr> --json`, `qube aie pr gate <pr>`, and `qube aie pr body <issue>` for pull request state/);
-    assert.match(agents, /Avoid raw provider review or comment payloads/);
     assert.match(agents, /Stop implementation work cleanly and report the exact blocker/);
-    assert.match(agents, /implementation stop conditions do not block explicitly user-directed analysis, investigation, queue triage, or manual GitHub work item creation and suggestion/);
-    assert.match(agents, /repository meta documentation/);
-    assert.match(agents, /Update affected product documentation when behavior, commands, or supported workflows change/);
+    assert.match(agents, /Update affected product documentation when behavior, commands, or workflows change/);
     assert.match(agents, /Do not commit generated build output unless repository policy explicitly allows it/);
-    assert.match(agents, /Use exact dependency versions/);
     assert.match(agents, /canonical supply-chain guard/);
-    assert.match(agents, /Before dependency, package-manager, CI\/release, IDE\/MCP, or AI-agent-tooling work/);
-    assert.match(agents, /Preserve or update lockfiles intentionally/);
-    assert.match(agents, /Disable lifecycle or build scripts/);
-    assert.match(agents, /package-age gates before adding or upgrading dependencies/);
-    assert.match(agents, /pin them to immutable full-length commit SHAs/);
+    assert.match(agents, /Use exact versions, inspect intentional lockfile changes, disable lifecycle scripts where supported, and apply package-age gates/);
+    assert.match(agents, /Pin third-party CI actions to immutable commit SHAs/);
     assert.match(agents, /Stop for explicit user approval when package age, identity, source\/provenance, integrity, or execution risk cannot be verified/);
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
@@ -1181,7 +1102,7 @@ describe('init service', () => {
     assert.match(command, /Do not run status after a successful start, retry wait/);
     assert.match(command, /Review mode is external/);
     assert.match(command, /GitHub review publisher mode is user/);
-    assert.match(command, /prefer repository package scripts/);
+    assert.match(command, /Prefer repository package scripts/);
     assert.match(command, /Use agent-browser first for visual UI inspection/);
     assert.match(command, /capture and inspect PNG screenshots/);
     assert.match(command, /typed outcome, observations, screenshot hashes, findings, and blockers in audit\.json/);
@@ -1224,7 +1145,7 @@ describe('init service', () => {
     assert.doesNotMatch(agents, /performed_via_github_app/);
     assert.doesNotMatch(agents, /refs\/notes\/ai/);
     assert.doesNotMatch(agents, /placeholder command classes/);
-    assert.doesNotMatch(agents, /package-age gates before adding or upgrading dependencies/);
+    assert.doesNotMatch(agents, /apply package-age gates/);
     assert.doesNotMatch(agents, /ZarK\/ai-supply-chain-guard/);
   });
 
@@ -1265,8 +1186,8 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Base branch: `upstream\/trunk`/);
     assert.match(agents, /Naming rules:/);
-    assert.match(agents, /package-age gates before adding or upgrading dependencies: 10 full days by default and 20 full days/);
-    assert.match(agents, /follow configured repository pinning policy/);
+    assert.match(agents, /apply package-age gates of 10 days or 20 days for high-risk tooling/);
+    assert.match(agents, /Follow repository pinning policy for third-party CI actions/);
   });
 
   it('writes project npm defaults only when explicitly accepted', async () => {
@@ -1995,31 +1916,28 @@ describe('managed section checksum normalization', () => {
     assert.match(agentsAction.reason, /^\+ .*Executor Issue Workflow/m);
   });
 
-  it('renders the seven review-cadence lines in the managed instruction text', async () => {
+  it('renders compact review and shipping rules in the managed instruction text', async () => {
     const hosts = await getAgentHostProfiles(['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
     const instructions = renderAgentInstructions(getDefaults(), hosts);
-    assertPrCadence(instructions);
-    assert.equal(extractPrCadenceLines(instructions).length, 7);
+    assertCompactWorkflow(instructions);
   });
 
-  it('writes the seven review-cadence lines into every enabled host target on a fresh init', async () => {
+  it('writes compact workflow rules into each instruction target on a fresh init', async () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true, result.errors.join('\n'));
     assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
-    assertPrCadence(readFileSync(join(repo, 'AGENTS.md'), 'utf8'));
-    assertPrCadence(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'));
-    assert.doesNotMatch(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /PR review and merge culture/);
-    assert.doesNotMatch(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /PR review and merge culture/);
+    assertCompactWorkflow(readFileSync(join(repo, 'AGENTS.md'), 'utf8'));
+    assertCompactWorkflow(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'));
 
     const grokRepo = makeGitRepo();
     const grok = await runInit({ target: '.', tool: 'grok-build', dryRun: false, force: false, cwd: grokRepo });
     assert.equal(grok.ok, true, grok.errors.join('\n'));
-    assertPrCadence(readFileSync(join(grokRepo, 'AGENTS.md'), 'utf8'));
+    assertCompactWorkflow(readFileSync(join(grokRepo, 'AGENTS.md'), 'utf8'));
     assert.equal(existsSync(join(grokRepo, 'CLAUDE.md')), false);
   });
 
-  it('replaces the old four-line cadence list when refreshing a valid managed section', async () => {
+  it('replaces an old cadence list with the compact workflow', async () => {
     const repo = makeGitRepo();
     const oldCadence = [
       '## Executor Issue Workflow',
@@ -2037,7 +1955,7 @@ describe('managed section checksum normalization', () => {
     const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true, result.errors.join('\n'));
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assertPrCadence(agents);
+    assertCompactWorkflow(agents);
     const agentsAction = result.actions.find(action => action.path === 'AGENTS.md');
     assert.ok(agentsAction);
     assert.equal(agentsAction.operation, 'replace-managed');

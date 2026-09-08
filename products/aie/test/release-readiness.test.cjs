@@ -38,11 +38,11 @@ describe('release readiness repository fixtures', () => {
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
 
     assert.deepEqual(result.selectedTools, ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
-    assert.match(agents, /OpenCode: instructions `AGENTS\.md`/);
-    assert.match(agents, /Codex: instructions `AGENTS\.md`/);
-    assert.match(agents, /Grok Build: instructions `AGENTS\.md`/);
-    assert.match(agents, /Cursor: instructions `AGENTS\.md`/);
-    assert.match(claude, /Claude Code: instructions `CLAUDE\.md`/);
+    assert.match(agents, /OpenCode: read `AGENTS\.md`; use `\/make-it-so` from `\.opencode\/commands\/make-it-so\.md` for the full procedure/);
+    assert.match(agents, /Codex: read `AGENTS\.md`; use `\$make-it-so` from `\.agents\/skills\/make-it-so\/SKILL\.md` for the full procedure/);
+    assert.match(agents, /Grok Build: read `AGENTS\.md`; use `\/make-it-so` from `\.grok\/commands\/make-it-so\.md` for the full procedure/);
+    assert.match(agents, /Cursor: read `AGENTS\.md`; use `\/make-it-so` from `\.cursor\/commands\/make-it-so\.md` for the full procedure/);
+    assert.match(claude, /Claude Code: read `CLAUDE\.md`; use `\/make-it-so` from `\.claude\/commands\/make-it-so\.md` for the full procedure/);
     assert.match(agents, /configured work and review provider is GitHub/);
     assert.match(command, /Continue repository development by completing the current issue, shipping it, and selecting the next ready issue/);
     assert.equal(existsSync(join(repo, '.agents', 'skills', 'make-it-so', 'SKILL.md')), true);
@@ -63,7 +63,7 @@ describe('release readiness repository fixtures', () => {
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
 
     assert.equal(result.ok, true);
-    assert.match(agents, /`qube aie start`/);
+    assert.match(agents, /`qube aie next --json`/);
     assert.match(claude, /`qube aie complete <issue>`/);
     assert.doesNotMatch(agents, /products\/aie\/bin\/run/);
     assert.doesNotMatch(claude, /node products\/aie\/bin\/run/);

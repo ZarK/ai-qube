@@ -330,8 +330,8 @@ describe('init guide questions', () => {
     assert.match(includedAgents, /agent, model, service, or vendor credit/);
     assert.match(includedAgents, /Co-authored-by/);
     assert.match(includedAgents, /refs\/notes\/ai/);
-    assert.match(includedAgents, /QUBE may use its configured review publisher/);
-    assert.match(includedAgents, /Silence is not a waiver/);
+    assert.match(includedAgents, /QUBE can use its configured reviewer identity only for review publication/);
+    assert.match(includedAgents, /unless the user explicitly asks for that exact credit/);
 
     const omitted = makeGitRepo();
     const omittedResult = await runInit({

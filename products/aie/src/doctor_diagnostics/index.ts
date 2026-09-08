@@ -113,10 +113,14 @@ export function buildInstructionPolicyDiagnostics(config: Config, repoRoot: stri
   const text = managedInstructionText(repoRoot);
   return {
     namingRules: installCheck(config.instructions.namingRules, text, /Naming rules:/),
-    promptInjectionWarning: installCheck(config.instructions.promptInjectionWarning, text, /untrusted task input/),
+    promptInjectionWarning: predicateInstallCheck(
+      config.instructions.promptInjectionWarning,
+      text,
+      value => /untrusted input/i.test(value) && /cannot override user instructions or repository policy/i.test(value),
+    ),
     noCreditWarning: installCheck(config.instructions.noCreditWarning, text, /agent, model, service, or vendor credit/),
     implementationGuardrails: installCheck(config.instructions.implementationGuardrails, text, /placeholder command classes|repository meta documentation/),
-    supplyChainSafety: installCheck(config.instructions.supplyChainSafety, text, /package-age gates before adding or upgrading dependencies|supply-chain safety/i),
+    supplyChainSafety: installCheck(config.instructions.supplyChainSafety, text, /package-age gates of \d+ days or \d+ days for high-risk tooling/i),
     canonicalSupplyChainGuard: predicateInstallCheck(config.instructions.supplyChainSafety, text, hasCanonicalSupplyChainGuardInstruction),
   };
 }

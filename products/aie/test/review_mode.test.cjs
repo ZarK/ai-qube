@@ -100,10 +100,10 @@ describe('review mode doctor and init', () => {
     assert.equal(result.ok, true, result.errors.join('\n'));
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.equal(readManagedToolVersion(agents), readAiePackageVersion());
-    assert.match(agents, /Review mode: isolated\./);
+    assert.match(agents, /Review mode is isolated\./);
     assert.equal(existsSync(join(__dirname, '../docs/review-modes.md')), true);
     const hosts = await getAgentHostProfiles(['opencode']);
     const isolated = isolatedConfig('isolated');
-    assert.match(renderAgentInstructions(isolated, hosts), /Review mode: isolated\./);
+    assert.match(renderAgentInstructions(isolated, hosts), /Review mode is isolated\./);
   });
 });
