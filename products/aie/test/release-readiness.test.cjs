@@ -63,7 +63,7 @@ describe('release readiness repository fixtures', () => {
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
 
     assert.equal(result.ok, true);
-    assert.match(agents, /`qube aie start`/);
+    assert.match(agents, /`qube aie next --json`/);
     assert.match(claude, /`qube aie complete <issue>`/);
     assert.doesNotMatch(agents, /products\/aie\/bin\/run/);
     assert.doesNotMatch(claude, /node products\/aie\/bin\/run/);

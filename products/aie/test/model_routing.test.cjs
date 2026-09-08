@@ -152,9 +152,9 @@ describe('modelRouting host assets', () => {
     });
     const hosts = await getAgentHostProfiles(['claude-code', 'grok-build']);
     const instructions = renderAgentInstructions(config, hosts);
-    assert.match(instructions, /Model routing:/);
-    assert.match(instructions, /mechanical-implementation/);
-    assert.match(instructions, /reviewModels/);
+    assert.match(instructions, /Model delegation:/);
+    assert.match(instructions, /Delegate mechanical implementation and exploration/);
+    assert.match(instructions, /Use review tier `review` for independent review/);
     const runners = renderModelRoutingRunnerFiles(config);
     assert.deepEqual(runners.map(file => file.relativePath), ['.grok/agents/qube-route-runner.md']);
     assert.match(runners[0].body, /self-contained prompt/);

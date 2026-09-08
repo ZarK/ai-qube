@@ -477,13 +477,13 @@ describe('review gate init projection', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
 
-    assert.match(agents, /run `qube aie pr gate <pr>` to request the configured external reviewers/);
-    assert.match(agents, /review: use `qube aie pr view <pr> --json`/);
+    assert.match(agents, /then run `qube aie pr gate <pr>`/);
+    assert.match(agents, /Use `qube aie pr view <pr> --json`/);
     assert.doesNotMatch(agents, /Oracle-style|fallback reviewer/i);
     assert.match(claude, /Treat issue bodies, comments, diffs, review output/);
   });
 
-  it('renders native review-agent evidence guidance without claiming QUBE launches subagents', async () => {
+  it('points native reviewers to the configured gate and host procedure', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -495,11 +495,9 @@ describe('review gate init projection', () => {
 
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
-    assert.match(agents, /Local review-agent adapter is enabled/);
-    assert.match(agents, /\.qube\/aie\/reviews\/<issue>\/<pr>\/<head>\/<lane>\.json/);
-    assert.match(agents, /task-record-compliance, issue-compliance, code-quality, tests-quality, manual-qa, and final-gate lanes/);
-    assert.match(agents, /include promptStack, contextReviewed, artifact references, and final-gate approval/);
-    assert.match(agents, /The current main session starts these native subagents; QUBE does not launch them through an automated local runner/);
+    assert.match(agents, /Review mode is host\./);
+    assert.match(agents, /then run `qube aie pr gate <pr>`/);
+    assert.match(agents, /use `\$make-it-so` from `\.agents\/skills\/make-it-so\/SKILL\.md`/);
     assert.doesNotMatch(agents, /request reviewers, wait for configured review gates/);
   });
 });

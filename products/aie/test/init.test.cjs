@@ -221,7 +221,7 @@ describe('init service', () => {
     assert.match(parsedSkill.body, /Continue repository development/);
     assert.match(skill, /^---\n# BEGIN EXECUTOR MANAGED SECTION\n/);
     assert.match(agents, /\.agents\/skills\/make-it-so\/SKILL\.md/);
-    assert.match(agents, /invoked as `\$make-it-so`/);
+    assert.match(agents, /use `\$make-it-so`/);
     assert.doesNotMatch(agents, /\.codex\/agents\/qube-review-focus\.toml/);
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
 
