@@ -20,6 +20,57 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | `qube make-it-so` | Map an intent to the safest real QUBE workflow. |
 | `qube run` | Run a QUBE component command with passthrough arguments. |
 
+### Make It So
+
+`qube make-it-so` exposes its selected command and workflow boundary. The
+`planned` flow maps free-form intent to `qube aib init <target> --idea <intent>`.
+It creates planning state without a GitHub issue, branch, pull request, or
+review request. The `issue` flow maps `next`, a number, or `#number` to
+`qube aie start`; all Executor checks remain active. The `direct-local` flow is
+currently refused and directs the user to the planned flow or `qube oneshot`.
+Use `--dry-run --json` to inspect the mapping without dispatching it.
+
+### Autoresearch
+
+`qube autoresearch` supports local directory targets and keeps run state under
+`.qube/autoresearch/` until promotion. The compact `<target> <goal>` form is an
+alias for `init`; it creates the arena and fixed evaluator without starting a
+candidate run or changing the target.
+
+For a code target, declare fixed evaluator scripts and data before `init`:
+
+```json
+{
+  "autoresearch": {
+    "evaluatorInputs": ["scripts/score.mjs", "data/cases.json"]
+  }
+}
+```
+
+Paths are relative to the target. QUBE hashes `package.json` and each declared
+file, then checks them before and after evaluation. A missing, unreadable, or
+changed evaluator input rejects the result. If the list is absent, QUBE checks
+`package.json`. The evaluator receives required system environment values but
+does not inherit application tokens.
+
+Use `baseline` to record fixed evidence, `run` to create a sandboxed candidate,
+and `status` or `dashboard` to inspect state. `promote --dry-run --json` lists
+the accepted changes without applying them. Promotion preserves unrelated
+files and stops on candidate changes or target conflicts. If apply fails, QUBE
+restores affected files. Run promotion again after an interruption.
+
+### Oneshot
+
+`qube oneshot` creates a local doc or code artifact without the normal issue,
+branch, pull request, review request, merge, or approval workflow. Default runs
+write only under `.qube/oneshot/<run-id>/`. Use `status`, `checks`, `review`, or
+`summary` with a run ID to inspect the result.
+
+`--dry-run --json` reports the plan without writing files. `--target` can write
+to a new target; existing targets are refused. `--output` copies the selected
+artifact to a file and refuses an existing file unless `--force-output` is set.
+Local checks and self-review do not count as pull request approval.
+
 ## Direct workflow commands
 
 Each direct command is the composer-facing name for one component command.
