@@ -36,7 +36,7 @@ For a global installation, run `qube init`. See the
 [QUBE 0.2.12 command reference](https://github.com/ZarK/ai-qube/blob/51eb90562ac9c27590d3b647a515ef9ff9c8c884/docs/qube-command-surfaces.md)
 for the commands in this release.
 
-Follow the [first-task and daily-use guide](../../docs/qube-init.md#first-task)
+Follow the [first-task and daily-use guide](https://github.com/ZarK/ai-qube/blob/main/docs/qube-init.md#first-task)
 to initialize a repository and complete a Ready issue with Codex and GitHub.
 
 ## Components
