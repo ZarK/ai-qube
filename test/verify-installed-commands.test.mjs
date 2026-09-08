@@ -35,6 +35,27 @@ function writeShim(prefix, command, body, exitCode = 0) {
   writeFileSync(windows, `@echo off\r\n${body}\r\nexit /b ${exitCode}\r\n`);
 }
 
+function writeIssueCommandShim(prefix, command, doctorOutput, doctorExitCode = 1) {
+  const binDir = path.join(prefix, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const unix = path.join(binDir, command);
+  const windows = path.join(process.platform === "win32" ? prefix : binDir, `${command}.cmd`);
+  writeFileSync(unix, `#!/bin/sh
+if [ "$1" = "doctor" ] || { [ "$1" = "aie" ] && [ "$2" = "doctor" ]; }; then
+  printf '%s\\n' '${doctorOutput}'
+  exit ${doctorExitCode}
+fi
+printf '%s\\n' '{"ok":true}'
+exit 0
+`);
+  try {
+    chmodSync(unix, 0o755);
+  } catch {
+    // Windows filesystems may reject POSIX mode bits.
+  }
+  writeFileSync(windows, `@echo off\r\nif "%~1"=="doctor" goto doctor\r\nif "%~1"=="aie" if "%~2"=="doctor" goto doctor\r\necho {"ok":true}\r\nexit /b 0\r\n:doctor\r\necho ${doctorOutput}\r\nexit /b ${doctorExitCode}\r\n`);
+}
+
 describe("installed command verification", () => {
   it("parses plan and prefix flags", () => {
     assert.deepEqual(parseVerifyInstalledArgs(["--json", "--plan", "publish-plan.json", "--skip-pack"]), {
@@ -260,7 +281,7 @@ describe("installed command verification", () => {
   it("skips pack and reports start checks for fixture commands", async () => {
     const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-skip-"));
     try {
-      writeShim(prefix, "qube", "echo help");
+      writeIssueCommandShim(prefix, "qube", '{"ok":false,"command":"doctor","isRepo":false}');
       const report = await runInstalledCommandVerification({
         repoRoot,
         prefix,
@@ -274,6 +295,45 @@ describe("installed command verification", () => {
     }
   });
 
+  it("accepts the expected doctor diagnostic outside a repository", async () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-doctor-"));
+    try {
+      writeIssueCommandShim(prefix, "aie", '{"ok":false,"command":"doctor","isRepo":false}');
+      const report = await runInstalledCommandVerification({
+        repoRoot,
+        prefix,
+        skipPack: true,
+        commands: ["aie"],
+      });
+      assert.equal(report.ok, true, report.error);
+      assert.equal(report.issueCommands.length, 3);
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed and crashed doctor diagnostics", async () => {
+    const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-doctor-bad-"));
+    try {
+      for (const [output, exitCode, reasonCode] of [
+        ['{"ok":false,"command":"doctor"}', 1, "invalid-doctor-diagnostic"],
+        ["doctor crashed", 2, "start-failed"],
+      ]) {
+        writeIssueCommandShim(prefix, "aie", output, exitCode);
+        const report = await runInstalledCommandVerification({
+          repoRoot,
+          prefix,
+          skipPack: true,
+          commands: ["aie"],
+        });
+        assert.equal(report.ok, false);
+        assert.equal(report.reasonCode, reasonCode);
+      }
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a set tag that does not match the qube version", async () => {
     await assert.rejects(() => resolvePublishTag("publish-set-v0.0.0", repoRoot), /does not match/);
   });
@@ -282,8 +342,8 @@ describe("installed command verification", () => {
     const prefix = mkdtempSync(path.join(os.tmpdir(), "qube-verify-set-"));
     const planPath = path.join(repoRoot, "test", "tmp-verify-plan.json");
     try {
-      writeShim(prefix, "qube", "echo help");
-      writeShim(prefix, "aie", "echo help");
+      writeIssueCommandShim(prefix, "qube", '{"ok":false,"command":"doctor","isRepo":false}');
+      writeIssueCommandShim(prefix, "aie", '{"ok":false,"command":"doctor","isRepo":false}');
       writeFileSync(planPath, `${JSON.stringify({
         mode: "set",
         packages: [{ packageKey: "qube", packageName: "@tjalve/qube", version: "0.2.6", path: "products/qube", command: "qube" }],
