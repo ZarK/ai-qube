@@ -108,6 +108,33 @@ describe("guided interaction presenter", () => {
     assert.match(outputs[1], /^Action: Answer Application identifier\nReason: That looks like a Client ID\.\nNext action:/);
   });
 
+  it("renders compact prompts without section numbers, recommendation blocks, or raw links", async () => {
+    const outputs = [];
+    const prompts = promptAdapter(["app-id"]);
+    const { createGuidedPresenter } = await import("../dist/guided/index.js");
+    const presenter = createGuidedPresenter({
+      output: message => outputs.push(message),
+      prompts: prompts.adapter,
+      gate: { terminal: interactiveTerminal },
+      presentation: "compact"
+    });
+
+    await presenter.choose({
+      section: { number: 2, title: "Publishing identity" },
+      label: "Application identifier",
+      explanation: "Choose the identifier QUBE should use.",
+      recommendation: { value: "app-id", reason: "The App ID is required for signing." },
+      documentation: { label: "GitHub App settings", url: "https://example.test/app" }
+    }, [
+      { value: "app-id", label: "App ID", recommended: true },
+      { value: "client-id", label: "Client ID" }
+    ]);
+
+    assert.deepEqual(outputs, [""]);
+    assert.deepEqual(prompts.calls[0][1].options.map(option => option.label), ["App ID", "Client ID"]);
+    assert.equal(prompts.calls[0][1].initialValue, "app-id");
+  });
+
   it("marks unavailable choices and does not select an unavailable recommendation", async () => {
     const prompts = promptAdapter(["local"]);
     const { createGuidedPresenter } = await import("../dist/guided/index.js");

@@ -2787,6 +2787,65 @@ describe("qube init orchestrator", () => {
     }
   });
 
+  it("finds globally installed sibling packages inside a pnpm repository", () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), "qube-global-siblings-"));
+    createInitShims(prefix);
+    const composerRoot = path.join(prefix, "node_modules", "@tjalve", "qube");
+    mkdirSync(composerRoot, { recursive: true });
+    writeFileSync(path.join(composerRoot, "package.json"), JSON.stringify({ name: qubePackageName, version: qubePackageVersion }));
+    for (const id of ["aie", "aib", "aiq", "aiu"]) {
+      const manifest = path.join(prefix, "node_modules", "@tjalve", id, "package.json");
+      const parsed = JSON.parse(readFileSync(manifest, "utf8"));
+      writeFileSync(manifest, JSON.stringify({ ...parsed, bin: { [id]: "init-shim.mjs" } }));
+    }
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-pnpm-consumer-"));
+    writeFileSync(path.join(cwd, "package.json"), JSON.stringify({ name: "consumer", private: true }));
+    writeFileSync(path.join(cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    const result = runCli(["init", ".", ...externalSelections(), "--dry-run", "--json"], {
+      cwd, env: initEnv(composerRoot),
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const requirements = JSON.parse(result.stdout).plan.packageRequirements;
+    assert.equal(requirements.placement, "global");
+    assert.equal(requirements.packageManager, "npm");
+    assert.equal(requirements.installCommand, null);
+    assert.ok(requirements.requirements.every(entry => entry.status === "ready"));
+    assert.equal(readInitCalls(prefix).length, 4);
+  });
+
+  it("finds packages linked beside QUBE in pnpm global and project layouts", () => {
+    for (const placement of ["global", "project"]) {
+      const root = mkdtempSync(path.join(tmpdir(), "qube-pnpm-links-"));
+      const prefix = path.join(root, "pnpm", placement);
+      const packages = path.join(root, "packages");
+      createInitShims(packages);
+      const composerRoot = path.join(prefix, "node_modules", ".pnpm", "@tjalve+qube@" + qubePackageVersion, "node_modules", "@tjalve", "qube");
+      mkdirSync(composerRoot, { recursive: true });
+      writeFileSync(path.join(composerRoot, "package.json"), JSON.stringify({ name: qubePackageName, version: qubePackageVersion }));
+      for (const name of [...qubeComponents.map(component => component.packageName), ...Object.keys(adapterPackageVersions)]) {
+        const source = path.join(packages, "node_modules", ...name.split("/"));
+        const id = qubeComponents.find(component => component.packageName === name)?.command;
+        if (id) {
+          const manifest = path.join(source, "package.json");
+          writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, "utf8")), bin: { [id]: "init-shim.mjs" } }));
+        }
+        symlinkSync(source, path.join(path.dirname(composerRoot), name.split("/").at(-1)), process.platform === "win32" ? "junction" : "dir");
+      }
+      const cwd = placement === "project" ? prefix : path.join(root, "consumer");
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(path.join(cwd, "package.json"), JSON.stringify({ name: "consumer", private: true, ...(placement === "project" ? { dependencies: { [qubePackageName]: qubePackageVersion } } : {}) }));
+      writeFileSync(path.join(cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      const result = runCli(["init", ".", ...externalSelections(), "--dry-run", "--json"], { cwd, env: initEnv(composerRoot) });
+      assert.equal(result.status, 0, `${placement}: ${result.stdout}\n${result.stderr}`);
+      const requirements = JSON.parse(result.stdout).plan.packageRequirements;
+      assert.equal(requirements.placement, placement);
+      assert.equal(requirements.packageManager, "pnpm");
+      assert.equal(requirements.installCommand, null);
+      assert.ok(requirements.requirements.every(entry => entry.status === "ready"));
+      assert.equal(readInitCalls(packages).length, 4);
+    }
+  });
+
   it("fails missing adapter preflight before Git, configuration, or component mutation", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-missing-adapter-root-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-missing-adapter-cwd-"));
@@ -2905,7 +2964,7 @@ describe("qube init orchestrator", () => {
     assert.equal(human.stderr, "");
     assert.match(human.stdout, /^Repository QUBE initialization is complete\./);
     assert.match(human.stdout, /Choices:/);
-    assert.match(human.stdout, /Reason:/);
+    assert.doesNotMatch(human.stdout, /Reason:/);
     assert.match(human.stdout, /Start a new Codex session/);
     assert.match(human.stdout, /run `\$make-it-so`\./);
     assert.doesNotMatch(human.stdout, /\b(?:aie|aib|aiq|aiu)\b/iu);
@@ -3705,7 +3764,7 @@ describe("qube init orchestrator", () => {
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "");
-    assert.match(result.stdout, /GitHub review publisher: needs attention\./);
+    assert.match(result.stdout, /Review publisher: needs attention\./);
     assert.match(result.stdout, /Next actions:[\s\S]*Rerun `qube init \.` to resume this action\./);
     assert.match(result.stdout, /Rerun `qube init \.` to continue Reviewer App onboarding and readiness checks\./);
     assert.doesNotMatch(result.stdout, /qube review setup|qube review doctor/u);
@@ -4278,7 +4337,9 @@ describe("qube init orchestrator", () => {
 
     const quiet = runCli(args.filter(arg => arg !== "--json"), { cwd, env });
     assert.equal(quiet.status, 0, quiet.stderr);
-    assert.match(quiet.stdout, /^Repository QUBE initialization is complete\.\nMode: apply\.\nPersistent values changed: no\./u);
+    assert.match(quiet.stdout, /^Repository QUBE initialization is complete\./u);
+    assert.match(quiet.stdout, /Choices:[\s\S]*Review model: shared-review/u);
+    assert.doesNotMatch(quiet.stdout, /Mode:|Persistent values changed:/u);
     assert.match(quiet.stdout, /Correct the reported readiness problems, then rerun `qube init \.`\./u);
     assert.equal(quiet.stderr, "");
     assert.equal(readFileSync(configPath, "utf8"), firstConfig);

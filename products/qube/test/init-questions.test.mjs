@@ -392,6 +392,71 @@ describe("guided QUBE init questions", () => {
     assert.equal(buildGuidedInitAnswerSummary(questions).length, 11);
   });
 
+  it("asks for editable saved values and keeps each saved value preselected", () => {
+    const questions = buildGuidedInitQuestions({
+      capabilities,
+      current: completeHarnessAnswers,
+      promptCurrent: true,
+    });
+    const applicable = questions.filter(question => question.applicable);
+
+    assert.ok(applicable.some(question => question.promptNeeded));
+    for (const question of applicable) {
+      assert.equal(question.answeredBy, "current", question.id);
+      assert.deepEqual(question.preselectedValue, question.currentValue, question.id);
+      const enabledChoices = question.options.filter(option => !option.disabled);
+      assert.equal(question.promptNeeded, enabledChoices.length > 1, question.id);
+    }
+  });
+
+  it("does not ask again for an explicit answer during interactive init", () => {
+    const questions = buildGuidedInitQuestions({
+      capabilities,
+      answers: { issueTracker: "gitlab" },
+      current: completeHarnessAnswers,
+      promptCurrent: true,
+    });
+    const tracker = questions.find(question => question.id === "issue-tracker");
+
+    assert.equal(tracker.answeredBy, "answer");
+    assert.equal(tracker.selectedValue, "gitlab");
+    assert.equal(tracker.promptNeeded, false);
+  });
+
+  it("requires a new choice when a saved model is absent from the live list", () => {
+    const cursorCapabilities = {
+      ...capabilities,
+      agentHarnesses: [{
+        value: "cursor",
+        label: "Cursor",
+        canRunPrimaryReview: true,
+        canRunSeparateReview: true,
+        reviewModels: {
+          kind: "live",
+          models: [{ value: "cursor-grok-4.6-high-fast", label: "Grok 4.6 high fast" }],
+        },
+      }],
+    };
+    const questions = buildGuidedInitQuestions({
+      capabilities: cursorCapabilities,
+      current: {
+        ...completeHarnessAnswers,
+        agentHarnesses: ["cursor"],
+        reviewSource: "primary",
+        reviewHarness: undefined,
+        reviewModel: "cursor-grok-4.6-medium-fast",
+      },
+      promptCurrent: true,
+    });
+    const model = questions.find(question => question.id === "review-model");
+
+    assert.deepEqual(model.options.map(option => option.value), ["cursor-grok-4.6-high-fast"]);
+    assert.equal(model.currentValue, null);
+    assert.equal(model.selectedValue, null);
+    assert.equal(model.promptNeeded, true);
+    assert.match(model.validationError, /current value selects unavailable choice: cursor-grok-4\.6-medium-fast/);
+  });
+
   it("resolves noninteractive defaults through the same question model", () => {
     const result = normalizeGuidedInitAnswers({
       capabilities,

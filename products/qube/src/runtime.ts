@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, cpSync, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, cpSync, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { promptInstallerChoice, promptInstallerChoices, type InstallerChoice } from "@tjalve/qube-cli/installer";
 import { createGuidedPresenter, type GuidedPresenter } from "@tjalve/qube-cli/guided";
-import { createCliError, renderCliErrorText } from "@tjalve/qube-cli/errors";
+import { createCliError, isCliError, renderCliErrorText } from "@tjalve/qube-cli/errors";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { renderJsonError } from "@tjalve/qube-cli/output";
@@ -84,7 +85,6 @@ import {
   publicInitActionLabel,
   renderInitFailure,
   renderInitPrerequisites,
-  renderInitQuestion,
   renderInitOutput,
   type InitPublisherReadiness,
   type PublicInitAnswer,
@@ -1073,6 +1073,18 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
     return withPackageMetadata(component, installPath, "install", path.join(packageRoot, "node_modules", ...component.packageName.split("/"), "package.json"));
   }
 
+  const installedManifest = resolvePackageManifest(component.packageName, packageRoot);
+  if (installedManifest) {
+    const manifest = JSON.parse(readFileSync(installedManifest, "utf8")) as { bin?: Record<string, string> };
+    const bin = manifest.bin?.[component.command];
+    if (typeof bin === "string") {
+      const commandPath = path.resolve(path.dirname(installedManifest), bin);
+      if (pathIsWithin(path.dirname(installedManifest), commandPath) && existsSync(commandPath)) {
+        return withPackageMetadata(component, commandPath, "install", installedManifest);
+      }
+    }
+  }
+
   const workspacePath = resolveCommandFromEntries(component.command, [path.join(environment.cwd, "node_modules", ".bin")], environment);
   if (workspacePath) {
     return withPackageMetadata(
@@ -1081,6 +1093,15 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
       "workspace",
       path.join(environment.cwd, "node_modules", ...component.packageName.split("/"), "package.json")
     );
+  }
+  return undefined;
+}
+
+function resolvePackageManifest(name: string, from: string): string | undefined {
+  const require = createRequire(path.join(from, "package.json"));
+  for (const root of require.resolve.paths(name) ?? []) {
+    const manifest = path.join(root, ...name.split("/"), "package.json");
+    if (readPackageVersion(name, manifest)) return manifest;
   }
   return undefined;
 }
@@ -1102,7 +1123,16 @@ function createQubeCli(environment: CliEnvironment) {
       createRuntimeCommand(installCommand, async ({ flags }) => {
         return executeQubeInstall(flags);
       }),
-      createRuntimeCommand(initCommand, ({ flags, args }) => executeQubeInit(flags, args, environment)),
+      createRuntimeCommand(initCommand, async ({ flags, args }) => {
+        try {
+          return await executeQubeInit(flags, args, environment);
+        } catch (error) {
+          if (flags.json !== true && isCliError(error) && error.kind === "prompt-cancelled") {
+            return { exitCode: error.exitCode, stdout: "Setup canceled.\n", stderr: "" };
+          }
+          throw error;
+        }
+      }),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
       createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
@@ -2038,128 +2068,81 @@ function selectedGuidedModelHosts(questions: readonly GuidedInitQuestion[]): rea
   return Object.freeze([...new Set(selected)]);
 }
 
-function guidedQuestionChoices(question: GuidedInitQuestion): {
+function guidedQuestionChoices(question: GuidedInitQuestion, saved: GuidedInitAnswers): {
   readonly choices: readonly InstallerChoice<string>[];
   readonly values: ReadonlyMap<string, string>;
+  readonly initialValue?: string;
+  readonly initialValues?: readonly string[];
+  readonly savedUnavailable?: string;
 } {
   const values = new Map<string, string>();
-  const recommended = new Set(Array.isArray(question.recommendedValue)
-    ? question.recommendedValue
-    : typeof question.recommendedValue === "string"
-      ? [question.recommendedValue]
-      : []);
+  const savedModel = question.id === "review-model"
+    ? saved.reviewModel
+    : question.id === "review-backup-model" ? saved.reviewBackupModel : null;
+  const availableOptions = typeof savedModel === "string" && !question.options.some(option => option.value === savedModel)
+    ? [Object.freeze({
+        value: savedModel,
+        label: `${savedModel} (saved)`,
+        disabled: true,
+      }), ...question.options]
+    : question.options;
   const preferredValue = question.selection === "single" && typeof question.preselectedValue === "string"
     ? question.preselectedValue
     : undefined;
   const options = preferredValue
     ? [
-        ...question.options.filter(option => option.value === preferredValue),
-        ...question.options.filter(option => option.value !== preferredValue),
+        ...availableOptions.filter(option => option.value === preferredValue),
+        ...availableOptions.filter(option => option.value !== preferredValue),
       ]
-    : question.options;
+    : availableOptions;
   const choices = options.map((option, index) => {
     const token = `choice-${index + 1}`;
     values.set(token, option.value);
     return Object.freeze({
       value: token,
       label: option.label,
-      ...(option.description ? { description: option.description } : {}),
       ...(option.disabled ? { disabled: true } : {}),
-      ...(recommended.has(option.value) ? { recommended: true } : {}),
     });
   });
-  return { choices: Object.freeze(choices), values };
-}
-
-interface GuidedInitQuestionLayers {
-  readonly userGlobal: GuidedInitAnswers;
-  readonly repository: GuidedInitAnswers;
-  readonly detected: GuidedInitAnswers;
-}
-
-function guidedQuestionLayerValue(
-  questionId: GuidedInitQuestionId,
-  answers: GuidedInitAnswers,
-): { readonly present: boolean; readonly value: GuidedInitQuestion["currentValue"] } {
-  switch (questionId) {
-    case "agent-harnesses": return { present: Object.hasOwn(answers, "agentHarnesses"), value: answers.agentHarnesses ?? null };
-    case "issue-tracker": return { present: Object.hasOwn(answers, "issueTracker"), value: answers.issueTracker ?? null };
-    case "automated-checks": return { present: Object.hasOwn(answers, "automatedChecks"), value: answers.automatedChecks ?? null };
-    case "continuous-shipping": return {
-      present: Object.hasOwn(answers, "continuousShipping"),
-      value: answers.continuousShipping === undefined ? null : answers.continuousShipping ? "on" : "off",
+  const tokenFor = (value: string): string | undefined => [...values].find(([, optionValue]) => optionValue === value)?.[0];
+  if (Array.isArray(question.preselectedValue)) {
+    return {
+      choices: Object.freeze(choices),
+      values,
+      initialValues: Object.freeze(question.preselectedValue.flatMap(value => {
+        const token = tokenFor(value);
+        return token ? [token] : [];
+      })),
+      ...(typeof savedModel === "string" && availableOptions !== question.options ? { savedUnavailable: savedModel } : {}),
     };
-    case "umpire-scope": return { present: Object.hasOwn(answers, "umpireScope"), value: answers.umpireScope ?? null };
-    case "quality-checks": return { present: Object.hasOwn(answers, "qualityStages"), value: answers.qualityStages ?? null };
-    case "review-source": return { present: Object.hasOwn(answers, "reviewSource"), value: answers.reviewSource ?? null };
-    case "external-reviewer": return { present: Object.hasOwn(answers, "externalReviewers"), value: answers.externalReviewers ?? null };
-    case "review-harness": return { present: Object.hasOwn(answers, "reviewHarness"), value: answers.reviewHarness ?? null };
-    case "review-model": return {
-      present: Object.hasOwn(answers, "reviewModel"),
-      value: answers.reviewModel === undefined ? null : answers.reviewModel ?? GUIDED_INIT_UNPINNED_MODEL,
-    };
-    case "review-backup-harness": return {
-      present: Object.hasOwn(answers, "reviewBackupHarness"),
-      value: answers.reviewBackupHarness === undefined ? null : answers.reviewBackupHarness ?? GUIDED_INIT_NO_BACKUP,
-    };
-    case "review-backup-model": return { present: Object.hasOwn(answers, "reviewBackupModel"), value: answers.reviewBackupModel ?? null };
-    case "review-backup-effort": return { present: Object.hasOwn(answers, "reviewBackupEffort"), value: answers.reviewBackupEffort ?? null };
-    case "review-publisher": return { present: Object.hasOwn(answers, "reviewPublisher"), value: answers.reviewPublisher ?? null };
   }
-}
-
-function guidedQuestionValueLabel(question: GuidedInitQuestion, value: GuidedInitQuestion["currentValue"]): string {
-  if (value === null) return "not set";
-  const label = (entry: string): string => question.options.find(option => option.value === entry)?.label ?? entry;
-  if (typeof value === "string") return label(value);
-  return value.length === 0 ? "none" : value.map(label).join(", ");
-}
-
-function showGuidedQuestion(question: GuidedInitQuestion, layers: GuidedInitQuestionLayers): void {
-  const userGlobal = guidedQuestionLayerValue(question.id, layers.userGlobal);
-  const repository = guidedQuestionLayerValue(question.id, layers.repository);
-  const detected = guidedQuestionLayerValue(question.id, layers.detected);
-  const source = repository.present
-    ? "repository"
-    : userGlobal.present
-      ? "user-global"
-      : detected.present
-        ? "detected"
-        : "QUBE default";
-  const effective = repository.present
-    ? repository.value
-    : userGlobal.present
-      ? userGlobal.value
-      : detected.present
-        ? detected.value
-        : question.recommendedValue;
-  process.stdout.write(renderInitQuestion({
-    step: question.step,
-    label: question.label,
-    explanation: question.explanation,
-    userGlobal: userGlobal.present ? guidedQuestionValueLabel(question, userGlobal.value) : "—",
-    repository: repository.present ? guidedQuestionValueLabel(question, repository.value) : "—",
-    effective: guidedQuestionValueLabel(question, effective),
-    source,
-    recommendation: question.recommendation,
-    reason: question.recommendationReason,
-    docsUrl: question.docsUrl,
-  }));
+  const initialValue = typeof question.preselectedValue === "string" ? tokenFor(question.preselectedValue) : undefined;
+  return {
+    choices: Object.freeze(choices),
+    values,
+    ...(initialValue ? { initialValue } : {}),
+    ...(typeof savedModel === "string" && availableOptions !== question.options ? { savedUnavailable: savedModel } : {}),
+  };
 }
 
 async function promptGuidedQuestion(
   question: GuidedInitQuestion,
   jsonMode: boolean,
-  layers: GuidedInitQuestionLayers,
+  saved: GuidedInitAnswers,
+  includeStep: boolean,
 ): Promise<GuidedInitQuestion["selectedValue"]> {
-  if (!jsonMode) showGuidedQuestion(question, layers);
-  const mapped = guidedQuestionChoices(question);
+  const mapped = guidedQuestionChoices(question, saved);
+  if (!jsonMode && mapped.savedUnavailable) {
+    process.stdout.write(`Saved review model "${mapped.savedUnavailable}" is unavailable. Select an available model.\n`);
+  }
+  const message = includeStep ? `${question.step}. ${question.label}` : question.label;
   if (question.selection === "multiple") {
     const selected = await promptInstallerChoices({
       command: initCommand,
       promptName: question.label,
-      message: question.prompt,
+      message,
       choices: mapped.choices,
+      ...(mapped.initialValues ? { initialValues: mapped.initialValues } : {}),
       jsonMode,
       yes: false,
     });
@@ -2168,8 +2151,9 @@ async function promptGuidedQuestion(
   const selected = await promptInstallerChoice({
     command: initCommand,
     promptName: question.label,
-    message: question.prompt,
+    message,
     choices: mapped.choices,
+    ...(mapped.initialValue ? { initialValue: mapped.initialValue } : {}),
     jsonMode,
     yes: false,
   });
@@ -2245,13 +2229,16 @@ async function collectGuidedInitAnswers(input: {
   readonly answers: GuidedInitAnswers;
   readonly current: GuidedInitAnswers;
   readonly defaults: GuidedInitAnswers;
-  readonly layers: GuidedInitQuestionLayers;
   readonly resolveDefaults: boolean;
   readonly jsonMode: boolean;
 }): Promise<{ readonly explicitAnswers: GuidedInitAnswers; readonly normalization: GuidedInitNormalization }> {
   let answers = input.answers;
   let current = input.current;
+  const promptCurrent = !input.resolveDefaults
+    && Object.keys(input.answers).length === 0
+    && evaluatePromptGate({ command: initCommand, jsonMode: input.jsonMode }).allowed;
   const modelListings = new Map<AgentHostId, ReturnType<typeof listHostModels>>();
+  const shownSteps = new Set<number>();
   const questions = (): readonly GuidedInitQuestion[] => {
     const firstCapabilities = createGuidedInitCapabilities({
       environment: input.environment,
@@ -2264,6 +2251,7 @@ async function collectGuidedInitAnswers(input: {
       current,
       defaults: input.defaults,
       resolveDefaults: input.resolveDefaults,
+      promptCurrent,
     });
     const modelHosts = selectedGuidedModelHosts(firstQuestions);
     const capabilities = createGuidedInitCapabilities({
@@ -2278,6 +2266,7 @@ async function collectGuidedInitAnswers(input: {
       current,
       defaults: input.defaults,
       resolveDefaults: input.resolveDefaults,
+      promptCurrent,
     });
   };
 
@@ -2299,7 +2288,9 @@ async function collectGuidedInitAnswers(input: {
     if (!question || !question.applicable || !question.promptNeeded || question.validationError) continue;
     const promptGate = evaluatePromptGate({ command: initCommand, jsonMode: input.jsonMode });
     if (!promptGate.allowed) continue;
-    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode, input.layers));
+    const includeStep = !shownSteps.has(question.step);
+    shownSteps.add(question.step);
+    answers = addGuidedAnswer(answers, question, await promptGuidedQuestion(question, input.jsonMode, input.current, includeStep));
   }
 
   const finalQuestions = questions();
@@ -2317,6 +2308,7 @@ async function collectGuidedInitAnswers(input: {
       current,
       defaults: input.defaults,
       resolveDefaults: input.resolveDefaults,
+      promptCurrent,
     }),
   });
 }
@@ -2709,7 +2701,11 @@ function detectInitPackagePlacement(environment: CliEnvironment): {
         ? "global"
         : "unknown";
   const userAgent = environment.env.npm_config_user_agent ?? "";
-  const packageManager: InstallPackageManager = projectRoot && existsSync(path.join(projectRoot, "pnpm-lock.yaml"))
+  const packageManager: InstallPackageManager = placement === "global"
+    ? packageRoot.split(path.sep).includes("node_modules")
+      ? packageRoot.split(path.sep).includes(".pnpm") || packageRoot.split(path.sep).includes("pnpm") ? "pnpm" : "npm"
+      : userAgent.startsWith("pnpm/") ? "pnpm" : "npm"
+    : projectRoot && existsSync(path.join(projectRoot, "pnpm-lock.yaml"))
     ? "pnpm"
     : projectRoot && existsSync(path.join(projectRoot, "package-lock.json"))
       ? "npm"
@@ -2733,6 +2729,8 @@ function installedInitPackageVersion(
     ...(projectRoot ? [path.join(projectRoot, "node_modules")] : []),
     ...(aieResolution?.packageJsonPath ? [path.join(path.dirname(aieResolution.packageJsonPath), "node_modules")] : []),
   ];
+  const installedManifest = resolvePackageManifest(packageNameValue, packageRoot);
+  if (installedManifest) return readPackageVersion(packageNameValue, installedManifest) ?? null;
   for (const root of candidateRoots) {
     const manifestPath = path.join(root, ...packageParts, "package.json");
     const version = readPackageVersion(packageNameValue, manifestPath);
@@ -2848,24 +2846,6 @@ function deferredProviderFailure(error: string | undefined): boolean {
   return Boolean(error && /authentication|authenticate|credential|login|remote|repository identity|not a git repository|could not resolve repository/i.test(error));
 }
 
-function readEffectiveGitIdentity(targetPath: string, key: GitIdentityPromptAction["key"]): string | undefined {
-  const result = spawnSync("git", ["-C", targetPath, "config", "--includes", "--get", key], {
-    encoding: "utf8",
-    timeout: 5_000,
-    windowsHide: true,
-  });
-  return result.status === 0 ? validGitIdentityValue(result.stdout) : undefined;
-}
-
-function renderEffectiveGitIdentity(targetPath: string): string {
-  const name = readEffectiveGitIdentity(targetPath, "user.name");
-  const email = readEffectiveGitIdentity(targetPath, "user.email");
-  return [
-    `Effective Git author name: ${name ? JSON.stringify(name) : "not configured"}`,
-    `Effective Git author email: ${email ? JSON.stringify(email) : "not configured"}`,
-  ].join("\n");
-}
-
 async function collectGitIdentityActions(input: {
   prerequisites: RepositoryPrerequisites;
   targetPath: string;
@@ -2878,9 +2858,8 @@ async function collectGitIdentityActions(input: {
     ["identity-email", "user.email", "Git author email"],
   ] as const).filter(([id]) => prerequisiteCheck(input.prerequisites, id)?.status === "needs-action");
   if (input.json || input.useDefaults || process.stdin.isTTY !== true || process.stdout.isTTY !== true) return Object.freeze([]);
-  process.stdout.write(`${renderEffectiveGitIdentity(input.targetPath)}\n`);
   if (missing.length === 0) return Object.freeze([]);
-  process.stdout.write("Commits require an author name and email. Repository scope is recommended because it changes only this repository.\n");
+  process.stdout.write("Set the missing Git author details.\n");
   return collectGitIdentityPromptActions(
     input.presenter,
     missing.map(([, key, label]) => Object.freeze({ key, label })),
@@ -2930,6 +2909,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const presenter = createGuidedPresenter({
     output: message => process.stdout.write(message),
     gate: { command: initCommand, jsonMode: json, defaults: useDefaults },
+    presentation: "compact",
   });
   const scopeResult = resolveQubeInitScope(flags, args);
   if (scopeResult.error) {
@@ -3003,7 +2983,10 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         : { exitCode: 2, stdout: "", stderr: renderInitFailure({ actionId: "git", reason: error, nextAction }) };
     }
   }
-  if (interactiveRepository && !prerequisitesShown) process.stdout.write(renderInitPrerequisites(prerequisites));
+  if (interactiveRepository && !prerequisitesShown) {
+    process.stdout.write(renderInitPrerequisites(prerequisites));
+    prerequisitesShown = true;
+  }
   const gitIdentityActions = scope === "repository" && !prospectivePrerequisite
     ? await collectGitIdentityActions({ prerequisites, targetPath, json, useDefaults, presenter })
     : Object.freeze([]);
@@ -3047,11 +3030,6 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     answers: guidedFlagAnswers,
     current: guidedCurrent,
     defaults: guidedDefaults,
-    layers: Object.freeze({
-      userGlobal: guidedAnswersFromConfig(globalConfig.config),
-      repository: guidedAnswersFromConfig(repositoryLayer),
-      detected: guidedAnswersFromConfig(null, detectedCi),
-    }),
     resolveDefaults: useDefaults,
     jsonMode: json,
   });
@@ -3547,7 +3525,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
         scope,
         mode: "plan",
         changed: planChanged,
-        prerequisites,
+        ...(!prerequisitesShown ? { prerequisites } : {}),
         githubReadiness,
         answers,
         ...(configuration ? { configuration } : {}),
@@ -3560,9 +3538,9 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   if (planChanged && !json && !useDefaults && process.stdin.isTTY === true) {
     const approved = await confirmInitAction(presenter, {
-      title: "Apply QUBE initialization",
-      label: `Apply the planned ${scope} QUBE initialization changes?`,
-      explanation: "QUBE applies the displayed initialization plan after confirmation.",
+      title: "QUBE setup",
+      label: `Save ${scope} choices?`,
+      explanation: "Save the selected setup choices.",
       recommended: true,
       reason: "Apply the plan to complete initialization.",
     });
@@ -3754,7 +3732,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
       scope,
       mode: "apply",
       changed,
-      prerequisites,
+      ...(!prerequisitesShown ? { prerequisites } : {}),
       githubReadiness,
       answers,
       ...(configuration ? { configuration } : {}),
@@ -5697,8 +5675,14 @@ function isRegularFile(filePath: string): boolean {
 
 function hasNodeShebang(filePath: string): boolean {
   try {
-    const head = readFileSync(filePath, { encoding: "utf8" }).slice(0, 80);
-    return /^#!\s*(?:\/usr\/bin\/env\s+node|\/usr\/bin\/node|\/bin\/node)\b/.test(head);
+    const descriptor = openSync(filePath, "r");
+    try {
+      const prefix = Buffer.alloc(256);
+      const length = readSync(descriptor, prefix, 0, prefix.length, 0);
+      return /^#!\s*(?:\/usr\/bin\/env\s+node|\/usr\/bin\/node|\/bin\/node)\b/.test(prefix.subarray(0, length).toString("utf8"));
+    } finally {
+      closeSync(descriptor);
+    }
   } catch {
     return false;
   }
@@ -6558,6 +6542,10 @@ function spawnInput(request: Pick<DispatchRequest, "commandPath" | "args">): [st
       throw new Error(`Refusing to forward an argument containing cmd metacharacters through ${request.commandPath}: ${JSON.stringify(unsafe)}.`);
     }
     return [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", request.commandPath, ...request.args]];
+  }
+  if (/\.(?:cjs|mjs|js)$/i.test(request.commandPath)
+    || (path.extname(request.commandPath) === "" && hasNodeShebang(request.commandPath))) {
+    return [process.execPath, [request.commandPath, ...request.args]];
   }
   return [request.commandPath, [...request.args]];
 }

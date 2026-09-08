@@ -101,6 +101,7 @@ export interface GuidedPresenterOptions {
   readonly output?: (message: string) => void;
   readonly prompts?: GuidedPromptAdapter;
   readonly gate?: Omit<PromptGateOptions<never>, "value" | "defaultValue">;
+  readonly presentation?: "detailed" | "compact";
 }
 
 export interface GuidedProgressOptions {
@@ -146,8 +147,9 @@ export function defineGuidedQuestion<Value>(question: GuidedQuestion<Value>): Re
   return Object.freeze(question);
 }
 
-export function renderGuidedQuestion<Value>(question: GuidedQuestion<Value>, options: { readonly includeSection?: boolean } = {}): string {
+export function renderGuidedQuestion<Value>(question: GuidedQuestion<Value>, options: { readonly includeSection?: boolean; readonly presentation?: "detailed" | "compact" } = {}): string {
   validateQuestion(question);
+  if (options.presentation === "compact") return "";
   const formatValue = question.formatValue ?? String;
   const lines = options.includeSection === false ? [] : [`${question.section.number}. ${question.section.title}`];
   lines.push(question.label, question.explanation);
@@ -208,7 +210,7 @@ export function createGuidedPresenter(options: GuidedPresenterOptions = {}): Gui
     const sectionKey = `${question.section.number}:${question.section.title}`;
     const includeSection = !shownSections.has(sectionKey);
     shownSections.add(sectionKey);
-    output(renderGuidedQuestion(question, { includeSection }));
+    output(renderGuidedQuestion(question, { includeSection, presentation: options.presentation ?? "detailed" }));
   };
 
   const prepare = <Value>(question: GuidedQuestion<Value>): GuidedPromptResult<Value> | undefined => {
@@ -282,7 +284,7 @@ export function createGuidedPresenter(options: GuidedPresenterOptions = {}): Gui
           value: choice.value,
           label: choice.disabled === true
             ? `${choice.label} (unavailable)`
-            : choice.recommended === true ? `${choice.label} (recommended)` : choice.label,
+            : options.presentation !== "compact" && choice.recommended === true ? `${choice.label} (recommended)` : choice.label,
           ...(choice.disabled === true ? { disabled: true } : {}),
           ...(choice.description === undefined ? {} : { hint: choice.description })
         }) as Option<Value>);
