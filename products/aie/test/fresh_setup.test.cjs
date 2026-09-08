@@ -303,7 +303,7 @@ describe('fresh setup defaults', () => {
     ]);
   });
 
-  it('uses current Codex and Grok catalog entries and turns Quality Control on when AIQ is available', async () => {
+  it('uses current Codex and Grok catalog entries and turns Quality on when aiq is available', async () => {
     const repo = makeTsRepo();
     const { applyFreshSetupPolicy, defaultAiqLintFormatGate } = require('../dist/init/fresh_setup.js');
     const policy = applyFreshSetupPolicy({
@@ -351,7 +351,7 @@ describe('fresh setup defaults', () => {
     assert.equal(policy.reviewFailover, null);
   });
 
-  it('uses a new Grok catalog model and leaves Quality Control off without AIQ', () => {
+  it('uses a new Grok catalog model and leaves Quality off without aiq', () => {
     const { applyFreshSetupPolicy } = require('../dist/init/fresh_setup.js');
     const policy = applyFreshSetupPolicy({
       policy: {},

@@ -46,7 +46,7 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
     const selected = chain.selectedRoute ? `${chain.selectedRoute.host}/${chain.selectedRoute.model ?? 'host-default'}` : 'none';
     lines.push(`Review route chain: lane=${chain.lane ?? 'default'}, required=${chain.required ? 'yes' : 'no'}, status=${chain.readiness}, selected=${selected}${chain.substitution ? `; ${chain.substitution}` : ''}`);
   }
-  lines.push(`Quality Control gate: ${readiness.aiq.enabled ? readiness.aiq.readiness : 'disabled'}; aiq=${readiness.aiq.tool.state}`);
+  lines.push(`Quality gate: ${readiness.aiq.enabled ? readiness.aiq.readiness : 'disabled'}; aiq=${readiness.aiq.tool.state}`);
   lines.push(`Supply-chain gates: policy=${readiness.supplyChain.readiness}, sensitive=${readiness.supplyChain.supplyChainSensitiveGates.length}, lifecycle-scripts=${readiness.supplyChain.disableLifecycleScripts ? 'disabled' : 'not disabled'}`);
   lines.push(`External services: ${readiness.externalServices.length > 0 ? readiness.externalServices.join(', ') : 'none configured'}`);
 }
@@ -72,7 +72,7 @@ function pushWorkflowReadiness(lines: string[], diagnostics: DoctorDiagnostics):
 
 export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   const lines: string[] = [];
-  lines.push('AI Executor doctor');
+  lines.push('Executor doctor');
   lines.push(`Node: ${diagnostics.nodeVersion} (satisfies Node.js 24 LTS or newer: ${diagnostics.nodeSatisfies ? 'yes' : 'no'})`);
   lines.push(`CWD: ${diagnostics.cwd}`);
   lines.push(`Branch: ${diagnostics.currentBranch}`);

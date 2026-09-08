@@ -208,8 +208,8 @@ export function formatRunResultOutput(
     displayMode === undefined || displayMode === result.mode
       ? formatRunResultAsText(result, { detail })
       : formatRunResultAsText(result, { detail }).replace(
-          new RegExp(`^AIQ ${escapeRegExp(result.mode)}(?=\\n)`, "u"),
-          `AIQ ${displayMode}`,
+          new RegExp(`^Quality ${escapeRegExp(result.mode)}(?=\\n)`, "u"),
+          `Quality ${displayMode}`,
         );
 
   const parts = [
@@ -252,7 +252,7 @@ export function formatDryRunOutput(format: OutputFormat, plan: RunPlan): string 
   }
 
   return [
-    "AIQ dry run",
+    "Quality dry run",
     `Run: ${plan.runId}`,
     `Context: ${plan.context}`,
     `Profile: ${plan.profile}`,
@@ -270,7 +270,7 @@ export function formatDoctorOutput(format: OutputFormat, output: DoctorCommandOu
   }
 
   return [
-    "AIQ doctor",
+    "Quality doctor",
     `Config: ${output.configPath ?? "defaults"}`,
     `Layers: ${output.configPaths?.join(", ") || "defaults"}`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
@@ -294,7 +294,7 @@ export function formatSetupOutput(format: OutputFormat, output: SetupCommandOutp
   const missing = output.missingPrerequisites;
   const metricRemediation = formatSetupMetricRemediation(output.stages);
   return [
-    "AIQ setup",
+    "Quality setup",
     output.summary,
     `Config: ${output.configPath ?? "defaults"}`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
@@ -321,7 +321,7 @@ export function formatSetupOutput(format: OutputFormat, output: SetupCommandOutp
     "Next:",
     ...output.nextCommands.map((command) => `  - ${command}`),
     metricRemediation,
-    "AIQ reports setup needs; it does not install tools or mutate the host environment.",
+    "Quality reports setup needs; it does not install tools or mutate the host environment.",
     "",
   ]
     .filter((line) => line !== undefined)
@@ -348,7 +348,7 @@ export function formatStatusOutput(format: OutputFormat, output: StatusCommandOu
   }
 
   return [
-    "AIQ status",
+    "Quality status",
     `Current stage: ${formatWorkflowStage(output.currentStage)}`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
     `Default run: stages ${output.defaultRun.range} (${output.defaultRun.stages.map((stage) => stage.id).join(", ")})`,
@@ -377,7 +377,7 @@ export function formatFirstRunDetectionOutput(
   }
 
   return [
-    "AIQ first run",
+    "Quality first run",
     `Detected project: ${output.detectedProjects.join(", ")}`,
     output.layout === undefined
       ? undefined
@@ -410,7 +410,7 @@ export function formatFirstRunSetupOutput(
   }
 
   return [
-    "AIQ first run",
+    "Quality first run",
     output.summary,
     `Current directory: ${output.cwd}`,
     output.remediation,
@@ -435,7 +435,7 @@ function formatDoctorCheckStatus(check: DoctorCheckOutput): "INFO" | "MISSING" |
 
 function formatRunWorkflowPrelude(workflow: RunWorkflowOutput): string {
   return [
-    "AIQ workflow",
+    "Quality workflow",
     `Current stage: ${formatWorkflowStage(workflow.currentStage)} (${workflow.progressPath}, ${workflow.progressSource})`,
     `Default run: stages ${workflow.defaultRun.range} (${workflow.defaultRun.stages.map((stage) => stage.id).join(", ")})`,
     `Selected stages: ${workflow.selectedStages.length === 0 ? "none configured yet" : workflow.selectedStages.join(", ")}`,
@@ -505,7 +505,7 @@ export function formatSetupGuidanceOutput(
     return `${JSON.stringify(output, null, 2)}\n`;
   }
 
-  return [`AIQ ${output.requested}`, output.summary, output.replacement, ""].join("\n");
+  return [`Quality ${output.requested}`, output.summary, output.replacement, ""].join("\n");
 }
 
 export function formatConfigOutput(format: OutputFormat, output: ConfigCommandOutput): string {
@@ -519,7 +519,7 @@ export function formatConfigOutput(format: OutputFormat, output: ConfigCommandOu
     return counts;
   }, {});
   return [
-    "AIQ config",
+    "Quality config",
     `Config: ${configPath}`,
     `Layers: ${output.configPaths?.join(", ") || "defaults"}`,
     `Sources: ${Object.entries(sourceCounts).map(([source, count]) => `${count} ${source}`).join(", ") || "defaults"}`,
@@ -537,7 +537,7 @@ export function formatConfigInitOutput(format: OutputFormat, output: ConfigInitO
   }
 
   return [
-    "AIQ config initialized",
+    "Quality config initialized",
     `${output.configCreated ? "Wrote" : "Found"} config: ${output.configPath}`,
     `${output.progressCreated ? "Wrote" : "Found"} progress: ${output.progressPath}`,
     "",
@@ -555,7 +555,7 @@ export function formatConfigSetupOutput(format: OutputFormat, plan: AiqSetupPlan
     )
     .flatMap((stage) => (stage.warning === undefined ? [] : [stage.warning.message]));
   return [
-    plan.dryRun ? "AIQ config plan" : "AIQ config initialized",
+    plan.dryRun ? "Quality config plan" : "Quality config initialized",
     `Selection: ${plan.selection.mode} (${plan.selection.resolvedStages.join(", ")})`,
     `Config: ${plan.config.operation} ${plan.config.path}`,
     `Progress: ${plan.progress.operation} ${plan.progress.path}`,
@@ -645,7 +645,7 @@ export function writeWatchOutput(
   const body = formatRunResultOutput("text", result, undefined, {
     ...(workflow === undefined ? {} : { workflow }),
   }).trimEnd();
-  io.stdout.write(`AIQ watch (${trigger})\n${body}\n`);
+  io.stdout.write(`Quality watch (${trigger})\n${body}\n`);
 }
 
 export function writeServeListeningOutput(
@@ -666,7 +666,7 @@ export function writeServeListeningOutput(
     return;
   }
 
-  io.stdout.write(`AIQ serve listening on ${url}\n`);
+  io.stdout.write(`Quality server listening on ${url}\n`);
 }
 
 function formatServeHost(host: string): string {

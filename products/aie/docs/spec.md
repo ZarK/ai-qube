@@ -1,10 +1,10 @@
-# AI Executor - Functional Requirements Specification
+# Executor - Functional Requirements Specification
 
 ## Document Purpose
 
-This document defines the functional requirements for AI Executor, distributed as the `@tjalve/aie` npm package and exposed through the `aie` CLI.
+This document defines the functional requirements for Executor, distributed as the `@tjalve/aie` npm package and exposed through the `aie` CLI.
 
-AI Executor is the QUBE package responsible for executing issue-driven development work from GitHub issues through implementation, verification, pull request review, merge, issue completion, and selection of the next issue. It is intentionally opinionated: the package exists to make autonomous agents confident enough to keep shipping overnight while still following explicit queue, quality, review, and safety rules.
+Executor is the QUBE package responsible for executing issue-driven development work from GitHub issues through implementation, verification, pull request review, merge, issue completion, and selection of the next issue. It is intentionally opinionated: the package exists to make autonomous agents confident enough to keep shipping overnight while still following explicit queue, quality, review, and safety rules.
 
 Requirements use stable identifiers (`FR-XX-NNN`) so milestone specs and GitHub issues can reference them without redefining scope.
 
@@ -30,10 +30,10 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 |----|-------------|--------|
 | FR-01-001 | Executor provides the issue execution coordination system for agentic coding: find or resume the correct GitHub issue, start it, guide implementation, define and track quality/review gate obligations, support pull-request shipping, complete the issue, unblock dependents, update queue state, and continue to the next issue. | Required |
 | FR-01-002 | Executor is usable as a standalone package in any GitHub repository that follows the required label and issue metadata conventions. | Required |
-| FR-01-003 | Executor works especially well with the other QUBE packages: Bootstrap (`@tjalve/aib`) creates specs, milestones, and issues; Executor (`@tjalve/aie`) guides agents executing those issues; Quality Control (`@tjalve/aiq`) provides deeper quality gates for agents to run; Umpire (`@tjalve/aiu`) keeps the agent loop alive. | Required |
+| FR-01-003 | Executor works especially well with the other QUBE packages: Bootstrap (`@tjalve/aib`) creates specs, milestones, and issues; Executor (`@tjalve/aie`) guides agents executing those issues; Quality (`@tjalve/aiq`) provides deeper quality gates for agents to run; Umpire (`@tjalve/aiu`) keeps the agent loop alive. | Required |
 | FR-01-004 | Executor does not own spec generation, milestone generation, or initial GitHub issue generation from specs. Those belong to Bootstrap. | Required |
 | FR-01-005 | Executor does not own long-running stop hooks or continuation scheduling. Those belong to Umpire, but Umpire may call Executor commands to choose and resume work. | Required |
-| FR-01-006 | Executor does not own static code analysis or AI code-quality engines. Those belong to Quality Control, but Executor may configure, render, and report an optional `aiq` gate for agents to run when installed and enabled. | Required |
+| FR-01-006 | Executor does not own static code analysis or AI code-quality engines. Those belong to Quality, but Executor may configure, render, and report an optional `aiq` gate for agents to run when installed and enabled. | Required |
 | FR-01-007 | Executor is opinionated about the development cycle and shipping permissions. The installed agent instructions explicitly authorize commit, push, PR creation, review-gate waits, merge, issue completion, and continuation when repository policy enables autonomous mode. | Required |
 | FR-01-008 | Executor does not replace the human developer's repository-specific requirements. It installs a default execution policy that can be configured per repository during initialization. | Required |
 | FR-01-009 | A future QUBE wrapper package may expose shorthand commands for all QUBE packages, but QUBE wrapper behavior is outside this specification. | Future |
@@ -185,7 +185,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-08-001 | Executor defines one end-to-end work cycle: queue inspection, issue start or resume, pre-start git/PR policy check for new work, branch check, implementation, manual audit when applicable, review-agent check, test gates, optional Quality Control gate, PR creation, PR review wait, PR feedback handling, merge, issue completion, base branch update, and next issue bootstrap. | Required |
+| FR-08-001 | Executor defines one end-to-end work cycle: queue inspection, issue start or resume, pre-start git/PR policy check for new work, branch check, implementation, manual audit when applicable, review-agent check, test gates, optional Quality gate, PR creation, PR review wait, PR feedback handling, merge, issue completion, base branch update, and next issue bootstrap. | Required |
 | FR-08-002 | The `/make-it-so` command starts or resumes this work cycle and instructs the agent to keep going until no ready work remains or the queue is blocked. | Required |
 | FR-08-003 | The installed instructions tell agents not to ask questions or pause for confirmations at normal decision, implementation, PR, review, merge, issue-completion, or continuation steps when autonomous mode is enabled and repository policy is satisfied. | Required |
 | FR-08-004 | The installed instructions require agents to maintain visible local todo state when the host supports todo tools, use those todo tools directly from the main agent instead of delegating todo operations to subagents, and keep at most one local todo item in progress. | Required |

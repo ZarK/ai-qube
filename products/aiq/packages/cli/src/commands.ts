@@ -237,7 +237,7 @@ export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise
     }
     if (layout.scope.avoidRepoRoot) {
       throw new Error(
-        `${layout.scope.warnings.at(-1) ?? "Repository layout is uncertain, so AIQ will not run a repository-root gate."} Use aiq run with explicit project paths.`,
+        `${layout.scope.warnings.at(-1) ?? "Repository layout is uncertain, so Quality will not run a repository-root gate."} Use aiq run with explicit project paths.`,
       );
     }
 
@@ -384,7 +384,7 @@ function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: s
       return {
         command,
         requested: `hook ${subcommand ?? ""}`.trim(),
-        summary: "Hook setup uses the dedicated AIQ hook adapter.",
+        summary: "Hook setup uses the dedicated Quality hook adapter.",
         replacement:
           "Use your repository hook manager to invoke the aiq-hook package, or run aiq check/run directly in pre-commit automation.",
       };
@@ -400,7 +400,7 @@ function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: s
       return {
         command,
         requested: `ignore ${subcommand ?? ""}`.trim(),
-        summary: "Ignored inputs are configured in the canonical AIQ config file.",
+        summary: "Ignored inputs are configured in the canonical Quality config file.",
         replacement:
           "Run aiq config to initialize .qube/aiq/config.json, then edit inputs.ignore there so the ignored paths are reviewed with project config.",
       };

@@ -27,7 +27,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ config initialized");
+    expect(stdout.value).toContain("Quality config initialized");
     expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "config.json"));
     expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "progress.json"));
 

@@ -53,7 +53,7 @@ describe("github action adapter", () => {
 
     expect(result.stderr).not.toContain("Dynamic require");
     expect(result.stderr).not.toContain("SyntaxError");
-    expect(result.stdout).toContain("AIQ check");
+    expect(result.stdout).toContain("Quality check");
   });
 });
 

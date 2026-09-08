@@ -197,7 +197,7 @@ function unsupportedAction(item: WorkItem | null, kind: Action["kind"], operatio
       providerId: "jira",
       displayId: item?.displayId ?? null,
       unsupported: true,
-      nextAction: "Use Jira queue/view reads and AIB Jira draft rendering, or add tested Jira transition/comment mutations with explicit workflow transition IDs before enabling lifecycle mutations.",
+      nextAction: "Use Jira queue/view reads and Bootstrap Jira draft rendering, or add tested Jira transition/comment mutations with explicit workflow transition IDs before enabling lifecycle mutations.",
     },
   });
 }

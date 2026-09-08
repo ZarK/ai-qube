@@ -203,22 +203,22 @@ export function buildInitQuestions(input: {
     })]),
     question({
       id: 'quality-gate',
-      prompt: 'Should Quality Control run?',
+      prompt: 'Should Quality run?',
       options: [
-        { value: 'off', label: 'Do not run AIQ quality gates.' },
-        { value: 'on', label: 'Run configured AIQ quality gates. Requires aiq.' },
+        { value: 'off', label: 'Do not run Quality gates.' },
+        { value: 'on', label: 'Run configured Quality gates. Requires `aiq`.' },
       ],
       recommendation: qualityControlValue
-        ? 'Record Quality Control. AIQ is available, so lint and format become a pre-PR gate.'
-        : 'Leave Quality Control off until aiq is available.',
+        ? 'Record Quality. The `aiq` command is available, so lint and format become a pre-PR gate.'
+        : 'Leave Quality off until `aiq` is available.',
       recommendedValue: qualityControlValue ? 'on' : 'off',
       answered: input.answers.qualityControl !== undefined,
       value: input.answers.qualityControl !== undefined ? (input.answers.qualityControl ? 'on' : 'off') : null,
       reason: input.answers.qualityControl !== undefined
-        ? 'The invocation already selected Quality Control.'
+        ? 'The invocation already selected Quality.'
         : qualityControlValue
-          ? 'Init recommends Quality Control on when aiq is available.'
-          : 'Init recommends Quality Control off until aiq is available.',
+          ? 'Init recommends Quality on when `aiq` is available.'
+          : 'Init recommends Quality off until `aiq` is available.',
     }),
     question({
       id: 'ui-audit',

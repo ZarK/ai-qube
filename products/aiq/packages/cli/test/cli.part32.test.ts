@@ -37,7 +37,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("Status: failed");
     expect(stdout.value).toContain("- Unsupported projects:");
     expect(stdout.value).not.toContain("Status: not_implemented");

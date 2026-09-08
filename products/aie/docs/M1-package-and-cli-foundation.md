@@ -2,7 +2,7 @@
 
 ## Strategic Goal
 
-M1 creates the safe, serious foundation for AI Executor as the `@tjalve/aie` npm package and `aie` CLI.
+M1 creates the safe, serious foundation for Executor as the `@tjalve/aie` npm package and `aie` CLI.
 
 This milestone does not implement the full GitHub issue workflow yet. It establishes the package shape, runtime policy, CLI conventions, repository config model, diagnostics framework, and supply-chain-safe install posture that every later milestone depends on.
 

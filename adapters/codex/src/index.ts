@@ -113,7 +113,7 @@ export const codexHostProfile = defineAgentHostProfile({
     }),
     probe: Object.freeze({
       support: "experimental",
-      description: "QUBE can inspect Codex Umpire setup through AIU doctor.",
+      description: "QUBE can inspect Codex Umpire setup with the `aiu doctor` command.",
       nextAction: "Run `qube aiu doctor --json` and address any reported setup problems.",
       command: Object.freeze(["qube", "aiu", "doctor", "--json"] as const),
     }),

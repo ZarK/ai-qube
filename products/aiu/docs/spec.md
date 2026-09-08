@@ -1,8 +1,8 @@
-# AI Umpire - Functional Requirements Specification
+# Umpire - Functional Requirements Specification
 
 ## Purpose
 
-AI Umpire is distributed as the `@tjalve/aiu` npm package and exposed through the `aiu` CLI. It keeps agentic development sessions moving by inspecting trusted structured state, deciding whether continuation is safe, and producing the next concrete prompt for the active host.
+Umpire is distributed as the `@tjalve/aiu` npm package and exposed through the `aiu` CLI. It keeps agentic development sessions moving by inspecting trusted structured state, deciding whether continuation is safe, and producing the next concrete prompt for the active host.
 
 Umpire is a continuation controller. It does not create product plans, own work-item lifecycle semantics, decide implementation correctness, run quality engines, or bundle companion packages. Those behaviors stay in the tools that produce trusted state. Umpire consumes configured commands and host signals, then decides whether to continue, repair, wait, or stop.
 

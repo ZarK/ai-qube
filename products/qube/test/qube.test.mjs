@@ -434,11 +434,11 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
     assert.match(help.stdout, /init\s+Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow\./);
-    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and role-aware provider connection diagnostics\./);
-    assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
-    assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
+    assert.match(help.stdout, /doctor\s+Check Quality, Executor, Umpire, agent harnesses, and provider connections\./);
+    assert.match(help.stdout, /check\s+Run Quality checks for explicit paths\./);
+    assert.match(help.stdout, /quality status\s+Show Quality status\./);
 
-    assert.match(help.stdout, /evidence\s+Emit structured AIQ quality evidence\./);
+    assert.match(help.stdout, /evidence\s+Show structured Quality results\./);
     assert.match(help.stdout, /continue\s+Show Umpire continuation status and resume guidance\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
 
@@ -466,7 +466,7 @@ describe("qube composer CLI", () => {
     assert.match(autoresearchHelp.stdout, /Run a safety-bounded local autoresearch arena lifecycle\./);
     assert.match(autoresearchHelp.stdout, /existing local directory/);
     assert.match(autoresearchHelp.stdout, /translate the request into <target-directory> plus <goal>/);
-    assert.match(autoresearchHelp.stdout, /AIB arena synthesis/);
+    assert.match(autoresearchHelp.stdout, /Bootstrap arena synthesis/);
     assert.match(autoresearchHelp.stdout, /command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy/);
     assert.match(autoresearchHelp.stdout, /\.qube\/autoresearch\/runs\/<run-id>\//);
     assert.match(autoresearchHelp.stdout, /Apply the accepted file changes to the target/);
@@ -939,7 +939,7 @@ describe("qube composer CLI", () => {
     assert.notEqual(parsed.workflow.error.trim(), "");
   });
 
-  it("preserves a missing Quality Control failure in offline doctor mode", () => {
+  it("preserves a missing Quality failure in offline doctor mode", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-offline-missing-quality-"));
     const emptyPackageRoot = mkdtempSync(path.join(tmpdir(), "qube-offline-empty-package-"));
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
@@ -1077,7 +1077,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.continuation.report.status, "ok");
 
     const human = runCli(["doctor"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
-    assert.match(human.stdout, /Continuation health: ok/);
+    assert.match(human.stdout, /Umpire health: ok/);
   });
 
   it("fails doctor when Umpire continuation health reports an error without hiding the underlying report", () => {

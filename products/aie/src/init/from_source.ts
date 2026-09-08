@@ -266,7 +266,7 @@ export function adjustAdoptedRecord(record: Record<string, unknown>, machine: Gu
   }
   if (gates.qualityControl === true && !machine.aiqAvailable) {
     gates.qualityControl = false;
-    adjustments.push('Disabled Quality Control because aiq is not available on this machine.');
+    adjustments.push('Disabled Quality because `aiq` is not available on this machine.');
   }
 
   const providers = isPlainObject(record.providers) ? record.providers : {};

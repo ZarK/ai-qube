@@ -1,6 +1,6 @@
-# AI Bootstrap Planning Docs
+# Bootstrap Planning Docs
 
-These documents capture the current product understanding for `ai-bootstrap` without forcing the repository to use its own generated spec/milestone format.
+These documents capture the current product understanding for Bootstrap without forcing the repository to use its own generated spec/milestone format.
 
 The intent is to keep `aib` clear enough to implement while avoiding confusing recursive artifacts such as "a spec for specs" or "a milestone for milestones".
 

@@ -1,4 +1,4 @@
-# AI Umpire Notes
+# Umpire Notes
 
 `ai-umpire` (`@tjalve/aiu`) owns continuation: it keeps agent work moving across stop hooks, context limits, stalled sessions, and multi-step planning/execution loops. It should continue from provider-neutral trusted state, not GitHub-specific assumptions.
 

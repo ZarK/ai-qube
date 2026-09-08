@@ -1,11 +1,11 @@
-# @tjalve/aiu
+# Umpire
 
-`@tjalve/aiu` is the AI Umpire CLI for safe agent continuation. It reads
+Umpire is the `@tjalve/aiu` CLI for safe agent continuation. It reads
 configured trusted state commands, evaluates continuation policy, and produces a
 concrete prompt only when the next action is bounded enough for an agent to
 continue.
 
-AIU does not decide quality, planning, or issue status from agent narration. It
+Umpire does not decide quality, planning, or issue status from agent narration. It
 expects structured local state from trusted commands and treats unknown,
 malformed, stale, blocked, or untrusted state as a stop condition.
 
@@ -58,18 +58,18 @@ pnpm exec aiu doctor --json
 ```
 
 Existing host files that differ from package-managed content are reported as
-conflicts. AIU does not replace them unless `--force` is explicitly selected
+conflicts. Umpire does not replace them unless `--force` is explicitly selected
 after review.
 
 ## Continuation Policy
 
 Quality continuation is driven by configured trusted commands that emit the
-`quality` state kind. AIU can continue quality work only when that state reports
+`quality` state kind. Umpire can continue quality work only when that state reports
 a concrete failing stage or finding group, affected paths when relevant, a next
 command, expected evidence, and a rerun command.
 
 Planning continuation is driven by configured trusted commands that emit the
-`planning` state kind. AIU can continue planning only when planning continuation
+`planning` state kind. Umpire can continue planning only when planning continuation
 is enabled and the state includes a concrete next action such as a command,
 artifact check, or draft path. Human-blocking questions, inconsistent artifacts,
 approval blocks, and ambiguous mappings stop continuation.
@@ -85,7 +85,7 @@ pnpm exec aiu verify --tool opencode --json
 ```
 
 Verification warns before it launches a harness or model. It creates a disposable
-Git repository, installs a packed copy of AIU with lifecycle scripts disabled,
+Git repository, installs a packed copy of Umpire with lifecycle scripts disabled,
 and checks both the allow and continue paths. OpenCode verification selects a
 listed free model when `--model` is absent. If no free model is listed, the
 command stops and asks for an explicit model. Successful verification records
@@ -101,7 +101,7 @@ pnpm exec aiu verify --tool cursor --model <model-id> --json
 
 Cursor verification never grants project trust. If Cursor blocks the first run, the JSON report includes `trustApprovalPath` and preserves that disposable project. Approve that exact project through Cursor's trust surface, then rerun the same verification command.
 
-Run Cursor verification in an interactive terminal. Standard input and standard error must be TTYs. The verifier tests the Cursor CLI project Stop reprompt. It does not assert continuation support in Cursor desktop, cloud, or headless mode. AIU does not pass Cursor's trust flag or change repository trust.
+Run Cursor verification in an interactive terminal. Standard input and standard error must be TTYs. The verifier tests the Cursor CLI project Stop reprompt. It does not assert continuation support in Cursor desktop, cloud, or headless mode. Umpire does not pass Cursor's trust flag or change repository trust.
 
 ## Host Support
 
@@ -130,9 +130,9 @@ git diffs before deleting host configuration.
 
 - The package has no install lifecycle scripts.
 - `doctor`, `paths`, `config`, `status`, and `init --dry-run` are inspection-first commands.
-- AIU does not stage, commit, push, open pull requests, close issues, delete
+- Umpire does not stage, commit, push, open pull requests, close issues, delete
   files, install package managers, or create provider credentials.
-- AIU does not install, authenticate, trust, restart, or wrap an agent harness.
+- Umpire does not install, authenticate, trust, restart, or wrap an agent harness.
 - Local `.qube/aiu/` state, locks, and logs are diagnostics, not provider truth.
 - Use `pnpm install --frozen-lockfile --ignore-scripts` for repository
   development and trusted publishing for package releases.

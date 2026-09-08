@@ -233,7 +233,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aib",
     packageName: "@tjalve/aib",
     packageVersion: dependencyVersion("@tjalve/aib"),
-    summary: "Plan projects, specs, milestones, and work-item drafts.",
+    summary: "Bootstrap plans projects, specs, milestones, and work item drafts.",
     initCapability: {
       participatesByDefault: true,
       scopes: ["repository"],
@@ -247,7 +247,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aie",
     packageName: "@tjalve/aie",
     packageVersion: dependencyVersion("@tjalve/aie"),
-    summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
+    summary: "Executor manages issues, branches, pull requests, and completion.",
     initCapability: {
       participatesByDefault: true,
       scopes: ["repository"],
@@ -280,7 +280,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aiq",
     packageName: "@tjalve/aiq",
     packageVersion: dependencyVersion("@tjalve/aiq"),
-    summary: "Run staged quality gates and produce agent-readable evidence.",
+    summary: "Quality checks code and reports results.",
     initCapability: {
       participatesByDefault: true,
       scopes: ["repository"],
@@ -294,7 +294,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aiu",
     packageName: "@tjalve/aiu",
     packageVersion: dependencyVersion("@tjalve/aiu"),
-    summary: "Guard agent continuation, host policy, and safe idle-work decisions.",
+    summary: "Umpire controls agent continuation and idle work.",
     initCapability: {
       participatesByDefault: true,
       scopes: ["repository"],

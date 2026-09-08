@@ -25,7 +25,7 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("AIQ CLI");
+      expect(stdout.value).toContain("Quality CLI");
       expect(stdout.value).toContain(`aiq ${command}`);
     }
   });
@@ -61,7 +61,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(2);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ first run");
+    expect(stdout.value).toContain("Quality first run");
     expect(stdout.value).toContain("No supported project marker was found");
     expect(stdout.value).toContain("aiq run <files...>");
     expect(stdout.value).toContain("package.json");
@@ -81,13 +81,13 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ first run");
+    expect(stdout.value).toContain("Quality first run");
     expect(stdout.value).toContain("Detected project: TypeScript (tsconfig.json)");
     expect(stdout.value).toContain("Target: .");
     expect(stdout.value).toContain("Stages: lint");
     expect(stdout.value).toContain("Change stage: aiq config --set-stage <0-9>");
     expect(stdout.value).toContain("Prepare missing tools/config: aiq setup");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("Stages: 1 lint passed");
     expect(stdout.value).toContain("Next: no action required.");
 

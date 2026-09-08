@@ -47,7 +47,7 @@ export function collectSetupDoctorRecommendations(repoRoot: string, config: Conf
     );
   }
   if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') {
-    recommendations.push('Quality Control is enabled but aiq readiness is missing.');
+    recommendations.push('Quality is enabled but aiq readiness is missing.');
   }
   if (gateReadiness.reviewAgent.localRunner.readiness === 'unavailable') {
     recommendations.push('Local review-agent adapter is configured without a local runner.');

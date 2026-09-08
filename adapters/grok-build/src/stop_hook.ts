@@ -107,7 +107,7 @@ export function isGrokSessionEndReason(reason: string | undefined): boolean {
 
 export const grokBuildStopHookFile: GrokBuildStopHookFile = Object.freeze({
   relativePath: pathPosix.join(".grok", "hooks", "ai-umpire.json"),
-  description: "Grok Build AI Umpire project Stop hook.",
+  description: "Grok Build Umpire project Stop hook.",
   content: stableJson({
     hooks: {
       Stop: [

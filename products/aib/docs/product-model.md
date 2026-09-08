@@ -1,4 +1,4 @@
-# AI Bootstrap Product Model
+# Bootstrap Product Model
 
 ## Purpose
 

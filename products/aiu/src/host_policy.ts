@@ -115,7 +115,7 @@ function buildHostProfile(tool: AiuHost, declared: AgentHostCapabilityProfile, r
       support: stopHookSupport,
       blocksByDefault: usesStopHook && continuationSupport !== "unsupported",
       description: usesStopHook
-        ? `AI Umpire init enables ${declared.displayName} Stop-hook blocking. An explicit false value disables blocking.`
+        ? `Umpire init enables ${declared.displayName} Stop-hook blocking. An explicit false value disables blocking.`
         : `${declared.displayName} continuation uses host delivery rather than a blocking Stop hook.`,
     }),
     managedFiles: Object.freeze(continuation.renderManagedAssets({

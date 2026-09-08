@@ -19,7 +19,7 @@ export function getAiuPackageVersion(): string {
   const manifestPath = path.join(getAiuPackageRoot(), "package.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { readonly version?: unknown };
   if (typeof manifest.version !== "string" || manifest.version.trim().length === 0) {
-    throw new Error(`AI Umpire package metadata does not contain a version: ${manifestPath}`);
+    throw new Error(`Umpire package metadata does not contain a version: ${manifestPath}`);
   }
   return manifest.version;
 }

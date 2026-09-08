@@ -391,7 +391,7 @@ choice, gives the recommendation and reason, and links to the applicable
 section in this guide.
 
 QUBE initializes the complete system. Bootstrap prepares planning. Executor
-prepares issue work and review. Quality Control prepares checks. Umpire prepares
+prepares issue work and review. Quality prepares checks. Umpire prepares
 safe continuation. You do not select these products separately.
 
 QUBE supplies repository instructions, trusted state, commands, and supported
@@ -516,7 +516,7 @@ headless mode.
 
 Quality checks cover lint, format, type checks, unit tests, end-to-end tests,
 source metrics, maintainability, coverage, and security. QUBE shows the current
-Quality Control stage list during setup.
+Quality stage list during setup.
 
 Recommended: select the single **unit** stage. A single stage is cumulative, so
 this selection includes end-to-end tests, lint, format, type checks, and unit

@@ -1,4 +1,4 @@
-# AIQ Notes
+# Quality Notes
 
 `@tjalve/aiq` owns reusable quality gates and should become the package that catches fake progress, shallow checks, and unsafe implementation patterns across QUBE-driven work. Its private workspace root is `@tjalve/aiq-workspace`.
 

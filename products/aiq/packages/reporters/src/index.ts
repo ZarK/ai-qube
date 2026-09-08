@@ -17,7 +17,7 @@ export function formatRunResultAsJson(result: RunResult): string {
 
 export function formatPlanAsText(plan: RunPlan): string {
   const lines = [
-    "AIQ plan",
+    "Quality plan",
     `Run: ${plan.runId}`,
     `Context: ${plan.context}`,
     `Schema: v${plan.artifactVersion}`,
@@ -47,7 +47,7 @@ export function formatRunResultAsText(
 
 function formatCompactRunResultAsText(result: RunResult): string {
   const lines = [
-    `AIQ ${result.mode}`,
+    `Quality ${result.mode}`,
     `Status: ${result.summary.status}`,
     `Stages: ${formatCompactStageList(result.stages)}`,
     `Files: ${result.summary.fileCount}; diagnostics: ${result.summary.diagnosticCount}`,
@@ -83,7 +83,7 @@ function formatCompactProblemItem(heading: ProblemCategory, item: string): strin
 
 function formatDetailedRunResultAsText(result: RunResult): string {
   const lines = [
-    `AIQ ${result.mode}`,
+    `Quality ${result.mode}`,
     `Run: ${result.runId}`,
     `Context: ${result.context}`,
     `Schema: v${result.artifactVersion}`,

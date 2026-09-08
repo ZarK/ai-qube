@@ -208,7 +208,7 @@ function createAiqCli(io: CliIo, options: CliRunOptions) {
     bin: "aiq",
     packageName: aiqPackageName,
     packageVersion: aiqPackageVersion,
-    description: "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
+    description: "Quality - staged code quality gates with agent-facing setup and remediation guidance.",
     registry: aiqCommandRegistry,
     commands: createRuntimeCommands(io, options),
   });

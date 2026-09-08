@@ -13,7 +13,7 @@ export const TRACKED_QUBE_CONFIG_PATHS = [
   '.qube/aiq/config.json',
 ] as const;
 
-export const LOCAL_RUNTIME_GITIGNORE_HEADER = '# Local Executor and AIQ runtime files.';
+export const LOCAL_RUNTIME_GITIGNORE_HEADER = '# Local Executor and Quality runtime files.';
 
 export type LocalRuntimeGitignoreOperation = 'create' | 'append' | 'unchanged';
 
@@ -78,7 +78,7 @@ export function planLocalRuntimeGitignoreUpdate(existingContent: string | null):
       operation: 'unchanged',
       content: existingContent,
       missing,
-      reason: 'Gitignore already ignores local Executor and AIQ runtime files.',
+      reason: 'Gitignore already ignores local Executor and Quality runtime files.',
     };
   }
   const block = renderRuleBlock(existingContent, missing);
@@ -87,7 +87,7 @@ export function planLocalRuntimeGitignoreUpdate(existingContent: string | null):
       operation: 'create',
       content: block,
       missing,
-      reason: 'Gitignore will be created with local Executor and AIQ runtime ignore rules.',
+      reason: 'Gitignore will be created with local Executor and Quality runtime ignore rules.',
     };
   }
   const separator = existingContent.endsWith('\n') ? '' : '\n';

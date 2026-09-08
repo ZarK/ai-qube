@@ -1,4 +1,4 @@
-# AI Bootstrap Notes
+# Bootstrap Notes
 
 `ai-bootstrap` (`@tjalve/aib`) owns the planning experience: turn an idea into a dry functional spec, milestone docs, and durable work items that agents can execute later. GitHub Issues are the default renderer, not the only core model.
 

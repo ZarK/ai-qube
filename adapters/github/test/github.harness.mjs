@@ -265,7 +265,7 @@ export const githubHarness = defineAdapterHarness({
     },
   },
   ignoredCapabilities: [
-    { id: "render-work-items", reason: "AIB owns provider draft rendering outside the runtime adapter roles." },
+    { id: "render-work-items", reason: "Bootstrap owns provider draft rendering outside the runtime adapter roles." },
     { id: "mutate-repository-files", reason: "The repository provider owns filesystem mutation." },
     { id: "publish-release", reason: "Repository release workflows own publishing." },
   ],

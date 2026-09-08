@@ -317,11 +317,11 @@ function prepareWorkspace(input: { readonly tool: AiuHost; readonly cwd: string;
     const artifacts = packageRoots.map((packageRoot) => packRuntimePackage(npm.resolvedPath!, packageRoot, root));
     const packedArtifactDigest = digestJson(artifacts.map((artifact) => ({ name: artifact.name, digest: artifact.digest })));
     const installed = runCommand(npm.resolvedPath, ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--save-exact", ...artifacts.map((artifact) => artifact.tarballPath)], root, 180_000);
-    if (installed.status !== 0) throw new Error(`packed AIU installation failed: ${commandFailureSummary(installed)}`);
+    if (installed.status !== 0) throw new Error(`packed Umpire installation failed: ${commandFailureSummary(installed)}`);
     const aiuEntry = assertInside(root, path.join(root, "node_modules", "@tjalve", "aiu", "bin", "run"));
-    if (!existsSync(aiuEntry)) throw new Error("packed AIU CLI entrypoint is missing");
+    if (!existsSync(aiuEntry)) throw new Error("packed Umpire CLI entrypoint is missing");
     const init = runCommand(process.execPath, [aiuEntry, "init", "--tool", input.tool, "--post-issue-scope", "ready"], root, 60_000);
-    if (init.status !== 0) throw new Error("packed AIU init failed");
+    if (init.status !== 0) throw new Error("packed Umpire init failed");
     if (input.tool === "opencode") {
       const opencodeRoot = assertInside(root, path.join(root, ".opencode"));
       const pluginInstall = runCommand(npm.resolvedPath, ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--save-exact", ...artifacts.map((artifact) => artifact.tarballPath)], opencodeRoot, 180_000);
@@ -674,7 +674,7 @@ function verificationMarkerScript(): string {
 }
 
 function verificationCommand(token: string): string {
-  return `---\ndescription: Continue the bounded AIU native lifecycle verification.\n---\nReply exactly with AIU_VERIFY_NEXT:${token}, then end the turn. Do not use tools.\n`;
+  return `---\ndescription: Continue the bounded Umpire native lifecycle verification.\n---\nReply exactly with AIU_VERIFY_NEXT:${token}, then end the turn. Do not use tools.\n`;
 }
 
 function readMarker(markerPath: string, token: string): boolean {

@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/aiu",
   "version": "0.0.14",
-  "description": "AI Umpire package foundation and CLI for safe agent continuation.",
+  "description": "Umpire CLI for safe agent continuation.",
   "keywords": [
     "cli",
     "agent",

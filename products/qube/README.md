@@ -43,12 +43,12 @@ for the package layout, development toolchain, checks, and pull request process.
 
 ## Components
 
-| Component | Package | Direct command | Purpose |
+| Product | Package | Direct command | Purpose |
 | --- | --- | --- | --- |
-| `aib` | `@tjalve/aib` | `aib` | Planning state, specs, milestones, and work item drafts. |
-| `aie` | `@tjalve/aie` | `aie` | GitHub issue execution workflow. |
-| `aiq` | `@tjalve/aiq` | `aiq` | Staged quality gates and evidence. |
-| `aiu` | `@tjalve/aiu` | `aiu` | Continuation policy from trusted local state. |
+| Bootstrap | `@tjalve/aib` | `aib` | Planning state, specs, milestones, and work item drafts. |
+| Executor | `@tjalve/aie` | `aie` | GitHub issue execution workflow. |
+| Quality | `@tjalve/aiq` | `aiq` | Staged quality gates and evidence. |
+| Umpire | `@tjalve/aiu` | `aiu` | Continuation policy from trusted local state. |
 
 ## Current development commands
 

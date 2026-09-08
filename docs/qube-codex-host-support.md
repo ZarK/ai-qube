@@ -13,7 +13,7 @@ independently installable.
 Supported QUBE-owned behavior:
 
 - Detect project `AGENTS.md` as the Codex instruction target.
-- Report Codex instruction support for AIB and AIE init flows.
+- Report Codex instruction support for Bootstrap and Executor init flows.
 - Report Executor repository checks for branch policy, worktree state, base
   branch freshness, and blocking pull requests.
 
@@ -33,7 +33,7 @@ Unsupported Codex host behavior:
 - QUBE does not install OpenCode-style project command files for Codex.
 - Codex host support does not directly invoke external PR reviewers.
 - Codex host support does not bypass branch policy or open pull requests
-  without the configured AIE/GitHub workflow.
+  without the configured Executor and GitHub workflow.
 
 ## Initialize
 

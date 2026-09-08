@@ -726,7 +726,7 @@ function renderArenaSynthesis(plan: ReturnType<typeof synthesizeAutoresearchAren
   const target = plan.target ? [`Target: ${plan.target.path}`, `Target kind: ${plan.target.kind}`] : [];
   const evaluator = plan.evaluator ? [`Evaluator: ${plan.evaluator.kind}`, `Evaluator hash: ${plan.evaluator.hash}`] : [];
   return [
-    "AIB autoresearch arena synthesis",
+    "Bootstrap autoresearch arena synthesis",
     "",
     `Classification: ${plan.classification}`,
     ...target,

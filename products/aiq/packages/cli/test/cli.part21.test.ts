@@ -32,7 +32,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ workflow");
+    expect(stdout.value).toContain("Quality workflow");
     expect(stdout.value).toContain("Current stage: 3 typecheck");
     expect(stdout.value).toContain("Default run: stages 0..3 (e2e, lint, format, typecheck)");
     expect(stdout.value).toContain("Selected stages: typecheck");

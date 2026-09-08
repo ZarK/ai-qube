@@ -9,9 +9,9 @@ repository config selects them.
 
 Supported now:
 
-- AIB renders provider-neutral work item drafts into Jira issue previews
+- Bootstrap renders provider-neutral work item drafts into Jira issue previews
   through `@tjalve/qube-adapter-jira`.
-- AIE resolves Jira through the optional `@tjalve/qube-adapter-jira`
+- Executor resolves Jira through the optional `@tjalve/qube-adapter-jira`
   work-provider package. The adapter maps Jira issues into QUBE work items for
   read flows.
 - Jira status, priority, labels, components, assignee, project, issue links,
@@ -21,10 +21,10 @@ Supported now:
 
 Explicitly unsupported now:
 
-- AIB does not create Jira issues.
-- AIE does not transition Jira workflow states, add comments, or complete
+- Bootstrap does not create Jira issues.
+- Executor does not transition Jira workflow states, add comments, or complete
   Jira issues.
-- AIE does not fall back to GitHub labels when a Jira lifecycle mutation is
+- Executor does not fall back to GitHub labels when a Jira lifecycle mutation is
   requested.
 
 ## Configuration

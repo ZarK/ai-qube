@@ -26,7 +26,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Quality run");
     expect(stdout.value).toContain("Run:");
     expect(stdout.value).toContain("Artifacts:");
     expect(stdout.value).toContain("Verbose tool details:");

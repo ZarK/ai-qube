@@ -386,7 +386,7 @@ Core policy:
 - ${renderPreStartText(config)} Keep at most one issue in progress.
 - ${renderMilestoneText(config)}
 - ${renderAuditPolicyText(config)}
-- Quality Control gate intent is ${yesNo(config.qualityControl)}.
+- Quality gate intent is ${yesNo(config.qualityControl)}.
 - ${renderReviewAgentText(config, hosts, workspaceRunner)}
 - ${renderQualityGateText(config)}
 - ${renderSupplyChainText(config)}

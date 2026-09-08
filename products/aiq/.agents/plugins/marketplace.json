@@ -1,6 +1,6 @@
 {
   "interface": {
-    "displayName": "AI Umpire"
+    "displayName": "Umpire"
   },
   "name": "ai-umpire",
   "plugins": [

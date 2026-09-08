@@ -31,7 +31,7 @@ test('adapter-only changes select the adapter and shipped consumers', () => {
   assert.ok(!plan.testTargets.includes('@tjalve/qube-adapter-gitlab'));
 });
 
-test('QUBE changes build the public Quality Control dependency before the composer', () => {
+test('QUBE changes build the public Quality dependency before the composer', () => {
   const plan = planCoreCi(['products/qube/src/runtime.ts']);
   assert.equal(plan.aiq, false);
   assert.deepEqual(plan.changedPackages, ['@tjalve/qube']);
@@ -108,7 +108,7 @@ test('CI product scripts reuse the dedicated build stage without weakening stand
   assert.ok(
     rootManifest.scripts.build.indexOf('pnpm --filter @tjalve/aiq-workspace run build')
       < rootManifest.scripts.build.indexOf('pnpm --filter @tjalve/qube run build'),
-    'The clean root build must assemble Quality Control before compiling QUBE',
+    'The clean root build must assemble Quality before compiling QUBE',
   );
   const packHelper = readFileSync(new URL('../scripts/check-ci-pack.mjs', import.meta.url), 'utf8');
   assert.match(packHelper, /check-publish-manifest\.mjs/);

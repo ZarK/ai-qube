@@ -218,7 +218,7 @@ ${workflow}`;
 
 function sharedBody(profiles: readonly AgentHostCapabilityProfile[]): string {
   const hostSections = profiles.map(taskGuidance).join("\n\n");
-  return `# AIB Bootstrap Workflow
+  return `# Bootstrap Workflow
 
 This repository uses \`aib\` as an agent-operated planning engine. The human talks to the agent; the agent operates the CLI and records durable state.
 

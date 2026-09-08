@@ -17,7 +17,7 @@ export const CURSOR_CONTINUATION_MINIMUM_VERSION = "2026.08.11";
 const hooksAsset = Object.freeze({
   id: "project-stop-hook",
   relativePath: ".cursor/hooks.json",
-  description: "Cursor AI Umpire project Stop hook.",
+  description: "Cursor Umpire project Stop hook.",
   ownership: "shared" as const,
   role: "entrypoint" as const,
 });

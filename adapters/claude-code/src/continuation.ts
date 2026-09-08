@@ -8,7 +8,7 @@ import {
   type ContinuationAssetValidation,
 } from "@tjalve/qube-core";
 
-const settingsAsset = Object.freeze({ id: "settings-stop-hook", relativePath: ".claude/settings.json", description: "Claude Code AI Umpire project Stop hook.", ownership: "shared" as const, role: "entrypoint" as const });
+const settingsAsset = Object.freeze({ id: "settings-stop-hook", relativePath: ".claude/settings.json", description: "Claude Code Umpire project Stop hook.", ownership: "shared" as const, role: "entrypoint" as const });
 
 export const claudeCodeContinuationDeclaration = defineContinuationDeclaration({
   version: CONTINUATION_DECLARATION_VERSION,

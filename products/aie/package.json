@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/aie",
   "version": "0.2.13",
-  "description": "AI Executor - autonomous GitHub issue execution for agentic development.",
+  "description": "Executor - autonomous GitHub issue execution for agentic development.",
   "keywords": [
     "cli",
     "github",

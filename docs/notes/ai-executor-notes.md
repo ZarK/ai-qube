@@ -1,4 +1,4 @@
-# AI Executor Notes
+# Executor Notes
 
 `ai-executor` (`@tjalve/aie`) owns execution of work-item-driven work: queue selection, lifecycle commands, branch checks, installed agent instructions, gates, review item handling, completion, and continuation. GitHub Issues and PRs are the default provider path, but the internal model should be provider-neutral.
 

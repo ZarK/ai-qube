@@ -88,12 +88,12 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("AIQ setup");
+      expect(stdout.value).toContain("Quality setup");
       expect(stdout.value).toContain("Required setup:");
       expect(stdout.value).toContain("Python runtime");
       expect(stdout.value).toContain("Install Python 3");
       expect(stdout.value).toContain("aiq doctor --stage typecheck");
-      expect(stdout.value).toContain("AIQ reports setup needs; it does not install tools");
+      expect(stdout.value).toContain("Quality reports setup needs; it does not install tools");
     } finally {
       process.env.PATH = originalPath;
     }

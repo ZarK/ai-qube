@@ -56,7 +56,7 @@ Required controls before public release:
 
 ## Safe Removal
 
-Remove AIU only after host files and trusted command descriptors no longer
+Remove Umpire only after host files and trusted command descriptors no longer
 depend on the package:
 
 ```sh

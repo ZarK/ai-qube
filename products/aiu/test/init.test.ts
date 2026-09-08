@@ -222,7 +222,7 @@ describe("init planner", () => {
     assert.deepEqual(config.hosts.enabled, firstPlan.init.tools);
   });
 
-  it("merges the exact AIU dependency into an existing OpenCode package manifest", async () => {
+  it("merges the exact Umpire dependency into an existing OpenCode package manifest", async () => {
     const target = await createRepoRoot();
     const manifestPath = path.join(target, ".opencode", "package.json");
     await writeJson(manifestPath, {
@@ -406,7 +406,7 @@ describe("init planner", () => {
     assert.equal(rerunHooks.hooks.stop.filter((entry) => /hook-stop --tool cursor/u.test(entry.command)).length, 1);
   });
 
-  it("merges the AI Umpire plugin into a shared Codex marketplace", async () => {
+  it("merges the Umpire plugin into a shared Codex marketplace", async () => {
     const target = await createRepoRoot();
     const marketplacePath = path.join(target, ".agents", "plugins", "marketplace.json");
     await mkdir(path.dirname(marketplacePath), { recursive: true });
@@ -459,7 +459,7 @@ describe("init planner", () => {
     assert.equal(await readFile(marketplacePath, "utf8"), firstContent);
   });
 
-  it("merges the AI Umpire Stop hook into shared Claude Code settings", async () => {
+  it("merges the Umpire Stop hook into shared Claude Code settings", async () => {
     const target = await createRepoRoot();
     const settingsPath = path.join(target, ".claude", "settings.json");
     const managedCommand = "pnpm exec aiu hook-stop --tool claude-code";

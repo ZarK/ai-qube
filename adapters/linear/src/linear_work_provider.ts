@@ -213,7 +213,7 @@ function unsupportedAction(item: WorkItem | null, kind: Action['kind'], operatio
       providerId: 'linear',
       displayId: item?.displayId ?? null,
       unsupported: true,
-      nextAction: 'Use Linear queue/view reads and AIB Linear draft rendering, or add a tested Linear workflow-state mutation adapter before enabling lifecycle mutations.',
+      nextAction: 'Use Linear queue/view reads and Bootstrap Linear draft rendering, or add a tested Linear workflow-state mutation adapter before enabling lifecycle mutations.',
     },
   });
 }
