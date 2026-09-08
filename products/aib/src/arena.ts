@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   autoresearchReadinessChecklist,
+  hashEvaluatorInputs,
   type AutoresearchAcceptancePolicy,
   type AutoresearchArena,
   type AutoresearchArenaPlan,
@@ -100,11 +101,31 @@ export function synthesizeAutoresearchArena(input: AutoresearchSynthesisInput): 
       nextAction: "Answer the package-manager question, then rerun aib arena synthesize."
     });
   }
+  if (command?.kind === "invalid-inputs") {
+    return incompletePlan({
+      classification: "needs-clarification",
+      goal,
+      blockingQuestions: [{
+        id: "target.evaluatorInputs",
+        text: `${command.reason} Correct autoresearch.evaluatorInputs in the target package.json.`,
+        reason: command.reason
+      }],
+      nextAction: "Correct the evaluator input declaration, then rerun aib arena synthesize."
+    });
+  }
   const objective = createObjective(goal, targetKind);
   const invariants = createInvariants();
   const mutableSurfaces = createMutableSurfaces(target);
   const acceptancePolicy = createAcceptancePolicy(objective, targetKind);
-  const evaluator = createEvaluator({ goal, target, objective, invariants, acceptancePolicy, command: command?.command });
+  const evaluator = createEvaluator({
+    goal,
+    target,
+    objective,
+    invariants,
+    acceptancePolicy,
+    command: command?.command,
+    inputs: command?.inputs ?? []
+  });
   const arena = createArena({ goal, target, objective, mutableSurfaces, invariants, acceptancePolicy, evaluator });
   const draft: Omit<AutoresearchArenaPlan, "readinessChecklist"> = {
     schemaVersion: 1,
@@ -270,6 +291,7 @@ function createEvaluator(input: {
   readonly invariants: readonly AutoresearchInvariant[];
   readonly acceptancePolicy: AutoresearchAcceptancePolicy;
   readonly command?: string;
+  readonly inputs: AutoresearchEvaluator["inputs"];
 }): AutoresearchEvaluator {
   const signals = extractSignals(input.goal);
   const base = {
@@ -280,6 +302,7 @@ function createEvaluator(input: {
     objective: input.objective,
     direction: input.objective.direction,
     command: input.target.kind === "code" ? input.command : undefined,
+    inputs: input.target.kind === "code" ? input.inputs : [],
     rubric: input.target.kind === "code" ? undefined : createRubric(input.goal),
     signals,
     invariants: input.invariants,
@@ -295,8 +318,9 @@ function createEvaluator(input: {
 type PackageCommandTool = "pnpm" | "npm" | "yarn" | "bun";
 
 type InferredCommand =
-  | { readonly kind: "command"; readonly command: string }
-  | { readonly kind: "blocked"; readonly question: AutoresearchBlockingQuestion };
+  | { readonly kind: "command"; readonly command: string; readonly inputs: AutoresearchEvaluator["inputs"] }
+  | { readonly kind: "blocked"; readonly question: AutoresearchBlockingQuestion }
+  | { readonly kind: "invalid-inputs"; readonly reason: string };
 type BlockedCommand = Extract<InferredCommand, { readonly kind: "blocked" }>;
 
 function inferCommand(targetPath: string): InferredCommand {
@@ -304,23 +328,57 @@ function inferCommand(targetPath: string): InferredCommand {
   if (!existsSync(manifestPath)) {
     return blockingPackageManagerQuestion("No package.json was found for the code target.");
   }
-  let manifest: { scripts?: Record<string, string>; packageManager?: string };
+  let manifest: {
+    scripts?: Record<string, string>;
+    packageManager?: string;
+    autoresearch?: unknown;
+  };
   try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: Record<string, string>; packageManager?: string };
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof manifest;
   } catch {
     return blockingPackageManagerQuestion("package.json could not be parsed for a fixed evaluator command.");
+  }
+  let inputs: AutoresearchEvaluator["inputs"];
+  try {
+    inputs = hashEvaluatorInputs(targetPath, [
+      "package.json",
+      ...readEvaluatorInputPaths(manifest.autoresearch)
+    ]);
+  } catch (error) {
+    return {
+      kind: "invalid-inputs",
+      reason: error instanceof Error ? error.message : String(error)
+    };
   }
   const tool = inferPackageCommandTool(targetPath, manifest.packageManager);
   if (tool.kind === "blocked") {
     return tool;
   }
   if (manifest.scripts?.test) {
-    return { kind: "command", command: testCommand(tool.tool) };
+    return { kind: "command", command: testCommand(tool.tool), inputs };
   }
   if (manifest.scripts?.build) {
-    return { kind: "command", command: runScriptCommand(tool.tool, "build") };
+    return { kind: "command", command: runScriptCommand(tool.tool, "build"), inputs };
   }
   return blockingPackageManagerQuestion("package.json does not define a test or build script for a fixed evaluator command.");
+}
+
+function readEvaluatorInputPaths(autoresearch: unknown): readonly string[] {
+  if (autoresearch === undefined) return [];
+  if (typeof autoresearch !== "object" || autoresearch === null || Array.isArray(autoresearch)) {
+    throw new TypeError("package.json autoresearch must be an object.");
+  }
+  const evaluatorInputs = (autoresearch as Record<string, unknown>).evaluatorInputs;
+  if (evaluatorInputs === undefined) return [];
+  if (!Array.isArray(evaluatorInputs)) {
+    throw new TypeError("package.json autoresearch.evaluatorInputs must be an array.");
+  }
+  return evaluatorInputs.map((inputPath, index) => {
+    if (typeof inputPath !== "string") {
+      throw new TypeError(`package.json autoresearch.evaluatorInputs[${index}] must be a string.`);
+    }
+    return inputPath;
+  });
 }
 
 function inferPackageCommandTool(
