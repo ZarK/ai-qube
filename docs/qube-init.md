@@ -180,6 +180,35 @@ It inherits user-global settings. It stores only repository settings that have
 a different value. It can also create or update repository integration assets
 that the selected harness requires. These assets are not configuration copies.
 
+### Change hosts after setup
+
+Use `qube hosts` to change host roles after setup. It uses the existing host
+questions without running the rest of initialization.
+
+```sh
+qube hosts --json
+qube hosts --host codex,cursor --review-mode isolated --review-harness cursor --dry-run --json
+qube hosts --global --host codex --review-mode host --yes
+```
+
+The first host in `--host` is primary. Interactive mode asks which selected
+host is primary. `--global` selects user-global settings;
+otherwise, changes apply to the current repository. `--json` without selection
+flags reports the current roles and unanswered questions without writing files.
+Use `--dry-run` to inspect planned changes. `--yes` accepts recommended values.
+
+Only installed host adapter packages appear as choices. Isolated review also
+requires an adapter that exports an isolated-review runner. When the review
+host changes, QUBE uses that host's live model catalog and replaces the saved
+review model. Use `--review-model` to select a model explicitly.
+
+The command writes only host order, review mode, review host, and review model
+settings. It preserves quality, UI audit, publisher, and managed instruction
+files. Use full `qube init` when you also need to update integration assets.
+If a machine-local Executor setting overrides the selected host fields,
+QUBE reports the conflicting field before it writes any changes.
+`qube switch` continues to switch issues.
+
 QUBE resolves each independent setting in this order:
 
 1. An explicit config path or supported command override.

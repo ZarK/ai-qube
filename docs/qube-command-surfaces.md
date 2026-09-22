@@ -14,6 +14,7 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
 | `qube init` | Initialize user-global QUBE choices without Git, or validate Git prerequisites and prepare one repository through the complete guided setup flow. Native continuation verification is optional, explicit, and can incur harness model cost. |
+| `qube hosts` | Show or change the primary and Review agent harnesses without running the full setup flow. |
 | `qube doctor` | Check Quality, Executor, Umpire, agent harnesses, and provider connections. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use Bootstrap arena synthesis before edits. |
 | `qube oneshot` | Show that one-shot execution is not available yet. |
