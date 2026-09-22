@@ -151,6 +151,11 @@ const dryRunFlag = defineFlag({
   description: "Print the plan without running mapped commands.",
   type: "boolean"
 });
+const localReviewPromptsFlag = defineFlag({
+  name: "local-review-prompts",
+  description: "Include full local review prompts for independent host review.",
+  type: "boolean"
+});
 const yesFlag = defineFlag({
   name: "yes",
   short: "y",
@@ -809,7 +814,7 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
   createDirectCommand("pr view", "Show concise pull request state.", "aie", "pr view"),
   createDirectCommand("pr body", "Draft a pull request body for issue work.", "aie", "pr body"),
-  createDirectCommand("pr gate", "Request and inspect configured pull request reviews.", "aie", "pr gate"),
+  createDirectCommand("pr gate", "Request and inspect configured pull request reviews.", "aie", "pr gate", { flags: [dryRunFlag, localReviewPromptsFlag], supportsDryRun: true }),
   createDirectCommand("deps", "Show Executor dependency helpers.", "aie", "deps", { supportsJson: false }),
   createDirectCommand("deps blockers", "List direct blockers for an issue.", "aie", "deps blockers"),
   createDirectCommand("deps blocked", "List blocked open issues.", "aie", "deps blocked"),
@@ -6248,7 +6253,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly ttyPrompt?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly supportsDryRun?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly ttyPrompt?: boolean; readonly flags?: readonly ReturnType<typeof defineFlag>[] } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -6263,7 +6268,7 @@ function createDirectCommand(
           multiple: true
         })
       ],
-      flags: supportsJson ? [jsonFlag] : [],
+      flags: [...(supportsJson ? [jsonFlag] : []), ...(options.flags ?? [])],
       examples: [
         {
           description,
@@ -6272,6 +6277,7 @@ function createDirectCommand(
       ],
       interactions: {
         json: supportsJson,
+        ...(options.supportsDryRun ? { dryRun: { supported: true as const } } : {}),
         noColor: true,
         nonInteractive: true,
         ttyPrompt: options.ttyPrompt === true

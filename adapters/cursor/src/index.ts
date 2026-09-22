@@ -185,7 +185,7 @@ export function listCursorModels(
 }
 
 const CURSOR_RESULT_MAX_BYTES = 1_048_576;
-const CURSOR_PREFACE_MAX_BYTES = 1_024;
+const CURSOR_PREFACE_MAX_BYTES = 65_536;
 const CURSOR_JSON_MAX_DEPTH = 64;
 const CURSOR_PREFACE_DIAGNOSTIC = "cursor-bounded-preface-normalized";
 const CURSOR_DECODE_REASON = "model-route-result-decode";
@@ -230,9 +230,17 @@ function scanJsonObject(text: string, start: number): JsonObjectScan {
   return { kind: "truncated" };
 }
 
-function quotedCandidate(text: string, start: number, end: number): boolean {
+function quotedSpanEnd(text: string, start: number): number | null | undefined {
   const quote = text[start - 1];
-  return (quote === '"' || quote === "'" || quote === "`") && text[end] === quote;
+  if (quote !== '"' && quote !== "'" && quote !== "`") return undefined;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (escaped) escaped = false;
+    else if (character === "\\") escaped = true;
+    else if (character === quote) return index;
+  }
+  return null;
 }
 
 export function decodeCursorReviewResult(text: string): CursorReviewResultDecode {
@@ -249,6 +257,15 @@ export function decodeCursorReviewResult(text: string): CursorReviewResultDecode
   let sawBalancedObject = false;
   for (let index = 0; index < trimmed.length; index += 1) {
     if (trimmed[index] !== "{") continue;
+    const quotedEnd = quotedSpanEnd(trimmed, index);
+    if (quotedEnd === null) {
+      sawTruncatedObject = true;
+      continue;
+    }
+    if (quotedEnd !== undefined) {
+      index = quotedEnd;
+      continue;
+    }
     const scan = scanJsonObject(trimmed, index);
     if (scan.kind === "deep") {
       sawDeepObject = true;
@@ -260,6 +277,7 @@ export function decodeCursorReviewResult(text: string): CursorReviewResultDecode
     }
     if (scan.kind === "invalid") continue;
     sawBalancedObject = true;
+    const candidateStart = index;
     const candidateText = trimmed.slice(index, scan.end);
     let parsed: unknown;
     try {
@@ -268,15 +286,13 @@ export function decodeCursorReviewResult(text: string): CursorReviewResultDecode
       continue;
     }
     if (!isRecord(parsed)) continue;
-    if (quotedCandidate(trimmed, index, scan.end)) {
-      index = scan.end;
-      continue;
-    }
-    candidates.push({ start: index, end: scan.end, text: candidateText });
     index = scan.end - 1;
+    if (typeof parsed.status !== "string") continue;
+    candidates.push({ start: candidateStart, end: scan.end, text: candidateText });
   }
 
   if (sawDeepObject) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-depth-limit" };
+  if (sawTruncatedObject) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-truncated-json" };
   if (candidates.length > 1) return { ok: false, reasonCode: CURSOR_DECODE_REASON, diagnostic: "cursor-result-multiple-objects" };
   const candidate = candidates[0];
   if (!candidate) {

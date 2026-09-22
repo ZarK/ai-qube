@@ -425,7 +425,7 @@ describe('model review runner', () => {
 
   it('accepts one bounded Cursor ACP preface and retains only its fixed local diagnostic', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-preface-'));
-    const rawPreface = 'Cursor inspected the current head; private host chatter must not persist. ';
+    const rawPreface = `Cursor inspected the current head; private host chatter must not persist. ${'progress '.repeat(2_048)}`;
     const accepted = await runModelReview({
       ...reviewInput(repoRoot, 'cursor'),
       transport: 'acp',
@@ -760,6 +760,41 @@ describe('model review runner', () => {
     assert.equal(existsSync(capturedPromptPath), false);
   });
 
+  it('prefers a valid Grok structured result over provisional text objects', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-grok-structured-'));
+    const provisional = { issueNumber: 309, prNumber: 310, headSha: 'abc123', lane: 'code-quality', status: 'pending', recommendation: 'pending', blockers: [], findings: [] };
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: `${JSON.stringify(provisional)}${JSON.stringify(provisional)}`, structuredOutput: laneResult(), sessionId: 'grok-structured' }),
+      }),
+    });
+
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-structured');
+
+    const wrongHead = { ...laneResult(), headSha: 'stale-head' };
+    const rejected = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(laneResult()), structuredOutput: wrongHead, sessionId: 'grok-stale-structured' }),
+      }),
+    });
+    assert.equal(rejected.evidence, null);
+    assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+  });
+
   it('executes the exact probed Cursor transport model and records fallback provenance', { skip: process.platform !== 'win32' }, async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-transport-'));
     let capturedArgs = null;
@@ -864,6 +899,26 @@ describe('model review runner', () => {
     assert.match(result.evidence.artifacts[1].path, /\[REDACTED\]\.md/);
     assert.equal(result.evidence.contextReviewed[0].source, reviewedPath);
     assert.match(result.evidence.commands[1], /\[REDACTED\]\.md/);
+  });
+
+  it('drops findings copied from the routed spawn prompt', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-prompt-fragment-'));
+    const body = laneResult();
+    body.severity = 'low';
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
+    body.findings = [
+      { id: 'Cursor ACP review capability boundary: use only repository reads.', severity: 'advisory', message: 'Copied identifier.', location: null },
+      { id: 'PROMPT-2', severity: 'advisory', message: 'Copied path.', location: { path: 'Do not request shell or terminal commands during review.' } },
+      { id: 'PROMPT-3', severity: 'advisory', message: 'Do not emit JSON progress, pending envelopes, or interim verdicts.', location: null },
+    ];
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ structuredOutput: body, sessionId: 'prompt-fragments' }) }),
+    });
+
+    assert.equal(result.error, null);
+    assert.deepEqual(result.evidence.findings, []);
   });
 
   it('accepts a confidence-bearing advisory and preserves confidence into routed evidence', async () => {
@@ -1090,8 +1145,8 @@ describe('model review runner', () => {
         stdout: JSON.stringify({ text: `${JSON.stringify(contradictoryPending)}\n${JSON.stringify(laneResult())}`, sessionId: 'contradictory' }),
       }),
     });
-    assert.equal(contradictorySequence.error, null);
-    assert.equal(contradictorySequence.evidence.status, 'passed', 'nonterminal transient JSON must not affect the final verdict');
+    assert.equal(contradictorySequence.evidence, null);
+    assert.equal(contradictorySequence.reasonCode, 'model-route-contract-mismatch');
 
     const nonterminalFinal = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),

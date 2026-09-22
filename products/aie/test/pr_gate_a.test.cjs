@@ -1840,7 +1840,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
 
 
-  it('keeps other lanes and their evidence intact when one routed lane fails', async () => {
+  it('reports four passed lanes and one timed-out lane without discarding current-head evidence', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     applyRoutedReviewFixture(repo);
@@ -1850,19 +1850,17 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewConcurrency = 3;
     config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const batchLanes = ['issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'];
+    config.reviewLanes = config.reviewLanes.filter(lane => batchLanes.includes(lane.id));
+    config.reviewSources[0].expected = batchLanes;
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     let timedOutLane = null;
-    let failedLane = null;
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
       const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
-      if (timedOutLane === null) {
-        timedOutLane = lane;
+      if (timedOutLane === null) timedOutLane = lane;
+      if (lane === timedOutLane) {
         return { exitCode: 1, stderr: '', stdout: '', timedOut: true, stdinDelivered: true };
-      }
-      if (failedLane === null) {
-        failedLane = lane;
-        return { exitCode: 1, stderr: 'host process crashed', stdout: '', timedOut: false, stdinDelivered: true };
       }
       const body = {
         issueNumber: 93,
@@ -1892,19 +1890,101 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'failed');
     const failed = result.localReviewRunner.lanes.filter(lane => lane.status === 'failed');
     const completed = result.localReviewRunner.lanes.filter(lane => lane.status === 'completed' && lane.route !== null);
-    assert.equal(failed.length, 2);
+    assert.equal(failed.length, 1);
+    assert.equal(completed.length, 4);
     assert.equal(failed.find(lane => lane.lane === timedOutLane)?.blocker, 'model-route-timeout');
-    assert.equal(failed.find(lane => lane.lane === failedLane)?.blocker, 'model-route-process-failed');
-    assert.ok(completed.length >= 1);
     for (const lane of completed) {
       const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
       assert.equal(evidence.status, 'passed');
       assert.equal(evidence.lane, lane.lane);
     }
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'missing');
+    assert.match(result.localReview.summary, new RegExp(`missing required lane files: ${timedOutLane}`));
+    assert.ok(completed.every(lane => result.localReview.summary.includes(`${lane.lane} (local)`)));
+    assert.ok(result.unavailable.every(entry => entry.includes(timedOutLane)), 'only the timed-out lane is unavailable');
+    const source = result.reviewSourceContract.sources.find(entry => entry.id === 'local-lanes');
+    assert.deepEqual([...source.received].sort(), completed.map(lane => lane.lane).sort());
+    assert.deepEqual(source.missing, [timedOutLane]);
+    assert.equal(source.satisfied, false);
+    const statusPayload = fixture.reviewPayloads.find(payload => typeof payload.body === 'string' && payload.body.includes('qube-pr-status:'));
+    assert.ok(statusPayload.body.includes('Review status: inconclusive.'));
+    assert.ok(statusPayload.body.includes(`${timedOutLane}: invalid`) && statusPayload.body.includes('model-route-timeout'));
+    for (const lane of completed) assert.ok(statusPayload.body.includes(`${lane.lane}: passed`));
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', '.review-lock.json')), false, 'timeout and process failures must not leave a review session lock');
     assert.deepEqual(result.reviewSessionLocks, [], 'the terminal gate result must not report its own cleared lock as active');
-    assert.match(result.localReviewRunner.summary, /Local review runner failed 2 lane\(s\)/);
-    assert.ok(result.localReviewRunner.summary.includes(timedOutLane) && result.localReviewRunner.summary.includes(failedLane));
+    assert.match(result.localReviewRunner.summary, /Local review runner failed 1 lane\(s\)/);
+    assert.ok(result.localReviewRunner.summary.includes(timedOutLane));
+
+    const retry = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+    });
+    const reused = retry.localReviewRunner.lanes.filter(lane => lane.status === 'completed' && lane.evidenceSource === 'local');
+    assert.equal(reused.length, 4);
+    assert.equal(retry.status, 'pending');
+    const retrySource = retry.reviewSourceContract.sources.find(entry => entry.id === 'local-lanes');
+    assert.deepEqual([...retrySource.received].sort(), reused.map(lane => lane.lane).sort());
+    assert.deepEqual(retrySource.missing, [timedOutLane]);
+    assert.equal(retrySource.satisfied, false, 'partial local reporting must not satisfy the provider source contract');
+  });
+
+  it('invalidates every routed lane when one lane changes the checkout', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewConcurrency = 1;
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let changedCheckout = false;
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (!changedCheckout) {
+        changedCheckout = true;
+        writeFileSync(join(repo, 'README.md'), 'fixture changed during review\n');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    const routed = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routed.length >= 2);
+    assert.ok(routed.every(lane => lane.status === 'failed' && lane.blocker === 'model-route-checkout-mismatch'), JSON.stringify(routed.map(lane => ({ lane: lane.lane, status: lane.status, blocker: lane.blocker }))));
+    for (const lane of routed) {
+      assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`)), false);
+    }
   });
 
   it('blocks the routed batch with probe diagnostics before any model execution', async () => {
