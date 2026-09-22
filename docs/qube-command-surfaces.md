@@ -17,18 +17,20 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | `qube hosts` | Show or change the primary and Review agent harnesses without running the full setup flow. |
 | `qube doctor` | Check Quality, Executor, Umpire, agent harnesses, and provider connections. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use Bootstrap arena synthesis before edits. |
-| `qube oneshot` | Show that one-shot execution is not available yet. |
-| `qube make-it-so` | Map an intent to the safest real QUBE workflow. |
+| `qube mode` | Show or set the workspace development mode. |
+| `qube make-it-so` | Continue the active workspace mode with an optional request. |
 | `qube run` | Run a QUBE component command with passthrough arguments. |
 
 ### Make It So
 
-`qube make-it-so` exposes its selected command and workflow boundary. The
+In local mode, `qube make-it-so <request>` prints instructions for the current
+agent to implement the request and prepare a concise manual-testing handoff.
+This path does not require Git, a provider, an issue, or a branch. In shipping
+mode, `qube make-it-so` exposes its selected command and workflow boundary. The
 `planned` flow maps free-form intent to `qube aib init <target> --idea <intent>`.
 It creates planning state without a GitHub issue, branch, pull request, or
 review request. The `issue` flow maps `next`, a number, or `#number` to
-`qube aie start`; all Executor checks remain active. The `direct-local` flow is
-currently refused and directs the user to the planned flow.
+`qube aie start`; all Executor checks remain active.
 Use `--dry-run --json` to inspect the mapping without dispatching it.
 
 ### Autoresearch
@@ -60,12 +62,13 @@ the accepted changes without applying them. Promotion preserves unrelated
 files and stops on candidate changes or target conflicts. If apply fails, QUBE
 restores affected files. Run promotion again after an interruption.
 
-### One-shot
+### Workspace mode
 
-One-shot is not available yet.
-
-Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
-Local checks and self-review do not count as pull request approval.
+Use `qube mode local` for persistent direct development with the current agent.
+Use `qube mode shipping` to return to the issue and pull request workflow.
+Run `qube mode` from the workspace or a nested directory to show the effective
+mode. A mode change updates only workspace mode state and its bounded agent
+instruction section. It does not start work or publish changes.
 
 ## Direct workflow commands
 

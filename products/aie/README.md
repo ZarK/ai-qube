@@ -68,6 +68,19 @@ aie init . --dry-run --json
 aie init . --defaults --yes
 ```
 
+## Workspace mode
+
+QUBE checks the workspace mode before Executor starts issue or shipping work.
+In local mode, the current agent works directly on the user's request and runs
+checks that fit the change. The agent then gives the user a concise manual test
+handoff. Executor does not require Git or a work provider for this local work.
+
+Executor blocks queue, issue, branch, review, pull request, and completion
+commands in local mode before they inspect Git or call a provider. Help,
+`aie schema`, `aie gates plan`, and the `aie run` local app commands remain
+available. Run `qube mode shipping` to return to the issue shipping workflow.
+Changing mode does not start work or publish changes.
+
 ## Safety Notes
 
 - The package has no install lifecycle scripts.

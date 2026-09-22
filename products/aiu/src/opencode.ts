@@ -24,7 +24,7 @@ import {
 import { runAiuTrustedStateAdapter } from "./trusted_adapter.js";
 import { decideAiuWhipContinuation, readAiuWhipState } from "./whip.js";
 import { decodeAiuContinuationEvent, getAiuContinuationAdapter } from "./continuation_adapters.js";
-import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
+import { readWorkspaceMode, type ContinuationDecodedEvent } from "@tjalve/qube-core";
 
 export interface AiuOpenCodeEvent {
   readonly type: string;
@@ -63,6 +63,9 @@ export interface AiuOpenCodeResultMetadata extends Readonly<Record<string, unkno
   readonly lockPath?: string;
   readonly logPath?: string;
   readonly staleLockRecovered?: boolean;
+  readonly workspaceMode?: "local" | "shipping" | "unknown";
+  readonly workspaceRoot?: string;
+  readonly workspaceModeConfigPath?: string;
 }
 
 export interface AiuOpenCodePromptDelivery {
@@ -151,13 +154,13 @@ export function createAiuOpenCodePlugin(options: AiuOpenCodePluginOptions = {}):
   return Object.freeze({
     name: "@tjalve/aiu/opencode" as const,
     handle: async (event: AiuOpenCodeEvent, context: AiuOpenCodeContext = {}) => {
-      const normalizedContext = withDefaultContext({
+      const mergedContext: AiuOpenCodeContext = Object.freeze({
         ...context,
         ...(options.loadTrustedStates && !context.loadTrustedStates ? { loadTrustedStates: options.loadTrustedStates } : {}),
         ...(options.deliverPrompt && !context.deliverPrompt ? { deliverPrompt: options.deliverPrompt } : {}),
       });
-      const result = await before(event, normalizedContext, async () => runAiuOpenCodeContinuation(event, normalizedContext));
-      return after(event, Object.freeze({ ...normalizedContext, previousResult: result }), async () => result);
+      const result = await before(event, mergedContext, async () => runAiuOpenCodeContinuation(event, mergedContext));
+      return after(event, Object.freeze({ ...mergedContext, previousResult: result }), async () => result);
     },
   });
 }
@@ -187,8 +190,6 @@ export function createAiuOpenCodeServerPlugin(
 }
 
 export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, context: AiuOpenCodeContext = {}): Promise<AiuOpenCodeHandlerResult> {
-  const normalizedContext = withDefaultContext(context);
-  const observedAt = normalizedContext.observedAt ?? new Date().toISOString();
   const decoded = decodeAiuContinuationEvent("opencode", { surface: "plugin-event", version: null, event });
   if (!decoded.ok) {
     return Object.freeze({
@@ -202,7 +203,30 @@ export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, contex
   }
 
   const host = buildAiuOpenCodeHostSession(decoded.event);
-  const repoRoot = normalizedContext.cwd ?? process.cwd();
+  const repoRoot = context.cwd ?? process.cwd();
+  try {
+    const workspaceMode = readWorkspaceMode(repoRoot);
+    if (workspaceMode.mode === "local") {
+      return Object.freeze({
+        handled: true,
+        metadata: resultMetadata(event, host, 0, [], ["workspace-local-mode"], undefined, undefined, {
+          workspaceMode: workspaceMode.mode,
+          workspaceRoot: workspaceMode.workspaceRoot,
+          workspaceModeConfigPath: workspaceMode.configPath,
+        }),
+      });
+    }
+  } catch (error) {
+    return Object.freeze({
+      handled: true,
+      metadata: resultMetadata(event, host, 0, [error instanceof Error ? error.message : String(error)], ["workspace-mode-invalid"], undefined, undefined, {
+        workspaceMode: "unknown",
+        workspaceRoot: repoRoot,
+      }),
+    });
+  }
+  const normalizedContext = withDefaultContext(context);
+  const observedAt = normalizedContext.observedAt ?? new Date().toISOString();
   const paths = resolveAiuContinuationPaths(repoRoot, normalizedContext.config);
   const activationSuppressions: string[] = normalizedContext.deliverPrompt === undefined ? ["host-delivery-unavailable"] : [];
   if (host.suppressions.length > 0) {

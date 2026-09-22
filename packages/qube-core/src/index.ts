@@ -1,3 +1,5 @@
+export type { WorkspaceMode, WorkspaceModeState, WorkspaceModeChange } from "./workspace_mode.js";
+export { readWorkspaceMode, configureWorkspaceMode, renderLocalDevelopmentPrompt, workspaceModeInstructions } from "./workspace_mode.js";
 export type {
   AutoresearchAcceptancePolicy,
   AutoresearchArena,
