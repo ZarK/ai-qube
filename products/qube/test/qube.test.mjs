@@ -2268,6 +2268,11 @@ describe("qube composer CLI", () => {
         args: ["start", "next", "--json"]
       },
       {
+        input: ["switch", "730", "--json"],
+        component: "aie",
+        args: ["switch", "730", "--json"]
+      },
+      {
         input: ["branch", "create", "84", "--dry-run", "--json"],
         component: "aie",
         args: ["branch", "create", "84", "--dry-run", "--json"]
