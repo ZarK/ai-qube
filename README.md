@@ -94,8 +94,8 @@ qube aiu status --json
 
 See the [current command reference](./docs/qube-command-surfaces.md) for command
 behavior and the [paths and artifacts guide](./docs/qube-paths-and-artifacts.md)
-for stored state. One-shot is unavailable. Use
-`qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
+for stored state. Use `qube mode local` for direct development and manual testing
+without the issue and pull request cycle. See [local development](./docs/qube-local-mode.md).
 
 ## Repository Layout
 

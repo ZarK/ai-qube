@@ -72,8 +72,9 @@ qube doctor --json
 
 The published commands above remain separate from this development surface.
 Use the [current command reference](https://github.com/ZarK/ai-qube/blob/main/docs/qube-command-surfaces.md)
-for the full command list and routing rules. One-shot is unavailable. Use
-`qube make-it-so --flow planned <idea>` to create a Bootstrap plan.
+for the full command list and routing rules. Use `qube mode local` for direct
+development and manual testing without the issue and pull request cycle.
+See [local development](../../docs/qube-local-mode.md).
 
 Direct component packages remain independently installable when one package is
 sufficient:

@@ -31,14 +31,17 @@ import {
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
 import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
-import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
+import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, WorkspaceMode } from "@tjalve/qube-core";
 import {
   AGENT_HOST_IDS,
+  configureWorkspaceMode,
   getAgentHostCapabilityProfile,
   hashEvaluatorInputs,
   observeAgentHostReadiness,
   QUBE_INIT_LAYER_CONTEXT_ENV,
   qubeCommandSurfaceContracts,
+  readWorkspaceMode,
+  renderLocalDevelopmentPrompt,
   resolveExecutable,
   serializeInitLayerContext,
 } from "@tjalve/qube-core";
@@ -286,7 +289,7 @@ interface AutoresearchPromotion {
   readonly promotedAt: string;
 }
 
-const makeItSoFlowValues = ["planned", "issue", "direct-local"] as const;
+const makeItSoFlowValues = ["planned", "issue"] as const;
 type MakeItSoFlow = typeof makeItSoFlowValues[number];
 
 interface MakeItSoMappedCommand {
@@ -300,8 +303,8 @@ interface MakeItSoPlan {
   readonly intent: string | null;
   readonly target: string;
   readonly dryRun: boolean;
-  readonly status: "dispatch" | "blocked";
-  readonly mappedCommand: MakeItSoMappedCommand | null;
+  readonly status: "dispatch";
+  readonly mappedCommand: MakeItSoMappedCommand;
   readonly boundaries: readonly string[];
   readonly nextAction: string;
 }
@@ -445,30 +448,42 @@ const autoresearchCommand = defineCommand({
   })
 });
 
-const oneshotCommand = defineCommand({
+const modeCommand = defineCommand({
   kind: "command",
-  name: "oneshot",
-  description: "Show that one-shot execution is not available yet.",
+  name: "mode",
+  description: "Show or set the workspace development mode.",
   arguments: [
     defineArgument({
-      name: "args",
-      description: "One-shot request.",
-      multiple: true
+      name: "mode",
+      description: "Workspace mode: local or shipping.",
+      required: false
     })
   ],
   flags: [
     jsonFlag,
+    dryRunFlag,
     defineFlag({
-      name: "help",
-      short: "h",
-      description: "Show command help.",
+      name: "prompt",
+      description: "Include the reusable local development prompt.",
       type: "boolean"
     })
   ],
   examples: [
     {
-      description: "Create a Bootstrap plan for the idea instead.",
-      command: "qube make-it-so --flow planned \"Ship a local notes CLI\""
+      description: "Show the effective workspace mode.",
+      command: "qube mode"
+    },
+    {
+      description: "Use local development mode in this workspace.",
+      command: "qube mode local"
+    },
+    {
+      description: "Preview a return to the shipping workflow.",
+      command: "qube mode shipping --dry-run --json"
+    },
+    {
+      description: "Print the reusable local development prompt.",
+      command: "qube mode --prompt"
     }
   ],
   output: {
@@ -477,21 +492,26 @@ const oneshotCommand = defineCommand({
   },
   interactions: {
     json: true,
+    dryRun: {
+      supported: true
+    },
     noColor: true,
     nonInteractive: true,
     ttyPrompt: false
   },
-  extensions: passthroughExtensions
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  })
 });
 
 const makeItSoCommand = defineCommand({
   kind: "command",
   name: "make-it-so",
-  description: "Map an intent to the safest real QUBE workflow.",
+  description: "Continue the active workspace mode with an optional request.",
   arguments: [
     defineArgument({
       name: "args",
-      description: "Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
+      description: "Local request, planning intent, or issue selector.",
       multiple: true
     })
   ],
@@ -518,8 +538,8 @@ const makeItSoCommand = defineCommand({
   ],
   examples: [
     {
-      description: "Start planning from a concise intent.",
-      command: "qube make-it-so \"Ship a local notes CLI\""
+      description: "Continue with a task-specific request in local mode.",
+      command: "qube make-it-so \"Add CSV export to the report command\""
     },
     {
       description: "Start the next provider-backed issue through Executor.",
@@ -964,10 +984,10 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, modeCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function renderCommandSurfacesDoc(): string {
-  const composerCommands = [componentsCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
+  const composerCommands = [componentsCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, modeCommand, makeItSoCommand, runCommand];
   const lines: string[] = [
     "# QUBE Command Surfaces",
     "",
@@ -987,12 +1007,14 @@ export function renderCommandSurfacesDoc(): string {
     "",
     "### Make It So",
     "",
-    "`qube make-it-so` exposes its selected command and workflow boundary. The",
+    "In local mode, `qube make-it-so <request>` prints instructions for the current",
+    "agent to implement the request and prepare a concise manual-testing handoff.",
+    "This path does not require Git, a provider, an issue, or a branch. In shipping",
+    "mode, `qube make-it-so` exposes its selected command and workflow boundary. The",
     "`planned` flow maps free-form intent to `qube aib init <target> --idea <intent>`.",
     "It creates planning state without a GitHub issue, branch, pull request, or",
     "review request. The `issue` flow maps `next`, a number, or `#number` to",
-    "`qube aie start`; all Executor checks remain active. The `direct-local` flow is",
-    "currently refused and directs the user to the planned flow.",
+    "`qube aie start`; all Executor checks remain active.",
     "Use `--dry-run --json` to inspect the mapping without dispatching it.",
     "",
     "### Autoresearch",
@@ -1024,12 +1046,13 @@ export function renderCommandSurfacesDoc(): string {
     "files and stops on candidate changes or target conflicts. If apply fails, QUBE",
     "restores affected files. Run promotion again after an interruption.",
     "",
-    "### One-shot",
+    "### Workspace mode",
     "",
-    "One-shot is not available yet.",
-    "",
-    "Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.",
-    "Local checks and self-review do not count as pull request approval.",
+    "Use `qube mode local` for persistent direct development with the current agent.",
+    "Use `qube mode shipping` to return to the issue and pull request workflow.",
+    "Run `qube mode` from the workspace or a nested directory to show the effective",
+    "mode. A mode change updates only workspace mode state and its bounded agent",
+    "instruction section. It does not start work or publish changes.",
     "",
     "## Direct workflow commands",
     "",
@@ -1083,8 +1106,8 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   if (args[0] === "autoresearch") {
     return planAutoresearch(args.slice(1), environment);
   }
-  if (args[0] === "oneshot") {
-    return planOneshot(args.slice(1), environment);
+  if (args[0] === "mode") {
+    return planWorkspaceMode(args.slice(1), environment);
   }
   if (args[0] === "make-it-so") {
     return planMakeItSo(args.slice(1), environment);
@@ -1192,7 +1215,7 @@ function createQubeCli(environment: CliEnvironment) {
       createRuntimeCommand(hostsCommand, async ({ flags }) => executeQubeHosts(flags, environment)),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
-      createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
+      createRuntimeCommand(modeCommand, ({ argv }) => executeWorkspaceMode(argv, environment)),
       createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
@@ -5992,53 +6015,115 @@ function renderAutoresearchHelp(): string {
   ].join("\n") + "\n";
 }
 
-function planOneshot(args: readonly string[], _environment: CliEnvironment): CliExecution {
-  if (isOneshotHelpRequest(args)) {
-    return { exitCode: 0, stdout: renderOneshotHelp(), stderr: "" };
+function planWorkspaceMode(args: readonly string[], environment: CliEnvironment, apply = false): CliExecution {
+  const json = hasTopLevelJsonFlag(args);
+  try {
+    const parsed = parseWorkspaceModeArgs(args);
+    if ("error" in parsed) return workspaceModeError(parsed.error, json);
+    const dryRun = parsed.dryRun || (parsed.mode !== undefined && !apply);
+    const change = parsed.mode
+      ? configureWorkspaceMode(environment.cwd, parsed.mode, { dryRun })
+      : undefined;
+    const result = change ?? readWorkspaceMode(environment.cwd);
+    const prompt = parsed.prompt ? renderLocalDevelopmentPrompt() : undefined;
+    const payload = {
+      mode: result.mode,
+      workspaceRoot: result.workspaceRoot,
+      configPath: result.configPath,
+      configured: result.configured,
+      changed: change?.changed ?? false,
+      dryRun,
+      writes: change?.writes ?? [],
+      ...(prompt ? { prompt } : {})
+    };
+    if (json) {
+      return {
+        exitCode: 0,
+        stdout: `${JSON.stringify({ ok: true, command: "mode", ...payload })}\n`,
+        stderr: ""
+      };
+    }
+    return { exitCode: 0, stdout: renderWorkspaceMode(payload), stderr: "" };
+  } catch (error) {
+    return workspaceModeError(error instanceof Error ? error.message : String(error), json);
   }
-  return renderOneshotUnavailable(hasTopLevelJsonFlag(args));
 }
 
-async function executeOneshot(args: readonly string[], _environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  if (isOneshotHelpRequest(args)) {
-    return { exitCode: 0, stdout: renderOneshotHelp() };
-  }
-  const json = hasTopLevelJsonFlag(args);
-  const result = renderOneshotUnavailable(json);
-  return json
-    ? { exitCode: result.exitCode, jsonStdout: result.stdout }
+function executeWorkspaceMode(args: readonly string[], environment: CliEnvironment): RuntimeCommandResult {
+  const result = planWorkspaceMode(args, environment, true);
+  return hasTopLevelJsonFlag(args)
+    ? { exitCode: result.exitCode, jsonStdout: result.stdout, stderr: result.stderr }
     : { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 }
 
-function renderOneshotUnavailable(json: boolean): CliExecution {
-  const error = createCliError({
-    command: "oneshot",
-    kind: "feature-unavailable",
-    operation: "run one-shot",
-    likelyCause: "One-shot is not available yet.",
-    suggestedNextAction: "Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.",
-    category: "validation"
-  });
-  return json
-    ? { exitCode: error.exitCode, stdout: renderJsonError(error), stderr: "" }
-    : { exitCode: error.exitCode, stdout: "", stderr: renderCliErrorText(error) };
+function parseWorkspaceModeArgs(args: readonly string[]):
+  | { readonly mode?: WorkspaceMode; readonly json: boolean; readonly dryRun: boolean; readonly prompt: boolean }
+  | { readonly error: string } {
+  let mode: WorkspaceMode | undefined;
+  let json = false;
+  let dryRun = false;
+  let prompt = false;
+  for (const token of args) {
+    if (token === "--json") json = true;
+    else if (token === "--dry-run") dryRun = true;
+    else if (token === "--prompt") prompt = true;
+    else if (token === "local" || token === "shipping") {
+      if (mode) return { error: "Specify one workspace mode: local or shipping." };
+      mode = token;
+    } else {
+      return { error: `Unknown mode argument: ${token}. Use local or shipping.` };
+    }
+  }
+  return { mode, json, dryRun, prompt };
 }
 
-function isOneshotHelpRequest(args: readonly string[]): boolean {
-  const topLevelArgs = topLevelTokens(args);
-  return topLevelArgs.includes("--help") || topLevelArgs.includes("-h");
+function renderWorkspaceMode(result: {
+  readonly mode: WorkspaceMode;
+  readonly workspaceRoot: string;
+  readonly configPath: string;
+  readonly configured: boolean;
+  readonly changed: boolean;
+  readonly dryRun: boolean;
+  readonly writes: readonly string[];
+  readonly prompt?: string;
+}): string {
+  const lines = [
+    `Mode: ${result.mode}`,
+    `Workspace: ${result.workspaceRoot}`,
+    `Configuration: ${result.configured ? result.configPath : "default (not configured)"}`,
+  ];
+  if (result.writes.length > 0) {
+    lines.push(result.dryRun ? "Planned writes:" : "Writes:", ...result.writes.map(file => `- ${file}`));
+  }
+  if (result.dryRun) lines.push("No files were changed.");
+  if (result.prompt) lines.push("", result.prompt.trimEnd());
+  return `${lines.join("\n")}\n`;
 }
 
-function renderOneshotHelp(): string {
-  return [
-    "oneshot",
-    "One-shot is not available yet.",
-    "",
-    "Supported next step:",
-    "  qube make-it-so --flow planned <idea>",
-    "",
-    "Use --json for a machine-readable error."
-  ].join("\n") + "\n";
+function workspaceModeError(message: string, json: boolean): CliExecution {
+  const nextAction = "Correct the workspace mode state, or use `qube mode local` or `qube mode shipping`.";
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "mode",
+        error: {
+          kind: "workspace-mode-error",
+          likelyCause: message,
+          suggestedNextAction: nextAction,
+          category: "validation",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return {
+    exitCode: 2,
+    stdout: "",
+    stderr: `Cannot read or update the workspace mode: ${message}\nNext action: ${nextAction}\n`
+  };
 }
 
 function readTextIfPresent(filePath: string): string {
@@ -6097,30 +6182,30 @@ function topLevelTokens(args: readonly string[]): readonly string[] {
 function renderMakeItSoHelp(): string {
   return [
     "make-it-so",
-    "Map an intent to the safest real QUBE workflow.",
+    "Continue the active workspace mode with an optional request.",
     "",
     "Usage:",
     "  qube make-it-so [args] [--json] [--dry-run] [--flow <value>] [--target <value>]",
     "",
     "Arguments:",
-    "  [args]  Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
+    "  [args]  Local request, planning intent, or issue selector.",
     "",
     "Flags:",
     "  --json            Render machine-readable JSON output.",
     "  --dry-run         Print the plan without running mapped commands.",
     "  -h, --help        Show command help.",
-    "  --flow <value>    Workflow to run.; options: planned, issue, direct-local",
+    "  --flow <value>    Shipping workflow to run.; options: planned, issue",
     "  --target <value>  Planning target path for the planned flow.",
     "",
     "Examples:",
-    "  qube make-it-so \"Ship a local notes CLI\"  # Start planning from a concise intent.",
+    "  qube make-it-so \"Add CSV export to the report command\"  # Continue with a task-specific request in local mode.",
     "  qube make-it-so --flow issue next --json  # Start the next provider-backed issue through Executor.",
     "  qube make-it-so \"Ship a local notes CLI\" --dry-run --json  # Preview the mapped workflow without running it.",
     "",
     "Behavior:",
     "  JSON output: supported",
     "  Dry run: supported",
-    "  Mutation: none",
+    "  Mutation: local mode prints instructions; shipping mode dispatches the selected workflow",
     "  Supply chain: standard"
   ].join("\n") + "\n";
 }
@@ -6252,43 +6337,50 @@ function mapIdeaArgs(args: readonly string[]): readonly string[] {
 }
 
 function planMakeItSo(args: readonly string[], environment: CliEnvironment): CliExecution {
+  let workspaceMode: ReturnType<typeof readWorkspaceMode>;
+  try {
+    workspaceMode = readWorkspaceMode(environment.cwd);
+  } catch (error) {
+    return makeItSoModeError(error instanceof Error ? error.message : String(error), hasTopLevelJsonFlag(args));
+  }
   const parsed = parseMakeItSoArgs(args);
   if ("error" in parsed) {
     return parsed.error;
   }
-  const plan = createMakeItSoPlan(parsed.flags, parsed.positionals);
-  if ("error" in plan) {
-    return makeItSoError(plan.error, parsed.flags.json === true);
+  const explicitFlow = readOption<string>(parsed.flags, "flow");
+  if (explicitFlow && !makeItSoFlowValues.includes(explicitFlow as MakeItSoFlow)) {
+    return makeItSoError(`Invalid make-it-so flow: ${explicitFlow}. Use one of: ${makeItSoFlowValues.join(", ")}.`, parsed.flags.json === true);
   }
-  if (plan.status === "blocked" && parsed.flags["dry-run"] !== true) {
+  if (workspaceMode.mode === "local") {
+    const request = parsed.positionals.join(" ").trim() || undefined;
+    const prompt = renderLocalDevelopmentPrompt(request);
     if (parsed.flags.json === true) {
       return {
-        exitCode: 2,
+        exitCode: 0,
         stdout: `${JSON.stringify({
-          ok: false,
+          ok: true,
           command: "make-it-so",
-          makeItSo: plan,
-          error: {
-            kind: "unsupported-flow",
-            likelyCause: "Direct-local make-it-so execution is not available.",
-            suggestedNextAction: plan.nextAction,
-            category: "usage",
-            exitCode: 2
-          }
+          mode: workspaceMode.mode,
+          workspaceRoot: workspaceMode.workspaceRoot,
+          configPath: workspaceMode.configPath,
+          configured: workspaceMode.configured,
+          request: request ?? null,
+          prompt
         })}\n`,
         stderr: ""
       };
     }
-    return { exitCode: 2, stdout: renderMakeItSoPlan(plan), stderr: "" };
+    return { exitCode: 0, stdout: prompt, stderr: "" };
+  }
+  const plan = createMakeItSoPlan(parsed.flags, parsed.positionals);
+  if ("error" in plan) {
+    return makeItSoError(plan.error, parsed.flags.json === true);
   }
   if (parsed.flags["dry-run"] === true) {
     if (parsed.flags.json === true) {
       return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "make-it-so", makeItSo: plan })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderMakeItSoPlan(plan), stderr: "" };
-  }
-  if (!plan.mappedCommand) {
-    return makeItSoError("No mapped command is available for this make-it-so flow.", parsed.flags.json === true);
   }
   return planQubeDispatch(plan.mappedCommand.component, plan.mappedCommand.args, environment);
 }
@@ -6308,22 +6400,6 @@ function createMakeItSoPlan(
   const intent = hasSelectorOrIntent ? first : null;
   const rest = hasSelectorOrIntent ? remaining : positionals;
   const wantsJson = flags.json === true;
-
-  if (flow === "direct-local") {
-    return {
-      flow,
-      intent,
-      target,
-      dryRun: flags["dry-run"] === true,
-      status: "blocked",
-      mappedCommand: null,
-      boundaries: [
-        "Direct-local artifact generation is not available.",
-        "No GitHub issue, branch, pull request, dependency, or workspace mutation is performed."
-      ],
-      nextAction: "Use `qube make-it-so --flow planned <intent>` to create a Bootstrap plan."
-    };
-  }
 
   if (flow === "issue") {
     const selector = intent ?? "next";
@@ -6480,6 +6556,28 @@ function makeItSoError(message: string, json: boolean): CliExecution {
     };
   }
   return { exitCode: 2, stdout: "", stderr: `${message}\n` };
+}
+
+function makeItSoModeError(message: string, json: boolean): CliExecution {
+  const nextAction = "Correct the workspace mode file, then run `qube mode --json` before continuing.";
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "make-it-so",
+        error: {
+          kind: "workspace-mode-error",
+          likelyCause: message,
+          suggestedNextAction: nextAction,
+          category: "validation",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return { exitCode: 2, stdout: "", stderr: `${message}\nNext action: ${nextAction}\n` };
 }
 
 function translateJsonFlag(args: readonly string[]): readonly string[] {

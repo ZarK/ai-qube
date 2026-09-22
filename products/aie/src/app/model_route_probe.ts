@@ -12,8 +12,8 @@ import {
 export { sanitizeProbeText } from './review_host_adapters.js';
 
 // Cursor's prompt-free ACP compatibility check performs three bounded
-// four-second requests. The route probe must allow the complete handshake.
-const PROBE_TIMEOUT_MS = 15_000;
+// requests, including a longer authentication step. Allow the full handshake.
+const PROBE_TIMEOUT_MS = 25_000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
 
 export type RoutedProbeHost = RoutedReviewHostId;

@@ -2,6 +2,7 @@ import { createCli, createCommand, runCli, type RuntimeCommand } from '@tjalve/q
 import { createRequire } from 'node:module';
 import { EXECUTOR_COMMANDS, EXECUTOR_COMMAND_REGISTRY } from './command_registry.js';
 import { RUNTIME_HANDLERS } from './runtime_handlers.js';
+import { guardExecutorShippingCommand } from './workspace_mode_guard.js';
 
 interface PackageJson {
   readonly name: string;
@@ -115,6 +116,13 @@ export async function runExecutorCli(input: readonly string[]): Promise<number> 
   process.exitCode = undefined;
   const preflightExitCode = writeInitParseError(input) ?? writeUsage(input);
   if (preflightExitCode !== undefined) return preflightExitCode;
+  const modeFailure = guardExecutorShippingCommand(input);
+  if (modeFailure) {
+    if (modeFailure.stdout) process.stdout.write(modeFailure.stdout);
+    if (modeFailure.stderr) process.stderr.write(modeFailure.stderr);
+    process.exitCode = modeFailure.exitCode;
+    return modeFailure.exitCode;
+  }
   const result = await runCli(createCli({
     bin: 'aie',
     packageName: packageJson.name,

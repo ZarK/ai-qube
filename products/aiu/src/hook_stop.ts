@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { ContinuationDecodedEvent } from "@tjalve/qube-core";
+import { readWorkspaceMode, type ContinuationDecodedEvent } from "@tjalve/qube-core";
 
 import type { AiuConfig, AiuHost } from "./config.js";
 import { loadAiuConfig } from "./config.js";
@@ -82,6 +82,18 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
   const cwd = resolvedCwd.cwd;
+  try {
+    const workspaceMode = readWorkspaceMode(cwd);
+    if (workspaceMode.mode === "local") {
+      return allow(options, inputBytes, "workspace-local-mode", [
+        diagnostic("info", "workspace-local-mode", `Workspace ${workspaceMode.workspaceRoot} is in local mode. The Stop is allowed for manual testing and feedback. Run qube mode shipping to resume autonomous continuation.`),
+      ]);
+    }
+  } catch (error) {
+    return allow(options, inputBytes, "workspace-mode-invalid", [
+      diagnostic("error", "workspace-mode-invalid", error instanceof Error ? error.message : String(error)),
+    ]);
+  }
   const configLoad = loadAiuConfig(options.configPath ? { cwd, configPath: options.configPath } : { cwd });
   const policyBlocker = stopHookPolicyBlocker(configLoad.config, options.tool);
   const configDiagnostics = configLoad.diagnostics
