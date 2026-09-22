@@ -22,7 +22,8 @@ export function redactKnownSecrets(text: string): string {
   for (const pattern of TOKEN_PATTERNS) {
     out = out.replace(pattern, '[REDACTED]');
   }
-  return out.replace(LABELED_SECRET_PATTERN, (_match, label: string, separator: string) => `${label}${separator}[REDACTED]`);
+  return out.replace(LABELED_SECRET_PATTERN, (_match, label: string, separator: string) => `${label}${separator}[REDACTED]`)
+    .replace(/\b((?:https?|socks5h?):\/\/)[^\s/@]+@/gi, '$1[REDACTED]@');
 }
 
 export function redact(text: string): string {

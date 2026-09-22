@@ -305,7 +305,15 @@ describe("Cursor isolated review adapter", () => {
       },
     );
     assert.deepEqual(
-      cursor.decodeCursorReviewResult(`${"x".repeat(1024)}{"status":"passed"}`),
+      cursor.decodeCursorReviewResult(`${"x".repeat(16_384)}{"status":"passed"}`),
+      {
+        ok: true,
+        text: '{"status":"passed"}',
+        diagnostic: "cursor-bounded-preface-normalized",
+      },
+    );
+    assert.deepEqual(
+      cursor.decodeCursorReviewResult('Progress metadata {"phase":"inspection"} is not a Review result.{"status":"passed"}'),
       {
         ok: true,
         text: '{"status":"passed"}',
@@ -321,11 +329,13 @@ describe("Cursor isolated review adapter", () => {
       diagnostic,
     });
     failure(cursor.decodeCursorReviewResult('```json\n{"status":"passed"}\n```'), "cursor-result-markdown-fence");
-    failure(cursor.decodeCursorReviewResult('{"first":true}\n{"second":true}'), "cursor-result-multiple-objects");
-    failure(cursor.decodeCursorReviewResult('[1,2]\n{"second":true}'), "cursor-result-json-preface");
+    failure(cursor.decodeCursorReviewResult('{"status":"passed"}\n{"status":"passed"}'), "cursor-result-multiple-objects");
+    failure(cursor.decodeCursorReviewResult('[1,2]\n{"status":"passed"}'), "cursor-result-json-preface");
     failure(cursor.decodeCursorReviewResult('{"status":"passed"} trailing'), "cursor-result-trailing-output");
-    failure(cursor.decodeCursorReviewResult(`${"x".repeat(1025)}{"status":"passed"}`), "cursor-result-preface-limit");
+    failure(cursor.decodeCursorReviewResult(`${"x".repeat(65_537)}{"status":"passed"}`), "cursor-result-preface-limit");
     failure(cursor.decodeCursorReviewResult('{"status":"passed"'), "cursor-result-truncated-json");
+    failure(cursor.decodeCursorReviewResult('prefix {"outer":{"status":"passed"}'), "cursor-result-truncated-json");
+    failure(cursor.decodeCursorReviewResult('prefix \'{"status":"passed"'), "cursor-result-truncated-json");
     failure(cursor.decodeCursorReviewResult(`${'{"nested":'.repeat(65)}true${"}".repeat(65)}`), "cursor-result-depth-limit");
     failure(cursor.decodeCursorReviewResult('[{"status":"passed"}]'), "cursor-result-trailing-output");
 
@@ -389,6 +399,30 @@ describe("Cursor isolated review adapter", () => {
     assert.equal(result.modelListed, true);
     assert.equal(result.resolvedModel, model);
     assert.deepEqual(result.availableModels, ["cursor-grok-4.6-high-fast"]);
+  });
+
+  it("preserves thinking and effort when resolving a Windows ACP model", () => {
+    const displayModel = "claude-fable-5-1-thinking-high";
+    const transportModel = "claude-fable-5-1[thinking=true,effort=high]";
+    const result = cursor.probeCursor({
+      model: displayModel,
+      executable: "cursor-agent",
+      prefixArgs: [],
+      version: "2026.08.11-build",
+      runCommand: (_executable, args) => {
+        if (args.at(-2) === "acp" && args.at(-1) === "--help") return "Usage: agent acp\nAgent Client Protocol";
+        if (args.at(-1) === "--help") return "ask";
+        if (args.includes("status")) return JSON.stringify({ status: "authenticated", isAuthenticated: true });
+        if (args.at(-1) === "models") return `Available models\n${displayModel} - Claude Fable Thinking High`;
+        if (args.at(-1) === "--acp-models") return JSON.stringify({ version: 1, transport: "acp", options: [{ value: transportModel, name: "Claude Fable Thinking High" }] });
+        return "";
+      },
+    }, "win32");
+
+    assert.equal(result.status, "ready");
+    assert.equal(result.modelListed, true);
+    assert.equal(result.resolvedModel, transportModel);
+    assert.deepEqual(result.availableModels, [displayModel]);
   });
 
   it("fails closed for version, capability, authentication, catalog, and model faults", () => {

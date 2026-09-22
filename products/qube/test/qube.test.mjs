@@ -442,6 +442,12 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /continue\s+Show Umpire continuation status and resume guidance\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
 
+    for (const args of [["aie", "pr", "gate", "--help"], ["pr", "gate", "--help"]]) {
+      const prGateHelp = runCli(args);
+      assert.equal(prGateHelp.status, 0, prGateHelp.stderr);
+      assert.match(prGateHelp.stdout, /--local-review-prompts/);
+    }
+
     const runHelp = runCli(["run", "--help"]);
     assert.equal(runHelp.status, 0);
     assert.match(runHelp.stdout, /Usage:\n  qube run \[component\] \[args\]/);
@@ -499,6 +505,9 @@ describe("qube composer CLI", () => {
     assert.deepEqual(installCommand?.flags.map(flag => flag.name), ["json"]);
     const makeItSoCommand = parsed.commands.find(command => command.name === "make-it-so");
     assert.equal(makeItSoCommand?.dryRun.supported, true);
+    const prGateCommand = parsed.commands.find(command => command.name === "pr gate");
+    assert.deepEqual(prGateCommand?.flags.map(flag => flag.name), ["dry-run", "json", "local-review-prompts"]);
+    assert.equal(prGateCommand?.dryRun.supported, true);
     const autoresearchCommand = parsed.commands.find(command => command.name === "autoresearch");
     assert.equal(autoresearchCommand?.dryRun.supported, true);
     const oneshotCommand = parsed.commands.find(command => command.name === "oneshot");

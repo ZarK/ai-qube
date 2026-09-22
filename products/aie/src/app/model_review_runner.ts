@@ -4,7 +4,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rm
 import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
@@ -24,6 +24,8 @@ const ROUTE_ENVIRONMENT_KEYS = new Set([
   'APPDATA', 'CODEX_HOME', 'COMSPEC', 'HOME', 'LANG', 'LC_ALL', 'LOCALAPPDATA', 'LOGNAME',
   'PATH', 'PATHEXT', 'SHELL', 'SYSTEMROOT', 'TEMP', 'TERM', 'TMP', 'TMPDIR', 'USER',
   'USERPROFILE', 'USERNAME', 'WINDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'NODE_USE_ENV_PROXY',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
 ]);
 
 export interface ModelReviewRoutePlan {
@@ -441,6 +443,34 @@ function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): b
   }
 }
 
+const SPAWN_PROMPT_FINDING_FRAGMENTS = [
+  'you are an isolated read-only qube review lane runner',
+  'return exactly one json object and no markdown or commentary',
+  'cursor acp review capability boundary',
+  'do not request shell or terminal commands',
+  'do not emit json progress',
+  'the following json schema is the authoritative qube output contract',
+  'exact qube lane prompt start',
+  'exact qube lane prompt end',
+  'final output check: build coverage after findings',
+] as const;
+
+function spawnPromptFragment(value: unknown, path = false): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (normalized.length < 24) return false;
+  if (path && /^[a-z0-9._@/\\-]+$/i.test(normalized)) return false;
+  return SPAWN_PROMPT_FINDING_FRAGMENTS.some(fragment => normalized.includes(fragment));
+}
+
+function promptFragmentFinding(value: unknown): boolean {
+  return isRecord(value) && (
+    spawnPromptFragment(value.id)
+    || spawnPromptFragment(value.message)
+    || (isRecord(value.location) && spawnPromptFragment(value.location.path, true))
+  );
+}
+
 function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
   const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'];
   if (!isRecord(value) || !hasExactKeys(value, required)) return null;
@@ -469,7 +499,8 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   if (value.recommendation !== expectedRecommendation) return null;
   if (typeof value.summary !== 'string' || value.summary.trim() === '' || typeof value.completeness !== 'string' || value.completeness.trim() === '') return null;
   if (!isStringArray(value.blockers) || !isStringArray(value.commands) || !isStringArray(value.surfaces) || !isStringArray(value.toolsUsed) || !isStringArray(value.preconditions)) return null;
-  if (!Array.isArray(value.findings) || !value.findings.every(item => isRecord(item)
+  const findings = Array.isArray(value.findings) ? value.findings.filter(item => !promptFragmentFinding(item)) : value.findings;
+  if (!Array.isArray(findings) || !findings.every(item => isRecord(item)
     && hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location', 'confidence'])
     && typeof item.severity === 'string' && FINDING_SEVERITY_VALUES.has(item.severity)
     && typeof item.message === 'string' && item.message.trim() !== ''
@@ -482,7 +513,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       && (item.location.line === undefined || (Number.isSafeInteger(item.location.line) && Number(item.location.line) > 0))
       && (item.location.endLine === undefined || (Number.isSafeInteger(item.location.endLine) && Number(item.location.endLine) > 0))
       && (item.location.side === undefined || item.location.side === 'source' || item.location.side === 'destination'))))) return null;
-  const hasBlockingFinding = value.findings.some(item => isRecord(item) && item.severity === 'blocking');
+  const hasBlockingFinding = findings.some(item => isRecord(item) && item.severity === 'blocking');
   const requestsChanges = value.status === 'failed' || value.status === 'needs-work';
   const hasBlockingVerdict = hasBlockingFinding
     || value.blockers.length > 0
@@ -507,8 +538,8 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       && typeof item.source === 'string' && item.source.trim() !== ''
       && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
       && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
-  if (value.findings.length > 0 && allClear) return null;
-  const candidate: Record<string, unknown> = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
+  if (findings.length > 0 && allClear) return null;
+  const candidate: Record<string, unknown> = { ...value, findings, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;
   if (anyNotInspected && candidate.status === 'passed') {
     // An unfinished inspection can never approve; fail closed to inconclusive so
@@ -760,6 +791,9 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
 }
 
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
+  if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)\b|could not resolve (?:host|proxy)|proxy (?:connection|authentication) failed|failed to (?:connect|fetch)/i.test(result.stderr)) {
+    return { reasonCode: 'model-route-network', error: 'The isolated review host could not reach its network service. Check the host connection and proxy settings, then rerun the gate.' };
+  }
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
   if (inspectionPolicyBlocked(result)) {
     return {
@@ -784,17 +818,7 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
   return result.stdout.trim();
 }
 
-function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boolean {
-  if (
-    !isRecord(value)
-    || !Array.isArray(value.coverage)
-    || evidence.status !== 'inconclusive'
-    || evidence.recommendation !== 'inconclusive'
-    || evidence.blockers.length !== 0
-    || evidence.findings.length !== 0
-    || value.coverage.length === 0
-    || value.coverage.some(item => !isRecord(item) || item.status !== 'not-inspected')
-  ) return false;
+function isProgressOnlyReviewText(text: string): boolean {
   const progressOnly = [
     /\b(?:in progress|pending|incomplete|not (?:yet )?complet(?:e|ed)|not yet (?:been )?inspected|inspecting)\b/i,
     /\b(?:review|inspection) continues\b/i,
@@ -803,11 +827,26 @@ function isSupersededProgressResult(value: unknown, evidence: LaneEvidence): boo
     /^not inspected[.!]?$/i,
   ];
   const substantiveReason = /\b(?:because|blocked|unavailable|unable|failed|error|cannot|can't|could not|missing)\b/i;
-  const isProgressOnly = (text: string): boolean => (
-    !substantiveReason.test(text)
-    && progressOnly.some(pattern => pattern.test(text.trim()))
-  );
-  return isProgressOnly(evidence.summary) && isProgressOnly(evidence.completeness);
+  return !substantiveReason.test(text) && progressOnly.some(pattern => pattern.test(text.trim()));
+}
+
+function isExplicitlyIncompleteResult(value: unknown, input: ModelReviewRunInput): boolean {
+  if (!isRecord(value)) return false;
+  if ((value.issueNumber !== undefined && value.issueNumber !== input.issueNumber)
+    || (value.prNumber !== undefined && value.prNumber !== input.prNumber)
+    || (value.headSha !== undefined && value.headSha !== input.headSha)
+    || (value.lane !== undefined && value.lane !== input.lane)) return false;
+  if (value.blockers !== undefined && (!Array.isArray(value.blockers) || value.blockers.length > 0)) return false;
+  if (value.findings !== undefined && (!Array.isArray(value.findings) || value.findings.length > 0)) return false;
+  if (value.status === 'pending') return value.recommendation === undefined || value.recommendation === 'pending' || value.recommendation === 'inconclusive';
+  const notInspected = Array.isArray(value.coverage)
+    && value.coverage.length > 0
+    && value.coverage.every(item => isRecord(item) && item.status === 'not-inspected');
+  if (value.status !== 'inconclusive' && !notInspected) return false;
+  return typeof value.summary === 'string'
+    && typeof value.completeness === 'string'
+    && isProgressOnlyReviewText(value.summary)
+    && isProgressOnlyReviewText(value.completeness);
 }
 
 export async function resolveModelReviewCheckoutState(repoRoot: string): Promise<string> {
@@ -823,7 +862,7 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
     timeout: 30_000,
     windowsHide: true,
   });
-  const status = result.stdout;
+  const status = result.stdout.split('\0').filter(record => !record.startsWith('? ') || !isHostScratchPath(record.slice(2))).join('\0');
   const hash = createHash('sha256');
   hash.update('status\0').update(status);
   const paths = checkoutStatusPaths(status);
@@ -841,16 +880,29 @@ function isInternalReviewPath(path: string): boolean {
     || normalized.startsWith('.qube/aie/reviews/');
 }
 
+function isHostScratchPath(path: string): boolean {
+  // Hosts use these root-level names for transient command files. A tracked
+  // file with the same name remains part of the checkout contract.
+  return /^_tmp_\d+_[a-zA-Z0-9]+$/.test(path);
+}
+
 export function watchModelReviewCheckout(repoRoot: string): ModelReviewCheckoutMonitor {
   let changedPath: string | null = null;
   const startedAt = Date.now();
   let watchError: string | null = null;
+  let trackedScratch: Set<string> | null = null;
+  try {
+    trackedScratch = new Set(execFileSync('git', ['-C', repoRoot, 'ls-files', '-z', '--', '_tmp_*'], {
+      encoding: 'utf8', timeout: 10_000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    }).split('\0'));
+  } catch { /* Without a tracked-file list, no scratch paths are exempt. */ }
   // QUBE requires Node 24 or newer. Recursive Linux watching has been
   // supported since Node 19.1; unavailable filesystem backends still fail
   // closed through the surrounding runModelReview error boundary.
   const watcher: FSWatcher = watch(repoRoot, { recursive: true, encoding: 'utf8' }, (eventType, filename) => {
     const path = filename === null ? null : String(filename);
     if (path === null || isInternalReviewPath(path)) return;
+    if (trackedScratch && isHostScratchPath(path) && !trackedScratch.has(path)) return;
     if (eventType === 'rename') {
       changedPath ??= path;
       return;
@@ -1017,10 +1069,12 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         let priorResult: unknown;
         try { priorResult = JSON.parse(priorText); } catch { continue; }
         const normalizedPriorResult = normalizeSchemaOptionals(priorResult);
+        if (isExplicitlyIncompleteResult(normalizedPriorResult, input)) continue;
         const priorEvidence = strictRoutedLane(normalizedPriorResult, input, provenance);
-        if (priorEvidence && !isSupersededProgressResult(normalizedPriorResult, priorEvidence)) {
+        if (priorEvidence) {
           return captureRawOutput(input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
+        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned an invalid transient Review object.');
       }
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');

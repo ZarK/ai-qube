@@ -98,6 +98,8 @@ describe("Cursor Windows ACP runner", () => {
       forwarded: ["--version"],
     });
     assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "gpt-5.6-luna[reasoning=high]", name: "GPT 5.6 Luna High" }] }] }, "gpt-5.6-luna-high"), "gpt-5.6-luna[reasoning=high]");
+    assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "claude-fable-5-1[thinking=true,effort=high]", name: "Claude Fable 5.1 Thinking High" }] }] }, "claude-fable-5-1-thinking-high"), "claude-fable-5-1[thinking=true,effort=high]");
+    assert.equal(selectCursorAcpModel({ configOptions: [{ id: "model", options: [{ value: "claude-fable-5-1[thinking=false,effort=high]" }] }] }, "claude-fable-5-1-thinking-high"), null);
     for (const effort of ["low", "medium", "high"]) {
       for (const fast of [false, true]) {
         const value = `grok-4.6[effort=${effort},fast=${fast}]`;

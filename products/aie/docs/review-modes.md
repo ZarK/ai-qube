@@ -26,6 +26,14 @@ Executor runs the reviews. The gate starts a model CLI per lane in a fresh read-
 
 Choose this mode when you want Executor to run the lane batch itself, including failover to a second host.
 
+Use `qube pr gate <pr> --dry-run --json --local-review-prompts` to inspect the lane plan. The `qube aie pr gate` path accepts the same flags.
+
+Each host adapter reads its own result envelope. Review results must match the issue, pull request, head, and lane. Ambiguous or incomplete JSON fails closed. Host progress text and prompt fragments do not become review findings.
+
+Root-level, untracked host scratch files named `_tmp_<pid>_<hash>` do not invalidate review. Source edits and changes to tracked files still invalidate the batch. Isolated hosts retain proxy and certificate settings, but do not inherit unrelated credentials. Connection failures report `model-route-network` with a recovery action.
+
+If one lane fails to run, the round remains incomplete. The gate retains valid current-head results, names the failed lane and reason, and reuses completed lanes on retry. Partial results cannot satisfy the required review source or permit a merge.
+
 ### Selected and executed routes
 
 Each accepted isolated lane records both the route selected before execution and the route that produced the evidence. The selected route identifies the configured host, model, effort, and tier. The executed route keeps requested, transport-resolved, and host-reported model identities separate, and records the transport that ran the lane.
