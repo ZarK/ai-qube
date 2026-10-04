@@ -1,0 +1,24 @@
+docs/index.html
+  s_b766bb36afd59e::t_7ae84ac1a2c020 42,64-65,83,249-257,260-261,295-296,381-384,386-485,673,675
+  s_b766bb36afd59e::t_1033ff686aa21d 259,385
+  s_b766bb36afd59e::t_ce4145c86205d8 269,275,676-687
+  s_b766bb36afd59e::t_24634e8752a7a8 258
+README.md
+  s_b766bb36afd59e::t_e34e0d0ce427b4 30-73,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8671b07e62c96a2e9e3950efd093eda68a23a77b",
+  "prompts": {},
+  "sessions": {
+    "s_b766bb36afd59e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4df065d0-614c-4c16-908c-189e7c589925",
+        "model": "unknown"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
