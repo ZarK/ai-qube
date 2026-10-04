@@ -27,6 +27,50 @@ per pull request is edited in place on each run. When a finding is fixed, the
 reviewer replies in its thread and resolves it. See
 [QUBE Review Surfaces](./docs/qube-review-surfaces.md) for the format.
 
+## Setup
+
+`qube init` is a guided setup that asks only the questions that apply to the
+repository. It checks Git and commit identity, then asks for the agent hosts
+and where reviews run. It also asks for the issue tracker, the source of
+automated checks, Continuous Shipping, Umpire continuation, Quality stages, and
+the review publisher. It prints the plan before it writes anything.
+`--dry-run --json` shows the resolved answers without changing files, and
+`--yes` accepts the recommended values.
+
+Setup writes repository settings to `.qube/init.json`, or user defaults to
+`~/.qube/config.json` with `qube init --global`. It also writes each selected
+host's instruction file and `make-it-so` entry point. QUBE stores credential
+references, not values. After setup, open a new session in the agent host and
+send its start command, for example `$make-it-so Complete issue 123, then stop.`
+in Codex.
+
+## Hosts and providers
+
+QUBE configures an agent host. It does not install, sign in to, or wrap the
+host. Install the adapter package for each host and provider you use.
+
+| Host | Adapter | Instruction file | Start command |
+| --- | --- | --- | --- |
+| Codex | `@tjalve/qube-adapter-codex` | `AGENTS.md` | `$make-it-so` |
+| Claude Code | `@tjalve/qube-adapter-claude-code` | `CLAUDE.md` | `/make-it-so` |
+| OpenCode | `@tjalve/qube-adapter-opencode` | `AGENTS.md` | `/make-it-so` |
+| Cursor | `@tjalve/qube-adapter-cursor` | `AGENTS.md` | `/make-it-so` |
+| Grok Build | `@tjalve/qube-adapter-grok-build` | `AGENTS.md` | `/make-it-so` |
+
+Review, task, subagent, model-list, and continuation support differ by host.
+See the [capability matrix](./docs/qube-host-surfaces.md#capability-matrix).
+
+| Provider | Role | Adapter |
+| --- | --- | --- |
+| GitHub | Issues, pull requests, checks, QUBE Review publishing | `@tjalve/qube-adapter-github` |
+| GitLab | Issues, merge requests, pipelines | `@tjalve/qube-adapter-gitlab` |
+| Linear | Issues | `@tjalve/qube-adapter-linear` |
+| Jira | Issues | `@tjalve/qube-adapter-jira` |
+| Jenkins | CI build evidence (read-only) | `@tjalve/qube-adapter-jenkins` |
+
+Selecting a provider without its adapter installed fails with setup guidance.
+QUBE does not fall back to GitHub.
+
 ## Website
 
 The project page lives at `docs/index.html` and is published with GitHub Pages
@@ -49,7 +93,7 @@ The preview server uses port 4173 by default. Set `PORT` to use another port.
 | `@tjalve/aiu` | `aiu` | Umpire decides whether an idle agent can continue safely from trusted local state. |
 | `@tjalve/qube` | `qube` | List and dispatch to the package family from one installed entry point. |
 | `@tjalve/qube-cli` | library | Shared TypeScript CLI metadata, schema, output, safety, and test helpers. |
-| `@tjalve/qube-adapter-*` | library | Host adapters (Claude Code, Codex, Cursor, Grok Build, OpenCode) and provider adapters (GitHub, GitLab, Linear, Jira, Jenkins). |
+| `@tjalve/qube-adapter-*` | library | Host and provider adapters. See [Hosts and providers](#hosts-and-providers). |
 
 ## Install
 
