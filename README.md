@@ -1,18 +1,87 @@
 # QUBE
 
-QUBE combines Quality (aiQ), Umpire (aiU), Bootstrap (aiB), and Executor (aiE).
-The package family supports agent-assisted planning, issue execution, quality
-gates, and continuation policy. Each tool can be installed and used on its own;
-`@tjalve/qube` provides one composer CLI for the installed tools.
+QUBE is a set of command-line tools for agent-assisted work in a git
+repository. It has four parts: Bootstrap, Executor, Quality, and Umpire. The
+name comes from their initials. Each part is its own npm package and works on
+its own. The `@tjalve/qube` composer CLI runs whichever parts are installed.
+
+Work moves through the parts in this order:
+
+1. **Bootstrap** (`aib`) turns an idea into a spec, milestones, and work items.
+2. **Executor** (`aie`) takes a ready issue, starts a branch, opens the pull
+   request, gathers reviews, and completes the issue after merge.
+3. **Quality** (`aiq`) runs the repository's staged gates and records the
+   results as structured evidence.
+4. **Umpire** (`aiu`) decides from trusted local state whether an idle agent
+   can continue, and writes the next prompt or stops.
+
+## QUBE Review
+
+`aie pr gate <pr>` runs review lanes against the pull request head. Each lane
+is an agent with one focus, such as issue-compliance, code-quality, security,
+or performance. The `qube-review[bot]` GitHub App publishes each round as one
+review. The first line gives the verdict, the counts, and the head. A findings
+table follows, and each finding gets one inline comment with a collapsed fix
+prompt for agents. Notes and provenance stay collapsed. A single status comment
+per pull request is edited in place on each run. When a finding is fixed, the
+reviewer replies in its thread and resolves it. See
+[QUBE Review Surfaces](./docs/qube-review-surfaces.md) for the format.
+
+## Setup
+
+`qube init` is a guided setup that asks only the questions that apply to the
+repository. It checks Git and commit identity, then asks for the agent hosts
+and where reviews run. It also asks for the issue tracker, the source of
+automated checks, Continuous Shipping, Umpire continuation, Quality stages, and
+the review publisher. It prints the plan before it writes anything.
+`--dry-run --json` shows the resolved answers without changing files, and
+`--yes` accepts the recommended values.
+
+Setup writes repository settings to `.qube/init.json`, or user defaults to
+`~/.qube/config.json` with `qube init --global`. It also writes each selected
+host's instruction file and `make-it-so` entry point. QUBE stores credential
+references, not values. After setup, open a new session in the agent host and
+send its start command, for example `$make-it-so Complete issue 123, then stop.`
+in Codex.
+
+## Hosts and providers
+
+QUBE configures an agent host. It does not install, sign in to, or wrap the
+host. Install the adapter package for each host and provider you use.
+
+| Host | Adapter | Instruction file | Start command |
+| --- | --- | --- | --- |
+| Codex | `@tjalve/qube-adapter-codex` | `AGENTS.md` | `$make-it-so` |
+| Claude Code | `@tjalve/qube-adapter-claude-code` | `CLAUDE.md` | `/make-it-so` |
+| OpenCode | `@tjalve/qube-adapter-opencode` | `AGENTS.md` | `/make-it-so` |
+| Cursor | `@tjalve/qube-adapter-cursor` | `AGENTS.md` | `/make-it-so` |
+| Grok Build | `@tjalve/qube-adapter-grok-build` | `AGENTS.md` | `/make-it-so` |
+
+Review, task, subagent, model-list, and continuation support differ by host.
+See the [capability matrix](./docs/qube-host-surfaces.md#capability-matrix).
+
+| Provider | Role | Adapter |
+| --- | --- | --- |
+| GitHub | Issues, pull requests, checks, QUBE Review publishing | `@tjalve/qube-adapter-github` |
+| GitLab | Issues, merge requests, pipelines | `@tjalve/qube-adapter-gitlab` |
+| Linear | Issues | `@tjalve/qube-adapter-linear` |
+| Jira | Issues | `@tjalve/qube-adapter-jira` |
+| Jenkins | CI build evidence (read-only) | `@tjalve/qube-adapter-jenkins` |
+
+Selecting a provider without its adapter installed fails with setup guidance.
+QUBE does not fall back to GitHub.
 
 ## Website
 
-The public-ready QUBE landing page lives at `docs/index.html` and is designed
-for GitHub Pages at https://zark.github.io/ai-qube/. Preview it locally with:
+The project page lives at `docs/index.html` and is published with GitHub Pages
+at https://zark.github.io/ai-qube/. It follows the brand assets in
+`docs/design/` and has light and dark themes. Preview it locally with:
 
 ```sh
 pnpm run site:preview
 ```
+
+The preview server uses port 4173 by default. Set `PORT` to use another port.
 
 ## Packages
 
@@ -24,6 +93,7 @@ pnpm run site:preview
 | `@tjalve/aiu` | `aiu` | Umpire decides whether an idle agent can continue safely from trusted local state. |
 | `@tjalve/qube` | `qube` | List and dispatch to the package family from one installed entry point. |
 | `@tjalve/qube-cli` | library | Shared TypeScript CLI metadata, schema, output, safety, and test helpers. |
+| `@tjalve/qube-adapter-*` | library | Host and provider adapters. See [Hosts and providers](#hosts-and-providers). |
 
 ## Install
 
@@ -103,6 +173,7 @@ for stored state. One-shot is unavailable. Use
 packages/
   qube-cli/       shared public CLI library
   qube-core/      private shared workspace contracts
+  qube-testkit/   adapter conformance suites and fixtures
 products/
   aib/            planning CLI
   aie/            execution CLI
@@ -110,9 +181,19 @@ products/
   aiu/            continuation policy CLI
   qube/           composer CLI
 adapters/
-  github/         GitHub provider capability adapter
-  opencode/       OpenCode host capability adapter
+  claude-code/    Claude Code host adapter
+  codex/          Codex host adapter
+  cursor/         Cursor host adapter
+  grok-build/     Grok Build host adapter
+  opencode/       OpenCode host adapter
+  github/         GitHub provider adapter, including QUBE Review publishing
+  gitlab/         GitLab provider adapter
+  linear/         Linear work provider adapter
+  jira/           Jira work provider adapter
+  jenkins/        Jenkins CI adapter
 docs/
+  index.html      project page (GitHub Pages)
+  design/         brand marks, icons, and the brand board
 ```
 
 Public package READMEs live beside the package that npm publishes. They contain
@@ -126,5 +207,6 @@ boundaries and agent harness surfaces. `docs/release-controls.md` and
 - [Commands](./docs/qube-command-surfaces.md)
 - [Host and provider integrations](./docs/qube-host-surfaces.md)
 - [Paths and artifacts](./docs/qube-paths-and-artifacts.md)
+- [QUBE Review surfaces](./docs/qube-review-surfaces.md)
 - [Contribution](./CONTRIBUTING.md)
 - [Release controls](./docs/release-controls.md)

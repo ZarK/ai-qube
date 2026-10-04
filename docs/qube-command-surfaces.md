@@ -6,8 +6,6 @@ For the published package, use the [QUBE 0.2.12 command reference](https://githu
 
 Generated from the composer command registry. Do not edit by hand; regenerate with `pnpm --dir products/qube run docs:surfaces` after a build.
 
-See also the static command-flow visual: [QUBE Command Surface: Idea to Complete Implementation](./qube-command-surface-visual.html).
-
 ## Composer-level commands
 
 | Command | Description |
