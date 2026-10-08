@@ -180,6 +180,14 @@ It inherits user-global settings. It stores only repository settings that have
 a different value. It can also create or update repository integration assets
 that the selected harness requires. These assets are not configuration copies.
 
+### Work locally
+
+Use `qube mode local` to work directly on a task without the issue and pull
+request cycle. This works in a plain folder and does not require full
+initialization. It preserves provider and review settings. See
+[local development](qube-local-mode.md) for prompts, mode status, and returning
+to shipping.
+
 ### Change hosts after setup
 
 Use `qube hosts` to change host roles after setup. It uses the existing host

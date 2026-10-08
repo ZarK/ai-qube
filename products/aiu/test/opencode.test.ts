@@ -22,6 +22,37 @@ after(async () => {
 });
 
 describe("OpenCode continuation runtime", () => {
+  it("suppresses local and malformed workspace continuation before trusted state or delivery", async () => {
+    for (const fixture of [
+      { mode: "local", suppression: "workspace-local-mode" },
+      { mode: "unexpected", suppression: "workspace-mode-invalid" },
+    ] as const) {
+      const target = await mkdtemp(path.join(tmpdir(), `aiu-opencode-mode-${fixture.mode}-`));
+      tempContinuationRoots.add(target);
+      await mkdir(path.join(target, ".qube"), { recursive: true });
+      await writeFile(path.join(target, ".qube", "mode.json"), JSON.stringify({ version: 1, mode: fixture.mode }));
+      let trustedStateLoads = 0;
+      let deliveries = 0;
+
+      const result = await runAiuOpenCodeContinuation(
+        { type: "session.idle", payload: { sessionId: "ses_local", selectedSessionId: "ses_local" } },
+        {
+          cwd: target,
+          loadTrustedStates: () => { trustedStateLoads += 1; return []; },
+          deliverPrompt: () => { deliveries += 1; return { delivered: true }; },
+        },
+      );
+
+      assert.equal(result.handled, true);
+      assert.ok(result.metadata?.suppressions?.includes(fixture.suppression));
+      assert.equal(result.decision, undefined);
+      assert.equal(result.prompt, undefined);
+      assert.equal(trustedStateLoads, 0);
+      assert.equal(deliveries, 0);
+      assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(target, getDefaultAiuConfig()), "opencode"), undefined);
+    }
+  });
+
   it("queues the managed command through the installed server plugin client for OpenCode sessionID events", async () => {
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-"));
     tempContinuationRoots.add(target);

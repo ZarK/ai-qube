@@ -5,6 +5,7 @@ dist/
 *.log
 
 # Local Executor config overlay - never commit publisher credentials or paths.
+.qube/mode.json
 .qube/aie/config.local.json
 aie.config.local.json
 aib.config.local.json

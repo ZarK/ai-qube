@@ -1,5 +1,5 @@
 import { grokBuildRouteRunnerPath } from '@tjalve/qube-adapter-grok-build';
-import { getAgentHostCapabilityProfile } from '@tjalve/qube-core';
+import { getAgentHostCapabilityProfile, renderLocalDevelopmentPrompt, workspaceModeInstructions } from '@tjalve/qube-core';
 import { Config } from './config/index.js';
 import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
 
@@ -371,6 +371,10 @@ export function renderAgentInstructions(config: Config, hosts: AgentHostProfile[
     : 'Autonomous review and shipping are disabled.';
   return `## Executor Issue Workflow
 
+Workspace mode:
+
+${workspaceModeInstructions}
+
 This repository uses Executor for issue-driven development. ${renderWorkReviewIntro(config)} ${workProviderName(config)} work item checklists and comments are the durable shared task record.
 
 ${renderAutonomousAuthority(config, hosts, workspaceRunner)}
@@ -431,6 +435,16 @@ export function renderMakeItSoCommand(config: Config, hosts: readonly AgentHostP
   return `---
 description: ${description}
 ---
+
+Before any issue, branch, Git, provider, or shipping preflight, run \`qube mode --json\` from the current workspace.
+
+${workspaceModeInstructions}
+
+If the reported mode is local, follow these instructions and stop before the shipping procedure below:
+
+${renderLocalDevelopmentPrompt().trim()}
+
+If the reported mode is shipping, continue with the Executor procedure below.
 
 ${introduction}
 

@@ -27,7 +27,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     if (process.env.FAKE_TIMEOUT === "1") return;
     send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
   }
-  else if (message.method === "authenticate") send({ jsonrpc: "2.0", id: message.id, result: {} });
+  else if (message.method === "authenticate") setTimeout(() => send({ jsonrpc: "2.0", id: message.id, result: {} }), process.env.FAKE_SLOW_AUTH === "1" ? 5_000 : 0);
   else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: {
     sessionId: "fresh-acp",
     configOptions: [
@@ -77,6 +77,7 @@ function invoke({ mode = "success", transportModel = "gpt-5.6-luna[reasoning=hig
         ...(mode === "exit" ? { FAKE_EXIT: "1" } : {}),
         ...(mode === "malformed" ? { FAKE_MALFORMED: "1" } : {}),
         ...(mode === "timeout" ? { FAKE_TIMEOUT: "1" } : {}),
+        ...(mode === "slow-auth" ? { FAKE_SLOW_AUTH: "1" } : {}),
         ...(transportModel === null ? { FAKE_FORBID_MODEL: "1" } : {}),
         ...(models ? { FAKE_MODELS: JSON.stringify(models) } : {}),
         FAKE_PROMPT_MARKER: promptMarker,
@@ -91,6 +92,13 @@ function invoke({ mode = "success", transportModel = "gpt-5.6-luna[reasoning=hig
 }
 
 describe("Cursor Windows ACP runner", () => {
+  it("allows bounded authentication latency without sending a prompt", () => {
+    const result = invoke({ probe: true, mode: "slow-auth" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).transport, "acp");
+    assert.equal(result.prompted, false);
+  });
+
   it("parses bounded runner arguments and selects an unambiguous model option", () => {
     assert.deepEqual(parseRunnerOptions(["--cursor-executable", "cursor", "--cursor-prefix-json", "[]", "--", "--version"]), {
       cursorExecutable: "cursor",

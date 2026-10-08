@@ -1,5 +1,8 @@
+import path from "node:path";
+
+import { readWorkspaceMode, type WorkspaceModeState } from "@tjalve/qube-core";
 import { AIU_REASON_CODE_CATALOG, createAiuTrustedStateEnvelope, type AiuReasonCodeDefinition, type AiuStateValueKind, type AiuTrustedStateEnvelope } from "./state.js";
-import { type AiuConfigLoadResult, loadAiuConfig } from "./config.js";
+import { getDefaultAiuConfig, type AiuConfigLoadResult, loadAiuConfig } from "./config.js";
 import { readAiuContinuationState, resolveAiuContinuationPaths, type AiuContinuationState } from "./continuation_store.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
 import { renderAiuContinuationPrompt, type AiuContinuationPrompt } from "./prompt.js";
@@ -14,6 +17,7 @@ import { decideAiuWhipContinuation, readAiuWhipState, type AiuWhipContinuationDe
 
 export const AIU_STATUS_ERROR_CODES = [
   "status-config-invalid",
+  "status-workspace-mode-invalid",
   "status-trusted-command-failed",
   ...AIU_TRUSTED_ADAPTER_ERROR_CODES,
 ] as const;
@@ -27,6 +31,7 @@ export interface AiuStatusOptions {
 }
 
 export interface AiuStatusReport {
+  readonly workspaceMode: AiuStatusWorkspaceMode;
   readonly config: {
     readonly path: string;
     readonly found: boolean;
@@ -49,6 +54,16 @@ export interface AiuStatusReport {
   readonly errors: readonly AiuStatusError[];
   readonly warnings: readonly AiuStatusWarning[];
 }
+
+export type AiuStatusWorkspaceMode = Readonly<WorkspaceModeState & {
+  readonly valid: true;
+}> | Readonly<{
+  readonly mode: "unknown";
+  readonly workspaceRoot: string;
+  readonly configPath: string;
+  readonly configured: boolean;
+  readonly valid: false;
+}>;
 
 export interface AiuStatusPaths {
   readonly stateDir: string;
@@ -164,9 +179,26 @@ export interface AiuStatusWarning {
 }
 
 export async function runAiuStatus(options: AiuStatusOptions = {}): Promise<AiuStatusReport> {
-  const configLoad = loadAiuConfig(resolveConfigOptions(options));
-  if (!configLoad.ok) {
-    return createAiuStatusReport(configLoad, []);
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  let workspaceMode: AiuStatusWorkspaceMode;
+  let workspaceModeError: string | undefined;
+  try {
+    workspaceMode = Object.freeze({ ...readWorkspaceMode(cwd), valid: true as const });
+  } catch (error) {
+    workspaceMode = Object.freeze({
+      mode: "unknown" as const,
+      workspaceRoot: cwd,
+      configPath: path.join(cwd, ".qube", "mode.json"),
+      configured: false,
+      valid: false as const,
+    });
+    workspaceModeError = error instanceof Error ? error.message : String(error);
+  }
+  const configLoad = !workspaceMode.valid || workspaceMode.mode === "local"
+    ? defaultStatusConfig(workspaceMode.workspaceRoot)
+    : loadAiuConfig(resolveConfigOptions(options));
+  if (!workspaceMode.valid || workspaceMode.mode === "local" || !configLoad.ok) {
+    return createAiuStatusReport(configLoad, [], workspaceMode, workspaceModeError);
   }
   const adapterResults: AiuTrustedStateAdapterResult[] = [];
 
@@ -177,15 +209,28 @@ export async function runAiuStatus(options: AiuStatusOptions = {}): Promise<AiuS
     }));
   }
 
-  return createAiuStatusReport(configLoad, adapterResults);
+  return createAiuStatusReport(configLoad, adapterResults, workspaceMode);
 }
 
 export function createAiuStatusReport(
   configLoad: AiuConfigLoadResult,
   adapterResults: readonly AiuTrustedStateAdapterResult[],
+  workspaceMode: AiuStatusWorkspaceMode = Object.freeze({
+    mode: "shipping",
+    workspaceRoot: configLoad.repoRoot,
+    configPath: path.join(configLoad.repoRoot, ".qube", "mode.json"),
+    configured: false,
+    valid: true,
+  }),
+  workspaceModeError?: string,
 ): AiuStatusReport {
   const inputEnvelopes = adapterResults.flatMap((result) => result.ok ? result.states : []);
   const errors = [
+    ...(workspaceModeError ? [{
+      code: "status-workspace-mode-invalid" as const,
+      message: workspaceModeError,
+      path: workspaceMode.configPath,
+    }] : []),
     ...configLoad.diagnostics
       .filter((diagnostic) => diagnostic.severity === "error")
       .map((diagnostic) => ({
@@ -229,7 +274,7 @@ export function createAiuStatusReport(
   const decision = decideAiuContinuation({
     states: decisionStates,
     policy: {
-      modes: configLoad.config.continuation.modes,
+      modes: workspaceMode.valid && workspaceMode.mode === "shipping" ? configLoad.config.continuation.modes : ["stop"],
       stopOnUnknownState: configLoad.config.continuation.stopOnUnknownState,
       stopOnUnsafeState: configLoad.config.continuation.stopOnUnsafeState,
       stopOnSupplyChainApprovalBlock: configLoad.config.continuation.stopOnSupplyChainApprovalBlock,
@@ -243,6 +288,7 @@ export function createAiuStatusReport(
   const prompt = renderAiuContinuationPrompt({ decision, config: configLoad.config });
 
   return Object.freeze({
+    workspaceMode,
     config: Object.freeze({
       path: configLoad.selectedPath,
       found: configLoad.found,
@@ -278,6 +324,9 @@ export function formatAiuStatusReport(report: AiuStatusReport): string {
   const selected = report.decision.selectedItem ? ` ${formatSelectedItem(report.decision.selectedItem)}` : "";
   const sourceLines = report.normalizedStateSummary.sources.map((source) => `- ${source.sourceId}: ${source.stateKind} ${source.status}/${source.freshness} observed ${source.observedAt}`);
   const lines = [
+    `workspaceMode: ${report.workspaceMode.mode}`,
+    `workspace: ${report.workspaceMode.workspaceRoot}`,
+    `workspaceModeConfig: ${report.workspaceMode.configPath}`,
     `decision: ${report.decision.kind}`,
     `mode: ${report.decision.selectedMode}`,
     `prompt: ${report.prompt.kind} ${report.prompt.fingerprint}`,
@@ -449,4 +498,16 @@ function formatSelectedItem(item: AiuContinuationDecision["selectedItem"]): stri
 
 function resolveConfigOptions(options: AiuStatusOptions) {
   return options.configPath ? { cwd: options.cwd, configPath: options.configPath } : { cwd: options.cwd };
+}
+
+function defaultStatusConfig(workspaceRoot: string): AiuConfigLoadResult {
+  return Object.freeze({
+    ok: true,
+    repoRoot: workspaceRoot,
+    selectedPath: path.join(workspaceRoot, ".qube", "aiu", "config.json"),
+    found: false,
+    defaultsUsed: true,
+    config: getDefaultAiuConfig(),
+    diagnostics: Object.freeze([]),
+  });
 }

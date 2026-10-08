@@ -1944,7 +1944,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewConcurrency = 1;
     config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
-    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
     let changedCheckout = false;
     const modelRouteProcess = async invocation => {
       const prompt = readFileSync(invocation.promptPath, 'utf8');
@@ -1952,12 +1953,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       if (!changedCheckout) {
         changedCheckout = true;
         writeFileSync(join(repo, 'README.md'), 'fixture changed during review\n');
-        await new Promise(resolve => setTimeout(resolve, 100));
       }
       const body = {
         issueNumber: 93,
         prNumber: 12,
-        headSha: 'abc123',
+        headSha,
         lane,
         status: 'passed',
         severity: 'none',
@@ -1977,13 +1977,13 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
     };
 
-    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe' });
 
     const routed = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
     assert.ok(routed.length >= 2);
     assert.ok(routed.every(lane => lane.status === 'failed' && lane.blocker === 'model-route-checkout-mismatch'), JSON.stringify(routed.map(lane => ({ lane: lane.lane, status: lane.status, blocker: lane.blocker }))));
     for (const lane of routed) {
-      assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`)), false);
+      assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', headSha, `${lane.lane}.json`)), false);
     }
   });
 

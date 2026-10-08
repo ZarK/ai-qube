@@ -68,9 +68,9 @@ async function findRepoRoot(startDir: string): Promise<string> {
 
 export async function loadConfigFile(
   startDir: string = process.cwd(),
-  options: { readonly homeDirectory?: string } = {},
+  options: { readonly homeDirectory?: string; readonly workspaceRoot?: string } = {},
 ): Promise<ConfigLoadResult> {
-  const root = await findRepoRoot(startDir);
+  const root = options.workspaceRoot === undefined ? await findRepoRoot(startDir) : resolve(options.workspaceRoot);
   const configPath = selectConfigPath(root);
   const overlayPath = overlayConfigPath(configPath);
   const globalConfigPath = userConfigPath(options.homeDirectory);

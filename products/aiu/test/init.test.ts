@@ -898,6 +898,7 @@ async function createRepoRoot(): Promise<string> {
   const target = await mkdtemp(path.join(tmpdir(), "aiu-init-"));
   tempRoots.push(target);
   await mkdir(path.join(target, ".git"));
+  await writeFile(path.join(target, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
   return target;
 }
 
