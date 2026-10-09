@@ -232,7 +232,7 @@ function normalizeAutomationAuthor(login: string): string {
   return login.toLowerCase().replace(/^app\//, '').replace(/\[bot\]$/, '');
 }
 
-export function isBlockingPullRequest(pr: PullRequestSummary): boolean {
+export function isBlockingPullRequest(pr: Pick<PullRequestSummary, 'isDraft' | 'ignored'>): boolean {
   return !pr.isDraft && !pr.ignored;
 }
 

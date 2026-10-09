@@ -175,8 +175,8 @@ export interface StatusResult {
     blockedWork: StatusWorkSummary[];
   };
   review: StatusReviewState;
-  openPullRequests: PullRequestSummary[];
-  blockingPullRequests: PullRequestSummary[];
+  openPullRequests: PullRequestSummary[] | null;
+  blockingPullRequests: PullRequestSummary[] | null;
   pullRequestError: string | null;
   gates: StatusGateState;
   reviewGate: ReviewGateResult | null;
@@ -202,11 +202,15 @@ interface QueueState {
   queue: Queue;
 }
 
-interface PullRequestState {
+type PullRequestState = {
   openPullRequests: PullRequestSummary[];
   blockingPullRequests: PullRequestSummary[];
+  pullRequestError: null;
+} | {
+  openPullRequests: null;
+  blockingPullRequests: null;
   pullRequestError: string | null;
-}
+};
 
 const EMPTY_QUEUE: Queue = {
   items: [],
@@ -301,8 +305,8 @@ function configErrorStatus(context: StatusServiceContext): StatusResult {
     expectedBranch: null,
     queue,
     review,
-    openPullRequests: [],
-    blockingPullRequests: [],
+    openPullRequests: null,
+    blockingPullRequests: null,
     pullRequestError: 'Trusted Executor config is invalid.',
     gates,
     reviewGate: null,
@@ -357,12 +361,12 @@ async function inspectReview(context: StatusServiceContext): Promise<StatusRevie
 }
 
 async function inspectPullRequests(context: StatusServiceContext): Promise<PullRequestState> {
-  if (context.config.providers.review.kind !== 'github') return { openPullRequests: [], blockingPullRequests: [], pullRequestError: null };
+  if (context.config.providers.review.kind !== 'github') return { openPullRequests: null, blockingPullRequests: null, pullRequestError: null };
   try {
     const openPullRequests = await context.readOpenPullRequests();
     return { openPullRequests, blockingPullRequests: openPullRequests.filter(isBlockingPullRequest), pullRequestError: null };
   } catch (error: unknown) {
-    return { openPullRequests: [], blockingPullRequests: [], pullRequestError: error instanceof Error ? error.message : String(error) };
+    return { openPullRequests: null, blockingPullRequests: null, pullRequestError: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -378,7 +382,7 @@ function workSummary(item: QueueItem): StatusWorkSummary {
 function buildAiuStatusStates(input: {
   queue: StatusResult['queue'];
   review: StatusReviewState;
-  blockingPullRequests: PullRequestSummary[];
+  blockingPullRequests: PullRequestSummary[] | null;
   decision: StatusDecision;
   autonomousMode: boolean;
 }): readonly AiuStatusState[] {
@@ -421,7 +425,8 @@ function buildAiuStatusStates(input: {
     }),
   ];
   const currentReviewSelected = input.queue.activeWork.length > 0
-    || (input.decision.reasonCodes.includes('open-review-before-new-work') && String(input.blockingPullRequests[0]?.number) === input.review.item?.key.id);
+    || (input.decision.reasonCodes.includes('open-review-before-new-work')
+      && (input.blockingPullRequests === null || String(input.blockingPullRequests[0]?.number) === input.review.item?.key.id));
   if (canRecoverWorkflow && currentReviewSelected && input.review.state === 'available' && input.review.item) {
     states.push(toAiuReview(input.review.item, action));
   }
@@ -516,9 +521,13 @@ function decideStatus(input: { context: StatusServiceContext; repository: RepoSt
     return { state: 'stop', reasonCodes: ['dirty-checkout'], nextCommand: 'git status', summary: 'The checkout has uncommitted changes that are not tied to one active issue.' };
   }
   if (input.activeItems.length === 0 && input.context.config.blockOnOpenPRs) {
-    if (input.pullRequests.pullRequestError) return { state: 'unknown', reasonCodes: ['review-state-unavailable'], nextCommand: 'aie doctor --json', summary: `Open pull request check failed: ${input.pullRequests.pullRequestError}` };
+    if (input.pullRequests.pullRequestError !== null) return { state: 'unknown', reasonCodes: ['review-state-unavailable'], nextCommand: 'aie doctor --json', summary: `Open pull request check failed: ${input.pullRequests.pullRequestError}` };
     const blockingPullRequests = input.pullRequests.blockingPullRequests;
-    if (blockingPullRequests.length > 0) return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${blockingPullRequests[0].number} --json`, summary: `Open pull requests block new issue work: ${blockingPullRequests.map(pr => `#${pr.number}`).join(', ')}.` };
+    if (blockingPullRequests === null) {
+      const review = input.review.item;
+      if (input.review.state === 'unavailable' || review?.state === 'unknown') return { state: 'unknown', reasonCodes: ['review-state-unavailable'], nextCommand: 'aie doctor --json', summary: 'Current review state is unavailable; Executor cannot safely start new work.' };
+      if (review && (review.state === 'open' || review.state === 'draft') && isBlockingPullRequest({ isDraft: review.state === 'draft', ignored: false })) return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${review.key.id} --json`, summary: `Open review ${review.displayId} blocks new issue work.` };
+    } else if (blockingPullRequests.length > 0) return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${blockingPullRequests[0].number} --json`, summary: `Open pull requests block new issue work: ${blockingPullRequests.map(pr => `#${pr.number}`).join(', ')}.` };
   }
 
   if (input.activeItems.length === 1) return decideActiveWork(input.activeItems[0], input);

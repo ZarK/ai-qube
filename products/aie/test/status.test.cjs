@@ -73,11 +73,13 @@ function makeJiraWork(id, title, status) {
 }
 
 function makeReview(number, options = {}) {
+  const providerId = options.providerId ?? 'github';
+  const url = providerId === 'gitlab' ? `https://gitlab.example.com/example/repo/-/merge_requests/${number}` : `https://github.com/example/repo/pull/${number}`;
   return normalizeReviewItem({
-    key: { providerId: 'github', id: String(number) },
-    displayId: `#${number}`,
+    key: { providerId, id: String(number) },
+    displayId: `${providerId === 'gitlab' ? '!' : '#'}${number}`,
     title: options.title ?? `PR ${number}`,
-    url: `https://github.com/example/repo/pull/${number}`,
+    url,
     sourceRef: options.sourceRef ?? 'head-sha',
     targetRef: 'main',
     state: options.state ?? 'open',
@@ -86,7 +88,7 @@ function makeReview(number, options = {}) {
     feedback: options.feedback ?? [],
     checks: options.checks ?? [],
     trustedMetadata: { number, headRefOid: 'head-sha', reviewRequests: [], comments: [], latestReviews: [], trustedMarkerAuthor: null },
-    source: { providerId: 'github', resourceKind: 'review-item', resourceId: String(number), url: `https://github.com/example/repo/pull/${number}`, metadata: { number } },
+    source: { providerId, resourceKind: 'review-item', resourceId: String(number), url, metadata: { number } },
   });
 }
 
@@ -141,7 +143,7 @@ function makeContext(input = {}) {
       inspectBranch: async item => ({ branchName: `issue/${item.key.id}-${item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`, currentBranch: repoState?.activeRef?.name ?? null, matches: false, exists: false, validName: true, validationError: null, repoState }),
     },
     reviewProvider: {
-      id: 'github',
+      id: config.providers.review.kind,
       capabilities: () => ({ loadReview: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true }),
     },
     readCurrentReview: async () => review,
@@ -163,6 +165,8 @@ describe('status service', () => {
     assert.equal(result.ok, true);
     assert.equal(result.decision.state, 'continue');
     assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+    assert.deepEqual(result.openPullRequests, []);
+    assert.deepEqual(result.blockingPullRequests, []);
     assert.equal(result.decision.nextCommand, 'aie start next');
     assert.equal(result.queue.nextWork.number, 76);
     assert.equal(result.providers.work.id, 'github');
@@ -390,6 +394,57 @@ describe('status service', () => {
 
     assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
     assert.equal(result.pullRequestError, null);
+    assert.equal(result.openPullRequests, null);
+    assert.equal(result.blockingPullRequests, null);
+  });
+
+  for (const state of ['open', 'draft']) {
+    it(`${state === 'open' ? 'waits on an open' : 'allows new work with a draft'} current GitLab merge request`, async () => {
+      const config = makeConfig({ blockOnOpenPRs: true });
+      config.providers.review.kind = 'gitlab';
+      const context = makeContext({
+        config,
+        workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+        review: { item: makeReview(90, { providerId: 'gitlab', state }), pr: null, warning: null },
+      });
+      context.readOpenPullRequests = async () => assert.fail('GitHub pull requests must not be queried');
+
+      const result = await buildStatus(context);
+
+      assert.equal(result.providers.work.id, 'github');
+      assert.equal(result.providers.review.id, 'gitlab');
+      assert.equal(result.openPullRequests, null);
+      assert.equal(result.blockingPullRequests, null);
+      assert.equal(result.pullRequestError, null);
+      assert.equal(result.decision.state, state === 'open' ? 'wait' : 'continue');
+      assert.deepEqual(result.decision.reasonCodes, [state === 'open' ? 'open-review-before-new-work' : 'start-next-work']);
+      assert.equal(result.decision.nextCommand, state === 'open' ? 'aie pr gate 90 --json' : 'aie start next');
+      const review = result.states.find(entry => entry.kind === 'review');
+      if (state === 'open') {
+        assert.equal(review.targetId, '90');
+        assert.deepEqual(review.nextAction.argv, ['aie', 'pr', 'gate', '90', '--json']);
+      } else {
+        assert.equal(review, undefined);
+      }
+    });
+  }
+
+  it('reports unknown when GitLab current review state is unavailable', async () => {
+    const config = makeConfig({ blockOnOpenPRs: true });
+    config.providers.review.kind = 'gitlab';
+    const context = makeContext({ config, workItems: [makeWork(77, 'Next issue', ['S-Ready'])] });
+    context.readCurrentReview = async () => { throw new Error('Merge request state unavailable'); };
+    context.readOpenPullRequests = async () => assert.fail('GitHub pull requests must not be queried');
+
+    const result = await buildStatus(context);
+
+    assert.equal(result.review.state, 'unavailable');
+    assert.equal(result.openPullRequests, null);
+    assert.equal(result.blockingPullRequests, null);
+    assert.equal(result.decision.state, 'unknown');
+    assert.deepEqual(result.decision.reasonCodes, ['review-state-unavailable']);
+    assert.equal(result.decision.nextCommand, 'aie doctor --json');
+    assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['stop']);
   });
 
   it('reports an unknown state when the required pull request check fails', async () => {
@@ -401,8 +456,28 @@ describe('status service', () => {
     assert.equal(result.decision.state, 'unknown');
     assert.deepEqual(result.decision.reasonCodes, ['review-state-unavailable']);
     assert.equal(result.pullRequestError, 'Pull request state unavailable');
+    assert.equal(result.openPullRequests, null);
+    assert.equal(result.blockingPullRequests, null);
     assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['stop']);
   });
+
+  for (const state of ['open', 'draft']) {
+    it(`reports unknown when pull request enumeration fails with an observed ${state} current review`, async () => {
+      const context = makeContext({
+        workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+        review: { item: makeReview(90, { state }), pr: null, warning: null },
+      });
+      context.readOpenPullRequests = async () => { throw new Error(); };
+
+      const result = await buildStatus(context);
+
+      assert.equal(result.decision.state, 'unknown');
+      assert.deepEqual(result.decision.reasonCodes, ['review-state-unavailable']);
+      assert.equal(result.openPullRequests, null);
+      assert.equal(result.blockingPullRequests, null);
+      assert.equal(result.pullRequestError, '');
+    });
+  }
 
   it('allows new work when a disabled pull request check fails', async () => {
     const result = await buildStatus(makeContext({
