@@ -8,6 +8,7 @@ import type {
   RunStageConfigurations,
   StageId,
 } from "./contracts.js";
+import { isIgnoredInput } from "./files.js";
 import { ToolRunner } from "./tool-runner.js";
 
 export type RunnerExecutionContext = {
@@ -110,6 +111,11 @@ export function getRunnerExecutionContext(): RunnerExecutionContext {
 
 export function getRunnerGraph(): ProjectGraph | undefined {
   return getRunnerExecutionContext().graph;
+}
+
+export function isIgnoredRunnerInput(file: string): boolean {
+  const { cwd, ignore } = getRunnerExecutionContext();
+  return isIgnoredInput(file, cwd, ignore);
 }
 
 export function getRunnerCache(): CacheService {

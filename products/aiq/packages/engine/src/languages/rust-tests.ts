@@ -33,6 +33,7 @@ import {
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
 } from "./shared-metrics-support.js";
 import {
   addCachedMetricDuration,
@@ -176,14 +177,18 @@ export async function runRustMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "Rust",
+    files[0] ?? runtime.cwd,
+  );
 }
 
 async function runRustTestStage(

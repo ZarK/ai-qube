@@ -171,19 +171,14 @@ export async function createRunRequest(
     parsed.diffOnly &&
     selectedManifest.files.length > 0 &&
     hasDiffOnlyFullRunStages(resolvedConfig.stages)
-      ? {
-          files: (
-            await normalizeFileManifest(
-              {
-                files: await collectGitWorkspaceFiles(io.cwd, selectedManifest.files),
-                source: manifest.source,
-                ignore: resolvedConfig.config.inputs.ignore,
-              },
-              io.cwd,
-            )
-          ).files,
-          source: manifest.source,
-        }
+      ? await normalizeFileManifest(
+          {
+            files: await collectGitWorkspaceFiles(io.cwd, selectedManifest.files),
+            source: manifest.source,
+            ignore: resolvedConfig.config.inputs.ignore,
+          },
+          io.cwd,
+        )
       : selectedManifest;
 
   const loadedLayout = await resolveRequestLayout(parsed, io, options, requestManifest.files);

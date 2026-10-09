@@ -3,11 +3,12 @@ import path from "node:path";
 import ts from "typescript";
 
 type ScanState = {
-  rust: boolean;
+  extension: string;
   blockDepth: number;
   index: number;
   mode: "code" | "block" | "line" | "literal";
   quote: string;
+  escapes: boolean;
   verbatim: boolean;
   lines: Set<number>;
   line: number;
@@ -17,7 +18,7 @@ export function countSourceLines(source: string, file: string): number {
   if (/\.[cm]?[jt]sx?$/iu.test(path.extname(file))) {
     return countJavaScriptSourceLines(source, file);
   }
-  return countDelimitedSourceLines(source, path.extname(file).toLowerCase() === ".rs");
+  return countDelimitedSourceLines(source, path.extname(file).toLowerCase());
 }
 
 function countJavaScriptSourceLines(source: string, file: string): number {
@@ -44,13 +45,14 @@ function countJavaScriptSourceLines(source: string, file: string): number {
   return lines.size;
 }
 
-function countDelimitedSourceLines(source: string, rust: boolean): number {
+function countDelimitedSourceLines(source: string, extension: string): number {
   const state: ScanState = {
-    rust,
+    extension,
     blockDepth: 0,
     index: 0,
     mode: "code",
     quote: "",
+    escapes: true,
     verbatim: false,
     lines: new Set(),
     line: 1,
@@ -74,7 +76,7 @@ function scanCharacter(source: string, state: ScanState): void {
     return;
   }
   if (state.mode === "block") {
-    if (state.rust && source.startsWith("/*", state.index)) {
+    if ([".rs", ".kt", ".kts"].includes(state.extension) && source.startsWith("/*", state.index)) {
       state.blockDepth += 1;
       state.index += 2;
     } else if (source.startsWith("*/", state.index)) {
@@ -94,16 +96,18 @@ function scanCharacter(source: string, state: ScanState): void {
 function scanLiteral(source: string, state: ScanState): void {
   const current = source[state.index] ?? "";
   if (current.trim().length > 0) state.lines.add(state.line);
-  if (!state.verbatim && current === "\\" && source[state.index + 1] !== "\n") {
+  if (state.escapes && current === "\\" && source[state.index + 1] !== "\n") {
     state.index += 2;
     return;
   }
-  if (current === state.quote) {
+  if (source.startsWith(state.quote, state.index)) {
     if (state.verbatim && source[state.index + 1] === state.quote) {
       state.index += 2;
       return;
     }
     state.mode = "code";
+    state.index += state.quote.length;
+    return;
   }
   state.index += 1;
 }
@@ -122,16 +126,51 @@ function scanCode(source: string, state: ScanState): void {
   }
   const current = source[state.index] ?? "";
   if (current.trim().length > 0) state.lines.add(state.line);
+  if (scanRawLiteral(source, state)) return;
   const characterLiteral =
     current === "'" &&
-    (!state.rust ||
+    (state.extension !== ".rs" ||
       /^'(?:[^'\\\r\n]|\\(?:[nrt\\0'"]|x[\da-f]{2}|u\{[\da-f_]+\}))'/iu.test(
         source.slice(state.index),
       ));
   if (current === '"' || characterLiteral || current === "`") {
     state.quote = current;
-    state.verbatim = current === '"' && source[state.index - 1] === "@";
+    state.verbatim =
+      state.extension === ".cs" && current === '"' && isVerbatimQuote(source, state.index);
+    state.escapes = !state.verbatim && current !== "`";
     state.mode = "literal";
   }
   state.index += 1;
+}
+
+function scanRawLiteral(source: string, state: ScanState): boolean {
+  let opener = "";
+  let closer = "";
+  if (state.extension === ".rs" && /[rbc]/u.test(source[state.index] ?? "")) {
+    const raw = /^(?:b|c)?r(#{0,255})"/u.exec(source.slice(state.index));
+    if (raw !== null && !/[\w]/u.test(source[state.index - 1] ?? "")) {
+      opener = raw[0];
+      closer = `"${raw[1]}`;
+    }
+  } else if (source.startsWith('"""', state.index)) {
+    if (state.extension === ".cs") {
+      if (isVerbatimQuote(source, state.index)) return false;
+      opener = /^"{3,}/u.exec(source.slice(state.index))?.[0] ?? "";
+      closer = opener;
+    } else if ([".java", ".kt", ".kts"].includes(state.extension)) {
+      opener = '"""';
+      closer = opener;
+    }
+  }
+  if (opener.length === 0) return false;
+  state.quote = closer;
+  state.escapes = state.extension === ".java";
+  state.verbatim = false;
+  state.mode = "literal";
+  state.index += opener.length;
+  return true;
+}
+
+function isVerbatimQuote(source: string, index: number): boolean {
+  return source[index - 1] === "@" || source.slice(index - 2, index) === "@$";
 }

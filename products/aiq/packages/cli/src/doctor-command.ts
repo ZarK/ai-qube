@@ -234,7 +234,10 @@ function validateDoctorPrerequisiteVersion(prerequisite: DoctorPrerequisite): st
 
 async function resolvePrerequisite(prerequisite: DoctorPrerequisite): Promise<string | undefined> {
   if (prerequisite.pythonModule === undefined) {
-    return resolveInstalledCommand(prerequisite.binaries, prerequisite.versionArgs);
+    const installed = await resolveInstalledCommand(prerequisite.binaries, prerequisite.versionArgs);
+    return installed !== undefined && prerequisite.pinnedVersion !== undefined
+      ? `${installed}; pinned tool version: ${prerequisite.pinnedVersion}`
+      : installed;
   }
   let interpreter: string;
   try {

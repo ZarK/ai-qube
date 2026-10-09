@@ -162,7 +162,8 @@ It exits non-zero when selected stages need missing required setup. Use
 `--verbose` for additional diagnostics. Required host tools always include their
 resolved paths and versions. Ruff, ShellCheck, and shfmt must be executables on
 `PATH`. The Python type checker, ty, also resolves on `PATH`. Lizard runs through
-uvx; `doctor` requires uvx on `PATH` and reports its path and version. Radon must
+uvx with an exact version pin shared by all metric runners. `doctor` requires
+uvx on `PATH` and reports its path, version, and the pinned Lizard version. Radon must
 be installed for the Python interpreter that Quality resolves; `doctor` reports
 that interpreter. Python prerequisite probes exclude the working
 directory and Python environment variables from the module search path so local

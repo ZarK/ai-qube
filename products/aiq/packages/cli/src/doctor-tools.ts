@@ -1,3 +1,4 @@
+import { lizardVersion } from "@tjalve/aiq/engine";
 import type { LanguageId, StageId } from "@tjalve/aiq/model";
 
 export const doctorPrerequisites = [
@@ -26,6 +27,7 @@ export interface DoctorPrerequisite {
   binaries: readonly string[];
   install: string;
   minimumMajor?: number;
+  pinnedVersion?: string;
   name: string;
   pythonModule?: string;
   versionArgs?: readonly string[];
@@ -327,8 +329,9 @@ export function resolveDoctorToolRequirements(
     if (lizardLanguages.some((language) => languages.has(language))) {
       requirements.set("Lizard metrics tool", {
         binaries: [process.platform === "win32" ? "uvx.exe" : "uvx"],
-        install: "Install uv with uvx on PATH to provision Lizard for shared metrics.",
+        install: `Install uv with uvx on PATH to provision Lizard ${lizardVersion} for shared metrics.`,
         name: "Lizard metrics tool",
+        pinnedVersion: lizardVersion,
         required: true,
         source: "external",
       });

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import type { Diagnostic, ProjectGraph, StageResult } from "../contracts.js";
+import { isIgnoredRunnerInput } from "../runner-context.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { pathExists } from "../utils/path-utils.js";
 import { createUnsupportedDotNetRunnerNote } from "./dotnet-tools.js";
@@ -321,7 +322,7 @@ export async function findMatchingFiles(
   predicate: (filePath: string) => boolean,
   shouldSkipDirectory?: (directoryPath: string) => boolean,
 ): Promise<string[]> {
-  if (!(await pathExists(directory))) {
+  if (isIgnoredRunnerInput(directory) || !(await pathExists(directory))) {
     return [];
   }
 
@@ -335,6 +336,9 @@ export async function findMatchingFiles(
 
   for (const entry of sortedEntries) {
     const entryPath = path.join(directory, entry.name);
+    if (isIgnoredRunnerInput(entryPath)) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (shouldSkipDirectory?.(entryPath) === true) {
         continue;

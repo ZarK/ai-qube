@@ -12,6 +12,7 @@ export { engineVersion } from "./contracts.js";
 export { createCacheService } from "./cache.js";
 export { resolvePathCommand, resolvePythonInterpreter } from "./tools/host-tools.js";
 export { ToolRunner } from "./tool-runner.js";
+export { lizardVersion } from "./tools/command-builders.js";
 export { normalizeFileManifest, isIgnoredInput, isSupportedInputFile } from "./files.js";
 export {
   LayoutConsumptionError,

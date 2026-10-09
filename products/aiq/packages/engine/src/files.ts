@@ -48,6 +48,7 @@ export async function normalizeFileManifest(
       path: file,
     })),
     files,
+    ...(input.ignore === undefined ? {} : { ignore: [...input.ignore] }),
     root: cwd,
     source: input.source,
     summary: {
@@ -105,9 +106,14 @@ const supportedMarkers = new Set([
 
 export function isIgnoredInput(file: string, cwd: string, ignore: readonly string[] = []): boolean {
   const relative = path.relative(cwd, file).replace(/\\/gu, "/");
+  const segments = relative.split("/");
+  const candidates = segments.flatMap((_, index) => {
+    const ancestor = segments.slice(0, index + 1).join("/");
+    return [ancestor, `${ancestor}/`];
+  });
   return ignore.some((pattern) => {
     const glob = pattern.replace(/\\/gu, "/");
-    return [relative, `${relative}/`].some(
+    return candidates.some(
       (candidate) =>
         path.posix.matchesGlob(candidate, glob) || path.posix.matchesGlob(candidate, `**/${glob}`),
     );

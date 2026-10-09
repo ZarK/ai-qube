@@ -17,6 +17,7 @@ import {
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
 } from "./shared-metrics-support.js";
 
 export async function runGoMetricsTask(
@@ -84,14 +85,18 @@ export async function runGoMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "Go",
+    files[0] ?? runtime.cwd,
+  );
 }
 
 async function processGoMetricsProjects(options: {

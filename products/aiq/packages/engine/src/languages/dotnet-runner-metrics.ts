@@ -18,6 +18,7 @@ import {
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
 } from "./shared-metrics-support.js";
 
 export async function runDotNetMetricsTask(
@@ -122,12 +123,16 @@ export async function runDotNetMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "C#",
+    files[0] ?? runtime.cwd,
+  );
 }

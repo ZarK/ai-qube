@@ -3,7 +3,11 @@ import path from "node:path";
 
 import type { StageId } from "./contracts.js";
 import { AiqEngineCancelledError } from "./run.js";
-import { getRunnerExecutionContext, getRunnerToolRunner } from "./runner-context.js";
+import {
+  getRunnerExecutionContext,
+  getRunnerToolRunner,
+  isIgnoredRunnerInput,
+} from "./runner-context.js";
 import * as binaries from "./tools/binary-resolver.js";
 import { pathExists } from "./utils/path-utils.js";
 
@@ -40,7 +44,7 @@ export async function findMatchingFiles(
   predicate: (filePath: string) => boolean,
   shouldSkipDirectory: (directoryPath: string) => boolean = () => false,
 ): Promise<string[]> {
-  if (!(await pathExists(root))) {
+  if (isIgnoredRunnerInput(root) || !(await pathExists(root))) {
     return [];
   }
 
@@ -50,6 +54,9 @@ export async function findMatchingFiles(
   const matches: string[] = [];
   for (const entry of entries) {
     const entryPath = path.join(root, entry.name);
+    if (isIgnoredRunnerInput(entryPath)) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (shouldSkipDirectory(entryPath)) {
         continue;

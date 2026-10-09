@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ToolRunner, resolvePythonInterpreter } from "../../engine/src/index.js";
+import { ToolRunner, lizardVersion, resolvePythonInterpreter } from "../../engine/src/index.js";
 
 import { parseArgs } from "../src/args.js";
 import { runDoctorCommand } from "../src/doctor-command.js";
@@ -59,6 +59,7 @@ describe("doctor host tools", () => {
       expect(check).toMatchObject({ ok: available, required: true });
       expect(code).toBe(available ? 0 : 1);
       expect(check.detail).toContain("uvx");
+      expect(check.detail).toContain(lizardVersion);
       if (available) {
         expect(check.detail).toContain(`${directory}${path.sep}uvx`);
         expect(check.detail).toContain("0.11.31");

@@ -414,6 +414,8 @@ export function createTscArgs(options: TscCommandOptions): string[] {
   ];
 }
 
+export const lizardVersion = "1.24.1";
+
 export interface LizardCommandOptions {
   inputFile: string;
   languages: string[];
@@ -422,6 +424,8 @@ export interface LizardCommandOptions {
 
 export function createLizardArgs(options: LizardCommandOptions): string[] {
   const args = [
+    "--from",
+    `lizard==${lizardVersion}`,
     "lizard",
     "--csv",
     ...options.languages.flatMap((lang) => ["-l", lang]),

@@ -30,6 +30,7 @@ export interface FileManifestSummary {
 export interface FileManifest {
   entries: FileManifestEntry[];
   files: string[];
+  ignore?: readonly string[];
   root: string;
   source: ManifestSource;
   summary: FileManifestSummary;

@@ -1,4 +1,3 @@
-import { isIgnoredInput } from "./files.js";
 import type {
   BashRunnerRuntime,
   DotNetRunnerRuntime,
@@ -13,7 +12,6 @@ import type {
 } from "./languages/contracts.js";
 import {
   getCachedRunnerValue,
-  getRunnerExecutionContext,
   getRunnerGraph,
   getRunnerRunScopedValue,
   getRunnerSelectedStages,
@@ -104,7 +102,6 @@ export function createPythonRunnerRuntime(
   cwd: string,
   signal: AbortSignal | undefined,
 ): PythonRunnerRuntime {
-  const { ignore } = getRunnerExecutionContext();
   return {
     createExecutionFailureStage,
     createNoopStageResult,
@@ -113,12 +110,7 @@ export function createPythonRunnerRuntime(
     createSharedMetricsNotImplementedNote,
     createToolRunResult,
     cwd,
-    findMatchingFiles: (root, predicate, shouldSkipDirectory) =>
-      findMatchingFiles(
-        root,
-        (file) => !isIgnoredInput(file, cwd, ignore) && predicate(file),
-        (directory) => isIgnoredInput(directory, cwd, ignore) || shouldSkipDirectory(directory),
-      ),
+    findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),

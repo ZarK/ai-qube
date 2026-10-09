@@ -1,4 +1,27 @@
-import type { Diagnostic, StageId } from "../contracts.js";
+import type { Diagnostic, StageId, StageResult } from "../contracts.js";
+
+export function createSharedMetricsStageResult(
+  result: Omit<StageResult, "status">,
+  scannedFileCount: number,
+  languageLabel: string,
+  file: string,
+): StageResult {
+  if (result.diagnostics.length > 0) {
+    return { ...result, status: "failed" };
+  }
+
+  if (scannedFileCount === 0) {
+    const message = `No ${languageLabel} source files were measured for ${result.stageId}.`;
+    return {
+      ...result,
+      diagnostics: [{ file, message, severity: "warning", source: "aiq-shared-metrics" }],
+      notes: [...result.notes, message],
+      status: "warning",
+    };
+  }
+
+  return { ...result, status: "passed" };
+}
 
 type CreateProcessFailureDiagnostic = (file: string, source: string, message: string) => Diagnostic;
 
