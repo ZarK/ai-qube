@@ -4,6 +4,7 @@ import { createReadStream, existsSync, readFileSync, realpathSync, rmSync, statS
 import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { setImmediate as nextEventLoopTurn } from 'node:timers/promises';
 import { execFile, execFileSync } from 'node:child_process';
 import { resolveTrustedLocalStore, type TrustedLocalStore } from '../trusted_local_store.js';
 import { resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
@@ -992,6 +993,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   let schemaPath: string | null = null;
   let checkoutMonitor: ModelReviewCheckoutMonitor | null = null;
   try {
+    const store = resolveTrustedLocalStore(input.repoRoot);
+    const routeDirectory = join(store.path, 'model-route');
+    mkdirTrustedStoreSync(routeDirectory, store);
     checkoutMonitor = (input.watchCheckout ?? watchModelReviewCheckout)(input.repoRoot);
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
     const resolveCheckoutState = input.resolveCheckoutState
@@ -1000,9 +1004,6 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     const checkoutState = await resolveCheckoutState(input.repoRoot);
     const adapter = getReviewHostAdapter(input.plan.host);
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
-    const store = resolveTrustedLocalStore(input.repoRoot);
-    const routeDirectory = join(store.path, 'model-route');
-    mkdirTrustedStoreSync(routeDirectory, store);
     if (adapter.requiresPromptFile) {
       promptPath = join(routeDirectory, `${invocationId}.prompt`);
       writeReviewFileGuarded(promptPath, prompt, store, 0o600);
@@ -1083,6 +1084,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
     if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', 'Local checkout contents changed during isolated review execution.');
+    // Promise continuations can reach this check before queued filesystem
+    // events. Cross a poll phase before reading and closing the monitor: the
+    // first immediate can still belong to the current turn's check phase.
+    await nextEventLoopTurn();
+    await nextEventLoopTurn();
     const watchedChange = checkoutMonitor.violation();
     if (watchedChange) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
     // strictRoutedLane already rejects empty completeness, contextReviewed,

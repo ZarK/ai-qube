@@ -431,6 +431,44 @@ describe('model review runner', () => {
     }
   });
 
+  for (const linked of [false, true]) {
+    for (const changesCheckout of [false, true]) {
+      it(`${changesCheckout ? 'rejects checkout writes' : 'allows trusted store writes'} when a ${linked ? 'linked' : 'primary'} checkout review completes immediately`, async t => {
+        const primary = cloneGitRepo('committed', 'aie-route-monitor-');
+        const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-route-monitor-linked-'));
+        const repoRoot = linked ? join(worktreeParent, 'checkout') : primary;
+        t.after(() => {
+          rmSync(worktreeParent, { recursive: true, force: true });
+          rmSync(primary, { recursive: true, force: true });
+        });
+        if (linked) execFileSync('git', ['worktree', 'add', '-b', 'review', repoRoot], { cwd: primary, stdio: 'ignore' });
+        const store = resolveTrustedLocalStore(repoRoot);
+        const result = await runModelReview({
+          ...reviewInput(repoRoot),
+          resolveCheckoutState: async () => 'unchanged',
+          resolveExecutable: async () => 'review.exe',
+          runProcess: async invocation => {
+            assert.equal(dirname(invocation.promptPath), join(store.path, 'model-route'));
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review started\n');
+            if (changesCheckout) writeFileSync(join(repoRoot, 'README.md'), 'changed during review\n');
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review completed\n');
+            return {
+              exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+              stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'review-session' }),
+            };
+          },
+        });
+        assert.equal(result.reasonCode, changesCheckout ? 'model-route-checkout-mismatch' : null, result.error);
+        if (changesCheckout) {
+          assert.equal(result.evidence, null);
+          assert.match(result.error, /README\.md/);
+        } else {
+          assert.equal(result.evidence.status, 'passed');
+        }
+      });
+    }
+  }
+
   it('refuses a symlinked model route directory before starting a review', async t => {
     const repoRoot = cloneGitRepo('committed', 'aie-route-symlink-');
     const outside = mkdtempSync(join(tmpdir(), 'aie-route-outside-'));
