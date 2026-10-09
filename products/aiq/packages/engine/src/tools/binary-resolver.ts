@@ -3,6 +3,9 @@ import path from "node:path";
 
 const require = createRequire(import.meta.url);
 
+export const powerShellCommands =
+  process.platform === "win32" ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] : ["pwsh"];
+
 export function resolvePackageBinaryPath(
   packageJsonSpecifier: string,
   relativeBinaryPath: string,

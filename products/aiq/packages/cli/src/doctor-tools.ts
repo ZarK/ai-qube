@@ -1,4 +1,11 @@
-import { lizardVersion } from "@tjalve/aiq/engine";
+import {
+  createCargoClippyArgs,
+  createCargoFmtArgs,
+  createCargoLlvmCovArgs,
+  createDotNetFormatArgs,
+  lizardVersion,
+  powerShellCommands,
+} from "@tjalve/aiq/engine";
 import type { LanguageId, StageId } from "@tjalve/aiq/model";
 
 export const doctorPrerequisites = [
@@ -30,6 +37,7 @@ export interface DoctorPrerequisite {
   pinnedVersion?: string;
   name: string;
   pythonModule?: string;
+  source?: "external" | "project";
   versionArgs?: readonly string[];
   required: boolean;
 }
@@ -210,6 +218,51 @@ const doctorToolRequirementRules: Array<{
     },
     stages: toolchainStages,
   },
+  ...[
+    {
+      languages: ["rust"] as const,
+      stages: ["lint"] as const,
+      name: "Rust Clippy",
+      binary: "cargo",
+      args: createCargoClippyArgs(),
+      install: "Install the Clippy component for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["rust"] as const,
+      stages: ["format"] as const,
+      name: "Rust rustfmt",
+      binary: "cargo",
+      args: createCargoFmtArgs(),
+      install: "Install the rustfmt component for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["rust"] as const,
+      stages: ["coverage"] as const,
+      name: "cargo-llvm-cov",
+      binary: "cargo",
+      args: createCargoLlvmCovArgs(),
+      install: "Install cargo-llvm-cov for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["dotnet"] as const,
+      stages: ["lint", "format"] as const,
+      name: ".NET format",
+      binary: "dotnet",
+      args: createDotNetFormatArgs({ reportDir: "", subcommand: "style", targetPath: "" }),
+      install: "Install a .NET SDK with the dotnet format command.",
+    },
+  ].map(({ languages, stages, name, binary, args, install }) => ({
+    languages,
+    stages,
+    requirement: {
+      binaries: [binary],
+      install,
+      name,
+      required: true,
+      source: "external" as const,
+      versionArgs: [...args.slice(0, 1), "--version"],
+    },
+  })),
   {
     languages: ["java", "kotlin"],
     requirement: {
@@ -222,7 +275,7 @@ const doctorToolRequirementRules: Array<{
     stages: toolchainStages,
   },
   {
-    languages: ["terraform", "hcl"],
+    languages: ["terraform"],
     requirement: {
       binaries: ["terraform"],
       install: "Install Terraform CLI to enable Terraform/HCL lint, format, and validation.",
@@ -231,6 +284,17 @@ const doctorToolRequirementRules: Array<{
       source: "external",
     },
     stages: ["lint", "format", "typecheck"],
+  },
+  {
+    languages: ["hcl"],
+    requirement: {
+      binaries: ["terraform"],
+      install: "Install Terraform CLI to enable HCL lint and format checks.",
+      name: "Terraform CLI",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint", "format"],
   },
 ];
 
@@ -304,14 +368,17 @@ export function resolveDoctorToolRequirements(
     usesAnyStage(selected, ["lint", "format", "unit", "coverage"])
   ) {
     requirements.set("PowerShell runtime", {
-      binaries:
-        process.platform === "win32"
-          ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
-          : ["pwsh"],
+      binaries: powerShellCommands,
       install: "Install PowerShell 7 (pwsh) and project PowerShell modules.",
       name: "PowerShell runtime",
       required: true,
       source: "external",
+      versionArgs: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$PSVersionTable.PSVersion.ToString()",
+      ],
     });
     addPowerShellModuleRequirements(requirements, selected);
   }
@@ -354,7 +421,7 @@ function addPowerShellModuleRequirements(
       continue;
     }
     requirements.set(module.name, {
-      binaries: process.platform === "win32" ? ["pwsh", "powershell"] : ["pwsh"],
+      binaries: powerShellCommands,
       install: `Install the ${module.name} module for the PowerShell runtime used by Quality.`,
       name: module.name,
       required: true,

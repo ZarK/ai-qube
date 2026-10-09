@@ -6,6 +6,7 @@ import type { StageId } from "@tjalve/aiq/model";
 
 import { detectProjectLanguages, formatDetectedLanguages } from "./doctor-discovery.js";
 import { detectJvmBuildTools } from "./doctor-jvm.js";
+import { resolveDoctorProjectTools } from "./doctor-project-tools.js";
 import {
   type DoctorPrerequisite,
   doctorPrerequisites,
@@ -69,14 +70,17 @@ async function createDoctorCommandOutput(
     detectedLanguages,
     resolvedConfig.stages,
   );
-  const jvmTools = await detectJvmBuildTools(io.cwd, resolvedConfig.stages);
+  const [jvmTools, projectTools] = await Promise.all([
+    detectJvmBuildTools(io.cwd, resolvedConfig.stages),
+    resolveDoctorProjectTools(io.cwd, resolvedConfig.stages),
+  ]);
   const prerequisites = mergeDoctorPrerequisites(
-    [...doctorPrerequisites, ...jvmTools.requirements],
+    [...doctorPrerequisites, ...jvmTools.requirements, ...projectTools],
     externalRequirements,
   );
   const prerequisiteChecks = await Promise.all(
     prerequisites.map(async (prerequisite) => {
-      const installed = await resolvePrerequisite(prerequisite);
+      const installed = await resolvePrerequisite(prerequisite, io.cwd);
       const versionProblem =
         installed === undefined ? undefined : validateDoctorPrerequisiteVersion(prerequisite);
       return {
@@ -85,7 +89,7 @@ async function createDoctorCommandOutput(
         name: prerequisite.name,
         ok: installed !== undefined && versionProblem === undefined ? true : !prerequisite.required,
         required: prerequisite.required,
-        source: "source" in prerequisite ? prerequisite.source : "external",
+        source: prerequisite.source ?? "external",
       };
     }),
   );
@@ -232,9 +236,16 @@ function validateDoctorPrerequisiteVersion(prerequisite: DoctorPrerequisite): st
   return `detected Node.js ${process.version}; ${prerequisite.install}`;
 }
 
-async function resolvePrerequisite(prerequisite: DoctorPrerequisite): Promise<string | undefined> {
+async function resolvePrerequisite(
+  prerequisite: DoctorPrerequisite,
+  cwd: string,
+): Promise<string | undefined> {
   if (prerequisite.pythonModule === undefined) {
-    const installed = await resolveInstalledCommand(prerequisite.binaries, prerequisite.versionArgs);
+    const installed = await resolveInstalledCommand(
+      prerequisite.binaries,
+      prerequisite.versionArgs,
+      cwd,
+    );
     return installed !== undefined && prerequisite.pinnedVersion !== undefined
       ? `${installed}; pinned tool version: ${prerequisite.pinnedVersion}`
       : installed;
@@ -276,6 +287,7 @@ async function missingPrerequisiteDetail(prerequisite: DoctorPrerequisite): Prom
 async function resolveInstalledCommand(
   commandNames: readonly string[],
   versionArgs: readonly string[] = ["--version"],
+  cwd = process.cwd(),
 ): Promise<string | undefined> {
   for (const commandName of commandNames) {
     if (commandName === "node") {
@@ -284,7 +296,7 @@ async function resolveInstalledCommand(
 
     const resolved = await resolvePathCommand(commandName);
     if (resolved !== undefined) {
-      const version = await resolveCommandVersion(resolved, versionArgs);
+      const version = await resolveCommandVersion(resolved, versionArgs, cwd);
       return version === undefined ? undefined : `${resolved}; ${version}`;
     }
   }
@@ -295,12 +307,13 @@ async function resolveInstalledCommand(
 async function resolveCommandVersion(
   command: string,
   args: readonly string[],
+  cwd: string,
 ): Promise<string | undefined> {
   if (/^gofmt(?:\.exe)?$/iu.test(path.basename(command))) {
     const go = await resolvePathCommand("go");
-    return go === undefined ? undefined : resolveCommandVersion(go, ["version", command]);
+    return go === undefined ? undefined : resolveCommandVersion(go, ["version", command], cwd);
   }
-  const result = await runCommand(command, [...args]);
+  const result = await runCommand(command, [...args], cwd);
   if (result.exitCode !== 0) {
     return undefined;
   }
@@ -309,7 +322,7 @@ async function resolveCommandVersion(
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  return lines.find((line) => /\d+\.\d+/u.test(line)) ?? lines[0];
+  return lines.find((line) => /\d/u.test(line));
 }
 
 async function runCommand(

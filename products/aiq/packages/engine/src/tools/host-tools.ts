@@ -5,6 +5,14 @@ import path from "node:path";
 import { resolvePythonCommand } from "./binary-resolver.js";
 
 export async function resolvePathCommand(command: string): Promise<string | undefined> {
+  if (path.isAbsolute(command)) {
+    try {
+      await access(command, constants.X_OK);
+      return (await stat(command)).isFile() ? command : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   const extensions =
     process.platform === "win32" && path.extname(command) === ""
       ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";")

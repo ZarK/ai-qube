@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { createCacheService } from "./cache.js";
 import type { CacheService } from "./contracts.js";
+import { powerShellCommands } from "./tools/binary-resolver.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -241,11 +242,7 @@ export class ToolRunner {
   async resolvePowerShellModuleManifest(moduleName: string): Promise<string | undefined> {
     const cacheKey = this.cache.generateKey(["infrastructure", "powershell-module", moduleName]);
     const cached = await this.cache.getOrCreate(cacheKey, async () => {
-      const powerShellCommand = await this.resolveBinaryIfAvailable(
-        process.platform === "win32"
-          ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
-          : ["pwsh"],
-      );
+      const powerShellCommand = await this.resolveBinaryIfAvailable(powerShellCommands);
       if (powerShellCommand === undefined) {
         return undefined;
       }
@@ -299,9 +296,7 @@ export class ToolRunner {
     signal?: AbortSignal,
   ): Promise<ToolRunOutcome> {
     const powerShellCommand = await this.resolveRequiredBinary(
-      process.platform === "win32"
-        ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
-        : ["pwsh"],
+      powerShellCommands,
       "PowerShell",
       "Install PowerShell to enable PowerShell lint, format, and test stages.",
     );

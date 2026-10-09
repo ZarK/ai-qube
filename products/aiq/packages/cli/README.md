@@ -169,6 +169,23 @@ that interpreter. Python prerequisite probes exclude the working
 directory and Python environment variables from the module search path so local
 modules cannot shadow installed host tools. User site packages remain available.
 
+Doctor probes the commands needed by the selected stages. Rust lint, format, and
+coverage require `cargo clippy`, `cargo fmt`, and `cargo llvm-cov`, respectively.
+Cargo alone does not satisfy these requirements. .NET lint and format also require
+`dotnet format`. Each subcommand must successfully report its version.
+
+JavaScript and TypeScript test scripts require npm when the resolved runner invokes
+`npm test` or `npm run`. Direct test runners do not require npm.
+For direct Playwright E2E runs, doctor checks the local Playwright executable and
+its version. A missing executable makes doctor fail. PowerShell probes
+the runtime and the selected stage's modules: PSScriptAnalyzer or Pester.
+HCL-only typecheck does not require Terraform; HCL lint and format do.
+
+Maven and Gradle wrappers must be regular, non-empty files. Doctor reads their
+version from valid wrapper distribution properties or a successful `--version`
+command. Invalid wrappers require the system Maven or Gradle command instead.
+If neither is available, doctor fails. Version probes can execute project wrappers.
+
 ## SLOC Limit
 
 Set the repository limit in `.qube/aiq/config.json`:
