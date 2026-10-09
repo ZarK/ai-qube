@@ -12,6 +12,7 @@ export { engineVersion } from "./contracts.js";
 export { createCacheService } from "./cache.js";
 export { resolvePathCommand, resolvePythonInterpreter } from "./tools/host-tools.js";
 export { ToolRunner } from "./tool-runner.js";
+export { findJvmWrapper } from "./tools/jvm-wrapper.js";
 export { powerShellCommands } from "./tools/binary-resolver.js";
 export { resolveJavaScriptHostCommands } from "./tools/project-host-tools.js";
 export {

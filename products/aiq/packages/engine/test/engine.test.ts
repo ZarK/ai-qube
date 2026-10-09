@@ -1,3 +1,4 @@
+import { cp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   os,
@@ -91,6 +92,65 @@ describe("engine foundation", () => {
     expect(result.stages.every((stage) => stage.status === "failed")).toBe(true);
     expect(result.stages[0]?.notes).toEqual(["Explicit target selected no files."]);
   });
+  it.each([
+    {
+      project: "kotlin-gradle",
+      files: [
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "src/main/kotlin/dev/aiq/fixture/Greeting.kt",
+        "src/test/kotlin/dev/aiq/fixture/GreetingTest.kt",
+      ],
+      ignored: "src/test/**",
+    },
+    {
+      project: "rust",
+      files: ["Cargo.toml", "Cargo.lock", "src/lib.rs", "tests/integration.rs"],
+      ignored: "tests/**",
+    },
+    {
+      project: "go",
+      files: [
+        "go.mod",
+        "go.sum",
+        "greeter.go",
+        "greeter_test.go",
+        "pkg/fixture/greeter.go",
+        "pkg/fixture/greeter_test.go",
+      ],
+      ignored: "**/*_test.go",
+    },
+  ])(
+    "selects the same $project files from directory and explicit targets",
+    async ({ project, files, ignored }) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "aiq-directory-selection-"));
+      tempDirs.push(root);
+      await cp(path.resolve("test-projects", project), root, { recursive: true });
+      // The Go fixture has no external modules, so it does not contain a checksum file.
+      if (project === "go") await writeFile(path.join(root, "go.sum"), "");
+      await writeFile(path.join(root, "unsupported.txt"), "Not an analyzer input.\n");
+
+      for (const ignore of [[], [ignored]]) {
+        const explicit = await createRunPlan({
+          cwd: root,
+          manifest: { files, source: "direct", ignore },
+          stages: ["lint", "sloc", "security"],
+        });
+        const directory = await createRunPlan({
+          cwd: root,
+          manifest: { files: ["."], source: "direct", ignore },
+          stages: ["lint", "sloc", "security"],
+        });
+        expect(directory.input.files).toEqual(explicit.input.files);
+        expect(directory.tasks.map((task) => task.files)).toEqual(
+          explicit.tasks.map((task) => task.files),
+        );
+        expect(directory.input.files.length).toBe(
+          ignore.length === 0 ? files.length : files.length - (project === "go" ? 2 : 1),
+        );
+      }
+    },
+  );
   it("does not reintroduce ignored diff-only files into a stage", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "aiq-ignored-diff-"));
     tempDirs.push(root);

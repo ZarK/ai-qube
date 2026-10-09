@@ -2,6 +2,9 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { FileManifest, FileManifestInput } from "./contracts.js";
+import { isSupportedInputFile } from "./runner-file-rules.js";
+
+export { isSupportedInputFile } from "./runner-file-rules.js";
 
 export async function normalizeFileManifest(
   input: FileManifestInput,
@@ -57,53 +60,6 @@ export async function normalizeFileManifest(
   };
 }
 
-const supportedExtensions = new Set([
-  ".bash",
-  ".bats",
-  ".c",
-  ".cjs",
-  ".cs",
-  ".csproj",
-  ".css",
-  ".cts",
-  ".go",
-  ".hcl",
-  ".htm",
-  ".html",
-  ".java",
-  ".js",
-  ".json",
-  ".jsonc",
-  ".jsx",
-  ".kt",
-  ".mjs",
-  ".mts",
-  ".ps1",
-  ".psd1",
-  ".psm1",
-  ".py",
-  ".pyi",
-  ".rs",
-  ".sh",
-  ".sln",
-  ".slnx",
-  ".sql",
-  ".tf",
-  ".tfvars",
-  ".ts",
-  ".tsx",
-  ".yaml",
-  ".yml",
-]);
-const supportedMarkers = new Set([
-  "Cargo.toml",
-  "go.mod",
-  "build.gradle",
-  "build.gradle.kts",
-  "pom.xml",
-  "pyproject.toml",
-]);
-
 export function isIgnoredInput(file: string, cwd: string, ignore: readonly string[] = []): boolean {
   const relative = path.relative(cwd, file).replace(/\\/gu, "/");
   const segments = relative.split("/");
@@ -131,17 +87,10 @@ async function collectDirectoryFiles(
     if (isIgnoredInput(file, cwd, ignore)) continue;
     if (entry.isDirectory()) {
       await collectDirectoryFiles(file, cwd, ignore, files);
-    } else if (entry.isFile() && isSupportedInputFile(entry.name)) {
+    } else if (entry.isFile() && isSupportedInputFile(file)) {
       files.add(file);
     }
   }
-}
-
-export function isSupportedInputFile(file: string): boolean {
-  return (
-    supportedMarkers.has(path.basename(file)) ||
-    supportedExtensions.has(path.extname(file).toLowerCase())
-  );
 }
 
 function isErrorCode(error: unknown, code: string): error is NodeJS.ErrnoException {

@@ -4,6 +4,8 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveJvmExecutionCommand } from "../../engine/src/languages/jvm-tools.js";
+import { createJvmRunnerRuntime } from "../../engine/src/runner-runtimes.js";
 import { parseArgs } from "../src/args.js";
 import { runDoctorCommand } from "../src/doctor-command.js";
 
@@ -25,6 +27,7 @@ describe("doctor JVM wrappers", () => {
     await writeFile(path.join(directory, testCase.wrapper), "");
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({
@@ -45,6 +48,7 @@ describe("doctor JVM wrappers", () => {
     await mkdir(path.join(directory, testCase.wrapper));
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
@@ -72,6 +76,7 @@ describe("doctor JVM wrappers", () => {
     await writeExecutable(wrapper, testCase.reportedVersion);
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(0);
     expect(findCheck(result.output, wrapper)).toMatchObject({
@@ -93,6 +98,7 @@ describe("doctor JVM wrappers", () => {
     await writeExecutable(path.join(directory, testCase.wrapper), 'openjdk version "24.0.1"');
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
@@ -116,6 +122,7 @@ describe("doctor JVM wrappers", () => {
     await writeExecutable(path.join(directory, testCase.wrapper), testCase.reportedVersion, 1);
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
@@ -145,6 +152,7 @@ describe("doctor JVM wrappers", () => {
     await writeWrapperProperties(directory, testCase.properties, testCase.archive);
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(0);
     expect(findCheck(result.output, wrapper)).toMatchObject({
@@ -189,6 +197,7 @@ describe("doctor JVM wrappers", () => {
     await writeWrapperProperties(directory, testCase.properties, testCase.archive);
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
@@ -215,6 +224,7 @@ describe("doctor JVM wrappers", () => {
     await writeWrapperProperties(directory, testCase.properties, testCase.archive, "not-a-url/");
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(1);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
@@ -241,6 +251,7 @@ describe("doctor JVM wrappers", () => {
     await writeExecutable(path.join(directory, testCase.binary), testCase.reportedVersion);
 
     const result = await runDoctor(directory);
+    await expectExecutionCommand(directory, testCase.tool, result.output);
 
     expect(result.code).toBe(0);
     expect(findCheck(result.output, testCase.tool)).toMatchObject({
@@ -249,6 +260,54 @@ describe("doctor JVM wrappers", () => {
       required: true,
       source: "external",
     });
+  });
+
+  it.each([
+    { marker: "pom.xml", tool: "Maven", wrapper: windowsName("mvnw.cmd", "mvnw") },
+    { marker: "build.gradle", tool: "Gradle", wrapper: windowsName("gradlew.bat", "gradlew") },
+  ])("selects the same ancestor $tool wrapper for doctor and execution", async (testCase) => {
+    const directory = await createJvmProject(testCase.marker);
+    const wrapper = path.join(directory, testCase.wrapper);
+    await writeExecutable(
+      wrapper,
+      testCase.tool === "Maven" ? "Apache Maven 3.9.9" : "Gradle 8.12",
+    );
+    const child = path.join(directory, "module");
+    await mkdir(child);
+    await writeFile(path.join(child, testCase.marker), "project marker\n");
+    await writeFile(path.join(child, testCase.wrapper), "");
+
+    const result = await runDoctor(directory);
+
+    expect(result.code).toBe(0);
+    expect(findCheck(result.output, wrapper)).toMatchObject({ ok: true, source: "project" });
+    await expectExecutionCommand(child, testCase.tool, result.output, directory);
+  });
+
+  it.each([
+    { marker: "pom.xml", tool: "Maven", wrapper: windowsName("mvnw.cmd", "mvnw") },
+    { marker: "build.gradle", tool: "Gradle", wrapper: windowsName("gradlew.bat", "gradlew") },
+  ])("does not select ancestor $tool wrappers outside the project scope", async (testCase) => {
+    const directory = await createJvmProject(testCase.marker);
+    await writeExecutable(
+      path.join(directory, testCase.wrapper),
+      testCase.tool === "Maven" ? "Apache Maven 3.9.9" : "Gradle 8.12",
+    );
+    const child = path.join(directory, "module");
+    await mkdir(child);
+    await writeFile(path.join(child, testCase.marker), "project marker\n");
+
+    const result = await runDoctor(child);
+
+    expect(result.code).toBe(1);
+    expect(findCheck(result.output, testCase.tool)).toMatchObject({ ok: false, required: true });
+    await expectExecutionCommand(child, testCase.tool, result.output);
+    await expectExecutionCommand(
+      child,
+      testCase.tool,
+      result.output,
+      path.join(directory, "other"),
+    );
   });
 });
 
@@ -263,6 +322,31 @@ interface DoctorResult {
       source?: string;
     }>;
   };
+}
+
+async function expectExecutionCommand(
+  directory: string,
+  tool: string,
+  output: DoctorResult["output"],
+  root = directory,
+): Promise<void> {
+  const runtime = createJvmRunnerRuntime(root, undefined);
+  const buildSystem = tool === "Maven" ? "maven" : "gradle";
+  const command = await resolveJvmExecutionCommand(
+    {
+      buildFilePath: path.join(directory, buildSystem === "maven" ? "pom.xml" : "build.gradle"),
+      buildSystem,
+      files: [],
+      projectRoot: directory,
+    },
+    "typecheck",
+    directory,
+    runtime,
+  );
+  const wrapper = output.checks.find((check) => check.source === "project");
+  const systemCommand =
+    buildSystem === "maven" ? runtime.resolveMavenCommand() : runtime.resolveGradleCommand();
+  expect(command?.command).toBe(wrapper?.name ?? systemCommand);
 }
 
 async function createJvmProject(marker: string): Promise<string> {
