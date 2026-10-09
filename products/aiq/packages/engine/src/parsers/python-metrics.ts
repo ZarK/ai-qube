@@ -44,8 +44,16 @@ function readPythonMetricsFile(value: unknown): PythonMetricsFileMetrics {
     },
     ...(readability === undefined
       ? {}
-      : { readability: { score: readMetricNumber(readability, "score") } }),
+      : { readability: { score: readFiniteNumber(readability, "score") } }),
   };
+}
+
+function readFiniteNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${key} must be a finite number.`);
+  }
+  return value;
 }
 
 function readMetricNumber(record: Record<string, unknown>, key: string): number {

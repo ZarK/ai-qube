@@ -215,7 +215,7 @@ async function runJavaScriptMetricsProjectTask(
       languages: ["javascript", "typescript", "tsx"],
     });
     const outcome = await runtime.runExecutable(
-      await runtime.resolveLizardCommand(),
+      runtime.resolveUvxCommand(),
       args,
       project.projectRoot,
       runtime.signal,

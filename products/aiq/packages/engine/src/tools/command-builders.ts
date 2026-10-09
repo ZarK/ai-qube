@@ -422,6 +422,7 @@ export interface LizardCommandOptions {
 
 export function createLizardArgs(options: LizardCommandOptions): string[] {
   const args = [
+    "lizard",
     "--csv",
     ...options.languages.flatMap((lang) => ["-l", lang]),
     "--input_file",

@@ -418,7 +418,7 @@ async function runJvmMetricsProjectTask(
     await writeFile(inputFile, `${project.files.join("\n")}\n`, "utf8");
     const args = commands.createLizardArgs({ inputFile, languages: ["java", "kotlin"] });
     const outcome = await runtime.runExecutable(
-      await runtime.resolveLizardCommand(),
+      runtime.resolveUvxCommand(),
       args,
       project.projectRoot,
       runtime.signal,

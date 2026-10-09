@@ -1,3 +1,4 @@
+import { isIgnoredInput } from "./files.js";
 import type {
   BashRunnerRuntime,
   DotNetRunnerRuntime,
@@ -12,6 +13,7 @@ import type {
 } from "./languages/contracts.js";
 import {
   getCachedRunnerValue,
+  getRunnerExecutionContext,
   getRunnerGraph,
   getRunnerRunScopedValue,
   getRunnerSelectedStages,
@@ -43,7 +45,7 @@ import {
   resolveDotNetCommand,
   resolveGradleCommand,
   resolveInstalledBinary,
-  resolveLizardCommand,
+  resolveUvxCommand,
   resolveMavenCommand,
   resolvePowerShellModuleManifest,
   resolveRequiredBinary,
@@ -88,7 +90,7 @@ export function createJavaScriptRunnerRuntime(cwd: string, signal: AbortSignal |
     readProcessFailureMessage,
     readSharedMetricsNote,
     readUnsupportedRunnerNote: createUnsupportedJavaScriptRunnerNote,
-    resolveLizardCommand,
+    resolveUvxCommand,
     runExecutable,
     selectedStages: getRunnerSelectedStages(),
     setRunScopedValue: setRunnerRunScopedValue,
@@ -102,6 +104,7 @@ export function createPythonRunnerRuntime(
   cwd: string,
   signal: AbortSignal | undefined,
 ): PythonRunnerRuntime {
+  const { ignore } = getRunnerExecutionContext();
   return {
     createExecutionFailureStage,
     createNoopStageResult,
@@ -110,7 +113,12 @@ export function createPythonRunnerRuntime(
     createSharedMetricsNotImplementedNote,
     createToolRunResult,
     cwd,
-    findMatchingFiles,
+    findMatchingFiles: (root, predicate, shouldSkipDirectory) =>
+      findMatchingFiles(
+        root,
+        (file) => !isIgnoredInput(file, cwd, ignore) && predicate(file),
+        (directory) => isIgnoredInput(directory, cwd, ignore) || shouldSkipDirectory(directory),
+      ),
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),
@@ -169,7 +177,7 @@ export function createGoRunnerRuntime(
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
-    resolveLizardCommand,
+    resolveUvxCommand,
     runExecutable,
     signal,
     throwIfAbortError,
@@ -242,7 +250,7 @@ export function createRustRunnerRuntime(
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
-    resolveLizardCommand,
+    resolveUvxCommand,
     runExecutable,
     signal,
     throwIfAbortError,
@@ -273,7 +281,7 @@ export function createJvmRunnerRuntime(
     resolveGradleCommand,
     resolveInstalledBinary,
     resolveMavenCommand,
-    resolveLizardCommand,
+    resolveUvxCommand,
     runExecutable,
     signal,
     throwIfAbortError,
@@ -298,7 +306,7 @@ export function createDotNetRunnerRuntime(
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveDotNetCommand,
-    resolveLizardCommand,
+    resolveUvxCommand,
     runExecutable,
     signal,
     throwIfAbortError,

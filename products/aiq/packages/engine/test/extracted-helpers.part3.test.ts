@@ -39,11 +39,14 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
-async function createTempSourceFile(contents: string): Promise<{ file: string; root: string }> {
+async function createTempSourceFile(
+  contents: string,
+  extension = ".ts",
+): Promise<{ file: string; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-extracted-helpers-"));
   tempDirs.push(root);
 
-  const file = path.join(root, "fixture.ts");
+  const file = path.join(root, `fixture${extension}`);
   await writeFile(file, contents, "utf8");
 
   return { file, root };
@@ -66,6 +69,61 @@ async function createTempPackageProject(
 }
 
 describe("extracted helper regressions", () => {
+  it.each([
+    {
+      name: "Rust lifetime parameters",
+      extension: ".rs",
+      source: "fn identity<'a>(value: &'a str) -> &'a str {\n    // comment\n    value\n}",
+      sloc: 3,
+    },
+    {
+      name: "Rust static lifetimes followed by comments",
+      extension: ".rs",
+      source: ['const NAME: &\'static str = "x";', ...Array(350).fill("// comment")].join("\n"),
+      sloc: 1,
+    },
+    {
+      name: "nested Rust block comments",
+      extension: ".rs",
+      source: "/* outer\n /* inner */\n still a comment\n */\nfn work() {}",
+      sloc: 1,
+    },
+    {
+      name: "Rust loop labels and anonymous lifetimes",
+      extension: ".rs",
+      source:
+        "'outer: loop {\n // comment\n let value: &'_ str = \"text\";\n break 'outer;\n}\n// comment",
+      sloc: 4,
+    },
+    ...[".rs", ".java", ".cs", ".go", ".kt"].map((extension) => ({
+      name: `${extension} character literals`,
+      extension,
+      source: "const chars = ['a', '/', '\\'', '\\\\'];\n// comment\nconst value = 1;",
+      sloc: 2,
+    })),
+    {
+      name: "Rust Unicode character literals",
+      extension: ".rs",
+      source: "let chars = ['🦀', '\\u{1F980}', '\\x27'];\n// comment\nlet value = 1;",
+      sloc: 2,
+    },
+    {
+      name: "non-nesting Java block comments",
+      extension: ".java",
+      source: "/* outer\n /* inner */\n class Main {}",
+      sloc: 1,
+    },
+  ])("counts $name as source lines", async ({ extension, source, sloc }) => {
+    const project = await createTempSourceFile(source, extension);
+    const metrics = await parseLizardMetrics("", project.root, [project.file]);
+    expect(metrics[project.file]?.raw.sloc).toBe(sloc);
+    const context = createRunnerExecutionContext(project.root);
+    context.stageConfigurations = { sloc: { languages: {}, limit: sloc + 1 } };
+    runnerExecutionContextStorage.run(context, () => {
+      expect(createLizardMetricsDiagnostics(metrics, "sloc", "lizard")).toEqual([]);
+    });
+  });
+
   it("counts the whole file independently of function NLOC", async () => {
     const project = await createTempSourceFile(
       `${Array.from({ length: 350 }, () => "line").join("\n")}\n`,

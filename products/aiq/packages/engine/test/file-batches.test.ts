@@ -36,11 +36,13 @@ describe("file argument batches", () => {
   it("runs a large Biome selection and retains diagnostics from every batch", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "aiq-file-batches-"));
     directories.push(directory);
-    const files = Array.from({ length: 250 }, (_, index) =>
-      path.join(directory, `${"source".repeat(10)}-${index}.json`),
-    );
+    const argumentLength = Math.max(32_000, fileArgumentBudget * 2);
+    const filePath = (index: number) =>
+      path.join(directory, `${"source".repeat(10)}-${index}.json`);
+    const fileCount = Math.floor(argumentLength / filePath(0).length) + 1;
+    const files = Array.from({ length: fileCount }, (_, index) => filePath(index));
     await Promise.all(files.map((file) => writeFile(file, '{"value" :1}\n', "utf8")));
-    expect(files.join(" ").length).toBeGreaterThan(32_000);
+    expect(files.join(" ").length).toBeGreaterThan(argumentLength);
     const result = await runPlannedTask(
       {
         fileCount: files.length,

@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ToolRunner, resolvePythonInterpreter } from "../../engine/src/index.js";
 
 import { parseArgs } from "../src/args.js";
 import { runDoctorCommand } from "../src/doctor-command.js";
@@ -18,6 +19,109 @@ afterEach(async () => {
 });
 
 describe("doctor host tools", () => {
+  it.each([true, false])("reports Lizard provisioning with uvx available: %s", async (available) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "aiq-doctor-lizard-"));
+    directories.push(directory);
+    await writeFile(path.join(directory, "main.ts"), "export const value = 1;\n");
+    if (available) {
+      await writeFile(path.join(directory, process.platform === "win32" ? "uvx.exe" : "uvx"), "", {
+        mode: 0o755,
+      });
+    }
+    vi.stubEnv("PATH", directory);
+    const probe = vi.spyOn(ToolRunner.prototype, "run").mockResolvedValue({
+      durationMs: 1,
+      exitCode: 0,
+      finishedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      stderr: "",
+      stdout: "uvx 0.11.31\n",
+    });
+    try {
+      let stdout = "";
+      const code = await runDoctorCommand(
+        parseArgs(["node", "aiq", "doctor", "--stage", "sloc", "--format", "json"], directory),
+        {
+          cwd: directory,
+          stdin: new PassThrough(),
+          stdout: {
+            write: (value) => {
+              stdout += value;
+              return true;
+            },
+          },
+          stderr: process.stderr,
+        },
+      );
+      const check = JSON.parse(stdout).checks.find(
+        (entry: { name: string }) => entry.name === "Lizard metrics tool",
+      );
+      expect(check).toMatchObject({ ok: available, required: true });
+      expect(code).toBe(available ? 0 : 1);
+      expect(check.detail).toContain("uvx");
+      if (available) {
+        expect(check.detail).toContain(`${directory}${path.sep}uvx`);
+        expect(check.detail).toContain("0.11.31");
+      } else {
+        expect(check.detail).toContain("not detected");
+      }
+    } finally {
+      probe.mockRestore();
+    }
+  });
+
+  it("isolates Python prerequisite imports from repository shadow modules", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "aiq-doctor-python-shadow-"));
+    directories.push(directory);
+    const modules = ["radon", "pytest", "pytest_cov"];
+    for (const name of modules) {
+      await writeFile(
+        path.join(directory, `${name}.py`),
+        `from pathlib import Path\nPath(__file__).with_suffix('.executed').write_text('imported')\n`,
+      );
+    }
+    const runner = new ToolRunner();
+    const interpreter = await resolvePythonInterpreter();
+    const control = await runner.run(interpreter, ["-c", `import ${modules.join(", ")}`], {
+      cwd: directory,
+    });
+    expect(control.exitCode).toBe(0);
+    for (const name of modules) {
+      const marker = path.join(directory, `${name}.executed`);
+      expect(await readFile(marker, "utf8")).toBe("imported");
+      await rm(marker);
+    }
+    const result = await runner.run(
+      process.execPath,
+      [
+        path.resolve("packages/cli/dist/bin/aiq.js"),
+        "doctor",
+        "--stage",
+        "sloc",
+        "--stage",
+        "unit",
+        "--stage",
+        "coverage",
+        "--format",
+        "json",
+      ],
+      { cwd: directory, env: { PYTHONPATH: directory } },
+    );
+    expect(result.stderr).toBe("");
+    const output = JSON.parse(result.stdout);
+    for (const name of ["Radon", "pytest", "pytest-cov"]) {
+      const check = output.checks.find((entry: { name: string }) => entry.name === name);
+      expect(check).toBeDefined();
+      expect(check.detail).toContain(`Python interpreter: ${interpreter}`);
+      expect(check.detail).not.toContain(directory);
+    }
+    for (const name of modules) {
+      await expect(readFile(path.join(directory, `${name}.executed`))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+  });
+
   it("requires the detected JVM build tool and recognizes an existing project wrapper", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "aiq-doctor-jvm-"));
     directories.push(directory);

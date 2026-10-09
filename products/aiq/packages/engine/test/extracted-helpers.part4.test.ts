@@ -108,6 +108,9 @@ describe("extracted helper regressions", () => {
       { ...valid, cc: [{}] },
       { ...valid, cc: null },
       { ...valid, raw: { ...valid.raw, sloc: "2" } },
+      { ...valid, raw: { ...valid.raw, sloc: -1 } },
+      { ...valid, raw: { ...valid.raw, sloc: 1.5 } },
+      { ...valid, cc: [{ ...valid.cc[0], complexity: -1 }] },
       { ...valid, readability: { score: null } },
       { ...valid, mi: { score: 100 } },
     ]) {
@@ -115,6 +118,39 @@ describe("extracted helper regressions", () => {
         /Malformed Radon/u,
       );
     }
+    for (const score of ["1e309", "-1e309"]) {
+      const report = JSON.stringify({ "fixture.py": valid }).replace(
+        '"readability":{"score":100}',
+        `"readability":{"score":${score}}`,
+      );
+      expect(() => parsePythonMetrics(report)).toThrow("score must be a finite number.");
+    }
+  });
+
+  it("accepts negative readability without rejecting source line or complexity measurements", () => {
+    const metrics = parsePythonMetrics(
+      JSON.stringify({
+        "fixture.py": {
+          cc: [],
+          mi: { rank: "A", score: 100 },
+          raw: { blank: 0, comments: 0, lloc: 40, loc: 40, multi: 0, singleComments: 0, sloc: 40 },
+          readability: { score: -22 },
+        },
+      }),
+    );
+    expect(metrics["fixture.py"]).toMatchObject({
+      cc: [],
+      raw: { sloc: 40 },
+      readability: { score: -22 },
+    });
+    expect(createPythonMetricsDiagnostics(metrics, "sloc", "radon")).toEqual([]);
+    expect(createPythonMetricsDiagnostics(metrics, "complexity", "radon")).toEqual([]);
+    expect(createPythonMetricsDiagnostics(metrics, "maintainability", "radon")).toEqual([
+      expect.objectContaining({
+        code: metricsDiagnosticCodes.pythonReadability,
+        message: "Readability index -22.0 is less than 85.",
+      }),
+    ]);
   });
 
   it("fails Python SLOC, complexity, maintainability, and readability defaults", () => {

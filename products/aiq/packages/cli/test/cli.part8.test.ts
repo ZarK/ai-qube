@@ -57,8 +57,23 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("Stage 3 (typecheck): FAILED");
     expect(stdout.value).toContain("To debug failed stages:");
-    expect(stdout.value).toContain("aiq run --only 3 --verbose");
+    expect(stdout.value).toContain("aiq --only 3 --verbose");
     expect(stdout.value).not.toContain("First-run diagnostics:");
+    const hint = stdout.value.match(/^\s+(aiq --only 3 --verbose)\s+#/mu)?.[1];
+    expect(hint).toBeDefined();
+    const debugStdout = new MemoryOutput();
+    const debugStderr = new MemoryOutput();
+    const debugExitCode = await runCli(["node", ...(hint ?? "").split(" ")], {
+      cwd: project.root,
+      stderr: debugStderr,
+      stdin: new MemoryInput(),
+      stdout: debugStdout,
+    });
+    expect(debugExitCode).toBe(1);
+    expect(debugStderr.value).toBe("");
+    expect(debugStdout.value).toContain("Stage 3 (typecheck): FAILED");
+    expect(debugStdout.value.match(/Stage \d+ \(/gu)).toHaveLength(1);
+    expect(debugStdout.value).toContain("Type 'number' is not assignable to type 'string'");
   });
 
   it("returns a distinct internal error code when first-run cannot inspect cwd", async () => {

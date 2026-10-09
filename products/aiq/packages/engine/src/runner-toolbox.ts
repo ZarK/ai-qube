@@ -1,6 +1,5 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { requirePathCommand } from "./tools/host-tools.js";
 
 import type { StageId } from "./contracts.js";
 import { AiqEngineCancelledError } from "./run.js";
@@ -155,8 +154,8 @@ export async function createJvmProcessEnv(): Promise<NodeJS.ProcessEnv | undefin
   return getRunnerToolRunner().createJvmProcessEnv();
 }
 
-export async function resolveLizardCommand(): Promise<string> {
-  return requirePathCommand("lizard");
+export function resolveUvxCommand(): string {
+  return binaries.resolveUvxCommand();
 }
 
 export function resolveDotNetCommand(): string {

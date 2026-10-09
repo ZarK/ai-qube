@@ -169,7 +169,7 @@ import {
   resolveDotNetCommand,
   resolveGradleCommand,
   resolveInstalledBinary,
-  resolveLizardCommand,
+  resolveUvxCommand,
   resolveMavenCommand,
   resolvePackageBinaryPath,
   resolvePowerShellModuleManifest,

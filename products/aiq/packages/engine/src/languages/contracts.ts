@@ -104,7 +104,7 @@ export interface JavaScriptRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   readUnsupportedRunnerNote: (stageId: StageId, projectRoots: readonly string[]) => string;
-  resolveLizardCommand: () => Promise<string>;
+  resolveUvxCommand: () => string;
   runExecutable: (
     command: string,
     args: string[],
@@ -223,7 +223,7 @@ export interface JvmRunnerRuntime extends LanguageRunnerBaseRuntime {
   resolveGradleCommand: () => string;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
   resolveMavenCommand: () => string;
-  resolveLizardCommand: () => Promise<string>;
+  resolveUvxCommand: () => string;
   runExecutable: (
     command: string,
     args: string[],
@@ -255,7 +255,7 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   resolveDotNetCommand: () => string;
-  resolveLizardCommand: () => Promise<string>;
+  resolveUvxCommand: () => string;
   runExecutable: (
     command: string,
     args: string[],
@@ -292,7 +292,7 @@ export interface GoRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
-  resolveLizardCommand: () => Promise<string>;
+  resolveUvxCommand: () => string;
   runExecutable: (
     command: string,
     args: string[],
@@ -329,7 +329,7 @@ export interface RustRunnerRuntime extends LanguageRunnerBaseRuntime {
     minMaintainabilityRank: string,
     emptyBlockLabel: string,
   ) => string;
-  resolveLizardCommand: () => Promise<string>;
+  resolveUvxCommand: () => string;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
   runExecutable: (
     command: string,

@@ -66,6 +66,7 @@ describe("CLI foundation", () => {
   it("renders check output as text from direct file input", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-check-text-"));
     tempDirs.push(tempDir);
+    const target = path.relative(process.cwd(), lintFailureFixtureFile).split(path.sep).join("/");
 
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
@@ -75,7 +76,7 @@ describe("CLI foundation", () => {
         "aiq",
         "check",
         "--files",
-        lintFailureFixtureFile,
+        target,
         "--stage",
         "lint",
         "--format",
@@ -97,7 +98,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("): FAILED");
     expect(stdout.value).toContain("Stage 1 (lint): FAILED");
     expect(stdout.value).toContain("To debug failed stages:");
-    expect(stdout.value).toContain(`aiq run ${lintFailureFixtureFile} --only 1 --verbose`);
+    expect(stdout.value).toContain(`aiq run ${target} --only 1 --verbose`);
     expect(stdout.value).not.toContain("Run:");
     expect(stdout.value).not.toContain("Artifacts:");
   });

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -103,10 +104,60 @@ describe("reporters", () => {
         "Total execution time: 00m25s",
         "",
         "To debug failed stages:",
-        '  aiq run src "test folder" --only 6 --verbose  # Debug stage 6 (complexity)',
+        "  aiq run src 'test folder' --only 6 --verbose  # Debug stage 6 (complexity)",
         "",
       ].join("\n"),
     );
+  });
+
+  it("passes shell metacharacters in debug targets as literal arguments", () => {
+    const windows = process.platform === "win32";
+    const targets = [
+      "$(Write-Output INJECTED).ts",
+      "$(printf INJECTED).ts",
+      "`echo INJECTED`.ts",
+      "quote'$(echo INJECTED).ts",
+      "a; echo INJECTED; #.ts",
+      ...(windows ? [] : ['double"quote.ts', "a&echo INJECTED|cat.ts"]),
+      "test folder/file.ts",
+      "C:\\source\\file.ts",
+    ];
+    const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+    const output = formatRunResultAsText(result, { targets });
+    const command = output.split("\n").find((line) => line.startsWith("  aiq run "));
+    expect(command).toBeDefined();
+    const script = windows
+      ? `function aiq { ConvertTo-Json -InputObject ([string[]]$args) -Compress }; ${command}`
+      : `aiq() { printf '%s\\0' "$@"; }; ${command}`;
+    const stdout = execFileSync(
+      windows ? "powershell.exe" : "/bin/sh",
+      windows ? ["-NoProfile", "-NonInteractive", "-Command", script] : ["-c", script],
+      { encoding: "utf8" },
+    );
+    const args = windows ? JSON.parse(stdout) : stdout.split("\0").slice(0, -1);
+    expect(args).toEqual(["run", ...targets, "--only", "1", "--verbose"]);
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "omits targets unsafe for Windows command shims or PowerShell quotes",
+    () => {
+      const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+      for (const character of ['"', "&", "|", "<", ">", "%", "^", "\u2018", "\u2019"]) {
+        const output = formatRunResultAsText(result, { targets: [`a${character}b.ts`] });
+        expect(output).toContain("Debug command omitted");
+        expect(output).not.toContain("aiq run");
+      }
+    },
+  );
+
+  it("omits executable hints when a target contains control characters", () => {
+    const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+    for (const target of ["line\nbreak.ts", "escape\u001b.ts", "line\u2028break.ts"]) {
+      const output = formatRunResultAsText(result, { targets: ["src", target] });
+      expect(output).toContain("Debug command omitted");
+      expect(output).not.toContain("aiq run");
+      expect(output).not.toContain(target);
+    }
   });
 
   it("colors terminal output and honors NO_COLOR", () => {

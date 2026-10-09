@@ -66,12 +66,12 @@ export const hasGoToolchain =
   commandAvailable("go") &&
   commandAvailable("gofmt") &&
   commandSucceeds("go", ["version"]) &&
-  commandAvailable("lizard");
+  commandAvailable("uvx");
 
 export const hasRustToolchain =
   commandAvailable("cargo") &&
   commandSucceeds("cargo", ["--version"]) &&
-  commandAvailable("lizard");
+  commandAvailable("uvx");
 
 export const hasRustCoverageToolchain =
   hasRustToolchain && commandSucceeds("cargo", ["llvm-cov", "--version"]);

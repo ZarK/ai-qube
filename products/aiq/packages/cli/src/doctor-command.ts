@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { loadAiqProgress } from "@tjalve/aiq/config";
 import { ToolRunner, resolvePathCommand, resolvePythonInterpreter } from "@tjalve/aiq/engine";
@@ -241,11 +242,17 @@ async function resolvePrerequisite(prerequisite: DoctorPrerequisite): Promise<st
   } catch {
     return undefined;
   }
-  const result = await runCommand(interpreter, [
-    "-c",
-    "import importlib, importlib.metadata, sys; module = importlib.import_module(sys.argv[1]); print(module.__file__ + '; ' + importlib.metadata.version(sys.argv[1]))",
-    prerequisite.pythonModule,
-  ]);
+  const result = await runCommand(
+    interpreter,
+    [
+      "-E",
+      "-P",
+      "-c",
+      "import importlib, importlib.metadata, sys; module = importlib.import_module(sys.argv[1]); print(module.__file__ + '; ' + importlib.metadata.version(sys.argv[1]))",
+      prerequisite.pythonModule,
+    ],
+    os.tmpdir(),
+  );
   return result.exitCode === 0
     ? `${prerequisite.pythonModule}; ${result.stdout.trim()}; Python interpreter: ${interpreter}`
     : undefined;
@@ -305,10 +312,11 @@ async function resolveCommandVersion(
 async function runCommand(
   command: string,
   args: string[],
+  cwd = process.cwd(),
 ): Promise<{ exitCode: number; stdout: string }> {
   try {
     const result = await doctorToolRunner.run(command, args, {
-      cwd: process.cwd(),
+      cwd,
       signal: AbortSignal.timeout(doctorProbeTimeoutMs),
     });
     return {

@@ -77,6 +77,7 @@ export interface ResolvedRunRequest {
   cwd: string;
   diffOnly: boolean;
   diffOnlyFiles: string[];
+  ignore?: readonly string[];
   manifest: FileManifest;
   mode: RunMode;
   outDir: string;

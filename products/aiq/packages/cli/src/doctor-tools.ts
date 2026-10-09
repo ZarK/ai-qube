@@ -326,8 +326,8 @@ export function resolveDoctorToolRequirements(
     ];
     if (lizardLanguages.some((language) => languages.has(language))) {
       requirements.set("Lizard metrics tool", {
-        binaries: ["lizard"],
-        install: "Install Lizard on PATH to enable non-Python metrics stages.",
+        binaries: [process.platform === "win32" ? "uvx.exe" : "uvx"],
+        install: "Install uv with uvx on PATH to provision Lizard for shared metrics.",
         name: "Lizard metrics tool",
         required: true,
         source: "external",

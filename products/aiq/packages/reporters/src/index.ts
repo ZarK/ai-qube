@@ -90,17 +90,30 @@ function appendDebugHints(
   const failed = stages.filter((stage) => stage.status === "failed");
   if (failed.length === 0) return;
   lines.push("", "To debug failed stages:");
-  const targetArgs = targets.map(quoteArgument).join(" ");
+  const quotedTargets = targets.map(quoteArgument);
+  if (quotedTargets.some((target) => target === undefined)) {
+    lines.push("  Debug command omitted because a target cannot be safely quoted for the shell.");
+    return;
+  }
+  const targetArgs = quotedTargets.join(" ");
+  const command = targetArgs.length === 0 ? "aiq" : `aiq run ${targetArgs}`;
   for (const stage of failed) {
     const number = stageNumbers[stage.stageId];
     lines.push(
-      `  aiq run${targetArgs.length === 0 ? "" : ` ${targetArgs}`} --only ${number} --verbose  # Debug stage ${number} (${stage.stageId})`,
+      `  ${command} --only ${number} --verbose  # Debug stage ${number} (${stage.stageId})`,
     );
   }
 }
 
-function quoteArgument(value: string): string {
-  return /^[A-Za-z0-9_./\\:-]+$/u.test(value) ? value : JSON.stringify(value);
+function quoteArgument(value: string): string | undefined {
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)) return undefined;
+  if (/^[A-Za-z0-9_./:-]+$/u.test(value)) return value;
+  if (process.platform === "win32") {
+    // Exclude delimiters for PowerShell and metacharacters in Windows command shims.
+    if (/["&|<>%^\u2018-\u201f]/u.test(value)) return undefined;
+    return `'${value.replaceAll("'", "''")}'`;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function appendDetails(lines: string[], result: RunResult): void {

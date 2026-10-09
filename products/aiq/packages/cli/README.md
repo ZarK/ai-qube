@@ -75,6 +75,9 @@ To debug failed stages:
 
 Times use `MMmSSs`. Status colors appear only on a terminal when `NO_COLOR` is
 unset. `--verbose` adds diagnostics and tool details after the summary.
+Debug hints use PowerShell quoting on Windows and POSIX shell quoting elsewhere.
+If a target cannot be quoted safely, Quality omits the command. After an implicit
+`aiq` run, hints use `aiq --only N --verbose` to select the failed stage.
 `--format json` emits the structured report. A stage without measurable files
 reports `WARNING` with a reason. An explicit target that selects no files fails.
 Directory targets expand recursively. `inputs.ignore` applies to directories,
@@ -158,8 +161,12 @@ stages that would run, and separates npm-bundled tools from external host tools.
 It exits non-zero when selected stages need missing required setup. Use
 `--verbose` for additional diagnostics. Required host tools always include their
 resolved paths and versions. Ruff, ShellCheck, and shfmt must be executables on
-`PATH`. Lizard and the Python type checker, ty, also resolve on `PATH`. Radon must be installed for the Python interpreter that Quality resolves;
-`doctor` reports that interpreter.
+`PATH`. The Python type checker, ty, also resolves on `PATH`. Lizard runs through
+uvx; `doctor` requires uvx on `PATH` and reports its path and version. Radon must
+be installed for the Python interpreter that Quality resolves; `doctor` reports
+that interpreter. Python prerequisite probes exclude the working
+directory and Python environment variables from the module search path so local
+modules cannot shadow installed host tools. User site packages remain available.
 
 ## SLOC Limit
 

@@ -51,6 +51,13 @@ export async function runPythonLintTask(
     );
   }
 
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for lint.",
+    );
+  }
+
   const status = diagnostics.length === 0 ? "passed" : "failed";
 
   return {
@@ -105,6 +112,13 @@ export async function runPythonFormatTask(
       totalDurationMs,
       diagnostics,
       toolRuns,
+    );
+  }
+
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for format.",
     );
   }
 
@@ -167,6 +181,13 @@ export async function runPythonTypecheckTask(
       totalDurationMs,
       diagnostics,
       toolRuns,
+    );
+  }
+
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for typecheck.",
     );
   }
 

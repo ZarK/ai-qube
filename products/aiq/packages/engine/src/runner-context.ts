@@ -14,6 +14,7 @@ export type RunnerExecutionContext = {
   cache: CacheService;
   cwd: string;
   graph: ProjectGraph | undefined;
+  ignore: readonly string[];
   selectedStages: readonly StageId[];
   stageConfigurations: RunStageConfigurations | undefined;
   signal: AbortSignal | undefined;
@@ -59,6 +60,7 @@ export function createRunnerExecutionContext(
       cache: cwdOrContext.cache,
       cwd: cwdOrContext.cwd,
       graph: cwdOrContext.graph,
+      ignore: cwdOrContext.ignore ?? [],
       selectedStages: [...cwdOrContext.selection.stages],
       stageConfigurations: cwdOrContext.selection.stageConfigurations,
       signal: signal ?? cwdOrContext.signal,
@@ -71,6 +73,7 @@ export function createRunnerExecutionContext(
     cache: defaultRunnerCache,
     cwd: cwdOrContext,
     graph: undefined,
+    ignore: [],
     selectedStages: [],
     stageConfigurations: undefined,
     signal,
@@ -95,6 +98,7 @@ export function getRunnerExecutionContext(): RunnerExecutionContext {
       cache: defaultRunnerCache,
       cwd: process.cwd(),
       graph: undefined,
+      ignore: [],
       selectedStages: [],
       stageConfigurations: undefined,
       signal: undefined,

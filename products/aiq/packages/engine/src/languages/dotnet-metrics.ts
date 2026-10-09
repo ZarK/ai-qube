@@ -65,7 +65,7 @@ async function runDotNetMetricsProjectTask(
     await writeFile(inputFile, `${project.files.join("\n")}\n`, "utf8");
     const args = createLizardArgs({ inputFile, languages: ["csharp"] });
     const outcome = await runtime.runExecutable(
-      await runtime.resolveLizardCommand(),
+      runtime.resolveUvxCommand(),
       args,
       project.projectRoot,
       runtime.signal,

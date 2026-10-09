@@ -168,7 +168,7 @@ export function createExecutionFailureStage(...values: ExecutionFailureStageArgs
   return {
     diagnostics: [...diagnostics, createProcessFailureDiagnostic(file, tool, message)],
     durationMs,
-    notes: [message],
+    notes: [`${tool}: ${message}`],
     stageId,
     status: "failed",
     toolRuns,

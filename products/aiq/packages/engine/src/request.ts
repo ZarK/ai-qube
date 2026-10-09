@@ -39,6 +39,7 @@ export async function resolveRunRequest(request: RunRequest): Promise<ResolvedRu
       request.manifest.ignore,
     ),
     manifest,
+    ...(request.manifest.ignore === undefined ? {} : { ignore: [...request.manifest.ignore] }),
     mode: request.mode,
     outDir: resolveArtifactOutDir(cwd, request.outDir ?? defaultOutDir),
     selection: {
