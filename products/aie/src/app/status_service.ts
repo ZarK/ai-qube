@@ -19,12 +19,14 @@ import type { WorkProvider, WorkProviderCapabilities } from '../providers/work_p
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
 import { maybeWorkItemKeyNumber } from '../core/work_item.js';
 import { workProviderOptions } from './lifecycle_common.js';
+import { isBlockingPullRequest, listOpenPullRequests, type PullRequestSummary } from '../repo/index.js';
 
 export type StatusDecisionState = 'continue' | 'stop' | 'wait' | 'unknown';
 export type StatusReasonCode =
   | 'config-invalid'
   | 'repository-unavailable'
   | 'work-provider-unavailable'
+  | 'review-state-unavailable'
   | 'multiple-active-work'
   | 'dirty-checkout'
   | 'linked-worktree'
@@ -173,6 +175,9 @@ export interface StatusResult {
     blockedWork: StatusWorkSummary[];
   };
   review: StatusReviewState;
+  openPullRequests: PullRequestSummary[];
+  blockingPullRequests: PullRequestSummary[];
+  pullRequestError: string | null;
   gates: StatusGateState;
   reviewGate: ReviewGateResult | null;
   decision: StatusDecision;
@@ -186,6 +191,7 @@ export interface StatusServiceContext {
   repositoryProvider: RepositoryProvider;
   reviewProvider: ReviewProvider | ReviewForgeProvider;
   readCurrentReview: () => Promise<CurrentReviewForge>;
+  readOpenPullRequests: () => Promise<PullRequestSummary[]>;
   cwd?: string;
   now?: () => Date;
 }
@@ -194,6 +200,12 @@ interface QueueState {
   available: boolean;
   error: string | null;
   queue: Queue;
+}
+
+interface PullRequestState {
+  openPullRequests: PullRequestSummary[];
+  blockingPullRequests: PullRequestSummary[];
+  pullRequestError: string | null;
 }
 
 const EMPTY_QUEUE: Queue = {
@@ -222,6 +234,7 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
     repositoryProvider,
     reviewProvider: reviewForgeProvider,
     readCurrentReview: () => reviewForgeProvider.findCurrentReview(),
+    readOpenPullRequests: () => listOpenPullRequests(config, { cwd: options.cwd }),
     cwd: options.cwd,
   };
 }
@@ -236,10 +249,11 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
   const selectedItem = activeItems.length === 1 ? activeItems[0] : nextItem;
   const expectedBranch = selectedItem ? await inspectExpectedBranch(context, selectedItem.workItem) : null;
   const review = await inspectReview(context);
+  const pullRequests = await inspectPullRequests(context);
   const gates = summarizeGates(buildGateStatus(context.config, { evidenceRoot: repository?.root ?? context.configLoad.root }));
   const activeIssueNumber = activeItems.length === 1 ? maybeWorkItemKeyNumber(activeItems[0].workItem.key) : null;
   const reviewGate = activeIssueNumber !== null ? runReviewGate(context.config, { issueNumber: activeIssueNumber, repoRoot: repository?.root ?? context.configLoad.root }) : null;
-  const decision = decideStatus({ context, repository, queueState, activeItems, nextItem, review, gates, reviewGate });
+  const decision = decideStatus({ context, repository, queueState, activeItems, nextItem, review, pullRequests, gates, reviewGate });
   const queue: StatusResult['queue'] = {
     available: queueState.available,
     error: queueState.error,
@@ -251,7 +265,7 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
 
   return {
     schemaVersion: 1,
-    states: buildAiuStatusStates({ queue, review, decision, autonomousMode: context.config.autonomousMode }),
+    states: buildAiuStatusStates({ queue, review, blockingPullRequests: pullRequests.blockingPullRequests, decision, autonomousMode: context.config.autonomousMode }),
     ok: true,
     command: 'status',
     timestamp: (context.now ?? (() => new Date()))().toISOString(),
@@ -262,6 +276,7 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
     expectedBranch,
     queue,
     review,
+    ...pullRequests,
     gates,
     reviewGate,
     decision,
@@ -275,7 +290,7 @@ function configErrorStatus(context: StatusServiceContext): StatusResult {
   const decision: StatusDecision = { state: 'stop', reasonCodes: ['config-invalid'], nextCommand: 'aie init . --dry-run --force', summary: 'Fix the selected Executor config before continuing Executor work.' };
   return {
     schemaVersion: 1,
-    states: buildAiuStatusStates({ queue, review, decision, autonomousMode: false }),
+    states: buildAiuStatusStates({ queue, review, blockingPullRequests: [], decision, autonomousMode: false }),
     ok: false,
     command: 'status',
     timestamp: (context.now ?? (() => new Date()))().toISOString(),
@@ -286,6 +301,9 @@ function configErrorStatus(context: StatusServiceContext): StatusResult {
     expectedBranch: null,
     queue,
     review,
+    openPullRequests: [],
+    blockingPullRequests: [],
+    pullRequestError: 'Trusted Executor config is invalid.',
     gates,
     reviewGate: null,
     decision,
@@ -338,6 +356,16 @@ async function inspectReview(context: StatusServiceContext): Promise<StatusRevie
   }
 }
 
+async function inspectPullRequests(context: StatusServiceContext): Promise<PullRequestState> {
+  if (context.config.providers.review.kind !== 'github') return { openPullRequests: [], blockingPullRequests: [], pullRequestError: null };
+  try {
+    const openPullRequests = await context.readOpenPullRequests();
+    return { openPullRequests, blockingPullRequests: openPullRequests.filter(isBlockingPullRequest), pullRequestError: null };
+  } catch (error: unknown) {
+    return { openPullRequests: [], blockingPullRequests: [], pullRequestError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function queueSummary(queue: Queue): StatusQueueSummary {
   return { total: queue.items.length, inProgress: queue.inProgressCount, ready: queue.readyCount, blocked: queue.blockedCount, drift: queue.driftCount, multipleInProgress: queue.multipleInProgress, cycles: queue.cycles };
 }
@@ -350,6 +378,7 @@ function workSummary(item: QueueItem): StatusWorkSummary {
 function buildAiuStatusStates(input: {
   queue: StatusResult['queue'];
   review: StatusReviewState;
+  blockingPullRequests: PullRequestSummary[];
   decision: StatusDecision;
   autonomousMode: boolean;
 }): readonly AiuStatusState[] {
@@ -391,7 +420,9 @@ function buildAiuStatusStates(input: {
       unknownItems: Object.freeze([]),
     }),
   ];
-  if (canRecoverWorkflow && input.review.state === 'available' && input.review.item) {
+  const currentReviewSelected = input.queue.activeWork.length > 0
+    || (input.decision.reasonCodes.includes('open-review-before-new-work') && String(input.blockingPullRequests[0]?.number) === input.review.item?.key.id);
+  if (canRecoverWorkflow && currentReviewSelected && input.review.state === 'available' && input.review.item) {
     states.push(toAiuReview(input.review.item, action));
   }
   return Object.freeze(states);
@@ -468,7 +499,7 @@ function summarizeGates(result: GateStatusResult): StatusGateState {
   return { configured: result.summary.total, failed: result.summary.failed, unknown: result.summary.unknown, notRecorded: result.summary.notRecorded, verified: result.summary.verified, stale: result.summary.stale, requiredBlocking, supplyChainStopConditions, result };
 }
 
-function decideStatus(input: { context: StatusServiceContext; repository: RepoState | null; queueState: QueueState; activeItems: QueueItem[]; nextItem: QueueItem | null; review: StatusReviewState; gates: StatusGateState; reviewGate: ReviewGateResult | null }): StatusDecision {
+function decideStatus(input: { context: StatusServiceContext; repository: RepoState | null; queueState: QueueState; activeItems: QueueItem[]; nextItem: QueueItem | null; review: StatusReviewState; pullRequests: PullRequestState; gates: StatusGateState; reviewGate: ReviewGateResult | null }): StatusDecision {
   if (!input.repository?.root) return { state: 'stop', reasonCodes: ['repository-unavailable'], nextCommand: 'aie doctor --json', summary: 'Run Executor from a valid git repository checkout.' };
   if (!input.queueState.available) return { state: 'unknown', reasonCodes: ['work-provider-unavailable'], nextCommand: 'aie doctor --json', summary: 'Work provider state is unavailable; Executor cannot safely continue.' };
   if (input.activeItems.length > 1) return { state: 'stop', reasonCodes: ['multiple-active-work'], nextCommand: 'aie queue --json', summary: 'Multiple active work items exist; fix status labels before continuing.' };
@@ -484,8 +515,10 @@ function decideStatus(input: { context: StatusServiceContext; repository: RepoSt
     }
     return { state: 'stop', reasonCodes: ['dirty-checkout'], nextCommand: 'git status', summary: 'The checkout has uncommitted changes that are not tied to one active issue.' };
   }
-  if (input.activeItems.length === 0 && input.review.item && (input.review.item.state === 'open' || input.review.item.state === 'draft')) {
-    return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${input.review.item.key.id} --json`, summary: 'An open pull request exists on the current branch; resolve it before starting new work.' };
+  if (input.activeItems.length === 0 && input.context.config.blockOnOpenPRs) {
+    if (input.pullRequests.pullRequestError) return { state: 'unknown', reasonCodes: ['review-state-unavailable'], nextCommand: 'aie doctor --json', summary: `Open pull request check failed: ${input.pullRequests.pullRequestError}` };
+    const blockingPullRequests = input.pullRequests.blockingPullRequests;
+    if (blockingPullRequests.length > 0) return { state: 'wait', reasonCodes: ['open-review-before-new-work'], nextCommand: `aie pr gate ${blockingPullRequests[0].number} --json`, summary: `Open pull requests block new issue work: ${blockingPullRequests.map(pr => `#${pr.number}`).join(', ')}.` };
   }
 
   if (input.activeItems.length === 1) return decideActiveWork(input.activeItems[0], input);

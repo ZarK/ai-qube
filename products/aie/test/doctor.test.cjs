@@ -8,7 +8,8 @@ const { basename, delimiter, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
-const { getInstructionStatus } = require('../dist/repo/index.js');
+const { getInstructionStatus, isBlockingPullRequest, listOpenPullRequests } = require('../dist/repo/index.js');
+const { buildLifecycleDiagnostics } = require('../dist/doctor_diagnostics/index.js');
 const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
 const { formatDoctorHuman, formatReviewRouteProbe } = require('../dist/renderers/doctor_renderer.js');
 const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
@@ -36,6 +37,32 @@ const unverifiedGitHubReadiness = Object.freeze({
 });
 
 describe('doctor diagnostics', () => {
+  it('uses only ready non-automation pull requests for lifecycle readiness', async () => {
+    const config = { ...getDefaults(), blockOnOpenPRs: true };
+    const baseRef = { remote: 'origin', branch: 'main', resolved: true, upToDate: true };
+    const raw = [
+      { number: 1, title: 'Parked work', author: { login: 'human' }, isDraft: true, url: 'https://github.com/example/repo/pull/1', headRefName: 'parked' },
+      ...['dependabot', 'dependabot[bot]', 'app/dependabot'].map((login, index) => ({
+        number: index + 2, title: 'Dependency update', author: { login, is_bot: true }, isDraft: false, url: `https://github.com/example/repo/pull/${index + 2}`, headRefName: `dependencies-${index}`,
+      })),
+      { number: 5, title: 'Ready work', author: { login: 'human' }, isDraft: false, url: 'https://github.com/example/repo/pull/5', headRefName: 'ready' },
+    ];
+    for (const includeReady of [false, true]) {
+      const prs = await listOpenPullRequests(config, { exec: async args => ({ args, exitCode: 0, stdout: JSON.stringify(includeReady ? raw : raw.slice(0, -1)), stderr: '' }) });
+      const blockingPullRequests = prs.filter(isBlockingPullRequest);
+      const blockingPullRequestCount = blockingPullRequests.length;
+      const lifecycle = buildLifecycleDiagnostics({ config, currentBranch: 'main', isWorktree: false, openIssues: [], queueDriftCount: 0, queueMultipleInProgress: false, baseRef, blockingPullRequestCount });
+
+      assert.deepEqual(blockingPullRequests.map(pr => pr.number), includeReady ? [5] : []);
+      assert.equal(lifecycle.lifecycleCommandsReady, !includeReady);
+      assert.equal(computeDoctorOk({
+        isRepo: true, configValid: true, gitAvailable: true, ghAvailable: true, nodeSatisfies: true,
+        isWorktree: false, labelsOk: true, queueDriftCount: 0, queueMultipleInProgress: false,
+        baseRef, blockOnOpenPRs: true, blockingPullRequestCount, instructionInstallOk: true,
+      }), !includeReady);
+    }
+  });
+
   it('requires observed connection details before treating unverified GitHub access as usable', () => {
     assert.equal(hasUsableGitHubConnection(readyGitHubReadiness), true);
     assert.equal(hasUsableGitHubConnection(unverifiedGitHubReadiness), true);

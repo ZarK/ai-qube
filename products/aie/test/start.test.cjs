@@ -249,6 +249,32 @@ describe('start service', () => {
     assert.equal(calls.some(args => args[0] === 'issue' && args[1] === 'edit'), false);
   });
 
+  for (const [login, isDraft] of [['human', true], ['dependabot', false], ['dependabot[bot]', false], ['app/dependabot', false]]) {
+    it(`allows start with a ${isDraft ? 'draft' : 'ready'} pull request from ${login}`, async () => {
+      const repo = makeGitRepo();
+      const exec = makeExec({
+        [issueListKey()]: success([], JSON.stringify([issue(93, 'Ready work', ['S-Ready'])])),
+        'pr list --state open --json number,title,author,isDraft,url,headRefName --limit 1000': success([], JSON.stringify([
+          { number: 12, title: 'Open work', author: { login }, isDraft, url: 'https://github.com/example/repo/pull/12', headRefName: 'feature' },
+        ])),
+      });
+
+      const result = await startIssue({
+        selection: { kind: 'next' },
+        dryRun: true,
+        assign: false,
+        comment: false,
+        exec,
+        cwd: repo,
+        config: { ...getDefaults(), noWorktree: false, blockOnOpenPRs: true },
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.preStartPolicy.ok, true);
+      assert.deepEqual(result.preStartPolicy.blockingPullRequests, []);
+    });
+  }
+
   it('skips mutations when pre-start open PR policy fails', async () => {
     const repo = makeGitRepo();
     const exec = makeExec({

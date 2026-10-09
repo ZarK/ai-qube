@@ -46,6 +46,35 @@ function makeExec(responses, calls = []) {
 }
 
 describe('switch service', () => {
+  for (const [login, isDraft] of [['human', true], ['dependabot', false], ['dependabot[bot]', false], ['app/dependabot', false]]) {
+    it(`allows switch with a ${isDraft ? 'draft' : 'ready'} pull request from ${login}`, async () => {
+      const repo = makeGitRepo();
+      const source = issue(93, 'Active work', ['S-InProgress']);
+      const target = issue(94, 'Ready work', ['S-Ready']);
+      const exec = makeExec({
+        [issueListKey()]: success([], JSON.stringify([source, target])),
+        [issueViewKey(94)]: success([], JSON.stringify(target)),
+        'pr list --state open --json number,title,author,isDraft,url,headRefName --limit 1000': success([], JSON.stringify([
+          { number: 12, title: 'Open work', author: { login }, isDraft, url: 'https://github.com/example/repo/pull/12', headRefName: 'feature' },
+        ])),
+      });
+
+      const result = await switchIssue({
+        targetIssueNumber: 94,
+        dryRun: true,
+        assign: false,
+        comment: false,
+        exec,
+        cwd: repo,
+        config: { ...getDefaults(), noWorktree: false, blockOnOpenPRs: true },
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.preStartPolicy.ok, true);
+      assert.deepEqual(result.preStartPolicy.blockingPullRequests, []);
+    });
+  }
+
   it('switches from the single active source to a ready target', async () => {
     const repo = makeGitRepo();
     const calls = [];

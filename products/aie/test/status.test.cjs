@@ -11,6 +11,7 @@ const { getDefaults } = require('../dist/config/index.js');
 const { configToExecutorPolicy } = require('../dist/config_policy.js');
 const { normalizeReviewItem } = require('../dist/core/review_item.js');
 const { normalizeWorkItem } = require('../dist/core/work_item.js');
+const { listOpenPullRequests } = require('../dist/repo/index.js');
 const { formatStatusHuman } = require('../dist/renderers/status_renderer.js');
 
 function binRun(args, cwd = process.cwd()) {
@@ -89,6 +90,17 @@ function makeReview(number, options = {}) {
   });
 }
 
+function makePullRequest(number, options = {}) {
+  return {
+    number,
+    title: `Pull request ${number}`,
+    author: { login: options.login ?? 'maintainer', is_bot: options.isBot ?? false },
+    isDraft: options.isDraft ?? false,
+    url: `https://github.com/example/repo/pull/${number}`,
+    headRefName: options.headRefName ?? 'other-branch',
+  };
+}
+
 function makeRepoState(root, overrides = {}) {
   return {
     root,
@@ -133,6 +145,13 @@ function makeContext(input = {}) {
       capabilities: () => ({ loadReview: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true }),
     },
     readCurrentReview: async () => review,
+    readOpenPullRequests: () => listOpenPullRequests(config, {
+      exec: async args => {
+        assert.deepEqual(args, ['pr', 'list', '--state', 'open', '--json', 'number,title,author,isDraft,url,headRefName', '--limit', '1000']);
+        if (input.pullRequestError) throw new Error(input.pullRequestError);
+        return { args, exitCode: 0, stdout: JSON.stringify(input.pullRequests ?? []), stderr: '' };
+      },
+    }),
     now: () => new Date('2026-05-17T00:00:00.000Z'),
   };
 }
@@ -277,6 +296,7 @@ describe('status service', () => {
     const result = await buildStatus(makeContext({
       workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
       review: { item: makeReview(90, { state: 'open' }), pr: null, warning: null },
+      pullRequests: [makePullRequest(90)],
     }));
 
     assert.deepEqual(result.decision.reasonCodes, ['open-review-before-new-work']);
@@ -284,6 +304,115 @@ describe('status service', () => {
     const review = result.states.find(state => state.kind === 'review');
     assert.equal(review.reviewStatus, 'active');
     assert.deepEqual(review.nextAction.argv, ['aie', 'pr', 'gate', '90', '--json']);
+  });
+
+  it('allows new work while the current pull request is a draft', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+      review: { item: makeReview(90, { state: 'draft' }), pr: null, warning: null },
+      pullRequests: [makePullRequest(90, { isDraft: true })],
+    }));
+
+    assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+    assert.equal(result.openPullRequests.length, 1);
+    assert.deepEqual(result.blockingPullRequests, []);
+    assert.equal(result.states.some(state => state.kind === 'review'), false);
+    assert.deepEqual(result.states.find(state => state.kind === 'work-queue').readyItems[0].nextAction.argv, ['aie', 'start', 'next']);
+  });
+
+  for (const configuredLogin of ['dependabot', 'dependabot[bot]', 'app/dependabot']) {
+    for (const login of ['dependabot', 'dependabot[bot]', 'app/dependabot']) {
+      it(`allows new work for ${login} when ${configuredLogin} is ignored`, async () => {
+        const result = await buildStatus(makeContext({
+          config: makeConfig({ ignoredAutomationAuthors: [configuredLogin] }),
+          workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+          review: { item: makeReview(90), pr: null, warning: null },
+          pullRequests: [makePullRequest(90, { login, isBot: true })],
+        }));
+
+        assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+        assert.deepEqual(result.blockingPullRequests, []);
+        assert.equal(result.states.some(state => state.kind === 'review'), false);
+      });
+    }
+  }
+
+  it('reports ready human pull requests on other branches as blockers', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+      review: { item: makeReview(90, { state: 'draft' }), pr: null, warning: null },
+      pullRequests: [
+        makePullRequest(90, { isDraft: true }),
+        makePullRequest(91, { login: 'app/dependabot', isBot: true }),
+        makePullRequest(92),
+        makePullRequest(93),
+      ],
+    }));
+
+    assert.deepEqual(result.decision.reasonCodes, ['open-review-before-new-work']);
+    assert.deepEqual(result.blockingPullRequests.map(pr => pr.number), [92, 93]);
+    assert.equal(result.decision.nextCommand, 'aie pr gate 92 --json');
+    assert.match(formatStatusHuman(result), /Open pull requests block new issue work: #92, #93\./);
+    assert.equal(result.states.some(state => state.kind === 'review'), false);
+  });
+
+  it('allows new work with ready pull requests when blocking is disabled', async () => {
+    const result = await buildStatus(makeContext({
+      config: makeConfig({ blockOnOpenPRs: false }),
+      workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+      review: { item: makeReview(90), pr: null, warning: null },
+      pullRequests: [makePullRequest(90)],
+    }));
+
+    assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+    assert.deepEqual(result.blockingPullRequests.map(pr => pr.number), [90]);
+    assert.equal(result.states.some(state => state.kind === 'review'), false);
+  });
+
+  it('keeps a draft review actionable for active work', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(77, 'Active work', ['S-InProgress'])],
+      review: { item: makeReview(90, { state: 'draft' }), pr: null, warning: null },
+      pullRequests: [makePullRequest(90, { isDraft: true })],
+    }));
+
+    assert.deepEqual(result.decision.reasonCodes, ['pending-review']);
+    assert.equal(result.states.find(state => state.kind === 'review').targetId, '90');
+  });
+
+  it('does not query GitHub pull requests for another review provider', async () => {
+    const config = makeConfig();
+    config.providers.review.kind = 'gitlab';
+    const context = makeContext({ config, workItems: [makeWork(77, 'Next issue', ['S-Ready'])] });
+    context.readOpenPullRequests = async () => assert.fail('GitHub pull requests must not be queried');
+
+    const result = await buildStatus(context);
+
+    assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+    assert.equal(result.pullRequestError, null);
+  });
+
+  it('reports an unknown state when the required pull request check fails', async () => {
+    const result = await buildStatus(makeContext({
+      workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+      pullRequestError: 'Pull request state unavailable',
+    }));
+
+    assert.equal(result.decision.state, 'unknown');
+    assert.deepEqual(result.decision.reasonCodes, ['review-state-unavailable']);
+    assert.equal(result.pullRequestError, 'Pull request state unavailable');
+    assert.deepEqual(result.states.find(state => state.kind === 'continuation-policy').allowedModes, ['stop']);
+  });
+
+  it('allows new work when a disabled pull request check fails', async () => {
+    const result = await buildStatus(makeContext({
+      config: makeConfig({ blockOnOpenPRs: false }),
+      workItems: [makeWork(77, 'Next issue', ['S-Ready'])],
+      pullRequestError: 'Pull request state unavailable',
+    }));
+
+    assert.deepEqual(result.decision.reasonCodes, ['start-next-work']);
+    assert.equal(result.pullRequestError, 'Pull request state unavailable');
   });
 
   it('reports merged review state as ready for issue completion', async () => {

@@ -108,7 +108,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-04-014 | Repository priming can create only the Executor-owned scaffolding needed to work existing issues; it must not take over Bootstrap responsibilities such as creating the functional spec, milestone docs, or issue batches from a spec. | Required |
 | FR-04-015 | Repository priming can optionally create a small seed issue only when explicitly requested by the user or a non-interactive flag. | Desired |
 | FR-04-016 | Default git policy disables linked git worktrees for Executor issue execution. Executor commands must not create, enter, or rely on git worktrees in v1. | Required |
-| FR-04-017 | Default pre-start policy blocks starting a new issue when open pull requests exist, except PRs authored by configured automation accounts such as dependency-update bots. | Required |
+| FR-04-017 | Default pre-start policy blocks starting a new issue when ready pull requests exist, except PRs authored by configured automation accounts such as dependency-update bots. Draft pull requests do not block new work. | Required |
 | FR-04-018 | Default base-branch policy requires the local base branch to match the configured remote base branch before starting a new issue. The default remote/base pair is `origin` and `main` unless repository detection or config says otherwise. | Required |
 | FR-04-019 | When GitHub milestone ordering is enabled, configuration can define the milestone title order or title-number parsing policy used as an ordering hint. Milestones are optional organization metadata and never replace status labels or blocker metadata. | Desired |
 
@@ -177,7 +177,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-07-007 | Executor can verify that the current branch matches the active issue before shipping. | Required |
 | FR-07-008 | Executor issue execution does not use linked git worktrees in v1. Lifecycle and branch commands detect linked worktrees and refuse to start new issue work from them. | Required |
 | FR-07-009 | Executor can verify that the configured local base branch is checked out where required, has no unsafe uncommitted work, and matches the configured remote base branch before new issue work begins. | Required |
-| FR-07-010 | Executor can list open repository pull requests and classify configured automation-authored PRs as ignored for the pre-start blocker check while treating all other open PRs as blockers. | Required |
+| FR-07-010 | Executor uses one blocking pull request filter for start, switch, repository priming, status, and doctor. Draft PRs and PRs from configured automation authors do not block new work. Automation logins written as `name`, `name[bot]`, or `app/name` match the same identity in both provider output and configuration. Other ready PRs block when open-PR blocking is enabled. | Required |
 
 ---
 

@@ -61,7 +61,7 @@
       "naming": "issue/<number>-<slug>",
       "baseBranch": "main",
       "baseRemote": "origin",
-      "noWorktree": true,
+      "noWorktree": false,
       "blockOnOpenPRs": true,
       "requireBaseBranchFreshness": true,
       "ignoredAutomationAuthors": [
