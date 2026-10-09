@@ -4,7 +4,7 @@ import {
   type AiqProgressStageIndex,
   aiqStageLadderIds,
 } from "@tjalve/aiq/config";
-import type { StageId, ToolRunResult } from "@tjalve/aiq/model";
+import type { StageId } from "@tjalve/aiq/model";
 
 export type CommandName =
   | "bench"
@@ -24,7 +24,7 @@ export type CommandName =
   | "status"
   | "watch";
 export type OutputFormat = "json" | "text";
-export type SetupGuidanceCommand = "ci" | "hook" | "ignore";
+export type SetupGuidanceCommand = "ci" | "ignore";
 
 export const defaultServeHost = "127.0.0.1";
 export const defaultServePort = 3000;
@@ -33,10 +33,11 @@ export const defaultWatchCadenceMs = 30_000;
 export const defaultWatchDebounceMs = 75;
 
 export interface CliIo {
+  entryPoint?: string;
   cwd: string;
   stderr: Pick<NodeJS.WriteStream, "write">;
   stdin: CliInput;
-  stdout: Pick<NodeJS.WriteStream, "write">;
+  stdout: Pick<NodeJS.WriteStream, "write"> & { isTTY?: boolean | undefined };
 }
 
 export interface CliInput {
@@ -81,11 +82,6 @@ export interface CliRunOptions {
   signal?: AbortSignal;
 }
 
-export interface VerboseToolRunDetail
-  extends Pick<ToolRunResult, "args" | "exitCode" | "status" | "tool"> {
-  stageId: StageId;
-}
-
 export const cliHelp = `Quality CLI
 
 Usage:
@@ -101,6 +97,7 @@ Usage:
   aiq setup [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq schema [--format json]
   aiq hook install
+  aiq hook run [--verbose] [--format <json|text>]
   aiq ci setup
   aiq ignore write
   aiq plan <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
@@ -169,7 +166,7 @@ Stage selection:
 
 Operational checks:
   --dry-run prints the run plan without executing tools or writing artifacts.
-  Default text output is compact: status, selected stage results, diagnostics summary, and the next action.
+  Default text output shows selected stage timing, status, reasons, total execution time, and debug commands.
   --verbose adds run metadata, artifact paths, stage notes, and command/tool details to text output.
   --format json keeps the complete machine-readable report for automation.
   aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
@@ -177,7 +174,8 @@ Operational checks:
   Quality uses repository-native tool configs by default, including Biome, tsconfig, Vitest/Jest, Playwright, Ruff/Radon-compatible Python config, and metrics config files when those tools expose them.
   aiq evidence emits structured Quality evidence that Executor can record and Umpire can parse as trusted quality state.
   aiq status shows the current stage, default stage selection, latest artifact paths, last run status, and next suggested command.
-  hook install, ci setup, and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
+  hook install installs a conflict-aware pre-commit hook. hook run checks staged files with the configured stages.
+  ci setup and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
 
 Metric remediation:
   Stages 5-7 enforce SLOC, complexity, maintainability, and readability defaults for source and test code.

@@ -105,7 +105,7 @@ describe("engine runners", () => {
       cacheHit: false,
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
     expect(complexity.status).toBe("passed");
     expect(complexity.notes[0]).toContain("Shared metrics observed");
@@ -114,7 +114,7 @@ describe("engine runners", () => {
       cacheHit: true,
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
     expect(maintainability.status).toBe("passed");
     expect(maintainability.notes.join(" ")).toContain("Reused cached C# metrics");
@@ -122,7 +122,7 @@ describe("engine runners", () => {
       cacheHit: true,
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
   }, 20_000);
 });

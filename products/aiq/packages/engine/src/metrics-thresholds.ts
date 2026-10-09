@@ -1,6 +1,7 @@
 import type { Diagnostic } from "./contracts.js";
 import type { LizardMetricsFileMetrics } from "./parsers/lizard.js";
 import type { PythonMetricsFileMetrics } from "./parsers/python.js";
+import { getRunnerStageConfigurations } from "./runner-context.js";
 
 export type SharedMetricsMode = "sloc" | "complexity" | "maintainability";
 
@@ -61,10 +62,12 @@ export function readMetricsThresholds(env = process.env): MetricsThresholds {
       env.AIQ_PYTHON_READABILITY_LIMIT,
       defaultMetricsThresholds.pythonReadabilityLimit,
     ),
-    slocLimit: readPositiveInteger(
-      env.AIQ_SLOC_LIMIT ?? env.LIZARD_SLOC_LIMIT,
-      defaultMetricsThresholds.slocLimit,
-    ),
+    slocLimit:
+      getRunnerStageConfigurations()?.sloc?.limit ??
+      readPositiveInteger(
+        env.AIQ_SLOC_LIMIT ?? env.LIZARD_SLOC_LIMIT,
+        defaultMetricsThresholds.slocLimit,
+      ),
   };
 }
 
@@ -210,61 +213,6 @@ export function createPythonMetricsDiagnostics(
           source,
           `Readability index ${fileMetrics.readability.score.toFixed(1)} is less than ${thresholds.pythonReadabilityLimit}.`,
           metricsDiagnosticCodes.pythonReadability,
-        ),
-      );
-    }
-  }
-
-  return diagnostics;
-}
-
-export function createFileMetricDiagnostics(
-  files: Record<
-    string,
-    { maintainability: { score: number }; maxComplexity: { score: number }; raw: { sloc: number } }
-  >,
-  mode: SharedMetricsMode,
-  source: string,
-  thresholds = readMetricsThresholds(),
-): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
-
-  for (const [file, fileMetrics] of Object.entries(files)) {
-    if (mode === "sloc" && fileMetrics.raw.sloc >= thresholds.slocLimit) {
-      diagnostics.push(
-        createMetricDiagnostic(
-          file,
-          source,
-          `SLOC ${fileMetrics.raw.sloc} is greater than or equal to ${thresholds.slocLimit}.`,
-          metricsDiagnosticCodes.sloc,
-        ),
-      );
-    }
-
-    if (
-      mode === "complexity" &&
-      fileMetrics.maxComplexity.score > thresholds.lizardComplexityLimit
-    ) {
-      diagnostics.push(
-        createMetricDiagnostic(
-          file,
-          source,
-          `Complexity ${fileMetrics.maxComplexity.score} is greater than ${thresholds.lizardComplexityLimit}.`,
-          metricsDiagnosticCodes.lizardComplexity,
-        ),
-      );
-    }
-
-    if (
-      mode === "maintainability" &&
-      fileMetrics.maxComplexity.score > thresholds.lizardMaintainabilityComplexityLimit
-    ) {
-      diagnostics.push(
-        createMetricDiagnostic(
-          file,
-          source,
-          `Maintainability complexity ${fileMetrics.maxComplexity.score} is greater than ${thresholds.lizardMaintainabilityComplexityLimit}.`,
-          metricsDiagnosticCodes.lizardMaintainabilityComplexity,
         ),
       );
     }

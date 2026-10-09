@@ -3,6 +3,9 @@ import path from "node:path";
 
 const require = createRequire(import.meta.url);
 
+export const powerShellCommands =
+  process.platform === "win32" ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] : ["pwsh"];
+
 export function resolvePackageBinaryPath(
   packageJsonSpecifier: string,
   relativeBinaryPath: string,
@@ -34,16 +37,8 @@ export function resolveUvxCommand(): string {
   return process.platform === "win32" ? "uvx.exe" : "uvx";
 }
 
-export function resolveUvCommand(): string {
-  return process.platform === "win32" ? "uv.exe" : "uv";
-}
-
 export function resolvePythonCommand(): string {
   return process.platform === "win32" ? "python" : "python3";
-}
-
-export function resolveTyCommand(): string {
-  return process.platform === "win32" ? "ty.exe" : "ty";
 }
 
 export function resolveDotNetCommand(): string {

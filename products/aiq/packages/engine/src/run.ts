@@ -107,11 +107,14 @@ export async function runResolvedRequest(
           });
         }
 
+        const stageStarted = new Date();
         const stage = normalizeReleaseStageResult(
           await runPlannedTask(task, engineContext),
           task,
           engineContext.cwd,
         );
+        stage.startedAt = stageStarted.toISOString();
+        stage.durationMs = Date.now() - stageStarted.getTime();
         emitStageTelemetry(engineContext, emitTelemetry, stage);
         return [task.id, stage] as const;
       }),
@@ -193,7 +196,7 @@ export async function runResolvedRequest(
     engineVersion,
     finishedAt: finished.toISOString(),
     mode: engineContext.mode,
-    ok: summary.status === "passed",
+    ok: summary.status === "passed" || summary.status === "warning",
     stages,
     plan,
     request: requestForResult,
@@ -347,6 +350,10 @@ function summarizeRunStatus(stages: StageResult[]): RunStatus {
 
   if (stages.some((stage) => stage.status === "not_implemented")) {
     return "not_implemented";
+  }
+
+  if (stages.some((stage) => stage.status === "warning")) {
+    return "warning";
   }
 
   return "passed";

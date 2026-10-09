@@ -31,6 +31,33 @@ afterEach(async () => {
 });
 
 describe("config schema", () => {
+  it("validates the SLOC limit and rejects it on other stages", () => {
+    expect(
+      validateAiqConfigFile({ version: 1, stages: { sloc: { limit: 800 } } }).stages?.sloc?.limit,
+    ).toBe(800);
+    for (const limit of [0, -1, 1.5, "800", null]) {
+      expect(() => validateAiqConfigFile({ version: 1, stages: { sloc: { limit } } })).toThrow(
+        /positive integer/u,
+      );
+    }
+    expect(() => validateAiqConfigFile({ version: 1, stages: { lint: { limit: 800 } } })).toThrow(
+      /limit/u,
+    );
+  });
+
+  it("passes the repository SLOC limit to run configuration", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "aiq-sloc-config-"));
+    tempDirs.push(root);
+    await mkdir(path.join(root, ".qube", "aiq"), { recursive: true });
+    await writeFile(
+      path.join(root, ".qube", "aiq", "config.json"),
+      JSON.stringify({ version: 1, stages: { sloc: { limit: 800 } } }),
+    );
+    const resolved = await resolveAiqConfig({ cwd: root, surface: "cli", stages: ["sloc"] });
+    expect(resolved.config.stages.sloc.limit).toBe(800);
+    expect(resolved.stageConfigurations?.sloc?.limit).toBe(800);
+  });
+
   it("reuses the canonical model ids for stages, languages, and surfaces", () => {
     expect(aiqStageIds).toBe(stageIds);
     expect(aiqLanguageIds).toBe(languageIds);
@@ -128,7 +155,9 @@ describe("config schema", () => {
       progressCreated: true,
       progressPath: path.join(repoDir, ".qube", "aiq", "progress.json"),
     });
-    await expect(readFile(result.configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(result.configPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(JSON.parse(await readFile(result.progressPath, "utf8"))).toEqual(defaultProgressState);
   });
 

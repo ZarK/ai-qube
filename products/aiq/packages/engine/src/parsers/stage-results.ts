@@ -1,6 +1,6 @@
 import type { Diagnostic } from "../contracts.js";
 
-type StageResultStatus = "failed" | "not_implemented" | "passed";
+type StageResultStatus = "failed" | "not_implemented" | "passed" | "warning";
 
 type StageResultShape = {
   diagnostics: Diagnostic[];
@@ -65,7 +65,7 @@ export function createNoopStageResult(stageId: string, note: string): StageResul
     durationMs: 0,
     notes: [note],
     stageId,
-    status: "passed",
+    status: "warning",
     toolRuns: [],
   };
 }
@@ -96,7 +96,7 @@ export function isNoopStageResult(result: {
   toolRuns: unknown[];
 }): boolean {
   return (
-    result.status === "passed" &&
+    result.status === "warning" &&
     result.durationMs === 0 &&
     result.diagnostics.length === 0 &&
     result.toolRuns.length === 0
@@ -112,6 +112,10 @@ export function summarizeCombinedStageStatus(
 
   if (results.some((result) => result.status === "not_implemented")) {
     return "not_implemented";
+  }
+
+  if (results.some((result) => result.status === "warning")) {
+    return "warning";
   }
 
   return "passed";

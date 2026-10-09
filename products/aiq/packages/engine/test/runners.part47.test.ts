@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   fixtureFile,
   fixturePythonFile,
   hasPythonQualityToolchain,
   mkdir,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   tempDirs,
   vitestCliPath,
@@ -26,7 +25,7 @@ describe("engine runners", () => {
         process.cwd(),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result.diagnostics)).toBe("passed");
       expect(result.diagnostics).toEqual([]);
       expect(result.toolRuns).toEqual(
         expect.arrayContaining([
@@ -52,7 +51,7 @@ describe("engine runners", () => {
     ];
 
     for (const variant of variants) {
-      const tempDir = await mkdtemp(path.join(os.tmpdir(), variant.tempPrefix));
+      const tempDir = await mkdtemp(path.join(process.cwd(), "test-projects", variant.tempPrefix));
       tempDirs.push(tempDir);
 
       await mkdir(path.join(tempDir, "src"), { recursive: true });
@@ -101,7 +100,7 @@ describe("engine runners", () => {
         process.cwd(),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result.diagnostics)).toBe("passed");
       expect(result.diagnostics).toEqual([]);
       expect(result.notes[0]).toContain("Vitest ran");
       expect(result.toolRuns[0]).toMatchObject({

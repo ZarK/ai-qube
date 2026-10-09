@@ -242,7 +242,6 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
   isSharedMetricsCompanionFile: (filePath: string) => boolean;
-  readFileText: (filePath: string) => Promise<string>;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,
@@ -256,6 +255,7 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   resolveDotNetCommand: () => string;
+  resolveUvxCommand: () => string;
   runExecutable: (
     command: string,
     args: string[],

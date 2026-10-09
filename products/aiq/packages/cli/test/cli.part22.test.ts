@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   mkdir,
   parseAiuTrustedStateJson,
-  path,
   readFile,
   runCli,
   writeFile,
@@ -14,7 +14,11 @@ describe("CLI foundation", () => {
   it("prints successful current-stage workflow guidance and advancement", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-status-successful-run-");
     await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
-    await writeFile(path.join(project.root, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
+    await writeFile(
+      path.join(project.root, ".qube", "aiq", "config.json"),
+      '{"version":1}\n',
+      "utf8",
+    );
     await writeFile(
       path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
@@ -32,8 +36,8 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Current stage satisfied: yes (3 typecheck)");
-    expect(stdout.value).toContain("Advance: aiq config --set-stage 4");
+    expect(stdout.value).toContain("Stage 3 (typecheck): PASSED");
+    expect(stdout.value).not.toContain("To debug failed stages:");
 
     const evidenceStdout = new MemoryOutput();
     const evidenceStderr = new MemoryOutput();

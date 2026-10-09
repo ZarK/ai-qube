@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   buildEngineContext,
   createDotNetCompetingSolutionProject,
   createDotNetFixtureProject,
   hasDotNet10Toolchain,
-  path,
   runPlannedTask,
   withExclusiveDotNet,
 } from "./runners-test-support.js";
@@ -28,7 +28,7 @@ describe("engine runners", () => {
         ),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result)).toBe("passed");
       expect(result.toolRuns).toHaveLength(1);
       expect(result.toolRuns[0]).toMatchObject({
         exitCode: 0,
@@ -71,7 +71,7 @@ describe("engine runners", () => {
         ),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result)).toBe("passed");
       expect(result.notes[0]).toContain("1 passed, 0 failed");
       expect(result.toolRuns[0]).toMatchObject({
         exitCode: 0,

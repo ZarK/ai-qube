@@ -8,12 +8,14 @@ import type {
   RunStageConfigurations,
   StageId,
 } from "./contracts.js";
+import { isIgnoredInput } from "./files.js";
 import { ToolRunner } from "./tool-runner.js";
 
 export type RunnerExecutionContext = {
   cache: CacheService;
   cwd: string;
   graph: ProjectGraph | undefined;
+  ignore: readonly string[];
   selectedStages: readonly StageId[];
   stageConfigurations: RunStageConfigurations | undefined;
   signal: AbortSignal | undefined;
@@ -59,6 +61,7 @@ export function createRunnerExecutionContext(
       cache: cwdOrContext.cache,
       cwd: cwdOrContext.cwd,
       graph: cwdOrContext.graph,
+      ignore: cwdOrContext.ignore ?? [],
       selectedStages: [...cwdOrContext.selection.stages],
       stageConfigurations: cwdOrContext.selection.stageConfigurations,
       signal: signal ?? cwdOrContext.signal,
@@ -71,6 +74,7 @@ export function createRunnerExecutionContext(
     cache: defaultRunnerCache,
     cwd: cwdOrContext,
     graph: undefined,
+    ignore: [],
     selectedStages: [],
     stageConfigurations: undefined,
     signal,
@@ -95,6 +99,7 @@ export function getRunnerExecutionContext(): RunnerExecutionContext {
       cache: defaultRunnerCache,
       cwd: process.cwd(),
       graph: undefined,
+      ignore: [],
       selectedStages: [],
       stageConfigurations: undefined,
       signal: undefined,
@@ -106,6 +111,11 @@ export function getRunnerExecutionContext(): RunnerExecutionContext {
 
 export function getRunnerGraph(): ProjectGraph | undefined {
   return getRunnerExecutionContext().graph;
+}
+
+export function isIgnoredRunnerInput(file: string): boolean {
+  const { cwd, ignore } = getRunnerExecutionContext();
+  return isIgnoredInput(file, cwd, ignore);
 }
 
 export function getRunnerCache(): CacheService {

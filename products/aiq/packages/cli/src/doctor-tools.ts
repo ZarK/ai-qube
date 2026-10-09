@@ -1,3 +1,11 @@
+import {
+  createCargoClippyArgs,
+  createCargoFmtArgs,
+  createCargoLlvmCovArgs,
+  createDotNetFormatArgs,
+  lizardVersion,
+  powerShellCommands,
+} from "@tjalve/aiq/engine";
 import type { LanguageId, StageId } from "@tjalve/aiq/model";
 
 export const doctorPrerequisites = [
@@ -26,7 +34,11 @@ export interface DoctorPrerequisite {
   binaries: readonly string[];
   install: string;
   minimumMajor?: number;
+  pinnedVersion?: string;
   name: string;
+  pythonModule?: string;
+  source?: "external" | "project";
+  versionArgs?: readonly string[];
   required: boolean;
 }
 
@@ -40,16 +52,7 @@ interface DoctorBundledTool {
   source: "bundled" | "project";
 }
 
-const toolchainStages: StageId[] = [
-  "lint",
-  "format",
-  "typecheck",
-  "unit",
-  "sloc",
-  "complexity",
-  "maintainability",
-  "coverage",
-];
+const toolchainStages: StageId[] = ["lint", "format", "typecheck", "unit", "coverage"];
 
 const doctorToolRequirementRules: Array<{
   languages: readonly LanguageId[];
@@ -59,13 +62,115 @@ const doctorToolRequirementRules: Array<{
   {
     languages: ["python"],
     requirement: {
-      binaries: ["python3", "python"],
+      binaries: [process.platform === "win32" ? "python" : "python3"],
       install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
       name: "Python runtime",
       required: true,
       source: "external",
     },
-    stages: toolchainStages,
+    stages: ["typecheck", "unit", "sloc", "complexity", "maintainability", "coverage"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: ["ruff"],
+      install: "Install Ruff on PATH to enable Python lint and format checks.",
+      name: "Ruff",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint", "format"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install Radon in the Python interpreter used by Quality.",
+      name: "Radon",
+      pythonModule: "radon",
+      required: true,
+      source: "external",
+    },
+    stages: ["sloc", "complexity", "maintainability"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: ["ty"],
+      install: "Install Astral ty on PATH to enable Python type checks.",
+      name: "ty",
+      required: true,
+      source: "external",
+    },
+    stages: ["typecheck"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install pytest in the Python interpreter used by Quality.",
+      name: "pytest",
+      pythonModule: "pytest",
+      required: true,
+      source: "external",
+    },
+    stages: ["unit", "coverage"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install pytest-cov in the Python interpreter used by Quality.",
+      name: "pytest-cov",
+      pythonModule: "pytest_cov",
+      required: true,
+      source: "external",
+    },
+    stages: ["coverage"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["shellcheck"],
+      install: "Install ShellCheck on PATH to enable Shell lint checks.",
+      name: "ShellCheck",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["shfmt"],
+      install: "Install shfmt on PATH to enable Shell format checks.",
+      name: "shfmt",
+      required: true,
+      source: "external",
+    },
+    stages: ["format"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["bats"],
+      install: "Install Bats on PATH to enable Shell test checks.",
+      name: "Bats",
+      required: true,
+      source: "external",
+    },
+    stages: ["unit", "coverage"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["kcov"],
+      install: "Install kcov on PATH to enable Shell coverage checks.",
+      name: "kcov",
+      required: true,
+      source: "external",
+    },
+    stages: ["coverage"],
   },
   {
     languages: ["go"],
@@ -75,8 +180,21 @@ const doctorToolRequirementRules: Array<{
       name: "Go toolchain",
       required: true,
       source: "external",
+      versionArgs: ["version"],
     },
     stages: toolchainStages,
+  },
+  {
+    languages: ["go"],
+    requirement: {
+      binaries: ["gofmt"],
+      install: "Install gofmt with the Go toolchain to enable Go format checks.",
+      name: "gofmt",
+      required: true,
+      source: "external",
+      versionArgs: ["-h"],
+    },
+    stages: ["format"],
   },
   {
     languages: ["rust"],
@@ -100,6 +218,51 @@ const doctorToolRequirementRules: Array<{
     },
     stages: toolchainStages,
   },
+  ...[
+    {
+      languages: ["rust"] as const,
+      stages: ["lint"] as const,
+      name: "Rust Clippy",
+      binary: "cargo",
+      args: createCargoClippyArgs(),
+      install: "Install the Clippy component for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["rust"] as const,
+      stages: ["format"] as const,
+      name: "Rust rustfmt",
+      binary: "cargo",
+      args: createCargoFmtArgs(),
+      install: "Install the rustfmt component for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["rust"] as const,
+      stages: ["coverage"] as const,
+      name: "cargo-llvm-cov",
+      binary: "cargo",
+      args: createCargoLlvmCovArgs(),
+      install: "Install cargo-llvm-cov for the Rust toolchain used by Cargo.",
+    },
+    {
+      languages: ["dotnet"] as const,
+      stages: ["lint", "format"] as const,
+      name: ".NET format",
+      binary: "dotnet",
+      args: createDotNetFormatArgs({ reportDir: "", subcommand: "style", targetPath: "" }),
+      install: "Install a .NET SDK with the dotnet format command.",
+    },
+  ].map(({ languages, stages, name, binary, args, install }) => ({
+    languages,
+    stages,
+    requirement: {
+      binaries: [binary],
+      install,
+      name,
+      required: true,
+      source: "external" as const,
+      versionArgs: [...args.slice(0, 1), "--version"],
+    },
+  })),
   {
     languages: ["java", "kotlin"],
     requirement: {
@@ -112,7 +275,7 @@ const doctorToolRequirementRules: Array<{
     stages: toolchainStages,
   },
   {
-    languages: ["terraform", "hcl"],
+    languages: ["terraform"],
     requirement: {
       binaries: ["terraform"],
       install: "Install Terraform CLI to enable Terraform/HCL lint, format, and validation.",
@@ -121,6 +284,17 @@ const doctorToolRequirementRules: Array<{
       source: "external",
     },
     stages: ["lint", "format", "typecheck"],
+  },
+  {
+    languages: ["hcl"],
+    requirement: {
+      binaries: ["terraform"],
+      install: "Install Terraform CLI to enable HCL lint and format checks.",
+      name: "Terraform CLI",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint", "format"],
   },
 ];
 
@@ -194,15 +368,19 @@ export function resolveDoctorToolRequirements(
     usesAnyStage(selected, ["lint", "format", "unit", "coverage"])
   ) {
     requirements.set("PowerShell runtime", {
-      binaries:
-        process.platform === "win32"
-          ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
-          : ["pwsh"],
+      binaries: powerShellCommands,
       install: "Install PowerShell 7 (pwsh) and project PowerShell modules.",
       name: "PowerShell runtime",
       required: true,
       source: "external",
+      versionArgs: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$PSVersionTable.PSVersion.ToString()",
+      ],
     });
+    addPowerShellModuleRequirements(requirements, selected);
   }
 
   if (usesAnyStage(selected, ["sloc", "complexity", "maintainability"])) {
@@ -217,9 +395,10 @@ export function resolveDoctorToolRequirements(
     ];
     if (lizardLanguages.some((language) => languages.has(language))) {
       requirements.set("Lizard metrics tool", {
-        binaries: ["lizard"],
-        install: "Install lizard where AIQ runs to enable non-Python metrics stages.",
+        binaries: [process.platform === "win32" ? "uvx.exe" : "uvx"],
+        install: `Install uv with uvx on PATH to provision Lizard ${lizardVersion} for shared metrics.`,
         name: "Lizard metrics tool",
+        pinnedVersion: lizardVersion,
         required: true,
         source: "external",
       });
@@ -227,6 +406,34 @@ export function resolveDoctorToolRequirements(
   }
 
   return [...requirements.values()];
+}
+
+function addPowerShellModuleRequirements(
+  requirements: Map<string, DoctorToolRequirement>,
+  selected: ReadonlySet<StageId>,
+): void {
+  const modules: Array<{ name: string; stages: StageId[] }> = [
+    { name: "PSScriptAnalyzer", stages: ["lint", "format"] },
+    { name: "Pester", stages: ["unit", "coverage"] },
+  ];
+  for (const module of modules) {
+    if (!usesAnyStage(selected, module.stages)) {
+      continue;
+    }
+    requirements.set(module.name, {
+      binaries: powerShellCommands,
+      install: `Install the ${module.name} module for the PowerShell runtime used by Quality.`,
+      name: module.name,
+      required: true,
+      source: "external",
+      versionArgs: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$ErrorActionPreference = 'Stop'; Import-Module ${module.name}; $module = Get-Module ${module.name}; Write-Output ($module.Path + '; ' + $module.Version)`,
+      ],
+    });
+  }
 }
 
 export function resolveDoctorBundledTools(

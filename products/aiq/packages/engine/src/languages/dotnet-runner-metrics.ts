@@ -1,24 +1,25 @@
 import path from "node:path";
 
 import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../contracts.js";
-import { createFileMetricDiagnostics } from "../metrics-thresholds.js";
+import { createLizardMetricsDiagnostics } from "../metrics-thresholds.js";
 import type { DotNetRunnerRuntime, SharedMetricsMode } from "./contracts.js";
-import { getDotNetMetricsProjectMetrics } from "./dotnet-tools.js";
-import {
-  appendUnsupportedSharedMetricsIssue,
-  collectUnsupportedSharedMetricsFiles,
-} from "./shared-metrics-support.js";
 import {
   dotNetExtensions,
   filterDotNetFiles,
   resolveDotNetMetricsFiles,
   resolveDotNetProjects,
 } from "./dotnet-projects.js";
+import { getDotNetMetricsProjectMetrics } from "./dotnet-tools.js";
 import {
   addCachedMetricDuration,
   addLizardFileMetrics,
   createSharedMetricTotals,
 } from "./shared-metrics-accumulator.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
+} from "./shared-metrics-support.js";
 
 export async function runDotNetMetricsTask(
   task: PlannedTask,
@@ -59,7 +60,7 @@ export async function runDotNetMetricsTask(
       addLizardFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
-          "aiq-csharp-metrics",
+          "lizard",
           cachedMetrics.metrics.args,
           cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs,
           cachedMetrics.metrics.exitCode,
@@ -71,14 +72,14 @@ export async function runDotNetMetricsTask(
       );
 
       diagnostics.push(
-        ...createFileMetricDiagnostics(cachedMetrics.metrics.files, mode, "aiq-csharp-metrics"),
+        ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
       );
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
     return runtime.createExecutionFailureStage(
       task.stageId,
-      "aiq-csharp-metrics",
+      "lizard",
       files[0] ?? runtime.cwd,
       error,
       totals.totalDurationMs,
@@ -122,12 +123,16 @@ export async function runDotNetMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "C#",
+    files[0] ?? runtime.cwd,
+  );
 }

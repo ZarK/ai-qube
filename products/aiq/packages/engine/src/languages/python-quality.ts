@@ -1,12 +1,13 @@
 import type { PlannedTask, StageResult } from "../contracts.js";
+import { runFileBatches } from "../file-batches.js";
 import type { PythonRunnerRuntime } from "./contracts.js";
-import { runRuffCheckProject, runRuffFormatProject, runTyCheckProject } from "./python-tools.js";
 import {
   filterPythonTaskFiles,
   resolvePythonProjects,
   resolvePythonSourceProject,
   runProjectBatches,
 } from "./python-projects.js";
+import { runRuffCheckProject, runRuffFormatProject, runTyCheckProject } from "./python-tools.js";
 
 export async function runPythonLintTask(
   task: PlannedTask,
@@ -23,9 +24,14 @@ export async function runPythonLintTask(
 
   try {
     const projects = await resolvePythonProjects(runtime.graph, files);
-    const projectResults = await runProjectBatches(projects, async (project) =>
-      runRuffCheckProject(await resolvePythonSourceProject(project, runtime), runtime),
-    );
+    const projectResults = (
+      await runProjectBatches(projects, async (project) => {
+        const sourceProject = await resolvePythonSourceProject(project, runtime);
+        return runFileBatches(sourceProject.files, (files) =>
+          runRuffCheckProject({ ...sourceProject, files }, runtime),
+        );
+      })
+    ).flat();
 
     for (const projectResult of projectResults) {
       totalDurationMs += projectResult.durationMs;
@@ -42,6 +48,13 @@ export async function runPythonLintTask(
       totalDurationMs,
       diagnostics,
       toolRuns,
+    );
+  }
+
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for lint.",
     );
   }
 
@@ -75,9 +88,14 @@ export async function runPythonFormatTask(
 
   try {
     const projects = await resolvePythonProjects(runtime.graph, files);
-    const projectResults = await runProjectBatches(projects, async (project) =>
-      runRuffFormatProject(await resolvePythonSourceProject(project, runtime), runtime),
-    );
+    const projectResults = (
+      await runProjectBatches(projects, async (project) => {
+        const sourceProject = await resolvePythonSourceProject(project, runtime);
+        return runFileBatches(sourceProject.files, (files) =>
+          runRuffFormatProject({ ...sourceProject, files }, runtime),
+        );
+      })
+    ).flat();
 
     for (const projectResult of projectResults) {
       totalDurationMs += projectResult.durationMs;
@@ -94,6 +112,13 @@ export async function runPythonFormatTask(
       totalDurationMs,
       diagnostics,
       toolRuns,
+    );
+  }
+
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for format.",
     );
   }
 
@@ -132,9 +157,14 @@ export async function runPythonTypecheckTask(
 
   try {
     const projects = await resolvePythonProjects(runtime.graph, files);
-    const projectResults = await runProjectBatches(projects, async (project) =>
-      runTyCheckProject(await resolvePythonSourceProject(project, runtime), runtime),
-    );
+    const projectResults = (
+      await runProjectBatches(projects, async (project) => {
+        const sourceProject = await resolvePythonSourceProject(project, runtime);
+        return runFileBatches(sourceProject.files, (files) =>
+          runTyCheckProject({ ...sourceProject, files }, runtime),
+        );
+      })
+    ).flat();
 
     for (const projectResult of projectResults) {
       totalDurationMs += projectResult.durationMs;
@@ -151,6 +181,13 @@ export async function runPythonTypecheckTask(
       totalDurationMs,
       diagnostics,
       toolRuns,
+    );
+  }
+
+  if (toolRuns.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No Python source files were found for typecheck.",
     );
   }
 

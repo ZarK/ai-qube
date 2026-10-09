@@ -188,7 +188,7 @@ export function applyLayoutToCandidateFiles(input: {
     kept.push(file);
   }
 
-  if (kept.length === 0) {
+  if (kept.length === 0 && input.requireProvenScope) {
     throw new LayoutConsumptionError(
       "Layout-proven affected scope contains no usable files. Use aiq run with explicit project files, or provide matching layout affected JSON.",
     );
@@ -282,6 +282,23 @@ function selectLayoutGateScope(input: {
       warnings,
       avoidRepoRoot: false,
     };
+  }
+
+  if (input.affected === null) {
+    const members = input.inspect.projects.filter((project) => project.path !== ".");
+    if (members.length > 0) {
+      return {
+        kind: "affected-projects",
+        layoutKind: input.inspect.kind,
+        source: input.source,
+        affectedProjectIds: members.map((project) => project.id),
+        affectedProjectPaths: members.map((project) => project.path),
+        suggestedGates: uniqueStrings(members.flatMap((project) => [...project.gates])),
+        classifiedPaths: input.classifiedPaths,
+        warnings,
+        avoidRepoRoot: false,
+      };
+    }
   }
 
   const affectedProjects = input.affected?.affectedProjects ?? [];

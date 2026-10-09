@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { createDotNetFixtureProject, runPlannedTask, writeFile } from "./runners-test-support.js";
 describe("engine runners", () => {
+  it("reports the highest method complexity without averaging simple methods", async () => {
+    const project = await createDotNetFixtureProject("aiq-dotnet-method-maximum-");
+    await writeFile(
+      project.sourceFile,
+      [
+        "public static class Scores {",
+        "  public static int Complex(int value) {",
+        ...Array.from({ length: 13 }, (_, index) => `    if (value == ${index}) return ${index};`),
+        "    return -1;",
+        "  }",
+        ...Array.from(
+          { length: 10 },
+          (_, index) => `  public static int Simple${index}() { return ${index}; }`,
+        ),
+        "}",
+      ].join("\n"),
+    );
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "complexity-method-maximum",
+        stageId: "complexity",
+      },
+      process.cwd(),
+    );
+    expect(result.status).toBe("failed");
+    expect(result.notes.join(" ")).toContain("C# complexity max: 14");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("Complex complexity 14"),
+      }),
+    );
+  });
+
   it("invalidates cached C# metrics when the file contents change", async () => {
     const project = await createDotNetFixtureProject("aiq-dotnet-metrics-refresh-");
 
@@ -69,7 +104,7 @@ describe("engine runners", () => {
       cacheHit: false,
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
     expect(secondComplexity.status).toBe("passed");
     expect(secondComplexity.notes[0]).toContain("C# complexity max: 3");
@@ -77,11 +112,11 @@ describe("engine runners", () => {
       cacheHit: false,
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
   }, 20_000);
 
-  it("does not count nullable annotations as ternary complexity", async () => {
+  it("measures conditional access and ternary branches with Lizard", async () => {
     const project = await createDotNetFixtureProject("aiq-dotnet-nullable-metrics-runner-");
 
     await writeFile(
@@ -113,6 +148,6 @@ describe("engine runners", () => {
     );
 
     expect(result.status).toBe("passed");
-    expect(result.notes[0]).toContain("C# complexity max: 2");
+    expect(result.notes[0]).toContain("C# complexity max: 3");
   });
 });

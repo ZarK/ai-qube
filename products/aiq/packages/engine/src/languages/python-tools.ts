@@ -2,10 +2,11 @@ import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { Diagnostic, ToolRunResult } from "../contracts.js";
+import { runFileBatches } from "../file-batches.js";
 import * as parsers from "../parsers/index.js";
 import type { PythonMetricsFileMetrics } from "../parsers/python.js";
-import * as binaries from "../tools/binary-resolver.js";
 import * as commands from "../tools/command-builders.js";
+import { requirePathCommand, resolvePythonInterpreter } from "../tools/host-tools.js";
 import { findNearestPythonQualityConfig, readConfigFingerprint } from "../tools/native-config.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { PythonRunnerRuntime } from "./contracts.js";
@@ -13,11 +14,6 @@ import type { PythonRunnerRuntime } from "./contracts.js";
 type PythonProject = {
   files: string[];
   projectRoot: string;
-};
-
-type ResolvedTyExecution = {
-  argsPrefix: string[];
-  command: string;
 };
 
 export type PythonToolProjectResult = {
@@ -49,7 +45,7 @@ export async function runRuffCheckProject(
 ): Promise<PythonToolProjectResult> {
   const args = commands.createRuffCheckArgs({ files: project.files });
   const outcome = await runtime.runExecutable(
-    binaries.resolvePythonCommand(),
+    await requirePathCommand("ruff"),
     args,
     project.projectRoot,
     runtime.signal,
@@ -87,7 +83,7 @@ export async function runRuffFormatProject(
 ): Promise<PythonToolProjectResult> {
   const args = commands.createRuffFormatArgs({ files: project.files });
   const outcome = await runtime.runExecutable(
-    binaries.resolvePythonCommand(),
+    await requirePathCommand("ruff"),
     args,
     project.projectRoot,
     runtime.signal,
@@ -128,25 +124,10 @@ export async function runTyCheckProject(
   project: PythonProject,
   runtime: PythonRunnerRuntime,
 ): Promise<PythonToolProjectResult> {
-  const tyExecution = await resolveTyExecution(runtime);
-  const pythonCommand = await runtime.resolveRequiredBinary(
-    [binaries.resolvePythonCommand()],
-    "python3",
-    "Install Python 3 to run Python typecheck.",
-  );
-  const args = [
-    ...tyExecution.argsPrefix,
-    ...commands.createTyCheckArgs({
-      files: project.files,
-      pythonPath: pythonCommand,
-    }),
-  ];
-  const outcome = await runtime.runExecutable(
-    tyExecution.command,
-    args,
-    project.projectRoot,
-    runtime.signal,
-  );
+  const tyCommand = await requirePathCommand("ty");
+  const pythonCommand = await resolvePythonInterpreter();
+  const args = commands.createTyCheckArgs({ files: project.files, pythonPath: pythonCommand });
+  const outcome = await runtime.runExecutable(tyCommand, args, project.projectRoot, runtime.signal);
   const parsedDiagnostics = parsers.parseTyGitlabDiagnostics(outcome.stdout, project.projectRoot);
 
   if (outcome.exitCode !== 0 && parsedDiagnostics.length === 0) {
@@ -187,7 +168,7 @@ export async function executePytestProjectTask(
   const coveragePath = path.join(tempDir, "coverage.json");
   const args = commands.createPythonTestArgs({ coveragePath, junitPath, mode });
   const outcome = await runtime.runExecutable(
-    binaries.resolvePythonCommand(),
+    await resolvePythonInterpreter(),
     args,
     project.projectRoot,
     runtime.signal,
@@ -270,29 +251,6 @@ export async function getPythonMetricsProjectMetrics(
     cacheHit: cached.cacheHit,
     metrics: cached.value,
   };
-}
-
-async function resolveTyExecution(runtime: PythonRunnerRuntime): Promise<ResolvedTyExecution> {
-  const tyCommand = await runtime.resolveBinaryIfAvailable([binaries.resolveTyCommand()]);
-  if (tyCommand !== undefined) {
-    return { argsPrefix: [], command: tyCommand };
-  }
-
-  const uvCommand = await runtime.resolveBinaryIfAvailable([binaries.resolveUvCommand()]);
-  if (uvCommand !== undefined) {
-    const argsPrefix = ["tool", "run", "ty"];
-    const outcome = await runtime.runExecutable(
-      uvCommand,
-      [...argsPrefix, "--version"],
-      runtime.cwd,
-      runtime.signal,
-    );
-    if (outcome.exitCode === 0) {
-      return { argsPrefix, command: uvCommand };
-    }
-  }
-
-  throw new Error("ty was not detected. Install Astral ty to run Python typecheck.");
 }
 
 function createPythonMetricsManifestKey(project: PythonProject): string {
@@ -398,33 +356,56 @@ async function runPythonMetricsProjectTask(
     "    }",
     "print(json.dumps(result))",
   ].join("\n");
-  const args = ["-c", script, ...project.files];
-  const outcome = await runtime.runExecutable(
-    binaries.resolvePythonCommand(),
-    args,
-    project.projectRoot,
-    runtime.signal,
-  );
-
-  if (outcome.exitCode !== 0) {
-    throw new Error(
-      runtime.readProcessFailureMessage("radon", outcome.stderr, outcome.stdout, outcome.exitCode),
+  const interpreter = await resolvePythonInterpreter();
+  const outcomes = await runFileBatches(project.files, async (files) => {
+    const outcome = await runtime.runExecutable(
+      interpreter,
+      ["-c", script, ...files],
+      project.projectRoot,
+      runtime.signal,
     );
+    if (outcome.exitCode !== 0) {
+      throw new Error(
+        runtime.readProcessFailureMessage(
+          "radon",
+          outcome.stderr,
+          outcome.stdout,
+          outcome.exitCode,
+        ),
+      );
+    }
+    return {
+      ...outcome,
+      files: parsePythonMetricsReport(outcome.stdout, files),
+    };
+  });
+  const first = outcomes[0];
+  const last = outcomes.at(-1);
+  if (first === undefined || last === undefined) {
+    throw new Error("No Python source files were selected for metrics.");
   }
-
   return {
-    args,
-    durationMs: outcome.durationMs,
-    exitCode: outcome.exitCode,
-    files: parsePythonMetricsReport(outcome.stdout),
-    finishedAt: outcome.finishedAt,
-    startedAt: outcome.startedAt,
+    args: ["-c", script, ...project.files],
+    durationMs: outcomes.reduce((total, outcome) => total + outcome.durationMs, 0),
+    exitCode: 0,
+    files: Object.assign({}, ...outcomes.map((outcome) => outcome.files)),
+    finishedAt: last.finishedAt,
+    startedAt: first.startedAt,
   };
 }
 
-function parsePythonMetricsReport(report: string): Record<string, PythonMetricsFileMetrics> {
+function parsePythonMetricsReport(
+  report: string,
+  selectedFiles: readonly string[],
+): Record<string, PythonMetricsFileMetrics> {
   try {
-    return parsers.parsePythonMetrics(report);
+    const metrics = parsers.parsePythonMetrics(report);
+    for (const file of selectedFiles) {
+      if (metrics[file] === undefined) {
+        throw new Error(`Missing file measurement: ${file}`);
+      }
+    }
+    return metrics;
   } catch (error) {
     throw new Error(
       `Failed to parse Python metrics output: ${error instanceof Error ? error.message : String(error)}`,

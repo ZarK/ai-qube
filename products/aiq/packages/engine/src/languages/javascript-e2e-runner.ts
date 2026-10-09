@@ -33,9 +33,10 @@ export async function resolveJavaScriptE2eRunner(
     return undefined;
   }
 
-  const playwrightBinary = await resolveLocalPlaywrightBinary(project.projectRoot);
-  if (playwrightBinary === undefined) {
+  const playwrightBinary = resolveLocalPlaywrightBinary(project.projectRoot);
+  if (!(await fileExists(playwrightBinary))) {
     return {
+      command: playwrightBinary,
       installMessage:
         "Playwright e2e is configured, but the local Playwright binary was not found in node_modules/.bin. Run aiq setup for required setup steps, then install this project's dependencies.",
       kind: "missing-playwright",
@@ -116,10 +117,9 @@ async function hasAnyPlaywrightSpec(
   return files.length > 0;
 }
 
-async function resolveLocalPlaywrightBinary(projectRoot: string): Promise<string | undefined> {
+function resolveLocalPlaywrightBinary(projectRoot: string): string {
   const binName = process.platform === "win32" ? "playwright.cmd" : "playwright";
-  const binaryPath = path.join(projectRoot, "node_modules", ".bin", binName);
-  return (await fileExists(binaryPath)) ? binaryPath : undefined;
+  return path.join(projectRoot, "node_modules", ".bin", binName);
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

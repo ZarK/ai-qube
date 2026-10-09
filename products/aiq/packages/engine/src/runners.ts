@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { runFileBatches } from "./file-batches.js";
 
 import type {
   Diagnostic,
@@ -90,6 +91,19 @@ import { runTypeScriptTypecheckTask as runTypeScriptTypecheckLanguageTask } from
 import * as parsers from "./parsers/index.js";
 import { type Registry, createRegistry } from "./registries.js";
 import { runBiomeFormatTask, runBiomeLintTask } from "./runner-biome-tasks.js";
+import {
+  createRunnerExecutionContext,
+  getCachedRunnerValue,
+  getRunnerExecutionContext,
+  getRunnerGraph,
+  getRunnerRunScopedValue,
+  getRunnerSelectedStages,
+  getRunnerStageConfigurations,
+  getRunnerToolRunner,
+  resetRunnerRunScopedValues,
+  runnerExecutionContextStorage,
+  setRunnerRunScopedValue,
+} from "./runner-context.js";
 import { runPrettierDocumentFormatTask, runSqlFormatTask } from "./runner-document-format-tasks.js";
 import {
   runCssLintTask,
@@ -97,18 +111,6 @@ import {
   runSqlLintTask,
   runYamlLintTask,
 } from "./runner-document-lint-tasks.js";
-import {
-  createBashRunnerRuntime,
-  createDotNetRunnerRuntime,
-  createGoRunnerRuntime,
-  createHashicorpRunnerRuntime,
-  createJavaScriptRunnerRuntime,
-  createJvmRunnerRuntime,
-  createPowerShellRunnerRuntime,
-  createPythonRunnerRuntime,
-  createRustRunnerRuntime,
-  createTypeScriptRunnerRuntime,
-} from "./runner-runtimes.js";
 import {
   biomeExtensions,
   cssExtensions,
@@ -124,19 +126,6 @@ import {
   yamlExtensions,
 } from "./runner-file-rules.js";
 import {
-  createRunnerExecutionContext,
-  getCachedRunnerValue,
-  getRunnerExecutionContext,
-  getRunnerGraph,
-  getRunnerRunScopedValue,
-  getRunnerSelectedStages,
-  getRunnerStageConfigurations,
-  getRunnerToolRunner,
-  resetRunnerRunScopedValues,
-  runnerExecutionContextStorage,
-  setRunnerRunScopedValue,
-} from "./runner-context.js";
-import {
   combineStageResults,
   createExecutionFailureStage,
   createNoopStageResult,
@@ -149,6 +138,19 @@ import {
   readSharedMetricsNote,
   summarizeCombinedStageStatus,
 } from "./runner-results.js";
+import {
+  createBashRunnerRuntime,
+  createDotNetRunnerRuntime,
+  createGoRunnerRuntime,
+  createHashicorpRunnerRuntime,
+  createJavaScriptRunnerRuntime,
+  createJvmRunnerRuntime,
+  createPowerShellRunnerRuntime,
+  createPythonRunnerRuntime,
+  createRustRunnerRuntime,
+  createTypeScriptRunnerRuntime,
+} from "./runner-runtimes.js";
+import { runSharedSecurityTask } from "./runner-security-task.js";
 import {
   createJvmProcessEnv,
   createRustProcessEnv,
@@ -167,18 +169,17 @@ import {
   resolveDotNetCommand,
   resolveGradleCommand,
   resolveInstalledBinary,
+  resolveUvxCommand,
   resolveMavenCommand,
   resolvePackageBinaryPath,
   resolvePowerShellModuleManifest,
   resolveRequiredBinary,
   resolveRequiredPowerShellModuleManifest,
-  resolveUvxCommand,
   runExecutable,
   runNodeTool,
   runPowerShellScript,
   throwIfAbortError,
 } from "./runner-toolbox.js";
-import { runSharedSecurityTask } from "./runner-security-task.js";
 import { pathExists } from "./utils/path-utils.js";
 
 export {
@@ -197,6 +198,12 @@ export async function runPlannedTask(
   cwdOrContext: EngineContext | string,
   signal?: AbortSignal,
 ): Promise<StageResult> {
+  if (task.files.length === 0) {
+    return {
+      ...createNoopStageResult(task.stageId, "Explicit target selected no files."),
+      status: "failed",
+    };
+  }
   const runnerContext = createRunnerExecutionContext(cwdOrContext, signal);
 
   return runnerExecutionContextStorage.run(runnerContext, async () => {
@@ -659,7 +666,15 @@ async function runStageDefinitionTask(
   return combineStageResults(
     task.stageId,
     await Promise.all(
-      handlers.map(({ files, handler }) => handler({ ...task, files }, { cwd, signal })),
+      handlers.map(async ({ files, handler }) => {
+        if (files.length === 0 || (task.stageId !== "lint" && task.stageId !== "format")) {
+          return handler({ ...task, files }, { cwd, signal });
+        }
+        const results = await runFileBatches(files, (batch) =>
+          handler({ ...task, files: batch }, { cwd, signal }),
+        );
+        return combineStageResults(task.stageId, results);
+      }),
     ),
   );
 }

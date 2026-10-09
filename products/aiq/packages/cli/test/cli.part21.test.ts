@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   mkdir,
   parseAiuTrustedStateJson,
-  path,
   runCli,
   writeFile,
 } from "./cli-test-support.js";
@@ -14,7 +14,11 @@ describe("CLI foundation", () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-status-failed-run-");
     await writeFile(project.filePath, "export const value: string = 1;\n", "utf8");
     await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
-    await writeFile(path.join(project.root, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
+    await writeFile(
+      path.join(project.root, ".qube", "aiq", "config.json"),
+      '{"version":1}\n',
+      "utf8",
+    );
     await writeFile(
       path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
@@ -32,11 +36,11 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality workflow");
-    expect(stdout.value).toContain("Current stage: 3 typecheck");
-    expect(stdout.value).toContain("Default run: stages 0..3 (e2e, lint, format, typecheck)");
-    expect(stdout.value).toContain("Selected stages: typecheck");
-    expect(stdout.value).toContain("Debug 3 typecheck: aiq run <paths...> --only 3 --verbose");
+    expect(stdout.value).toContain("Stage 3 (typecheck): FAILED");
+    expect(stdout.value).not.toContain("Stage 1 (lint)");
+    expect(stdout.value).toContain(
+      "aiq run src/index.ts --only 3 --verbose  # Debug stage 3 (typecheck)",
+    );
 
     const statusStdout = new MemoryOutput();
     const statusStderr = new MemoryOutput();
@@ -50,7 +54,10 @@ describe("CLI foundation", () => {
     expect(statusExitCode).toBe(0);
     expect(statusStderr.value).toBe("");
     const status = JSON.parse(statusStdout.value) as {
-      lastRun: { failedStages: Array<{ id: string; index: number }>; status: string };
+      lastRun: {
+        failedStages: Array<{ id: string; index: number }>;
+        status: string;
+      };
       nextCommand: string;
     };
     expect(status.lastRun.status).toBe("failed");

@@ -9,10 +9,6 @@ import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import { findNearestLizardConfig, readConfigFingerprint } from "../tools/native-config.js";
 import type { JavaScriptRunnerRuntime, SharedMetricsMode } from "./contracts.js";
-import {
-  appendUnsupportedSharedMetricsIssue,
-  collectUnsupportedSharedMetricsFiles,
-} from "./shared-metrics-support.js";
 import type {
   JavaScriptMetricsProject,
   JavaScriptMetricsProjectMetrics,
@@ -29,6 +25,11 @@ import {
   addLizardFileMetrics,
   createSharedMetricTotals,
 } from "./shared-metrics-accumulator.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
+} from "./shared-metrics-support.js";
 
 export async function runJavaScriptMetricsTask(
   task: PlannedTask,
@@ -132,14 +133,18 @@ export async function runJavaScriptMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "JavaScript/TypeScript",
+    files[0] ?? runtime.cwd,
+  );
 }
 
 async function getJavaScriptMetricsProjectMetrics(

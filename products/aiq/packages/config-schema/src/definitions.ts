@@ -173,11 +173,13 @@ export interface AiqStageLanguageConfig {
 
 export interface AiqStageConfig {
   enabled: boolean;
+  limit?: number;
   languages: Partial<Record<AiqLanguageId, AiqStageLanguageConfig>>;
 }
 
 export interface AiqStageConfigFile {
   enabled?: boolean;
+  limit?: number;
   languages?: Partial<Record<AiqLanguageId, AiqStageLanguageConfig>>;
 }
 
