@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { mkdtempSync } = require('node:fs');
@@ -178,6 +179,7 @@ describe('aie risk cards', () => {
 
   it('activates risk cards through the real local-review runner planning path', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-risk-cards-runner-'));
+    execFileSync('git', ['init', '--quiet', repo]);
     const config = localConfig();
     const issueText = 'provider capability trust marker pagination fixture test';
     const paths = ['products/aie/src/app/local_review_runner.ts'];
@@ -226,6 +228,7 @@ describe('aie risk cards', () => {
 
   it('keeps local-command terminal hash aligned with card-aware planned hash', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-risk-cards-cmd-'));
+    execFileSync('git', ['init', '--quiet', repo]);
     const config = localConfig();
     config.localReviewAgents = ['local-command'];
     config.reviewLanes = [

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -57,6 +58,7 @@ describe('package publish surface safety', () => {
   it('resolves the routed review runtime from a staged package surface outside the checkout', async () => {
     const packageRoot = join(__dirname, '..');
     const stagedRoot = mkdtempSync(join(tmpdir(), 'aie-packed-route-'));
+    execFileSync('git', ['init', '--quiet', stagedRoot]);
     assert.ok(pkg.files.includes('dist/'));
     cpSync(join(packageRoot, 'dist'), join(stagedRoot, 'dist'), { recursive: true });
     copyFileSync(join(packageRoot, 'package.json'), join(stagedRoot, 'package.json'));

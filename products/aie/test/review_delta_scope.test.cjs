@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const { mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -294,7 +295,7 @@ describe('review delta scope', () => {
 
   it('includes the delta section in the external-lane review bundle', async () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-delta-external-'));
-    mkdirSync(join(root, '.git'), { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' });
     const selection = selectReviewScope({
       priorApprovedHeadSha: 'aaa111',
       priorFindings: [{ summary: 'empty tokens were dropped' }],

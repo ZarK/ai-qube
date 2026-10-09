@@ -681,6 +681,44 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
   });
 
+  it('loads and validates trusted host provenance for gate and publish in a linked worktree', async t => {
+    const primary = makeGitRepo();
+    const directory = mkdtempSync(join(tmpdir(), 'aie-linked-review-'));
+    const repo = join(directory, 'review');
+    execFileSync('git', ['worktree', 'add', '--detach', repo, 'HEAD'], { cwd: primary, stdio: 'ignore' });
+    t.after(() => {
+      rmSync(directory, { recursive: true, force: true });
+      rmSync(primary, { recursive: true, force: true });
+    });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha });
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['git'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
+    const result = await runPrGate(localHostConfig(null), { prNumber: 12, repoRoot: repo, exec });
+    assert.equal(result.localReview.status, 'passed');
+    const calls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return { item: { id: 'review:12' }, pr: cleanLocalPr({ headRefOid: headSha }), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+      },
+      async publishLaneReviewFeedback(input) {
+        calls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha, lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), deltaBaseRef: 'origin/main' });
+    assert.equal(calls.length, 1);
+    assert.equal(existsSync(join(primary, '.git', 'qube', 'aie')), false);
+  });
+
   it('fails route-fault ledger reads closed on malformed content and reads absence as empty', () => {
     const repo = makeGitRepo();
     assert.deepEqual(readRouteFaults(repo, 93, 12), { version: 1, lanes: {} }, 'a confirmed missing ledger means no recorded faults');
@@ -1160,7 +1198,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
     const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
-    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd());
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], makeGitRepo());
     assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
     assert.doesNotMatch(contextLines.join('\n'), /pr review publish/);
   });
@@ -1191,7 +1229,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
   it('advertises the economy delegation catalog in the lane spawn prompt', () => {
     const { ECONOMY_REVIEW_CATALOG } = require('../dist/review_catalog.js');
-    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd());
+    const contextLines = laneContextLines('codex', 'code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], makeGitRepo());
     const catalogLine = contextLines.find(line => line.startsWith('Economy delegation catalog'));
     assert.ok(catalogLine, 'the lane spawn prompt must advertise the economy delegation catalog');
     for (const agent of ECONOMY_REVIEW_CATALOG) {
@@ -1416,7 +1454,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     it('refuses route-fault writes through a symlinked route-faults descendant', () => {
       const { recordRouteFault } = require('../dist/app/local_review_runner_support.js');
-      const repo = mkdtempSync(join(tmpdir(), 'aie-route-fault-lock-'));
+      const repo = cloneGitRepo('bare', 'aie-route-fault-lock-');
       const outside = mkdtempSync(join(tmpdir(), 'aie-route-fault-outside-'));
       mkdirSync(join(repo, '.git', 'qube', 'aie', 'route-faults'), { recursive: true });
       symlinkSync(outside, join(repo, '.git', 'qube', 'aie', 'route-faults', '93'), 'junction');

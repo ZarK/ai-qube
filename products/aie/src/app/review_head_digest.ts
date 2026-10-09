@@ -300,7 +300,7 @@ export function buildReviewHeadDigest(input: ReviewHeadDigestInput): ReviewHeadD
 
 export function writeReviewHeadDigest(repoRoot: string, digest: ReviewHeadDigest, primaryIssueNumber: number): string {
   const path = reviewHeadDigestPath(repoRoot, primaryIssueNumber, digest.prNumber, digest.headSha);
-  const containment = { repoRoot, subtree: ['.qube', 'aie', 'reviews'] as const };
+  const containment = { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] as const };
   mkdirTrustedStoreSync(dirname(path), containment);
   writeReviewFileGuarded(path, `${JSON.stringify(digest, null, 2)}\n`, containment);
   return path;

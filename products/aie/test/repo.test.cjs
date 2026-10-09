@@ -14,6 +14,7 @@ const {
   findMilestoneWarnings,
   formatMinimalConfig,
   getInstructionStatus,
+  isBlockingPullRequest,
   listMilestones,
   listOpenPullRequests,
   runRepoAffected,
@@ -80,6 +81,8 @@ describe('repo prime service', () => {
       [prListArgs.join(' ')]: success(prListArgs, JSON.stringify([
         { number: 2, title: 'Automation', author: { login: 'dependabot[bot]' }, isDraft: false, url: 'https://github.com/example/repo/pull/2', headRefName: 'deps' },
         { number: 3, title: 'Feature', author: { login: 'human' }, isDraft: false, url: 'https://github.com/example/repo/pull/3', headRefName: 'feature' },
+        { number: 4, title: 'Parked work', author: { login: 'human' }, isDraft: true, url: 'https://github.com/example/repo/pull/4', headRefName: 'parked' },
+        { number: 5, title: 'Dependency update', author: { login: 'app/dependabot', is_bot: true }, isDraft: false, url: 'https://github.com/example/repo/pull/5', headRefName: 'dependencies' },
       ])),
       [milestoneArgs.join(' ')]: success(milestoneArgs, JSON.stringify([{ number: 1, title: 'Product', state: 'open', due_on: null, open_issues: 1, closed_issues: 0 }])),
     }, calls);
@@ -93,7 +96,7 @@ describe('repo prime service', () => {
     assert.ok(plan.skippedActions.includes('Config write requires --yes'));
     assert.equal(plan.labelPlan.created.length, desired.length - 2);
     assert.equal(plan.openIssueCount, 2);
-    assert.equal(plan.pullRequests.length, 2);
+    assert.equal(plan.pullRequests.length, 4);
     assert.deepEqual(plan.blockingPullRequests.map(pr => pr.number), [3]);
     assert.deepEqual(plan.milestoneWarnings.map(warning => warning.issueNumber), [10]);
     assert.deepEqual(plan.instructions.harnesses.map(harness => harness.host), ['opencode', 'codex', 'claude-code', 'grok-build', 'cursor']);
@@ -183,18 +186,40 @@ describe('repo prime service', () => {
 });
 
 describe('repo data helpers', () => {
+  for (const configuredAuthor of ['dependabot', 'dependabot[bot]', 'app/dependabot']) {
+    for (const login of ['dependabot', 'dependabot[bot]', 'app/dependabot']) {
+      it(`ignores automation login ${login} configured as ${configuredAuthor}`, async () => {
+        const config = { ...getDefaults(), ignoredAutomationAuthors: [configuredAuthor] };
+        const exec = makeFixtureExec({
+          [prListArgs.join(' ')]: success(prListArgs, JSON.stringify([
+            { number: 4, title: 'Dependency update', author: { login, is_bot: true }, isDraft: false, url: 'https://github.com/example/repo/pull/4', headRefName: 'dependencies' },
+          ])),
+        });
+
+        const prs = await listOpenPullRequests(config, { exec });
+
+        assert.equal(prs[0].author, login);
+        assert.equal(prs[0].ignored, true);
+        assert.deepEqual(prs.filter(isBlockingPullRequest), []);
+      });
+    }
+  }
+
   it('classifies ignored and blocking pull requests from config', async () => {
     const config = getDefaults();
     const exec = makeFixtureExec({
       [prListArgs.join(' ')]: success(prListArgs, JSON.stringify([
         { number: 4, title: 'Automation', author: { login: 'renovate[bot]' }, isDraft: false, url: 'https://github.com/example/repo/pull/4', headRefName: 'renovate' },
         { number: 5, title: 'Manual', author: { login: 'maintainer' }, isDraft: true, url: 'https://github.com/example/repo/pull/5', headRefName: 'manual' },
+        { number: 6, title: 'Ready work', author: { login: 'maintainer' }, isDraft: false, url: 'https://github.com/example/repo/pull/6', headRefName: 'ready' },
+        { number: 7, title: 'Unconfigured automation', author: { login: 'app/other', is_bot: true }, isDraft: false, url: 'https://github.com/example/repo/pull/7', headRefName: 'other' },
       ])),
     });
 
     const prs = await listOpenPullRequests(config, { exec });
 
-    assert.deepEqual(prs.map(pr => [pr.number, pr.ignored]), [[4, true], [5, false]]);
+    assert.deepEqual(prs.map(pr => [pr.number, pr.ignored]), [[4, true], [5, false], [6, false], [7, false]]);
+    assert.deepEqual(prs.filter(isBlockingPullRequest).map(pr => pr.number), [6, 7]);
   });
 
   it('normalizes milestones and missing milestone warnings', async () => {
