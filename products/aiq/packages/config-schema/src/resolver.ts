@@ -55,10 +55,7 @@ export async function resolveAiqConfig(
     options.homeDirectory === undefined ? {} : { homeDirectory: options.homeDirectory },
   );
   const config = mergeAiqConfig(
-    mergeAiqConfig(
-      mergeAiqConfig(defaultConfig, loaded.userGlobalConfig),
-      loaded.config,
-    ),
+    mergeAiqConfig(mergeAiqConfig(defaultConfig, loaded.userGlobalConfig), loaded.config),
     loaded.machineLocalConfig,
   );
   const sources = attributeAiqSources(config, [
@@ -112,21 +109,33 @@ function attributeAiqSources(
 ): Readonly<Record<string, "machine-local" | "repository" | "user-global" | "default">> {
   const sources: Record<string, "machine-local" | "repository" | "user-global" | "default"> = {};
   for (const fieldPath of collectLeafPaths(config)) {
-    sources[fieldPath] = layers.find(layer => layer.config !== undefined && readConfigPath(layer.config, fieldPath) !== undefined)?.source ?? "default";
+    sources[fieldPath] =
+      layers.find(
+        (layer) =>
+          layer.config !== undefined && readConfigPath(layer.config, fieldPath) !== undefined,
+      )?.source ?? "default";
   }
   return Object.freeze(sources);
 }
 
 function collectLeafPaths(value: unknown, prefix = ""): string[] {
-  if (Array.isArray(value) || value === null || typeof value !== "object") return prefix === "" ? [] : [prefix];
-  return Object.entries(value as Record<string, unknown>)
-    .flatMap(([key, entry]) => collectLeafPaths(entry, prefix === "" ? key : `${prefix}.${key}`));
+  if (Array.isArray(value) || value === null || typeof value !== "object")
+    return prefix === "" ? [] : [prefix];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) =>
+    collectLeafPaths(entry, prefix === "" ? key : `${prefix}.${key}`),
+  );
 }
 
 function readConfigPath(config: AiqConfigFile, fieldPath: string): unknown {
   let current: unknown = config;
   for (const part of fieldPath.split(".")) {
-    if (current === null || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, part)) return undefined;
+    if (
+      current === null ||
+      typeof current !== "object" ||
+      Array.isArray(current) ||
+      !Object.hasOwn(current, part)
+    )
+      return undefined;
     current = (current as Record<string, unknown>)[part];
   }
   return current;
@@ -147,6 +156,9 @@ function applyStageOverrides(merged: AiqConfig, override: AiqConfigFile): void {
 
     if (stageOverride.enabled !== undefined) {
       merged.stages[stageId].enabled = stageOverride.enabled;
+    }
+    if (stageOverride.limit !== undefined) {
+      merged.stages[stageId].limit = stageOverride.limit;
     }
     applyStageLanguageOverrides(merged.stages[stageId], stageOverride);
   }
@@ -270,6 +282,7 @@ function cloneAiqConfig(config: AiqConfig): AiqConfig {
 
 function cloneStageConfig(config: AiqStageConfig): AiqStageConfig {
   return {
+    ...(config.limit === undefined ? {} : { limit: config.limit }),
     enabled: config.enabled,
     languages: cloneStageLanguages(config.languages),
   };
@@ -354,7 +367,8 @@ function resolveStageConfigurations(
           .map(([languageId, languageConfig]) => [languageId, { toolId: languageConfig.tool }]),
       );
 
-      return [stageId, { languages }];
+      const limit = config.stages[stageId].limit;
+      return [stageId, { languages, ...(limit === undefined ? {} : { limit }) }];
     }),
   ) as RunStageConfigurations;
 }

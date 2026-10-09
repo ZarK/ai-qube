@@ -36,7 +36,7 @@ export class ToolRunner {
 
   async run(command: string, args: string[], options: ToolRunOptions): Promise<ToolRunOutcome> {
     const startedAt = new Date();
-    const maxBuffer = options.maxBuffer ?? 10 * 1024 * 1024;
+    const maxBuffer = options.maxBuffer ?? Number.POSITIVE_INFINITY;
 
     try {
       const execOptions: {
@@ -212,7 +212,9 @@ export class ToolRunner {
     return {
       ...(process.env.ASDF_RUST_VERSION === undefined && derivedAsdfRustVersion === undefined
         ? {}
-        : { ASDF_RUST_VERSION: process.env.ASDF_RUST_VERSION ?? derivedAsdfRustVersion }),
+        : {
+            ASDF_RUST_VERSION: process.env.ASDF_RUST_VERSION ?? derivedAsdfRustVersion,
+          }),
       PATH:
         existingPath.length > 0
           ? `${deduplicatedPathEntries.join(path.delimiter)}${path.delimiter}${existingPath}`

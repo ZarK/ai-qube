@@ -5,7 +5,6 @@ import {
   resolveGradleCommand,
   resolveMavenCommand,
   resolvePythonCommand,
-  resolveTyCommand,
 } from "../src/tools/binary-resolver.js";
 
 export function commandAvailable(command: string): boolean {
@@ -57,10 +56,9 @@ export const hasPythonPytestToolchain = commandSucceeds(
 );
 
 export const hasPythonQualityToolchain =
-  commandSucceeds(resolvePythonCommand(), [
-    "-c",
-    "import pytest, pytest_cov, radon; import ruff",
-  ]) && commandAvailable(resolveTyCommand());
+  commandSucceeds(resolvePythonCommand(), ["-c", "import pytest, pytest_cov, radon"]) &&
+  commandAvailable("ruff") &&
+  commandAvailable("ty");
 
 export const hasDotNet10Toolchain = hasDotNetSdkMajor(10);
 

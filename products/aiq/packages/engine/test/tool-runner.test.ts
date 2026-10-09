@@ -92,7 +92,9 @@ describe("ToolRunner binary lookup", () => {
         await writeFile(scriptPath, "@echo off\r\necho %~1\r\n", "utf8");
 
         const runner = new ToolRunner();
-        const outcome = await runner.run(scriptPath, ["script-ok"], { cwd: tempDir });
+        const outcome = await runner.run(scriptPath, ["script-ok"], {
+          cwd: tempDir,
+        });
 
         expect(outcome.exitCode).toBe(0);
         expect(outcome.stdout.trim()).toBe("script-ok");
@@ -122,7 +124,7 @@ describe("ToolRunner binary lookup", () => {
         expect(path.resolve(outcome.stdout.trim())).toBe(tempDir);
       } finally {
         if (previousPath === undefined) {
-          delete process.env.PATH;
+          Reflect.deleteProperty(process.env, "PATH");
         } else {
           process.env.PATH = previousPath;
         }
@@ -141,7 +143,9 @@ describe("ToolRunner binary lookup", () => {
         await writeFile(scriptPath, '@echo off\r\necho "%~1"\r\n', "utf8");
 
         const runner = new ToolRunner();
-        const outcome = await runner.run(scriptPath, ["safe&echo injected"], { cwd: tempDir });
+        const outcome = await runner.run(scriptPath, ["safe&echo injected"], {
+          cwd: tempDir,
+        });
 
         expect(outcome.exitCode).toBe(0);
         expect(outcome.stdout.trim()).toBe('"safe&echo injected"');
@@ -189,7 +193,9 @@ describe("ToolRunner binary lookup", () => {
         );
 
         const runner = new ToolRunner();
-        const outcome = await runner.run(scriptPath, ["quoted arg"], { cwd: tempDir });
+        const outcome = await runner.run(scriptPath, ["quoted arg"], {
+          cwd: tempDir,
+        });
 
         expect(outcome.exitCode).toBe(7);
         expect(outcome.stderr.trim()).toBe("failed-script");
@@ -208,7 +214,9 @@ describe("ToolRunner binary lookup", () => {
 
       vi.spyOn(runner, "resolveInstalledBinary").mockResolvedValue(undefined);
       vi.spyOn(runner, "run").mockResolvedValue(
-        createOutcome({ stdout: `${extensionlessPath}\r\n${commandScriptPath}\r\n` }),
+        createOutcome({
+          stdout: `${extensionlessPath}\r\n${commandScriptPath}\r\n`,
+        }),
       );
 
       await expect(runner.resolveBinaryIfAvailable(["npm"])).resolves.toBe(commandScriptPath);
@@ -224,6 +232,19 @@ describe("ToolRunner binary lookup", () => {
         maxBuffer: 1,
       }),
     ).rejects.toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+  });
+
+  it("captures tool output larger than ten megabytes without truncation", async () => {
+    const runner = new ToolRunner();
+    const size = 11 * 1024 * 1024;
+    const result = await runner.run(
+      process.execPath,
+      ["-e", `process.stdout.write("x".repeat(${size})); process.stderr.write("done")`],
+      { cwd: process.cwd() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toHaveLength(size);
+    expect(result.stderr).toBe("done");
   });
 
   it("propagates aborts from asdf binary lookup", async () => {
@@ -247,7 +268,9 @@ describe("ToolRunner binary lookup", () => {
 
   it("treats unspawnable asdf lookup as unavailable instead of crashing", async () => {
     const runner = new ToolRunner();
-    const lookupError = Object.assign(new Error("spawn EINVAL"), { code: "EINVAL" });
+    const lookupError = Object.assign(new Error("spawn EINVAL"), {
+      code: "EINVAL",
+    });
 
     vi.spyOn(runner, "run").mockRejectedValue(lookupError);
 

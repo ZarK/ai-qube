@@ -14,6 +14,7 @@ export type ArtifactSchemaVersion = typeof artifactSchemaVersion;
 
 export interface FileManifestInput {
   files: readonly string[];
+  ignore?: readonly string[];
   source: ManifestSource;
 }
 
@@ -39,6 +40,7 @@ export interface RunStageLanguageConfiguration {
 }
 
 export interface RunStageConfiguration {
+  limit?: number;
   languages: Partial<Record<LanguageId, RunStageLanguageConfiguration>>;
 }
 
@@ -113,9 +115,9 @@ export interface RunPlan {
   layout?: LayoutConsumption;
 }
 
-export type StageStatus = "failed" | "not_implemented" | "passed";
+export type StageStatus = "failed" | "not_implemented" | "passed" | "warning";
 
-export type ToolRunStatus = "failed" | "not_implemented" | "passed";
+export type ToolRunStatus = "failed" | "not_implemented" | "passed" | "warning";
 
 export interface DiagnosticRange {
   endColumn?: number;
@@ -147,6 +149,7 @@ export interface ToolRunResult {
 }
 
 export interface StageResult {
+  startedAt?: string;
   diagnostics: Diagnostic[];
   durationMs: number;
   notes: string[];
@@ -185,7 +188,7 @@ export interface RunTelemetryEvent {
   toolRunCount?: number;
 }
 
-export type RunStatus = "failed" | "not_implemented" | "passed";
+export type RunStatus = "failed" | "not_implemented" | "passed" | "warning";
 
 export interface RunSummary {
   cacheHitCount: number;

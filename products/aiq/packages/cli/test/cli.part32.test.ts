@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   mkdir,
   mkdtemp,
-  os,
-  path,
   readFile,
   runCli,
   tempDirs,
@@ -37,9 +37,9 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality run");
-    expect(stdout.value).toContain("Status: failed");
-    expect(stdout.value).toContain("- Unsupported projects:");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).toContain("): FAILED");
+    expect(stdout.value).toContain("Unsupported JavaScript/TypeScript test configuration");
     expect(stdout.value).not.toContain("Status: not_implemented");
     expect(stdout.value).not.toContain("not_implemented");
     expect(stdout.value).not.toContain("rewrite foundation slice");
@@ -68,9 +68,9 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("Missing tools:");
-      expect(stdout.value).toContain("[stage 3 typecheck]");
-      expect(stdout.value).toContain("aiq setup");
+      expect(stdout.value).toContain("was not detected");
+      expect(stdout.value).toContain("Stage 3 (typecheck): FAILED");
+      expect(stdout.value).toContain("--verbose  # Debug stage");
     } finally {
       process.env.PATH = originalPath;
     }
@@ -96,10 +96,10 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("Missing tools:");
-      expect(stdout.value).toContain("[stage 5 sloc]");
+      expect(stdout.value).toContain("was not detected");
+      expect(stdout.value).toContain("Stage 5 (sloc): FAILED");
       expect(stdout.value).toContain("lizard");
-      expect(stdout.value).toContain("aiq setup");
+      expect(stdout.value).toContain("--verbose  # Debug stage");
     } finally {
       process.env.PATH = originalPath;
     }

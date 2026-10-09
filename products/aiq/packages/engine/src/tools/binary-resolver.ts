@@ -30,20 +30,8 @@ export function resolveGradleCommand(): string {
   return process.platform === "win32" ? "gradle.bat" : "gradle";
 }
 
-export function resolveUvxCommand(): string {
-  return process.platform === "win32" ? "uvx.exe" : "uvx";
-}
-
-export function resolveUvCommand(): string {
-  return process.platform === "win32" ? "uv.exe" : "uv";
-}
-
 export function resolvePythonCommand(): string {
   return process.platform === "win32" ? "python" : "python3";
-}
-
-export function resolveTyCommand(): string {
-  return process.platform === "win32" ? "ty.exe" : "ty";
 }
 
 export function resolveDotNetCommand(): string {

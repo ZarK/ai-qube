@@ -41,7 +41,7 @@ describe("OpenCode adapter", () => {
     expect(result.diagnostics).not.toHaveLength(0);
     expect(result.planPath).toBeUndefined();
     expect(result.reportPath).toBeUndefined();
-    expect(result.text).toContain("Quality check");
+    expect(result.text).toContain("Total execution time:");
   });
 
   it("hides diagnostics in the tool-facing result when opencode publishDiagnostics is disabled", async () => {

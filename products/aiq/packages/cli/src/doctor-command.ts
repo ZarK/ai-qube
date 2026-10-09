@@ -1,9 +1,17 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
+import path from "node:path";
 import { loadAiqProgress } from "@tjalve/aiq/config";
+import { ToolRunner, resolvePathCommand, resolvePythonInterpreter } from "@tjalve/aiq/engine";
 import type { StageId } from "@tjalve/aiq/model";
 
+import { detectProjectLanguages, formatDetectedLanguages } from "./doctor-discovery.js";
+import { detectJvmBuildTools } from "./doctor-jvm.js";
+import {
+  type DoctorPrerequisite,
+  doctorPrerequisites,
+  mergeDoctorPrerequisites,
+  resolveDoctorBundledTools,
+  resolveDoctorToolRequirements,
+} from "./doctor-tools.js";
 import { detectNativeConfigs, resolveDoctorNativeConfigChecks } from "./native-config.js";
 import {
   type DoctorCheckOutput,
@@ -16,16 +24,8 @@ import {
 import { resolveCliConfig } from "./requests.js";
 import { formatError } from "./shared.js";
 import { type CliIo, type ParsedArgs, cliStageShortcutIds } from "./types.js";
-import { detectProjectLanguages, formatDetectedLanguages } from "./doctor-discovery.js";
-import {
-  type DoctorPrerequisite,
-  doctorPrerequisites,
-  mergeDoctorPrerequisites,
-  resolveDoctorBundledTools,
-  resolveDoctorToolRequirements,
-} from "./doctor-tools.js";
 
-const execFileAsync = promisify(execFile);
+const doctorToolRunner = new ToolRunner();
 const doctorProbeTimeoutMs = 5_000;
 
 export async function runDoctorCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {
@@ -68,21 +68,18 @@ async function createDoctorCommandOutput(
     detectedLanguages,
     resolvedConfig.stages,
   );
-  const prerequisites = mergeDoctorPrerequisites(doctorPrerequisites, externalRequirements);
+  const jvmTools = await detectJvmBuildTools(io.cwd, resolvedConfig.stages);
+  const prerequisites = mergeDoctorPrerequisites(
+    [...doctorPrerequisites, ...jvmTools.requirements],
+    externalRequirements,
+  );
   const prerequisiteChecks = await Promise.all(
     prerequisites.map(async (prerequisite) => {
-      const installed = await resolveInstalledCommand(prerequisite.binaries, {
-        includeVersion: parsed.verbose,
-      });
+      const installed = await resolvePrerequisite(prerequisite);
       const versionProblem =
         installed === undefined ? undefined : validateDoctorPrerequisiteVersion(prerequisite);
       return {
-        detail:
-          versionProblem ??
-          installed ??
-          (prerequisite.required
-            ? `not detected; ${prerequisite.install}`
-            : `not detected; ${prerequisite.install}`),
+        detail: versionProblem ?? installed ?? (await missingPrerequisiteDetail(prerequisite)),
         install: prerequisite.install,
         name: prerequisite.name,
         ok: installed !== undefined && versionProblem === undefined ? true : !prerequisite.required,
@@ -113,13 +110,16 @@ async function createDoctorCommandOutput(
     },
     ...resolveDoctorNativeConfigChecks(detectedLanguages, resolvedConfig.stages, nativeConfigs),
     ...prerequisiteChecks,
+    ...jvmTools.checks,
     ...bundledChecks,
   ];
 
   return {
     checks,
     ...(resolvedConfig.configPath === undefined ? {} : { configPath: resolvedConfig.configPath }),
-    ...(resolvedConfig.configPaths === undefined ? {} : { configPaths: resolvedConfig.configPaths }),
+    ...(resolvedConfig.configPaths === undefined
+      ? {}
+      : { configPaths: resolvedConfig.configPaths }),
     ...(resolvedConfig.sources === undefined ? {} : { sources: resolvedConfig.sources }),
     cwd: resolvedConfig.cwd,
     detectedTech: formatDetectedLanguages(detectedLanguages),
@@ -231,45 +231,75 @@ function validateDoctorPrerequisiteVersion(prerequisite: DoctorPrerequisite): st
   return `detected Node.js ${process.version}; ${prerequisite.install}`;
 }
 
+async function resolvePrerequisite(prerequisite: DoctorPrerequisite): Promise<string | undefined> {
+  if (prerequisite.pythonModule === undefined) {
+    return resolveInstalledCommand(prerequisite.binaries, prerequisite.versionArgs);
+  }
+  let interpreter: string;
+  try {
+    interpreter = await resolvePythonInterpreter();
+  } catch {
+    return undefined;
+  }
+  const result = await runCommand(interpreter, [
+    "-c",
+    "import importlib, importlib.metadata, sys; module = importlib.import_module(sys.argv[1]); print(module.__file__ + '; ' + importlib.metadata.version(sys.argv[1]))",
+    prerequisite.pythonModule,
+  ]);
+  return result.exitCode === 0
+    ? `${prerequisite.pythonModule}; ${result.stdout.trim()}; Python interpreter: ${interpreter}`
+    : undefined;
+}
+
+async function missingPrerequisiteDetail(prerequisite: DoctorPrerequisite): Promise<string> {
+  if (prerequisite.pythonModule !== undefined) {
+    try {
+      const interpreter = await resolvePythonInterpreter();
+      return `not detected in Python interpreter: ${interpreter}; ${prerequisite.install}`;
+    } catch {
+      return `not detected; Python interpreter unavailable; ${prerequisite.install}`;
+    }
+  }
+  return `not detected; ${prerequisite.install}`;
+}
+
 async function resolveInstalledCommand(
   commandNames: readonly string[],
-  options: { includeVersion?: boolean } = {},
+  versionArgs: readonly string[] = ["--version"],
 ): Promise<string | undefined> {
   for (const commandName of commandNames) {
     if (commandName === "node") {
-      return options.includeVersion ? `${process.execPath}; ${process.version}` : "detected";
+      return `${process.execPath}; ${process.version}`;
     }
 
-    const result = await runCommand(process.platform === "win32" ? "where" : "which", [
-      commandName,
-    ]);
-    if (result.exitCode === 0) {
-      const resolved = result.stdout
-        .split(/\r?\n/u)
-        .map((value) => value.trim())
-        .find((value) => value.length > 0);
-      const resolvedCommand = resolved ?? commandName;
-      if (!options.includeVersion) {
-        return "detected";
-      }
-      const version = await resolveCommandVersion(resolvedCommand);
-      return version === undefined ? resolvedCommand : `${resolvedCommand}; ${version}`;
+    const resolved = await resolvePathCommand(commandName);
+    if (resolved !== undefined) {
+      const version = await resolveCommandVersion(resolved, versionArgs);
+      return version === undefined ? undefined : `${resolved}; ${version}`;
     }
   }
 
   return undefined;
 }
 
-async function resolveCommandVersion(command: string): Promise<string | undefined> {
-  const result = await runCommand(command, ["--version"]);
+async function resolveCommandVersion(
+  command: string,
+  args: readonly string[],
+): Promise<string | undefined> {
+  if (/^gofmt(?:\.exe)?$/iu.test(path.basename(command))) {
+    const go = await resolvePathCommand("go");
+    return go === undefined ? undefined : resolveCommandVersion(go, ["version", command]);
+  }
+  const result = await runCommand(command, [...args]);
   if (result.exitCode !== 0) {
     return undefined;
   }
 
-  return result.stdout
+  const lines = result.stdout
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .find((line) => line.length > 0);
+    .filter((line) => line.length > 0);
+  return lines.find((line) => /\d+\.\d+/u.test(line)) ?? lines[0];
 }
 
 async function runCommand(
@@ -277,22 +307,15 @@ async function runCommand(
   args: string[],
 ): Promise<{ exitCode: number; stdout: string }> {
   try {
-    const result = await execFileAsync(command, args, {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-      timeout: doctorProbeTimeoutMs,
+    const result = await doctorToolRunner.run(command, args, {
+      cwd: process.cwd(),
+      signal: AbortSignal.timeout(doctorProbeTimeoutMs),
     });
-    return { exitCode: 0, stdout: result.stdout };
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error) {
-      const code = (error as { code?: unknown }).code;
-      const stdout = (error as { stdout?: unknown }).stdout;
-      return {
-        exitCode: typeof code === "number" ? code : 1,
-        stdout: typeof stdout === "string" ? stdout : "",
-      };
-    }
-
+    return {
+      exitCode: result.exitCode ?? 1,
+      stdout: result.stdout || result.stderr,
+    };
+  } catch {
     return { exitCode: 1, stdout: "" };
   }
 }

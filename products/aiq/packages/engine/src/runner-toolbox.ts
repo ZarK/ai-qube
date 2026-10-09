@@ -1,9 +1,10 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { requirePathCommand } from "./tools/host-tools.js";
 
 import type { StageId } from "./contracts.js";
-import { getRunnerExecutionContext, getRunnerToolRunner } from "./runner-context.js";
 import { AiqEngineCancelledError } from "./run.js";
+import { getRunnerExecutionContext, getRunnerToolRunner } from "./runner-context.js";
 import * as binaries from "./tools/binary-resolver.js";
 import { pathExists } from "./utils/path-utils.js";
 
@@ -154,8 +155,8 @@ export async function createJvmProcessEnv(): Promise<NodeJS.ProcessEnv | undefin
   return getRunnerToolRunner().createJvmProcessEnv();
 }
 
-export function resolveUvxCommand(): string {
-  return binaries.resolveUvxCommand();
+export async function resolveLizardCommand(): Promise<string> {
+  return requirePathCommand("lizard");
 }
 
 export function resolveDotNetCommand(): string {

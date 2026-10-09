@@ -130,9 +130,11 @@ describe("CLI foundation", () => {
     );
     expect(packageReadme).toContain("Quality uses repository-native tool configs by default.");
     expect(packageReadme).toContain("Existing Biome config, `tsconfig.json`, Vitest/Jest config");
-    expect(packageReadme).toContain("Default text output is compact");
-    expect(packageReadme).toContain("Use `--verbose` for run metadata");
-    expect(packageReadme).toContain("Use `--format json` for the complete structured JSON report");
+    expect(packageReadme).toContain("Default text output shows each selected stage");
+    expect(packageReadme).toContain(
+      "`--verbose` adds diagnostics and tool details after the summary.",
+    );
+    expect(packageReadme).toContain("`--format json` emits the structured report");
     expect(packageReadme).toContain(
       "Treat metric remediation as behavior-preserving work, not architecture redesign.",
     );

@@ -1,7 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { defaultProjectScopeIgnoredDirectoryNames } from "./project-scope.js";
 import type { OutputFormat } from "./types.js";
 
 export interface FirstRunProjectInference {
@@ -22,47 +21,6 @@ export interface FirstRunSetupGuidance {
   remediation: string;
   summary: string;
 }
-
-const firstRunSupportedFileExtensions = new Set([
-  ".bash",
-  ".bats",
-  ".c",
-  ".cjs",
-  ".cs",
-  ".csproj",
-  ".css",
-  ".cts",
-  ".go",
-  ".hcl",
-  ".htm",
-  ".html",
-  ".java",
-  ".js",
-  ".json",
-  ".jsonc",
-  ".jsx",
-  ".kt",
-  ".mjs",
-  ".mts",
-  ".ps1",
-  ".psd1",
-  ".psm1",
-  ".py",
-  ".pyi",
-  ".rs",
-  ".sh",
-  ".sln",
-  ".slnx",
-  ".sql",
-  ".tf",
-  ".tfvars",
-  ".ts",
-  ".tsx",
-  ".yaml",
-  ".yml",
-]);
-
-const firstRunMaxCollectedFiles = 500;
 
 const firstRunPrimaryMarkerNames = new Map<string, string>([
   ["Cargo.toml", "Rust"],
@@ -123,23 +81,6 @@ export async function inferFirstRunProjects(cwd: string): Promise<FirstRunProjec
   );
 }
 
-export async function collectFirstRunManifestFiles(
-  cwd: string,
-  projects: readonly FirstRunProjectInference[],
-): Promise<FirstRunManifestCollection> {
-  const files = new Set(projects.map((project) => path.relative(cwd, project.manifestPath)));
-  const warnings: string[] = [];
-  const truncated = await collectSupportedFiles(cwd, cwd, files, warnings);
-
-  return {
-    files: [...files]
-      .filter((file) => file.length > 0)
-      .sort((left, right) => left.localeCompare(right)),
-    truncated,
-    warnings,
-  };
-}
-
 export function createFirstRunSetupGuidance(cwd: string): FirstRunSetupGuidance {
   return {
     cwd,
@@ -162,68 +103,6 @@ export function formatFirstRunDetectedProjects(
 
 export function writeFirstRunJsonPrelude(format: OutputFormat): boolean {
   return format === "json";
-}
-
-async function collectSupportedFiles(
-  root: string,
-  directory: string,
-  files: Set<string>,
-  warnings: string[],
-): Promise<boolean> {
-  if (files.size >= firstRunMaxCollectedFiles) {
-    return true;
-  }
-
-  let entries: Awaited<ReturnType<typeof readDirectoryEntries>>;
-  try {
-    entries = await readDirectoryEntries(directory);
-  } catch (error) {
-    warnings.push(
-      `Skipped unreadable directory ${path.relative(root, directory) || "."}: ${formatTraversalError(error)}`,
-    );
-    return false;
-  }
-
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (files.size >= firstRunMaxCollectedFiles) {
-      return true;
-    }
-
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (!defaultProjectScopeIgnoredDirectoryNames.has(entry.name)) {
-        const truncated = await collectSupportedFiles(root, entryPath, files, warnings);
-        if (truncated) {
-          return true;
-        }
-      }
-      continue;
-    }
-
-    if (!entry.isFile() || !isFirstRunSupportedInputFile(entry.name)) {
-      continue;
-    }
-
-    files.add(path.relative(root, entryPath));
-  }
-
-  return false;
-}
-
-function isFirstRunSupportedInputFile(fileName: string): boolean {
-  return (
-    firstRunPrimaryMarkerNames.has(fileName) ||
-    firstRunPrimaryMarkerExtensions.has(path.extname(fileName).toLowerCase()) ||
-    firstRunSupportedFileExtensions.has(path.extname(fileName).toLowerCase())
-  );
-}
-
-async function readDirectoryEntries(directory: string) {
-  return readdir(directory, { withFileTypes: true });
-}
-
-function formatTraversalError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function isReadableFile(filePath: string): Promise<boolean> {

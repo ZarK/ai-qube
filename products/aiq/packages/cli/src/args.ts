@@ -451,6 +451,12 @@ function isSetupGuidanceCommand(command: CommandName): command is "ci" | "hook" 
 }
 
 function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
+  if (parsed.command === "hook" && parsed.setupSubcommand === "run") {
+    if (hasSetupGuidanceUnsupportedOptions({ ...parsed, verbose: false })) {
+      throw new Error("Use aiq hook run [--verbose] [--format json|text].");
+    }
+    return;
+  }
   if (hasSetupGuidanceUnsupportedOptions(parsed)) {
     throw new Error(
       "Setup guidance commands only accept their documented subcommand and --format.",

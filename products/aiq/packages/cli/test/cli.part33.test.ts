@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   countOccurrences,
   mkdir,
   mkdtemp,
-  os,
-  path,
   runCli,
   tempDirs,
   writeFile,
@@ -56,9 +56,9 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("Status: failed");
-      expect(stdout.value).toContain("Problems:");
-      expect(stdout.value).toContain("Next: aiq setup");
+      expect(stdout.value).toContain("): FAILED");
+      expect(stdout.value).toContain("To debug failed stages:");
+      expect(stdout.value).toContain("To debug failed stages:");
       expect(countOccurrences(stdout.value, "lizard was not detected")).toBeLessThanOrEqual(1);
       expect(countOccurrences(stdout.value, "aiq setup")).toBeLessThanOrEqual(2);
       expect(stdout.value).not.toContain("Artifacts:");
@@ -89,7 +89,9 @@ describe("CLI foundation", () => {
       );
 
       const output = JSON.parse(stdout.value) as {
-        stages: Array<{ diagnostics: Array<{ message: string; source: string }> }>;
+        stages: Array<{
+          diagnostics: Array<{ message: string; source: string }>;
+        }>;
       };
       const diagnostic = output.stages[0]?.diagnostics[0];
 

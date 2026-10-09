@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-import { stderr, stdout } from "node:process";
 import { createRequire } from "node:module";
+import { stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { defineCommand, defineFlag } from "@tjalve/qube-cli/metadata";
-import { createCommandRegistry } from "@tjalve/qube-cli/registry";
-import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, normalizeDefaultCommandInput, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import {
   type AiqProfileName,
   type StageId,
@@ -14,12 +11,28 @@ import {
   formatRunResultAsText,
   stageIds,
 } from "@tjalve/aiq/api";
+import { defineCommand, defineFlag } from "@tjalve/qube-cli/metadata";
+import { createCommandRegistry } from "@tjalve/qube-cli/registry";
+import {
+  type RuntimeCommandResult,
+  createCli,
+  createCommand as createRuntimeCommand,
+  createSchemaCommand,
+  normalizeDefaultCommandInput,
+  runCli,
+} from "@tjalve/qube-cli/runtime";
 
 import { runAiqHook } from "../index.js";
 
 const requirePackage = createRequire(import.meta.url);
-const packageJson = requirePackage("../../package.json") as { name: string; version: string };
-const packageIdentity = { name: packageJson.name, version: packageJson.version };
+const packageJson = requirePackage("../../package.json") as {
+  name: string;
+  version: string;
+};
+const packageIdentity = {
+  name: packageJson.name,
+  version: packageJson.version,
+};
 
 const runCommand = defineCommand({
   kind: "command",
@@ -29,40 +42,40 @@ const runCommand = defineCommand({
     defineFlag({
       name: "up-to",
       description: "Run cumulative AIQ stages through the stage index.",
-      type: "integer"
+      type: "integer",
     }),
     defineFlag({
       name: "only",
       description: "Run only one AIQ stage index.",
-      type: "integer"
+      type: "integer",
     }),
     defineFlag({
       name: "stage",
       description: "Run one AIQ stage by id.",
       type: "option",
-      options: stageIds
+      options: stageIds,
     }),
     defineFlag({
       name: "profile",
       description: "Select the AIQ execution profile.",
       type: "option",
-      options: aiqProfileNames
-    })
+      options: aiqProfileNames,
+    }),
   ],
   examples: [
     {
       description: "Run the default hook checks.",
-      command: "aiq-hook run"
+      command: "aiq-hook run",
     },
     {
       description: "Run stages through stage 4.",
-      command: "aiq-hook run --up-to 4"
-    }
+      command: "aiq-hook run --up-to 4",
+    },
   ],
   interactions: {
     nonInteractive: true,
-    ttyPrompt: false
-  }
+    ttyPrompt: false,
+  },
 });
 
 let hookRegistry = createCommandRegistry({ commands: [runCommand] });
@@ -74,14 +87,14 @@ const hookCli = createCli({
   description: "AIQ hook adapter.",
   registry: hookRegistry,
   commands: [
-    createRuntimeCommand(runCommand, context => runHookCommand(context.argv)),
+    createRuntimeCommand(runCommand, (context) => runHookCommand(context.argv)),
     createSchemaCommand({
       registry: () => hookRegistry,
       bin: "aiq-hook",
       packageName: packageIdentity.name,
-      packageVersion: packageIdentity.version
-    })
-  ]
+      packageVersion: packageIdentity.version,
+    }),
+  ],
 });
 hookRegistry = hookCli.registry;
 
@@ -90,7 +103,10 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 export async function runAiqHookCli(input: readonly string[]): Promise<number> {
-  const result = await runCli(hookCli, normalizeDefaultCommandInput(input, { defaultCommand: "run" }));
+  const result = await runCli(
+    hookCli,
+    normalizeDefaultCommandInput(input, { defaultCommand: "run" }),
+  );
   if (result.stdout.length > 0) stdout.write(result.stdout);
   if (result.stderr.length > 0) stderr.write(result.stderr);
   return result.exitCode;
@@ -108,8 +124,10 @@ async function runHookCommand(argv: readonly string[]): Promise<RuntimeCommandRe
     }
 
     return {
-      stdout: formatRunResultAsText(result.result),
-      exitCode: result.exitCode
+      stdout: formatRunResultAsText(result.result, {
+        color: stdout.isTTY === true,
+      }),
+      exitCode: result.exitCode,
     };
   } catch (error) {
     return { stderr: `${formatError(error)}\n`, exitCode: 1 };
@@ -120,7 +138,10 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function parseHookArgs(argv: string[]): { profile?: AiqProfileName; stages?: StageId[] } {
+export function parseHookArgs(argv: string[]): {
+  profile?: AiqProfileName;
+  stages?: StageId[];
+} {
   let profile: AiqProfileName | undefined;
   let stages: StageId[] | undefined;
   let stageSelector: "--only" | "--stage" | "--up-to" | undefined;

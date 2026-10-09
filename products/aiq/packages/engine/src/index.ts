@@ -10,7 +10,9 @@ export {
 } from "./artifacts.js";
 export { engineVersion } from "./contracts.js";
 export { createCacheService } from "./cache.js";
-export { normalizeFileManifest } from "./files.js";
+export { resolvePathCommand, resolvePythonInterpreter } from "./tools/host-tools.js";
+export { ToolRunner } from "./tool-runner.js";
+export { normalizeFileManifest, isIgnoredInput, isSupportedInputFile } from "./files.js";
 export {
   LayoutConsumptionError,
   applyLayoutToCandidateFiles,

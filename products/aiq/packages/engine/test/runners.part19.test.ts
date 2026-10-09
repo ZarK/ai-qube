@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   buildEngineContext,
   createSingleLanguageStageConfiguration,
   languageIds,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   sharedMetricsStages,
   tempDirs,
@@ -86,7 +86,7 @@ describe("engine runners", () => {
         );
 
         expect(JSON.stringify(result)).not.toContain("not_implemented");
-        expect(result.status).toBe("passed");
+        expect(result.status).toBe("warning");
         expect(result.toolRuns).toEqual([]);
       }
     }

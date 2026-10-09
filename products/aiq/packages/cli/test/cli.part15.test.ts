@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   mkdtemp,
-  os,
-  path,
   runCli,
   tempDirs,
   writeFile,
@@ -57,6 +57,10 @@ describe("CLI foundation", () => {
         expect.objectContaining({
           install: expect.stringContaining("Install Python 3"),
           name: "Python runtime",
+        }),
+        expect.objectContaining({
+          install: expect.stringContaining("Install Astral ty"),
+          name: "ty",
         }),
       ]);
       expect(output.actions.find((action) => action.name === "Python runtime")).toMatchObject({

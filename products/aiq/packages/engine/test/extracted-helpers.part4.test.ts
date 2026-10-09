@@ -5,7 +5,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFileMetricDiagnostics,
   createLizardMetricsDiagnostics,
   createPythonMetricsDiagnostics,
   metricsDiagnosticCodes,
@@ -14,7 +13,11 @@ import {
 import { parseDotNetTrxReport } from "../src/parsers/dotnet.js";
 import { parseGoVetDiagnostics } from "../src/parsers/go.js";
 import { parseLizardMetrics } from "../src/parsers/lizard.js";
-import { parsePytestReport, parseTyGitlabDiagnostics } from "../src/parsers/python.js";
+import {
+  parsePytestReport,
+  parsePythonMetrics,
+  parseTyGitlabDiagnostics,
+} from "../src/parsers/python.js";
 import { capitalize, resolveDiagnosticFile } from "../src/parsers/utils.js";
 import { parseXmlAttributes } from "../src/parsers/xml.js";
 import { createRegistry } from "../src/registries.js";
@@ -63,6 +66,57 @@ async function createTempPackageProject(
 }
 
 describe("extracted helper regressions", () => {
+  it.each([
+    "",
+    "not JSON",
+    "[]",
+    '{"fixture.py": null}',
+    '{"fixture.py": {}}',
+    '{"fixture.py": {"cc": [], "mi": {"rank": "A", "score": "unknown"}, "raw": {}}}',
+  ])("rejects malformed Python metrics: %s", (output) => {
+    expect(() => parsePythonMetrics(output)).toThrow(/radon/iu);
+  });
+
+  it("rejects incomplete or invalid Python metric fields", () => {
+    const valid = {
+      cc: [
+        {
+          complexity: 1,
+          endline: 2,
+          lineno: 1,
+          name: "work",
+          rank: "A",
+          type: "Function",
+        },
+      ],
+      mi: { rank: "A", score: 100 },
+      raw: {
+        blank: 0,
+        comments: 0,
+        lloc: 2,
+        loc: 2,
+        multi: 0,
+        singleComments: 0,
+        sloc: 2,
+      },
+      readability: { score: 100 },
+    };
+    expect(parsePythonMetrics(JSON.stringify({ "fixture.py": valid }))["fixture.py"]).toEqual(
+      valid,
+    );
+    for (const invalid of [
+      { ...valid, cc: [{}] },
+      { ...valid, cc: null },
+      { ...valid, raw: { ...valid.raw, sloc: "2" } },
+      { ...valid, readability: { score: null } },
+      { ...valid, mi: { score: 100 } },
+    ]) {
+      expect(() => parsePythonMetrics(JSON.stringify({ "fixture.py": invalid }))).toThrow(
+        /Malformed Radon/u,
+      );
+    }
+  });
+
   it("fails Python SLOC, complexity, maintainability, and readability defaults", () => {
     const file = path.resolve("fixture.py");
     const metrics = {
@@ -124,21 +178,25 @@ describe("extracted helper regressions", () => {
     ]);
   });
 
-  it("uses lizard-style complexity defaults for file-level metric fallbacks", () => {
+  it("applies per-method maintainability limits to C#", () => {
     const file = path.resolve("fixture.cs");
     const metrics = {
       [file]: {
-        maintainability: { score: 100 },
-        maxComplexity: { score: 11 },
+        blockCount: 1,
+        blocks: [
+          { complexity: 11, file, name: "Score", nloc: 10, parameterCount: 1, startLine: 1 },
+        ],
+        maintainability: { rank: "A", score: 100 },
+        maxComplexity: { rank: "C", score: 11 },
         raw: { sloc: 10 },
       },
     };
 
-    expect(createFileMetricDiagnostics(metrics, "maintainability", "aiq-csharp-metrics")).toEqual([
+    expect(createLizardMetricsDiagnostics(metrics, "maintainability", "lizard")).toEqual([
       expect.objectContaining({
         code: metricsDiagnosticCodes.lizardMaintainabilityComplexity,
         file,
-        message: "Maintainability complexity 11 is greater than 10.",
+        message: "Score maintainability complexity 11 is greater than 10.",
       }),
     ]);
   });

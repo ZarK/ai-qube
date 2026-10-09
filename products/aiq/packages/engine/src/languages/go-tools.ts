@@ -167,7 +167,7 @@ async function runGoMetricsProjectTask(
     );
     const args = commands.createLizardArgs({ inputFile, languages: ["go"] });
     const outcome = await runtime.runExecutable(
-      runtime.resolveUvxCommand(),
+      await runtime.resolveLizardCommand(),
       args,
       project.projectRoot,
       runtime.signal,

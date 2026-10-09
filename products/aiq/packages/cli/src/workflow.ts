@@ -10,7 +10,7 @@ import type { RunRequest, RunResult, StageId } from "@tjalve/aiq/model";
 import type { RunWorkflowOutput } from "./output.js";
 import { cliStageShortcutIds } from "./types.js";
 
-type WorkflowStatus = "failed" | "none" | "not_implemented" | "passed" | "unreadable";
+type WorkflowStatus = "failed" | "none" | "not_implemented" | "passed" | "warning" | "unreadable";
 type WorkflowStageLike = {
   id: StageId;
   index: number;

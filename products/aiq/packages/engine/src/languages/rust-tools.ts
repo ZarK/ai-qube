@@ -160,7 +160,7 @@ async function runRustMetricsProjectTask(
     await writeFile(inputFile, `${project.files.join("\n")}\n`, "utf8");
     const args = commands.createLizardArgs({ inputFile, languages: ["rust"] });
     const outcome = await runtime.runExecutable(
-      runtime.resolveUvxCommand(),
+      await runtime.resolveLizardCommand(),
       args,
       project.projectRoot,
       runtime.signal,

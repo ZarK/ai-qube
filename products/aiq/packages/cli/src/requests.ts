@@ -10,7 +10,7 @@ import {
   resolveAiqConfig,
   resolveAiqProgressStageIds,
 } from "@tjalve/aiq/config";
-import { resolveRunRequest, toRepoRelativePath } from "@tjalve/aiq/engine";
+import { normalizeFileManifest, resolveRunRequest, toRepoRelativePath } from "@tjalve/aiq/engine";
 import type {
   FileManifestInput,
   LayoutConsumption,
@@ -71,7 +71,7 @@ export async function createManifestInput(
     sources.add("stream");
   }
 
-  if (manifestFiles.length === 0) {
+  if (sources.size === 0) {
     throw new Error(createMissingManifestMessage(parsed.command));
   }
 
@@ -163,13 +163,28 @@ export async function createRunRequest(
       : { includeProgressStage: options.includeProgressStage }),
     surface: options.surface,
   });
+  const selectedManifest = await normalizeFileManifest(
+    { ...manifest, ignore: resolvedConfig.config.inputs.ignore },
+    io.cwd,
+  );
   const requestManifest =
-    parsed.diffOnly && hasDiffOnlyFullRunStages(resolvedConfig.stages)
+    parsed.diffOnly &&
+    selectedManifest.files.length > 0 &&
+    hasDiffOnlyFullRunStages(resolvedConfig.stages)
       ? {
-          files: await collectGitWorkspaceFiles(io.cwd, manifest.files),
+          files: (
+            await normalizeFileManifest(
+              {
+                files: await collectGitWorkspaceFiles(io.cwd, selectedManifest.files),
+                source: manifest.source,
+                ignore: resolvedConfig.config.inputs.ignore,
+              },
+              io.cwd,
+            )
+          ).files,
           source: manifest.source,
         }
-      : manifest;
+      : selectedManifest;
 
   const loadedLayout = await resolveRequestLayout(parsed, io, options, requestManifest.files);
   const scoped =
@@ -191,7 +206,7 @@ export async function createRunRequest(
     mode: options.mode,
     stages: resolvedConfig.stages,
     diffOnly: parsed.diffOnly,
-    ...(parsed.diffOnly ? { diffOnlyFiles: manifest.files } : {}),
+    ...(parsed.diffOnly ? { diffOnlyFiles: selectedManifest.files } : {}),
     ...(resolvedConfig.stageConfigurations === undefined
       ? {}
       : { stageConfigurations: resolvedConfig.stageConfigurations }),

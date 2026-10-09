@@ -104,7 +104,7 @@ export interface JavaScriptRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   readUnsupportedRunnerNote: (stageId: StageId, projectRoots: readonly string[]) => string;
-  resolveUvxCommand: () => string;
+  resolveLizardCommand: () => Promise<string>;
   runExecutable: (
     command: string,
     args: string[],
@@ -223,7 +223,7 @@ export interface JvmRunnerRuntime extends LanguageRunnerBaseRuntime {
   resolveGradleCommand: () => string;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
   resolveMavenCommand: () => string;
-  resolveUvxCommand: () => string;
+  resolveLizardCommand: () => Promise<string>;
   runExecutable: (
     command: string,
     args: string[],
@@ -242,7 +242,6 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
   isSharedMetricsCompanionFile: (filePath: string) => boolean;
-  readFileText: (filePath: string) => Promise<string>;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,
@@ -256,6 +255,7 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   resolveDotNetCommand: () => string;
+  resolveLizardCommand: () => Promise<string>;
   runExecutable: (
     command: string,
     args: string[],
@@ -292,7 +292,7 @@ export interface GoRunnerRuntime extends LanguageRunnerBaseRuntime {
     emptyBlockLabel: string,
   ) => string;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
-  resolveUvxCommand: () => string;
+  resolveLizardCommand: () => Promise<string>;
   runExecutable: (
     command: string,
     args: string[],
@@ -329,7 +329,7 @@ export interface RustRunnerRuntime extends LanguageRunnerBaseRuntime {
     minMaintainabilityRank: string,
     emptyBlockLabel: string,
   ) => string;
-  resolveUvxCommand: () => string;
+  resolveLizardCommand: () => Promise<string>;
   resolveInstalledBinary: (commandName: string) => Promise<string | undefined>;
   runExecutable: (
     command: string,

@@ -9,10 +9,6 @@ import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import { findNearestLizardConfig, readConfigFingerprint } from "../tools/native-config.js";
 import type { JavaScriptRunnerRuntime, SharedMetricsMode } from "./contracts.js";
-import {
-  appendUnsupportedSharedMetricsIssue,
-  collectUnsupportedSharedMetricsFiles,
-} from "./shared-metrics-support.js";
 import type {
   JavaScriptMetricsProject,
   JavaScriptMetricsProjectMetrics,
@@ -29,6 +25,10 @@ import {
   addLizardFileMetrics,
   createSharedMetricTotals,
 } from "./shared-metrics-accumulator.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+} from "./shared-metrics-support.js";
 
 export async function runJavaScriptMetricsTask(
   task: PlannedTask,
@@ -215,7 +215,7 @@ async function runJavaScriptMetricsProjectTask(
       languages: ["javascript", "typescript", "tsx"],
     });
     const outcome = await runtime.runExecutable(
-      runtime.resolveUvxCommand(),
+      await runtime.resolveLizardCommand(),
       args,
       project.projectRoot,
       runtime.signal,

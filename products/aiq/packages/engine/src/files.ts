@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { FileManifest, FileManifestInput } from "./contracts.js";
@@ -17,7 +17,14 @@ export async function normalizeFileManifest(
 
     const resolved = path.resolve(cwd, trimmed);
     try {
-      await access(resolved);
+      const info = await stat(resolved);
+      if (isIgnoredInput(resolved, cwd, input.ignore)) {
+        continue;
+      }
+      if (info.isDirectory()) {
+        await collectDirectoryFiles(resolved, cwd, input.ignore, unique);
+        continue;
+      }
     } catch (error) {
       if (isErrorCode(error, "ENOENT")) {
         throw new Error(
@@ -34,9 +41,6 @@ export async function normalizeFileManifest(
   }
 
   const files = [...unique].sort();
-  if (files.length === 0) {
-    throw new Error("No input files were provided.");
-  }
 
   return {
     entries: files.map((file) => ({
@@ -50,6 +54,88 @@ export async function normalizeFileManifest(
       fileCount: files.length,
     },
   };
+}
+
+const supportedExtensions = new Set([
+  ".bash",
+  ".bats",
+  ".c",
+  ".cjs",
+  ".cs",
+  ".csproj",
+  ".css",
+  ".cts",
+  ".go",
+  ".hcl",
+  ".htm",
+  ".html",
+  ".java",
+  ".js",
+  ".json",
+  ".jsonc",
+  ".jsx",
+  ".kt",
+  ".mjs",
+  ".mts",
+  ".ps1",
+  ".psd1",
+  ".psm1",
+  ".py",
+  ".pyi",
+  ".rs",
+  ".sh",
+  ".sln",
+  ".slnx",
+  ".sql",
+  ".tf",
+  ".tfvars",
+  ".ts",
+  ".tsx",
+  ".yaml",
+  ".yml",
+]);
+const supportedMarkers = new Set([
+  "Cargo.toml",
+  "go.mod",
+  "build.gradle",
+  "build.gradle.kts",
+  "pom.xml",
+  "pyproject.toml",
+]);
+
+export function isIgnoredInput(file: string, cwd: string, ignore: readonly string[] = []): boolean {
+  const relative = path.relative(cwd, file).replace(/\\/gu, "/");
+  return ignore.some((pattern) => {
+    const glob = pattern.replace(/\\/gu, "/");
+    return [relative, `${relative}/`].some(
+      (candidate) =>
+        path.posix.matchesGlob(candidate, glob) || path.posix.matchesGlob(candidate, `**/${glob}`),
+    );
+  });
+}
+
+async function collectDirectoryFiles(
+  directory: string,
+  cwd: string,
+  ignore: readonly string[] | undefined,
+  files: Set<string>,
+): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (isIgnoredInput(file, cwd, ignore)) continue;
+    if (entry.isDirectory()) {
+      await collectDirectoryFiles(file, cwd, ignore, files);
+    } else if (entry.isFile() && isSupportedInputFile(entry.name)) {
+      files.add(file);
+    }
+  }
+}
+
+export function isSupportedInputFile(file: string): boolean {
+  return (
+    supportedMarkers.has(path.basename(file)) ||
+    supportedExtensions.has(path.extname(file).toLowerCase())
+  );
 }
 
 function isErrorCode(error: unknown, code: string): error is NodeJS.ErrnoException {

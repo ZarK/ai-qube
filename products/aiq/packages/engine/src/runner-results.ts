@@ -90,7 +90,7 @@ export function createNoopStageResult(stageId: StageId, note: string): StageResu
     durationMs: 0,
     notes: [note],
     stageId,
-    status: "passed",
+    status: "warning",
     toolRuns: [],
   };
 }
@@ -116,7 +116,7 @@ export function combineStageResults(
 
 export function isNoopStageResult(result: StageResult): boolean {
   return (
-    result.status === "passed" &&
+    result.status === "warning" &&
     result.durationMs === 0 &&
     result.diagnostics.length === 0 &&
     result.toolRuns.length === 0
@@ -132,6 +132,10 @@ export function summarizeCombinedStageStatus(
 
   if (results.some((result) => result.status === "not_implemented")) {
     return "not_implemented";
+  }
+
+  if (results.some((result) => result.status === "warning")) {
+    return "warning";
   }
 
   return "passed";

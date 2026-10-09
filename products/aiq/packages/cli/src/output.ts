@@ -1,6 +1,6 @@
 import { formatBenchmarkReportAsJson, formatBenchmarkReportAsText } from "@tjalve/aiq/benchmark";
 import type { AiqSetupPlan } from "@tjalve/aiq/config";
-import type { RunPlan, RunResult, StageId, ToolRunResult } from "@tjalve/aiq/model";
+import type { RunPlan, RunResult, StageId } from "@tjalve/aiq/model";
 import {
   formatPlanAsJson,
   formatPlanAsText,
@@ -9,7 +9,7 @@ import {
 } from "@tjalve/aiq/reporters";
 
 import { type CliIo, type OutputFormat, cliStageShortcutIds } from "./types.js";
-import type { SetupGuidanceCommand, VerboseToolRunDetail } from "./types.js";
+import type { SetupGuidanceCommand } from "./types.js";
 
 export interface ConfigCommandOutput {
   config: unknown;
@@ -154,9 +154,9 @@ export interface StatusCommandOutput {
     runId?: string;
     stages: Array<{
       stage: WorkflowStageOutput;
-      status: "failed" | "not_implemented" | "passed";
+      status: "failed" | "not_implemented" | "passed" | "warning";
     }>;
-    status: "failed" | "none" | "not_implemented" | "passed" | "unreadable";
+    status: "failed" | "none" | "not_implemented" | "passed" | "warning" | "unreadable";
   };
   nextCommand: string;
   progressLastRun: string | null;
@@ -194,8 +194,13 @@ export function formatPlanOutput(format: OutputFormat, plan: RunPlan): string {
 export function formatRunResultOutput(
   format: OutputFormat,
   result: RunResult,
-  displayMode?: RunResult["mode"] | "run",
-  options: { verbose?: boolean; workflow?: RunWorkflowOutput } = {},
+  _displayMode?: RunResult["mode"] | "run",
+  options: {
+    verbose?: boolean;
+    workflow?: RunWorkflowOutput;
+    color?: boolean;
+    targets?: readonly string[];
+  } = {},
 ): string {
   if (format === "json") {
     return options.workflow === undefined
@@ -203,47 +208,11 @@ export function formatRunResultOutput(
       : `${JSON.stringify({ ...result, workflow: options.workflow }, null, 2)}\n`;
   }
 
-  const detail = options.verbose === true;
-  const baseOutput =
-    displayMode === undefined || displayMode === result.mode
-      ? formatRunResultAsText(result, { detail })
-      : formatRunResultAsText(result, { detail }).replace(
-          new RegExp(`^Quality ${escapeRegExp(result.mode)}(?=\\n)`, "u"),
-          `Quality ${displayMode}`,
-        );
-
-  const parts = [
-    options.workflow === undefined ? undefined : formatRunWorkflowPrelude(options.workflow),
-    baseOutput.trimEnd(),
-    options.verbose
-      ? formatVerboseToolRunDetails(collectVerboseToolRuns(result)).trimEnd()
-      : undefined,
-    options.workflow === undefined ? undefined : formatRunWorkflowNextSteps(options.workflow),
-  ].filter((part): part is string => part !== undefined && part.length > 0);
-
-  return `${parts.join("\n")}\n`;
-}
-
-export function formatFirstRunResultDetails(result: RunResult): string {
-  const diagnostics = result.stages.flatMap((stage) =>
-    stage.diagnostics.map((diagnostic) => ({ diagnostic, stageId: stage.stageId })),
-  );
-  if (diagnostics.length === 0) {
-    return "";
-  }
-
-  return [
-    "First-run diagnostics:",
-    ...diagnostics.slice(0, 5).map(({ diagnostic, stageId }) => {
-      const file = diagnostic.file.length === 0 ? "workspace" : diagnostic.file;
-      return `  - ${stageId}/${diagnostic.source}: ${file} - ${diagnostic.message}`;
-    }),
-    diagnostics.length > 5 ? `  ... ${diagnostics.length - 5} more diagnostic(s)` : undefined,
-    "Remediation: fix the listed diagnostics, or run aiq setup if a tool prerequisite appears to be missing.",
-    "",
-  ]
-    .filter((line): line is string => line !== undefined)
-    .join("\n");
+  return formatRunResultAsText(result, {
+    detail: options.verbose === true,
+    color: options.color === true,
+    targets: options.targets ?? [],
+  });
 }
 
 export function formatDryRunOutput(format: OutputFormat, plan: RunPlan): string {
@@ -433,42 +402,6 @@ function formatDoctorCheckStatus(check: DoctorCheckOutput): "INFO" | "MISSING" |
   return "MISSING";
 }
 
-function formatRunWorkflowPrelude(workflow: RunWorkflowOutput): string {
-  return [
-    "Quality workflow",
-    `Current stage: ${formatWorkflowStage(workflow.currentStage)} (${workflow.progressPath}, ${workflow.progressSource})`,
-    `Default run: stages ${workflow.defaultRun.range} (${workflow.defaultRun.stages.map((stage) => stage.id).join(", ")})`,
-    `Selected stages: ${workflow.selectedStages.length === 0 ? "none configured yet" : workflow.selectedStages.join(", ")}`,
-    "",
-  ].join("\n");
-}
-
-function formatRunWorkflowNextSteps(workflow: RunWorkflowOutput): string {
-  if (workflow.failedStages.length > 0) {
-    return [
-      "Workflow next:",
-      ...workflow.debugCommands.map((command, index) => {
-        const stage = workflow.failedStages[index];
-        const label = stage === undefined ? "failed stage" : formatWorkflowStage(stage);
-        return `  - Debug ${label}: ${command}`;
-      }),
-      `  - Then rerun: ${workflow.nextCommand}`,
-      "",
-    ].join("\n");
-  }
-
-  if (workflow.currentStageSatisfied !== undefined) {
-    return [
-      "Workflow next:",
-      `  - Current stage satisfied: ${workflow.currentStageSatisfied ? "yes" : "no"} (${formatWorkflowStage(workflow.currentStage)})`,
-      `  - ${workflow.currentStageSatisfied ? "Advance" : "Continue"}: ${workflow.nextCommand}`,
-      "",
-    ].join("\n");
-  }
-
-  return ["Workflow next:", `  - ${workflow.nextCommand}`, ""].join("\n");
-}
-
 function formatStatusLastRun(lastRun: StatusCommandOutput["lastRun"]): string {
   if (lastRun.status === "none") {
     return "Last run: none";
@@ -514,15 +447,22 @@ export function formatConfigOutput(format: OutputFormat, output: ConfigCommandOu
   }
 
   const configPath = output.configPath ?? "defaults";
-  const sourceCounts = Object.entries(output.sources ?? {}).reduce<Record<string, number>>((counts, [, source]) => {
-    counts[source] = (counts[source] ?? 0) + 1;
-    return counts;
-  }, {});
+  const sourceCounts = Object.entries(output.sources ?? {}).reduce<Record<string, number>>(
+    (counts, [, source]) => {
+      counts[source] = (counts[source] ?? 0) + 1;
+      return counts;
+    },
+    {},
+  );
   return [
     "Quality config",
     `Config: ${configPath}`,
     `Layers: ${output.configPaths?.join(", ") || "defaults"}`,
-    `Sources: ${Object.entries(sourceCounts).map(([source, count]) => `${count} ${source}`).join(", ") || "defaults"}`,
+    `Sources: ${
+      Object.entries(sourceCounts)
+        .map(([source, count]) => `${count} ${source}`)
+        .join(", ") || "defaults"
+    }`,
     `Progress: ${output.progressPath} (${output.progressSource})`,
     `Current stage: ${formatProgressStage(output.progress)}`,
     `Profile: ${output.profile}`,
@@ -550,9 +490,7 @@ export function formatConfigSetupOutput(format: OutputFormat, plan: AiqSetupPlan
   }
 
   const selectedWarnings = plan.stageMetadata
-    .filter(
-      (stage) => stage.refactorDriving && plan.selection.resolvedStages.includes(stage.id),
-    )
+    .filter((stage) => stage.refactorDriving && plan.selection.resolvedStages.includes(stage.id))
     .flatMap((stage) => (stage.warning === undefined ? [] : [stage.warning.message]));
   return [
     plan.dryRun ? "Quality config plan" : "Quality config initialized",
@@ -573,42 +511,6 @@ export function formatConfigStageOutput(format: OutputFormat, output: ConfigStag
   }
 
   return `Set current_stage=${output.current_stage} in ${output.progressPath}\n`;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function collectVerboseToolRuns(result: RunResult): VerboseToolRunDetail[] {
-  return result.stages.flatMap((stage) =>
-    stage.toolRuns.map((toolRun) => toVerboseToolRunDetail(stage.stageId, toolRun)),
-  );
-}
-
-function toVerboseToolRunDetail(stageId: StageId, toolRun: ToolRunResult): VerboseToolRunDetail {
-  return {
-    args: toolRun.args,
-    ...(toolRun.exitCode === undefined ? {} : { exitCode: toolRun.exitCode }),
-    stageId,
-    status: toolRun.status,
-    tool: toolRun.tool,
-  };
-}
-
-function formatVerboseToolRunDetails(details: VerboseToolRunDetail[]): string {
-  if (details.length === 0) {
-    return "Verbose tool details:\n  No tool commands were executed.\n";
-  }
-
-  return [
-    "Verbose tool details:",
-    ...details.map((detail) => {
-      const command = [detail.tool, ...detail.args].join(" ");
-      const exitCode = detail.exitCode === undefined ? "n/a" : String(detail.exitCode);
-      return `  - ${detail.stageId}: ${command} [status=${detail.status}, exit=${exitCode}]`;
-    }),
-    "",
-  ].join("\n");
 }
 
 function formatProgressStage(progress: unknown): string {

@@ -52,7 +52,7 @@ describe("CLI foundation", () => {
         ),
       );
 
-      expect(exitCode).toBe(0);
+      expect(exitCode, stdout.value + stderr.value).toBe(0);
       expect(stderr.value).toBe("");
 
       const output = JSON.parse(stdout.value) as {
@@ -95,7 +95,7 @@ describe("CLI foundation", () => {
         cacheHit: true,
         exitCode: 0,
         status: "passed",
-        tool: "aiq-csharp-metrics",
+        tool: "lizard",
       });
     },
     // Real .NET SDK restore/build/test/coverage/security can exceed 20s on cold local agents.

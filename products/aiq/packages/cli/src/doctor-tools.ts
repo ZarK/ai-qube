@@ -27,6 +27,8 @@ export interface DoctorPrerequisite {
   install: string;
   minimumMajor?: number;
   name: string;
+  pythonModule?: string;
+  versionArgs?: readonly string[];
   required: boolean;
 }
 
@@ -40,16 +42,7 @@ interface DoctorBundledTool {
   source: "bundled" | "project";
 }
 
-const toolchainStages: StageId[] = [
-  "lint",
-  "format",
-  "typecheck",
-  "unit",
-  "sloc",
-  "complexity",
-  "maintainability",
-  "coverage",
-];
+const toolchainStages: StageId[] = ["lint", "format", "typecheck", "unit", "coverage"];
 
 const doctorToolRequirementRules: Array<{
   languages: readonly LanguageId[];
@@ -59,13 +52,115 @@ const doctorToolRequirementRules: Array<{
   {
     languages: ["python"],
     requirement: {
-      binaries: ["python3", "python"],
+      binaries: [process.platform === "win32" ? "python" : "python3"],
       install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
       name: "Python runtime",
       required: true,
       source: "external",
     },
-    stages: toolchainStages,
+    stages: ["typecheck", "unit", "sloc", "complexity", "maintainability", "coverage"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: ["ruff"],
+      install: "Install Ruff on PATH to enable Python lint and format checks.",
+      name: "Ruff",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint", "format"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install Radon in the Python interpreter used by Quality.",
+      name: "Radon",
+      pythonModule: "radon",
+      required: true,
+      source: "external",
+    },
+    stages: ["sloc", "complexity", "maintainability"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: ["ty"],
+      install: "Install Astral ty on PATH to enable Python type checks.",
+      name: "ty",
+      required: true,
+      source: "external",
+    },
+    stages: ["typecheck"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install pytest in the Python interpreter used by Quality.",
+      name: "pytest",
+      pythonModule: "pytest",
+      required: true,
+      source: "external",
+    },
+    stages: ["unit", "coverage"],
+  },
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: [],
+      install: "Install pytest-cov in the Python interpreter used by Quality.",
+      name: "pytest-cov",
+      pythonModule: "pytest_cov",
+      required: true,
+      source: "external",
+    },
+    stages: ["coverage"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["shellcheck"],
+      install: "Install ShellCheck on PATH to enable Shell lint checks.",
+      name: "ShellCheck",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["shfmt"],
+      install: "Install shfmt on PATH to enable Shell format checks.",
+      name: "shfmt",
+      required: true,
+      source: "external",
+    },
+    stages: ["format"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["bats"],
+      install: "Install Bats on PATH to enable Shell test checks.",
+      name: "Bats",
+      required: true,
+      source: "external",
+    },
+    stages: ["unit", "coverage"],
+  },
+  {
+    languages: ["bash"],
+    requirement: {
+      binaries: ["kcov"],
+      install: "Install kcov on PATH to enable Shell coverage checks.",
+      name: "kcov",
+      required: true,
+      source: "external",
+    },
+    stages: ["coverage"],
   },
   {
     languages: ["go"],
@@ -75,8 +170,21 @@ const doctorToolRequirementRules: Array<{
       name: "Go toolchain",
       required: true,
       source: "external",
+      versionArgs: ["version"],
     },
     stages: toolchainStages,
+  },
+  {
+    languages: ["go"],
+    requirement: {
+      binaries: ["gofmt"],
+      install: "Install gofmt with the Go toolchain to enable Go format checks.",
+      name: "gofmt",
+      required: true,
+      source: "external",
+      versionArgs: ["-h"],
+    },
+    stages: ["format"],
   },
   {
     languages: ["rust"],
@@ -203,6 +311,7 @@ export function resolveDoctorToolRequirements(
       required: true,
       source: "external",
     });
+    addPowerShellModuleRequirements(requirements, selected);
   }
 
   if (usesAnyStage(selected, ["sloc", "complexity", "maintainability"])) {
@@ -218,7 +327,7 @@ export function resolveDoctorToolRequirements(
     if (lizardLanguages.some((language) => languages.has(language))) {
       requirements.set("Lizard metrics tool", {
         binaries: ["lizard"],
-        install: "Install lizard where AIQ runs to enable non-Python metrics stages.",
+        install: "Install Lizard on PATH to enable non-Python metrics stages.",
         name: "Lizard metrics tool",
         required: true,
         source: "external",
@@ -227,6 +336,34 @@ export function resolveDoctorToolRequirements(
   }
 
   return [...requirements.values()];
+}
+
+function addPowerShellModuleRequirements(
+  requirements: Map<string, DoctorToolRequirement>,
+  selected: ReadonlySet<StageId>,
+): void {
+  const modules: Array<{ name: string; stages: StageId[] }> = [
+    { name: "PSScriptAnalyzer", stages: ["lint", "format"] },
+    { name: "Pester", stages: ["unit", "coverage"] },
+  ];
+  for (const module of modules) {
+    if (!usesAnyStage(selected, module.stages)) {
+      continue;
+    }
+    requirements.set(module.name, {
+      binaries: process.platform === "win32" ? ["pwsh", "powershell"] : ["pwsh"],
+      install: `Install the ${module.name} module for the PowerShell runtime used by Quality.`,
+      name: module.name,
+      required: true,
+      source: "external",
+      versionArgs: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$ErrorActionPreference = 'Stop'; Import-Module ${module.name}; $module = Get-Module ${module.name}; Write-Output ($module.Path + '; ' + $module.Version)`,
+      ],
+    });
+  }
 }
 
 export function resolveDoctorBundledTools(

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   lintFailureFixtureFile,
   mkdtemp,
-  os,
-  path,
   runCli,
   tempDirs,
   writeFile,
@@ -93,13 +93,11 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality check");
-    expect(stdout.value).toContain("Status: failed");
-    expect(stdout.value).toContain("Stages: 1 lint failed");
-    expect(stdout.value).toContain("Files: 1; diagnostics:");
-    expect(stdout.value).toContain("Problems:");
-    expect(stdout.value).toContain("- Quality failures:");
-    expect(stdout.value).toContain("Next: aiq run <paths...> --only 1 --verbose");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).toContain("): FAILED");
+    expect(stdout.value).toContain("Stage 1 (lint): FAILED");
+    expect(stdout.value).toContain("To debug failed stages:");
+    expect(stdout.value).toContain(`aiq run ${lintFailureFixtureFile} --only 1 --verbose`);
     expect(stdout.value).not.toContain("Run:");
     expect(stdout.value).not.toContain("Artifacts:");
   });
