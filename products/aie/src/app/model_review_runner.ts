@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync, rmSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile, execFileSync } from 'node:child_process';
+import { resolveTrustedLocalStore, type TrustedLocalStore } from '../trusted_local_store.js';
 import { resolveExecutable, type AgentHostExecutables } from '@tjalve/qube-core';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
@@ -712,16 +713,17 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
 }
 
 export function isolatedRawOutputPath(
-  repoRoot: string,
+  store: TrustedLocalStore,
   issueNumber: number,
   prNumber: number,
   headSha: string,
   lane: LocalReviewLaneId,
 ): string {
-  return join(repoRoot, '.git', 'qube', 'aie', 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
+  return join(store.path, 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
 }
 
 function captureRawOutput(
+  store: TrustedLocalStore,
   input: ModelReviewRunInput,
   result: ModelRouteProcessResult | null,
   reasonCode: string,
@@ -729,8 +731,8 @@ function captureRawOutput(
 ): ModelReviewRunResult {
   if (!result) return { evidence: null, reasonCode, error };
   try {
-    const path = isolatedRawOutputPath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-    mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
+    const path = isolatedRawOutputPath(store, input.issueNumber, input.prNumber, input.headSha, input.lane);
+    mkdirTrustedStoreSync(dirname(path), store);
     writeReviewFileGuarded(path, `${JSON.stringify({
       version: 1,
       issueNumber: input.issueNumber,
@@ -745,7 +747,7 @@ function captureRawOutput(
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       recordedAt: new Date().toISOString(),
-    }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
+    }, null, 2)}\n`, store);
     const relativePath = relative(input.repoRoot, path).replace(/\\/g, '/');
     return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
   } catch {
@@ -998,20 +1000,22 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     const checkoutState = await resolveCheckoutState(input.repoRoot);
     const adapter = getReviewHostAdapter(input.plan.host);
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
-    const routeDirectory = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route');
-    mkdirSync(routeDirectory, { recursive: true });
+    const store = resolveTrustedLocalStore(input.repoRoot);
+    const routeDirectory = join(store.path, 'model-route');
+    mkdirTrustedStoreSync(routeDirectory, store);
     if (adapter.requiresPromptFile) {
       promptPath = join(routeDirectory, `${invocationId}.prompt`);
-      writeFileSync(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
+      writeReviewFileGuarded(promptPath, prompt, store, 0o600);
     }
     if (adapter.requiresSchemaFile) {
       schemaPath = join(routeDirectory, `${invocationId}.schema.json`);
-      writeFileSync(schemaPath, reviewResultSchema(input), { encoding: 'utf8', mode: 0o600 });
+      writeReviewFileGuarded(schemaPath, reviewResultSchema(input), store, 0o600);
     }
     const invocation = buildModelRouteInvocation(input, executable, prompt, promptPath, schemaPath);
     const result = await (input.runProcess ?? runModelRouteProcess)(invocation);
     if (inspectionPolicyBlocked(result)) {
       return captureRawOutput(
+        store,
         input,
         result,
         'model-route-policy-blocked',
@@ -1020,17 +1024,17 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     }
     if (result.exitCode !== 0 || result.timedOut) {
       const failure = failureReason(result);
-      return captureRawOutput(input, result, failure.reasonCode, failure.error);
+      return captureRawOutput(store, input, result, failure.reasonCode, failure.error);
     }
-    if (!result.stdinDelivered) return captureRawOutput(input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
+    if (!result.stdinDelivered) return captureRawOutput(store, input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
     const parsedHostOutput = adapter.parseEnvelope(result.stdout);
-    if (!parsedHostOutput) return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
+    if (!parsedHostOutput) return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
     if ('failureReasonCode' in parsedHostOutput) {
-      return captureRawOutput(input, result, parsedHostOutput.failureReasonCode, parsedHostOutput.failureDiagnostic);
+      return captureRawOutput(store, input, result, parsedHostOutput.failureReasonCode, parsedHostOutput.failureDiagnostic);
     }
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {
-      return captureRawOutput(input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
+      return captureRawOutput(store, input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
     }
     const provenance: LocalReviewRunnerProvenance = {
       runnerKind: 'local-host',
@@ -1060,10 +1064,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if ('transientTexts' in parsedHostOutput) {
       const transientTexts = parsedHostOutput.transientTexts;
       if (!Array.isArray(transientTexts) || !transientTexts.every((text): text is string => typeof text === 'string')) {
-        return captureRawOutput(input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
+        return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
       }
       if (transientTexts.length >= input.plan.maxTurns) {
-        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned more transient host messages than the configured turn bound.');
+        return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review route returned more transient host messages than the configured turn bound.');
       }
       for (const priorText of transientTexts) {
         let priorResult: unknown;
@@ -1072,25 +1076,25 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         if (isExplicitlyIncompleteResult(normalizedPriorResult, input)) continue;
         const priorEvidence = strictRoutedLane(normalizedPriorResult, input, provenance);
         if (priorEvidence) {
-          return captureRawOutput(input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
+          return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
-        return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review route returned an invalid transient Review object.');
+        return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review route returned an invalid transient Review object.');
       }
     }
-    if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
-    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return captureRawOutput(input, result, 'model-route-checkout-mismatch', 'Local checkout contents changed during isolated review execution.');
+    if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
+    if (await resolveCheckoutState(input.repoRoot) !== checkoutState) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', 'Local checkout contents changed during isolated review execution.');
     const watchedChange = checkoutMonitor.violation();
-    if (watchedChange) return captureRawOutput(input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
+    if (watchedChange) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) {
       if (isRecord(modelResult) && typeof modelResult.status === 'string' && !STATUS_VALUES.has(modelResult.status)) {
-        return captureRawOutput(input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive.`);
+        return captureRawOutput(store, input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive.`);
       }
       const digestViolation = artifactDigestViolation(modelResult, input.repoRoot);
-      if (digestViolation) return captureRawOutput(input, result, 'model-route-artifact-digest', digestViolation);
-      return captureRawOutput(input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
+      if (digestViolation) return captureRawOutput(store, input, result, 'model-route-artifact-digest', digestViolation);
+      return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
     }
     return {
       evidence: {
