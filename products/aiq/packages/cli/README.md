@@ -36,7 +36,8 @@ pnpm exec aiq evidence --format json
 `aiq` is the configured project gate. It looks for a supported project in the
 current directory, initializes `.qube/aiq/config.json` and `.qube/aiq/progress.json`
 when it can safely infer inputs, and runs every stage from `0` through the
-persisted `current_stage`.
+persisted `current_stage`. At a multi-package workspace root, it selects all declared
+workspace members, even when there are no changed paths.
 
 ## Commands
 
@@ -60,7 +61,28 @@ tools or writing artifacts.
 orchestration tools can store as gate evidence or parse as trusted quality
 state.
 
-Default text output is compact: status, selected stage results, diagnostics summary, and the next action. Use `--verbose` for run metadata, artifact paths, stage notes, and command/tool details. Use `--format json` for the complete structured JSON report.
+Default text output shows each selected stage with its start time and duration:
+
+```text
+[00m00s/00m02s] Stage 5 (sloc): PASSED
+[00m02s/00m01s] Stage 6 (complexity): FAILED
+
+Total execution time: 00m03s
+
+To debug failed stages:
+  aiq run src --only 6 --verbose  # Debug stage 6 (complexity)
+```
+
+Times use `MMmSSs`. Status colors appear only on a terminal when `NO_COLOR` is
+unset. `--verbose` adds diagnostics and tool details after the summary.
+Debug hints use PowerShell quoting on Windows and POSIX shell quoting elsewhere.
+If a target cannot be quoted safely, Quality omits the command. After an implicit
+`aiq` run, hints use `aiq --only N --verbose` to select the failed stage.
+`--format json` emits the structured report. A stage without measurable files
+reports `WARNING` with a reason. An explicit target that selects no files fails.
+Directory targets expand recursively. `inputs.ignore` applies to directories,
+explicit files, and file lists. A pattern such as `dist/**` also excludes nested
+`dist` directories.
 
 ## Package Surface
 
@@ -75,7 +97,7 @@ narration.
 
 QUBE-facing Quality commands are `run`, `check`, `plan`, `doctor`, `setup`,
 `status`, `config`, `evidence`, and `schema`. Standalone-only Quality commands are
-`bench`, `watch`, `serve`, `hook install`, `ci setup`, and `ignore write`.
+`bench`, `watch`, `serve`, `hook install`, `hook run`, `ci setup`, and `ignore write`.
 
 ## Stage Ladder
 
@@ -137,7 +159,67 @@ actions in JSON. Quality does not install tools or mutate the host environment.
 `doctor` checks config/progress state, detects project technologies, reports the
 stages that would run, and separates npm-bundled tools from external host tools.
 It exits non-zero when selected stages need missing required setup. Use
-`--verbose` to show exact binary paths and versions.
+`--verbose` for additional diagnostics. Required host tools always include their
+resolved paths and versions. Ruff, ShellCheck, and shfmt must be executables on
+`PATH`. The Python type checker, ty, also resolves on `PATH`. Lizard runs through
+uvx with an exact version pin shared by all metric runners. `doctor` requires
+uvx on `PATH` and reports its path, version, and the pinned Lizard version. Radon must
+be installed for the Python interpreter that Quality resolves; `doctor` reports
+that interpreter. Python prerequisite probes exclude the working
+directory and Python environment variables from the module search path so local
+modules cannot shadow installed host tools. User site packages remain available.
+
+Doctor probes the commands needed by the selected stages. Rust lint, format, and
+coverage require `cargo clippy`, `cargo fmt`, and `cargo llvm-cov`, respectively.
+Cargo alone does not satisfy these requirements. .NET lint and format also require
+`dotnet format`. Each subcommand must successfully report its version.
+
+JavaScript and TypeScript test scripts require npm when the resolved runner invokes
+`npm test` or `npm run`. Direct test runners do not require npm.
+For direct Playwright E2E runs, doctor checks the local Playwright executable and
+its version. A missing executable makes doctor fail. PowerShell probes
+the runtime and the selected stage's modules: PSScriptAnalyzer or Pester.
+HCL-only typecheck does not require Terraform; HCL lint and format do.
+
+Maven and Gradle wrappers must be regular, non-empty files. Doctor reads their
+version from valid wrapper distribution properties or a successful `--version`
+command. Invalid wrappers require the system Maven or Gradle command instead.
+If neither is available, doctor fails. Version probes can execute project wrappers.
+
+## SLOC Limit
+
+Set the repository limit in `.qube/aiq/config.json`:
+
+```json
+{
+  "version": 1,
+  "stages": {
+    "sloc": { "limit": 800 }
+  }
+}
+```
+
+`stages.sloc.limit` is a positive integer. A file fails when its source line count
+is greater than or equal to the limit. Quality counts non-blank, non-comment
+lines in the entire file, including top-level code. The repository setting takes
+precedence over environment thresholds. Without this setting, existing defaults
+and environment variables apply.
+
+## Commit Hook
+
+```sh
+aiq hook install
+aiq hook run
+```
+
+`hook install` writes `pre-commit` in the effective Git hooks directory. It refuses
+an external hooks directory or a different existing hook. The hook invokes Node
+with the absolute path of the installing `aiq` entry point. Keep that installation
+available, or reinstall the hook after moving it.
+
+The hook checks staged files with the configured stages `0..current_stage` and
+blocks the commit if a stage fails. It uses the same text renderer as `aiq run`.
+The published `@tjalve/aiq` package contains the complete hook implementation.
 
 ## Common Remediation
 

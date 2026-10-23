@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  os,
+  path,
   ToolRunner,
   buildEngineContext,
   createDotNetFixtureProject,
@@ -7,8 +9,6 @@ import {
   hasDotNet10Toolchain,
   mkdir,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   tempDirs,
   withExclusiveDotNet,
@@ -33,7 +33,7 @@ describe("engine runners", () => {
         ),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result)).toBe("passed");
       expect(result.diagnostics).toEqual([]);
       expect(result.notes[0]).toContain("dotnet test ran");
       expect(result.toolRuns[0]).toMatchObject({
@@ -62,7 +62,7 @@ describe("engine runners", () => {
         ),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status, JSON.stringify(result)).toBe("passed");
       expect(result.diagnostics).toEqual([]);
       expect(result.notes[0]).toContain("dotnet test coverage lines:");
       expect(result.toolRuns[0]).toMatchObject({

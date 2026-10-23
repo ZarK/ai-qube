@@ -5,6 +5,7 @@ import { getJvmMetricsProjectMetrics, resolveJvmMetricsFiles } from "./jvm-tools
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
 } from "./shared-metrics-support.js";
 import { filterJvmFiles, isJvmTaskFile, resolveJvmProjects } from "./jvm-projects.js";
 import {
@@ -112,12 +113,16 @@ export async function runJvmMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "JVM",
+    files[0] ?? runtime.cwd,
+  );
 }

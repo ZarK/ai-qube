@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   fixtureFile,
   mkdtemp,
-  os,
-  path,
   runCli,
   tempDirs,
   writeFile,
@@ -33,7 +33,10 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
 
     const output = JSON.parse(stdout.value) as {
-      request: { manifest: { files: string[] }; selection: { stages: string[] } };
+      request: {
+        manifest: { files: string[] };
+        selection: { stages: string[] };
+      };
     };
     expect(output.request.manifest.files).toEqual([path.join(tempDir, "LICENSE")]);
     expect(output.request.selection.stages).toEqual(["e2e"]);
@@ -52,10 +55,10 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality run");
-    expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("Stages: 3 typecheck passed");
-    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).toContain("): PASSED");
+    expect(stdout.value).toContain("Stage 3 (typecheck): PASSED");
+    expect(stdout.value).toContain("Total execution time:");
     expect(stdout.value).not.toContain("Artifacts:");
   });
 
@@ -72,10 +75,10 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality run");
-    expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("Stages: 3 typecheck passed");
-    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).toContain("): PASSED");
+    expect(stdout.value).toContain("Stage 3 (typecheck): PASSED");
+    expect(stdout.value).toContain("Total execution time:");
     expect(stdout.value).not.toContain("Artifacts:");
   });
 
@@ -92,10 +95,10 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality check");
-    expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("Stages: 3 typecheck passed");
-    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).toContain("): PASSED");
+    expect(stdout.value).toContain("Stage 3 (typecheck): PASSED");
+    expect(stdout.value).toContain("Total execution time:");
     expect(stdout.value).not.toContain("Artifacts:");
   });
 

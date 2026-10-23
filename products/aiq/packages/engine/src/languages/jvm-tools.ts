@@ -6,6 +6,7 @@ import type { Diagnostic } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
 import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
+import { findJvmWrapper } from "../tools/jvm-wrapper.js";
 import type { JvmRunnerRuntime } from "./contracts.js";
 import { type JvmBuildSystem, type JvmProject, jvmSourceExtensions } from "./jvm.js";
 
@@ -356,36 +357,30 @@ async function resolveMavenExecutable(
   projectRoot: string,
   runtime: JvmRunnerRuntime,
 ): Promise<JvmExecutable> {
-  const wrapperName = process.platform === "win32" ? "mvnw.cmd" : "mvnw";
-  const wrapperPath = path.join(projectRoot, wrapperName);
-  try {
-    await readFile(wrapperPath, "utf8");
-    return { argsPrefix: [], command: wrapperPath, env: await runtime.createJvmProcessEnv() };
-  } catch {
-    return {
-      argsPrefix: [],
-      command: (await runtime.resolveInstalledBinary("mvn")) ?? runtime.resolveMavenCommand(),
-      env: await runtime.createJvmProcessEnv(),
-    };
-  }
+  const wrapper = await findJvmWrapper(projectRoot, runtime.cwd, "Maven");
+  return {
+    argsPrefix: [],
+    command:
+      wrapper?.path ??
+      (await runtime.resolveInstalledBinary("mvn")) ??
+      runtime.resolveMavenCommand(),
+    env: await runtime.createJvmProcessEnv(),
+  };
 }
 
 async function resolveGradleExecutable(
   projectRoot: string,
   runtime: JvmRunnerRuntime,
 ): Promise<JvmExecutable> {
-  const wrapperName = process.platform === "win32" ? "gradlew.bat" : "gradlew";
-  const wrapperPath = path.join(projectRoot, wrapperName);
-  try {
-    await readFile(wrapperPath, "utf8");
-    return { argsPrefix: [], command: wrapperPath, env: await runtime.createJvmProcessEnv() };
-  } catch {
-    return {
-      argsPrefix: [],
-      command: (await runtime.resolveInstalledBinary("gradle")) ?? runtime.resolveGradleCommand(),
-      env: await runtime.createJvmProcessEnv(),
-    };
-  }
+  const wrapper = await findJvmWrapper(projectRoot, runtime.cwd, "Gradle");
+  return {
+    argsPrefix: [],
+    command:
+      wrapper?.path ??
+      (await runtime.resolveInstalledBinary("gradle")) ??
+      runtime.resolveGradleCommand(),
+    env: await runtime.createJvmProcessEnv(),
+  };
 }
 
 function createJvmMetricsManifestKey(project: { buildFilePath: string; files: string[] }): string {

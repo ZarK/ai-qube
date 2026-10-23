@@ -58,6 +58,7 @@ export const layoutGateScopeKinds = ["affected-projects", "root-app", "avoided-r
 export type LayoutGateScopeKind = (typeof layoutGateScopeKinds)[number];
 
 export const layoutConsumptionSources = [
+  "workspace",
   "layout-inspect-json",
   "layout-affected-json",
   "aie-cli",

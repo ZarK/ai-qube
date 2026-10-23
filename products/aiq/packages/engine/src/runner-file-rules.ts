@@ -1,11 +1,10 @@
 import path from "node:path";
 
 import type { LanguageId, RunStageConfiguration } from "./contracts.js";
+import { goSourceExtensions, isGoTaskFile } from "./languages/go-projects.js";
 import { isJvmTaskFile as isJvmLanguageTaskFile } from "./languages/jvm.js";
-import {
-  pythonTaskConfigNames,
-  pythonTaskExtensions as pythonExtensions,
-} from "./languages/python.js";
+import { isPythonTaskFile, pythonTaskExtensions as pythonExtensions } from "./languages/python.js";
+import { isRustTaskFile, rustSourceExtensions } from "./languages/rust-projects.js";
 import { isHclFile, isTerraformFile } from "./languages/terraform.js";
 
 export const biomeExtensions = new Set([
@@ -49,13 +48,9 @@ export const prettierDocumentExtensions = new Set([
 ]);
 
 const dotNetExtensions = new Set([...dotNetSourceExtensions, ...dotNetProjectExtensions]);
-const goSourceExtensions = new Set([".go"]);
-const rustSourceExtensions = new Set([".rs"]);
 const javaSourceExtensions = new Set([".java"]);
 const kotlinSourceExtensions = new Set([".kt"]);
 const javaScriptProjectConfigNames = ["package.json"];
-const goProjectConfigNames = ["go.mod", "go.sum"];
-const rustProjectConfigNames = ["Cargo.toml", "Cargo.lock"];
 const jvmBuildConfigNames = ["build.gradle.kts", "build.gradle", "pom.xml"];
 const jvmSettingsConfigNames = ["settings.gradle.kts", "settings.gradle"];
 const jvmTaskConfigNames = [...jvmBuildConfigNames, ...jvmSettingsConfigNames];
@@ -149,14 +144,6 @@ export function shouldSkipScriptProjectDirectory(directoryPath: string): boolean
   ].includes(name);
 }
 
-function isPythonTaskFile(file: string): boolean {
-  const extension = path.extname(file).toLowerCase();
-  return (
-    pythonExtensions.has(extension) ||
-    pythonTaskConfigNames.includes(path.basename(file).toLowerCase())
-  );
-}
-
 function isJavaScriptMetricsTaskFile(file: string): boolean {
   const extension = path.extname(file).toLowerCase();
   return (
@@ -165,19 +152,13 @@ function isJavaScriptMetricsTaskFile(file: string): boolean {
   );
 }
 
-function isGoTaskFile(file: string): boolean {
-  const extension = path.extname(file).toLowerCase();
+export function isSupportedInputFile(file: string): boolean {
+  const context = createFileMatchContext(file);
   return (
-    goSourceExtensions.has(extension) ||
-    goProjectConfigNames.includes(path.basename(file).toLowerCase())
-  );
-}
-
-function isRustTaskFile(file: string): boolean {
-  const extension = path.extname(file).toLowerCase();
-  return (
-    rustSourceExtensions.has(extension) ||
-    rustProjectConfigNames.includes(path.basename(file).toLowerCase())
+    Object.values(languageMatchers).some((matches) => matches(context)) ||
+    biomeExtensions.has(context.extension) ||
+    securityExtensions.has(context.extension) ||
+    defaultLanguageMatcher(context)
   );
 }
 
@@ -273,15 +254,18 @@ function fileMatchesConfiguredJavaScriptRunnerLanguage(
 }
 
 function fileMatchesLanguage(file: string, languageId: LanguageId): boolean {
+  return (languageMatchers[languageId] ?? defaultLanguageMatcher)(createFileMatchContext(file));
+}
+
+function createFileMatchContext(file: string): FileMatchContext {
   const normalizedPath = path.resolve(file);
   const baseName = path.basename(normalizedPath);
-  const context = {
+  return {
     baseName,
     extension: path.extname(normalizedPath).toLowerCase(),
     file,
     lowerBaseName: baseName.toLowerCase(),
   };
-  return (languageMatchers[languageId] ?? defaultLanguageMatcher)(context);
 }
 
 function defaultLanguageMatcher({ file }: FileMatchContext): boolean {

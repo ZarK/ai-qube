@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { readIntegerString } from "./utils.js";
+import { countSourceLines } from "./source-lines.js";
 
 export interface LizardMetricsFileMetrics {
   blocks: Array<{
@@ -37,26 +37,14 @@ export async function parseLizardMetrics(
     .filter((line) => line.length > 0)
     .map((line) => parseCsvLine(line));
   const rowMetrics = new Map<string, LizardMetricsFileMetrics["blocks"]>();
+  const selectedPaths = new Set(selectedFiles.map((file) => path.resolve(file)));
 
   for (const row of rows) {
-    const nloc = readIntegerString(row[0]);
-    const complexity = readIntegerString(row[1]);
-    const parameterCount = readIntegerString(row[3]);
-    const file = row[6] === undefined ? undefined : path.resolve(cwd, row[6]);
-    const name = row[7];
-    const startLine = readIntegerString(row[9]);
-    if (
-      complexity === undefined ||
-      file === undefined ||
-      name === undefined ||
-      nloc === undefined ||
-      parameterCount === undefined ||
-      startLine === undefined
-    ) {
-      continue;
+    const block = readLizardBlock(row, cwd);
+    const file = block.file;
+    if (!selectedPaths.has(file)) {
+      throw new Error(`Lizard returned metrics for an unselected file: ${file}`);
     }
-
-    const block = { complexity, file, name, nloc, parameterCount, startLine };
     const existingRows = rowMetrics.get(file);
     if (existingRows === undefined) {
       rowMetrics.set(file, [block]);
@@ -68,13 +56,8 @@ export async function parseLizardMetrics(
   const files = await Promise.all(
     selectedFiles.map(async (file) => {
       const source = await readFile(file, "utf8");
-      const fileSloc = source
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0).length;
+      const fileSloc = countSourceLines(source, file);
       const blocks = rowMetrics.get(file) ?? [];
-      const blockNloc = blocks.reduce((sum, block) => sum + block.nloc, 0);
-      const sloc = blocks.length > 0 ? blockNloc : fileSloc;
       const maxComplexity = blocks.reduce((max, block) => Math.max(max, block.complexity), 0);
       const maintainabilityScore = clampNumber(
         100 -
@@ -98,13 +81,47 @@ export async function parseLizardMetrics(
             rank: rankComplexityScore(maxComplexity),
             score: maxComplexity,
           },
-          raw: { sloc },
+          raw: { sloc: fileSloc },
         } satisfies LizardMetricsFileMetrics,
       ] as const;
     }),
   );
 
   return Object.fromEntries(files);
+}
+
+function readLizardBlock(row: string[], cwd: string): LizardMetricsFileMetrics["blocks"][number] {
+  if (row.length !== 11) throw new Error("Malformed Lizard metrics row: expected 11 CSV fields.");
+  const file = row[6];
+  const name = row[7];
+  if (!file?.trim() || !name?.trim())
+    throw new Error("Lizard metrics require a file and function name.");
+  readLizardInteger(row[2], "token count", 0);
+  readLizardInteger(row[4], "length", 0);
+  const startLine = readLizardInteger(row[9], "start line", 1);
+  const endLine = readLizardInteger(row[10], "end line", 1);
+  if (endLine < startLine) throw new Error("Lizard end line must not precede the start line.");
+  return {
+    complexity: readLizardInteger(row[1], "complexity", 1),
+    file: path.resolve(cwd, file),
+    name,
+    nloc: readLizardInteger(row[0], "NLOC", 0),
+    parameterCount: readLizardInteger(row[3], "parameter count", 0),
+    startLine,
+  };
+}
+
+function readLizardInteger(value: string | undefined, field: string, minimum: number): number {
+  const number = Number(value);
+  if (
+    value === undefined ||
+    !/^\d+$/u.test(value) ||
+    !Number.isSafeInteger(number) ||
+    number < minimum
+  ) {
+    throw new Error(`Malformed Lizard ${field}: ${value ?? "missing"}`);
+  }
+  return number;
 }
 
 function parseCsvLine(line: string): string[] {
@@ -131,6 +148,7 @@ function parseCsvLine(line: string): string[] {
     current += char ?? "";
   }
   values.push(current);
+  if (inQuotes) throw new Error("Malformed Lizard CSV output: unterminated quoted field.");
   return values;
 }
 

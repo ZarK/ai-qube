@@ -55,10 +55,8 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--set-stage <0-9>");
     expect(stdout.value).toContain("--up-to <0-9>");
     expect(stdout.value).toContain("--verbose");
-    expect(stdout.value).toContain(
-      "aiq config plans and applies .qube/aiq/config.json",
-    );
-    expect(stdout.value).toContain("Default text output is compact");
+    expect(stdout.value).toContain("aiq config plans and applies .qube/aiq/config.json");
+    expect(stdout.value).toContain("Default text output shows selected stage timing");
     expect(stdout.value).toContain("--verbose adds run metadata");
     expect(stdout.value).toContain("--format json keeps the complete machine-readable report");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");

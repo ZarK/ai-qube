@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageId } from "./runners-test-support.js";
 import {
+  os,
+  path,
   buildEngineContext,
   createSingleLanguageStageConfiguration,
   fixtureFile,
   fixtureTsconfig,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   sharedMetricsStages,
   tempDirs,
   writeFile,
 } from "./runners-test-support.js";
 describe("engine runners", () => {
-  it("no-ops shared metrics for unsupported language file types without placeholders", async () => {
+  it("warns about unmeasured shared metrics for unsupported language file types without placeholders", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-unsupported-metrics-matrix-"));
     tempDirs.push(tempDir);
 
@@ -65,7 +65,7 @@ describe("engine runners", () => {
         );
 
         expect(JSON.stringify(result)).not.toContain("not_implemented");
-        expect(result.status).toBe("passed");
+        expect(result.status).toBe("warning");
         expect(result.diagnostics).toEqual([]);
         expect(result.toolRuns).toEqual([]);
       }

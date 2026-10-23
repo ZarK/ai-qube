@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixtureFile, runEngine } from "./engine-test-support.js";
 describe("engine foundation", () => {
-  it("treats configured stages with no enabled languages as a noop instead of not implemented", async () => {
+  it("warns when configured stages have no enabled analyzers", async () => {
     const result = await runEngine({
       context: "cli",
       manifest: {
@@ -20,12 +20,12 @@ describe("engine foundation", () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
+    expect(result.summary.status).toBe("warning");
     expect(result.stages).toEqual([
       expect.objectContaining({
         diagnostics: [],
         stageId: "lint",
-        status: "passed",
+        status: "warning",
         toolRuns: [],
       }),
     ]);

@@ -3,6 +3,7 @@ import {
   stdin as defaultStdin,
   stdout as defaultStdout,
 } from "node:process";
+import { runHookCommand } from "./hook-command.js";
 
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -46,7 +47,12 @@ import { runWatchCommand } from "./watch.js";
 
 export * from "./api.js";
 export * from "./schema.js";
-export { cliHelp, type CliInput, type CliIo, type CliRunOptions } from "./types.js";
+export {
+  cliHelp,
+  type CliInput,
+  type CliIo,
+  type CliRunOptions,
+} from "./types.js";
 
 const firstRunCommandMetadata = {
   kind: "command",
@@ -188,7 +194,16 @@ export async function runCli(
     }
   }
 
-  const result = await runSharedCli(createAiqCli(io, options), normalizeAiqInput(input, io.cwd));
+  const result = await runSharedCli(
+    createAiqCli(
+      {
+        ...io,
+        ...(argv[1] === undefined ? {} : { entryPoint: path.resolve(io.cwd, argv[1]) }),
+      },
+      options,
+    ),
+    normalizeAiqInput(input, io.cwd),
+  );
   if (result.stdout.length > 0) io.stdout.write(result.stdout);
   if (result.stderr.length > 0) io.stderr.write(result.stderr);
   return result.exitCode;
@@ -208,7 +223,8 @@ function createAiqCli(io: CliIo, options: CliRunOptions) {
     bin: "aiq",
     packageName: aiqPackageName,
     packageVersion: aiqPackageVersion,
-    description: "Quality - staged code quality gates with agent-facing setup and remediation guidance.",
+    description:
+      "Quality - staged code quality gates with agent-facing setup and remediation guidance.",
     registry: aiqCommandRegistry,
     commands: createRuntimeCommands(io, options),
   });
@@ -231,14 +247,15 @@ async function runAiqRuntimeCommand(
     parsed = createParsedArgs(command, context);
   } catch (error) {
     const message = formatError(error);
-    if (command === "config" && context.flags.format === "json") return { stdout: configJsonFailure(message), exitCode: 2 };
+    if (command === "config" && context.flags.format === "json")
+      return { stdout: configJsonFailure(message), exitCode: 2 };
     return { stderr: `${message}\n`, exitCode: 2 };
   }
   if (streamsCommandOutput(parsed.command)) {
     const exitCode = await dispatchParsedCommand(parsed, io, options);
     return { exitCode };
   }
-  const stdout = new BufferedOutput();
+  const stdout = new BufferedOutput(io.stdout.isTTY);
   const stderr = new BufferedOutput();
   const commandIo = { ...io, stderr, stdout };
   const exitCode = await dispatchParsedCommand(parsed, commandIo, options);
@@ -255,6 +272,8 @@ function streamsCommandOutput(command: ParsedArgs["command"]): boolean {
 
 class BufferedOutput {
   value = "";
+
+  constructor(readonly isTTY?: boolean) {}
 
   write(chunk: string | Uint8Array): boolean {
     this.value += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
@@ -288,8 +307,9 @@ async function dispatchParsedCommand(
       return runSetupCommand(parsed, io);
     case "first-run":
       return runFirstRunCommand(parsed, io);
-    case "ci":
     case "hook":
+      return runHookCommand(parsed, io);
+    case "ci":
     case "ignore":
       return runSetupGuidanceCommand(parsed, io);
     case "plan":
@@ -389,7 +409,8 @@ function configJsonFailure(message: string): string {
     ok: false,
     command: "config",
     error: message,
-    nextAction: "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
+    nextAction:
+      "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
   })}\n`;
 }
 

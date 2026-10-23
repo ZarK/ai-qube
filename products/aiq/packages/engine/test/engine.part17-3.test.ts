@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   commandAvailable,
   createDotNetFixtureProject,
   createGoFixtureProject,
@@ -12,8 +14,6 @@ import {
   hasPythonQualityToolchain,
   hasRustCoverageToolchain,
   mkdtemp,
-  os,
-  path,
   readJsonArtifact,
   readMetricsEvents,
   requireCanonicalArtifactPaths,
@@ -102,7 +102,7 @@ describe("engine foundation", () => {
             cacheHit: true,
             event: "cache.hit",
             stageId: "maintainability",
-            tool: "aiq-csharp-metrics",
+            tool: "lizard",
           }),
         ]),
       );
@@ -137,7 +137,7 @@ function expectDotNetFixtureStages(result: EngineRunResult): void {
     cacheHit: false,
     exitCode: 0,
     status: "passed",
-    tool: "aiq-csharp-metrics",
+    tool: "lizard",
   });
   expect(
     result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
@@ -145,7 +145,7 @@ function expectDotNetFixtureStages(result: EngineRunResult): void {
     cacheHit: true,
     exitCode: 0,
     status: "passed",
-    tool: "aiq-csharp-metrics",
+    tool: "lizard",
   });
   expect(
     result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
