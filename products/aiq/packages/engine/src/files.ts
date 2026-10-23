@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { FileManifest, FileManifestInput } from "./contracts.js";
-import { isSupportedInputFile } from "./runner-file-rules.js";
+import { isSupportedInputFile, shouldSkipScriptProjectDirectory } from "./runner-file-rules.js";
 
 export { isSupportedInputFile } from "./runner-file-rules.js";
 
@@ -86,6 +86,7 @@ async function collectDirectoryFiles(
     const file = path.join(directory, entry.name);
     if (isIgnoredInput(file, cwd, ignore)) continue;
     if (entry.isDirectory()) {
+      if (shouldSkipScriptProjectDirectory(file)) continue;
       await collectDirectoryFiles(file, cwd, ignore, files);
     } else if (entry.isFile() && isSupportedInputFile(file)) {
       files.add(file);

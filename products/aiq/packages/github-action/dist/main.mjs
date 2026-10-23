@@ -468679,9 +468679,7 @@ function countDelimitedSourceLines(source2, extension) {
     blockDepth: 0,
     index: 0,
     mode: "code",
-    quote: "",
-    escapes: true,
-    verbatim: false,
+    literals: [],
     lines: /* @__PURE__ */ new Set(),
     line: 1
   };
@@ -468720,19 +468718,35 @@ function scanCharacter(source2, state3) {
   scanCode(source2, state3);
 }
 function scanLiteral(source2, state3) {
+  const literal2 = state3.literals.at(-1);
+  if (!literal2) return;
   const current = source2[state3.index] ?? "";
   if (current.trim().length > 0) state3.lines.add(state3.line);
-  if (state3.escapes && current === "\\" && source2[state3.index + 1] !== "\n") {
+  if (literal2.escapes && current === "\\" && source2[state3.index + 1] !== "\n") {
     state3.index += 2;
     return;
   }
-  if (source2.startsWith(state3.quote, state3.index)) {
-    if (state3.verbatim && source2[state3.index + 1] === state3.quote) {
+  if (source2.startsWith(literal2.quote, state3.index)) {
+    if (literal2.verbatim && source2[state3.index + 1] === literal2.quote) {
       state3.index += 2;
       return;
     }
     state3.mode = "code";
-    state3.index += state3.quote.length;
+    state3.literals.pop();
+    state3.index += literal2.quote.length;
+    return;
+  }
+  if (literal2.escapedBraces && source2.startsWith("{{", state3.index)) {
+    state3.index += 2;
+    return;
+  }
+  if (literal2.interpolation && source2.startsWith(literal2.interpolation, state3.index)) {
+    state3.index += literal2.interpolation.length;
+    if (literal2.interpolation.startsWith("{") && !literal2.escapedBraces) {
+      while (source2[state3.index] === "{") state3.index += 1;
+    }
+    literal2.expressionDepth = 1;
+    state3.mode = "code";
     return;
   }
   state3.index += 1;
@@ -468751,15 +468765,24 @@ function scanCode(source2, state3) {
   }
   const current = source2[state3.index] ?? "";
   if (current.trim().length > 0) state3.lines.add(state3.line);
+  const literal2 = state3.literals.at(-1);
+  if (literal2 && literal2.expressionDepth > 0) {
+    if (literal2.expressionDepth === 1 && source2.startsWith(literal2.closingBraces, state3.index)) {
+      literal2.expressionDepth = 0;
+      state3.mode = "literal";
+      state3.index += literal2.closingBraces.length;
+      return;
+    }
+    if (current === "{") literal2.expressionDepth += 1;
+    if (current === "}") literal2.expressionDepth -= 1;
+  }
   if (scanRawLiteral(source2, state3)) return;
   const characterLiteral = current === "'" && (state3.extension !== ".rs" || /^'(?:[^'\\\r\n]|\\(?:[nrt\\0'"]|x[\da-f]{2}|u\{[\da-f_]+\}))'/iu.test(
     source2.slice(state3.index)
   ));
   if (current === '"' || characterLiteral || current === "`") {
-    state3.quote = current;
-    state3.verbatim = state3.extension === ".cs" && current === '"' && isVerbatimQuote(source2, state3.index);
-    state3.escapes = !state3.verbatim && current !== "`";
-    state3.mode = "literal";
+    const verbatim = state3.extension === ".cs" && current === '"' && isVerbatimQuote(source2, state3.index);
+    startLiteral(source2, state3, current, !verbatim && current !== "`", verbatim);
   }
   state3.index += 1;
 }
@@ -468783,12 +468806,40 @@ function scanRawLiteral(source2, state3) {
     }
   }
   if (opener.length === 0) return false;
-  state3.quote = closer;
-  state3.escapes = state3.extension === ".java";
-  state3.verbatim = false;
-  state3.mode = "literal";
+  startLiteral(source2, state3, closer, state3.extension === ".java", false);
   state3.index += opener.length;
   return true;
+}
+function startLiteral(source2, state3, quote, escapes, verbatim) {
+  let interpolation = "";
+  let closingBraces = "}";
+  let escapedBraces = false;
+  if (quote.startsWith('"') && state3.extension !== ".rs") {
+    let prefix2 = state3.index;
+    if (source2[prefix2 - 1] === "@") prefix2 -= 1;
+    let dollars = 0;
+    while (source2[prefix2 - 1] === "$") {
+      dollars += 1;
+      prefix2 -= 1;
+    }
+    if (state3.extension === ".cs" && dollars > 0) {
+      interpolation = "{".repeat(quote.length >= 3 ? dollars : 1);
+      closingBraces = "}".repeat(interpolation.length);
+      escapedBraces = quote.length === 1;
+    } else if ([".kt", ".kts"].includes(state3.extension)) {
+      interpolation = `${"$".repeat(Math.max(1, dollars))}{`;
+    }
+  }
+  state3.literals.push({
+    quote,
+    escapes,
+    verbatim,
+    interpolation,
+    closingBraces,
+    escapedBraces,
+    expressionDepth: 0
+  });
+  state3.mode = "literal";
 }
 function isVerbatimQuote(source2, index) {
   return source2[index - 1] === "@" || source2.slice(index - 2, index) === "@$";
@@ -473171,6 +473222,7 @@ async function collectDirectoryFiles(directory, cwd, ignore4, files) {
     const file = path37.join(directory, entry.name);
     if (isIgnoredInput(file, cwd, ignore4)) continue;
     if (entry.isDirectory()) {
+      if (shouldSkipScriptProjectDirectory(file)) continue;
       await collectDirectoryFiles(file, cwd, ignore4, files);
     } else if (entry.isFile() && isSupportedInputFile(file)) {
       files.add(file);

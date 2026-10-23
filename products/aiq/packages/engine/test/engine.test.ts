@@ -76,6 +76,19 @@ describe("engine foundation", () => {
     }
   });
 
+  it("does not expand directory targets into build output directories", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "aiq-artifact-inputs-"));
+    tempDirs.push(root);
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "main.rs"), "fn main() {}\n");
+    for (const artifact of ["target", "node_modules", "dist", "build"]) {
+      await mkdir(path.join(root, artifact), { recursive: true });
+      await writeFile(path.join(root, artifact, "generated.rs"), "fn generated() {}\n");
+    }
+    const result = await normalizeFileManifest({ files: ["."], source: "direct" }, root);
+    expect(result.files).toEqual([path.join(root, "src", "main.rs")]);
+  });
+
   it("fails selected stages when an explicit directory contains no supported files", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "aiq-empty-inputs-"));
     tempDirs.push(root);

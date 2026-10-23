@@ -2,14 +2,22 @@ import path from "node:path";
 
 import ts from "typescript";
 
+type LiteralState = {
+  quote: string;
+  escapes: boolean;
+  verbatim: boolean;
+  interpolation: string;
+  closingBraces: string;
+  escapedBraces: boolean;
+  expressionDepth: number;
+};
+
 type ScanState = {
   extension: string;
   blockDepth: number;
   index: number;
   mode: "code" | "block" | "line" | "literal";
-  quote: string;
-  escapes: boolean;
-  verbatim: boolean;
+  literals: LiteralState[];
   lines: Set<number>;
   line: number;
 };
@@ -51,9 +59,7 @@ function countDelimitedSourceLines(source: string, extension: string): number {
     blockDepth: 0,
     index: 0,
     mode: "code",
-    quote: "",
-    escapes: true,
-    verbatim: false,
+    literals: [],
     lines: new Set(),
     line: 1,
   };
@@ -94,19 +100,36 @@ function scanCharacter(source: string, state: ScanState): void {
 }
 
 function scanLiteral(source: string, state: ScanState): void {
+  const literal = state.literals.at(-1);
+  if (!literal) return;
   const current = source[state.index] ?? "";
   if (current.trim().length > 0) state.lines.add(state.line);
-  if (state.escapes && current === "\\" && source[state.index + 1] !== "\n") {
+  if (literal.escapes && current === "\\" && source[state.index + 1] !== "\n") {
     state.index += 2;
     return;
   }
-  if (source.startsWith(state.quote, state.index)) {
-    if (state.verbatim && source[state.index + 1] === state.quote) {
+  if (source.startsWith(literal.quote, state.index)) {
+    if (literal.verbatim && source[state.index + 1] === literal.quote) {
       state.index += 2;
       return;
     }
     state.mode = "code";
-    state.index += state.quote.length;
+    state.literals.pop();
+    state.index += literal.quote.length;
+    return;
+  }
+  if (literal.escapedBraces && source.startsWith("{{", state.index)) {
+    state.index += 2;
+    return;
+  }
+  if (literal.interpolation && source.startsWith(literal.interpolation, state.index)) {
+    state.index += literal.interpolation.length;
+    // Extra opening braces in raw strings are literal text before the expression.
+    if (literal.interpolation.startsWith("{") && !literal.escapedBraces) {
+      while (source[state.index] === "{") state.index += 1;
+    }
+    literal.expressionDepth = 1;
+    state.mode = "code";
     return;
   }
   state.index += 1;
@@ -126,6 +149,17 @@ function scanCode(source: string, state: ScanState): void {
   }
   const current = source[state.index] ?? "";
   if (current.trim().length > 0) state.lines.add(state.line);
+  const literal = state.literals.at(-1);
+  if (literal && literal.expressionDepth > 0) {
+    if (literal.expressionDepth === 1 && source.startsWith(literal.closingBraces, state.index)) {
+      literal.expressionDepth = 0;
+      state.mode = "literal";
+      state.index += literal.closingBraces.length;
+      return;
+    }
+    if (current === "{") literal.expressionDepth += 1;
+    if (current === "}") literal.expressionDepth -= 1;
+  }
   if (scanRawLiteral(source, state)) return;
   const characterLiteral =
     current === "'" &&
@@ -134,11 +168,9 @@ function scanCode(source: string, state: ScanState): void {
         source.slice(state.index),
       ));
   if (current === '"' || characterLiteral || current === "`") {
-    state.quote = current;
-    state.verbatim =
+    const verbatim =
       state.extension === ".cs" && current === '"' && isVerbatimQuote(source, state.index);
-    state.escapes = !state.verbatim && current !== "`";
-    state.mode = "literal";
+    startLiteral(source, state, current, !verbatim && current !== "`", verbatim);
   }
   state.index += 1;
 }
@@ -163,12 +195,47 @@ function scanRawLiteral(source: string, state: ScanState): boolean {
     }
   }
   if (opener.length === 0) return false;
-  state.quote = closer;
-  state.escapes = state.extension === ".java";
-  state.verbatim = false;
-  state.mode = "literal";
+  startLiteral(source, state, closer, state.extension === ".java", false);
   state.index += opener.length;
   return true;
+}
+
+function startLiteral(
+  source: string,
+  state: ScanState,
+  quote: string,
+  escapes: boolean,
+  verbatim: boolean,
+): void {
+  let interpolation = "";
+  let closingBraces = "}";
+  let escapedBraces = false;
+  if (quote.startsWith('"') && state.extension !== ".rs") {
+    let prefix = state.index;
+    if (source[prefix - 1] === "@") prefix -= 1;
+    let dollars = 0;
+    while (source[prefix - 1] === "$") {
+      dollars += 1;
+      prefix -= 1;
+    }
+    if (state.extension === ".cs" && dollars > 0) {
+      interpolation = "{".repeat(quote.length >= 3 ? dollars : 1);
+      closingBraces = "}".repeat(interpolation.length);
+      escapedBraces = quote.length === 1;
+    } else if ([".kt", ".kts"].includes(state.extension)) {
+      interpolation = `${"$".repeat(Math.max(1, dollars))}{`;
+    }
+  }
+  state.literals.push({
+    quote,
+    escapes,
+    verbatim,
+    interpolation,
+    closingBraces,
+    escapedBraces,
+    expressionDepth: 0,
+  });
+  state.mode = "literal";
 }
 
 function isVerbatimQuote(source: string, index: number): boolean {
