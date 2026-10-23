@@ -5,6 +5,7 @@ This matrix separates product-installed config/state paths from implementation-t
 | Owner | Path pattern | Classification | Committed | Write policy |
 | --- | --- | --- | --- | --- |
 | QUBE | `.qube/` | shared QUBE namespace | no | Each product writes only its owned namespace under the shared QUBE root. |
+| QUBE | `.qube/mode.json` | workspace development mode | no | Explicit mode changes select local development or shipping for this workspace. Agent instructions read this state before workflow checks. |
 | Bootstrap | `.qube/aib/session.json` | standalone product state | no | Bootstrap writes its local planning session state here. Runtime state is not committed. |
 | Bootstrap | `aib.config.json` | repository configuration | yes | Bootstrap stores only repository settings that differ from explicit user-global settings. |
 | Bootstrap | `aib.config.local.json and ~/.qube/aib/config.json` | machine-local and user-global configuration | no | Bootstrap reads these higher and lower configuration layers without copying them into repository configuration. |

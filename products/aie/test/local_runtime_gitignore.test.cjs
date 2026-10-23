@@ -48,6 +48,7 @@ describe('local runtime gitignore merge', () => {
       assert.match(planned.content, new RegExp(`^${rule.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
     }
     assert.equal(writtenRulesCoverTrackedConfig(), false);
+    assert.equal(LOCAL_RUNTIME_GITIGNORE_RULES.includes('.qube/mode.json'), true);
   });
 
   it('appends missing rules and keeps existing lines', () => {

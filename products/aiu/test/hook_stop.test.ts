@@ -14,6 +14,39 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const observedAt = "2026-05-23T00:00:00.000Z";
 
 describe("provider-neutral stop hooks", () => {
+  it("allows local and malformed workspace stops before trusted commands or continuation state", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    for (const fixture of [
+      { mode: "local", reason: "workspace-local-mode" },
+      { mode: "unexpected", reason: "workspace-mode-invalid" },
+    ] as const) {
+      const sentinel = path.join(tmpdir(), `aiu-hook-mode-${process.pid}-${fixture.mode}.txt`);
+      await rm(sentinel, { force: true });
+      const target = await createRepo({
+        tool: "codex",
+        stopHookBlocking: true,
+        trustedCommand: [process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
+      });
+      try {
+        await writeFile(path.join(target, ".qube", "mode.json"), JSON.stringify({ version: 1, mode: fixture.mode }));
+        const result = await runAiuHookStop({
+          tool: "codex",
+          cwd: target,
+          observedAt,
+          stdin: JSON.stringify(stopPayload(target, "manual-test-session")),
+        });
+
+        assert.equal(result.decision, "allow");
+        assert.equal(result.reason, fixture.reason);
+        assert.equal(readAiuHostActivation(resolveAiuContinuationPaths(target, getDefaultAiuConfig()), "codex"), undefined);
+        assert.equal(existsSync(sentinel), false);
+      } finally {
+        await rm(target, { recursive: true, force: true });
+        await rm(sentinel, { force: true });
+      }
+    }
+  });
+
   it("blocks Codex stops with a concrete continuation prompt when policy allows it", async () => {
     const { runAiuHookStop } = await loadHookStop();
     const target = await createRepo({

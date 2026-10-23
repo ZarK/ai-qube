@@ -85,6 +85,8 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-03-016 | Installed always-loaded instructions include implementation guardrails: agents must implement only real requested behavior, avoid fake commands/stubs/no-op tests, keep implementation artifacts in product language, avoid milestone/phase/reference leakage, avoid agent-created meta docs, keep generated build output out of commits unless policy allows it, and use issue comments or PRs for durable implementation notes. | Required |
 | FR-03-017 | Initialization can make the implementation guardrail instruction block mandatory by default and configurable only through an explicit repository policy choice. | Desired |
 | FR-03-018 | Installed always-loaded instructions include supply-chain safety rules for dependency work, package-manager commands, project generators, CI actions/workflows, release automation, IDE tooling, MCP servers, and AI-agent tools. | Required |
+| FR-03-019 | Installed instructions tell the agent to read the workspace mode at the start of each session, before issue, branch, Git, provider, or shipping preflight. | Required |
+| FR-03-020 | In local mode, installed instructions use the current agent and the user's request. They require focused implementation, proportionate checks, and a manual test handoff without an issue, branch, commit, pull request, or automatic continuation cycle. | Required |
 
 ---
 
@@ -324,6 +326,8 @@ These requirements define the user-facing behavior of the Executor CLI. They do 
 | FR-15-019 | Human help, agent schema output, docs generation, mutation labels, dry-run labels, and CLI tests are derived from shared command metadata so they do not drift. | Required |
 | FR-15-020 | Interactive prompts and rich terminal formatting are used only when a TTY is available and always have flag, config, or non-interactive equivalents. | Required |
 | FR-15-021 | A command is present in the executable CLI only when the active issue delivers real behavior for that command. Issue bodies must not ask agents to add commands outside their scope, and Executor must not contain executable placeholders, reserved command classes, or "not implemented yet" runtime paths. | Required |
+| FR-15-022 | Before an issue or shipping command resolves Git state or calls a provider, Executor reads the workspace mode. Local mode stops the command with a nonzero safety error and explains how to run `qube mode shipping`. | Required |
+| FR-15-023 | Executor fails closed when workspace mode state is malformed. Help, schema output, gate planning, and local app runner commands remain available for direct local development when mode state is valid. | Required |
 
 ---
 

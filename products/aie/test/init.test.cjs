@@ -696,6 +696,21 @@ describe('init service', () => {
     assert.match(renderMakeItSoCommand(unavailable), /no supported reviewer is configured/);
   });
 
+  it('renders workspace mode guidance before Executor preflight instructions', async () => {
+    const config = getDefaults();
+    const agents = renderAgentInstructions(config, await getAgentHostProfiles(['codex']));
+    const command = renderMakeItSoCommand(config);
+
+    assert.match(agents, /Read the workspace mode at the start of each session/);
+    assert.ok(agents.indexOf('Read the workspace mode') < agents.indexOf('Before new issue work'));
+    assert.match(command, /Before any issue, branch, Git, provider, or shipping preflight, run `qube mode --json`/);
+    assert.match(command, /Work locally in this workspace using the current agent/);
+    assert.match(command, /Use the user's current request as the task/);
+    assert.match(command, /Run checks appropriate to the changes/);
+    assert.match(command, /Report what works, what you verified, any concrete limitations, and how the user can test it/);
+    assert.ok(command.indexOf('Work locally in this workspace') < command.indexOf('Continue repository development'));
+  });
+
   it('is idempotent after writing managed sections', async () => {
     const repo = makeGitRepo();
     await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
