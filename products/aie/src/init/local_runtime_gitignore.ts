@@ -1,4 +1,5 @@
 export const LOCAL_RUNTIME_GITIGNORE_RULES = [
+  '.qube/mode.json',
   '.qube/aie/reviews/',
   '.qube/aie/gates/',
   '.qube/aie/runs/',

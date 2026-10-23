@@ -18,6 +18,83 @@ const aiuBin = path.join(repoRoot, "dist/src/bin/aiu.js");
 const observedAt = "2026-05-23T00:00:00.000Z";
 
 describe("status reporting", () => {
+  it("reports nested local mode in a fresh plain folder without requiring AIU config", async () => {
+    const { formatAiuStatusReport, runAiuStatus } = await loadStatus();
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-status-local-"));
+    const nested = path.join(target, "src", "feature");
+    try {
+      await mkdir(path.join(target, ".qube"), { recursive: true });
+      await mkdir(nested, { recursive: true });
+      await writeFile(path.join(target, ".qube", "mode.json"), JSON.stringify({ version: 1, mode: "local" }));
+
+      const report = await runAiuStatus({ cwd: nested });
+
+      assert.equal(report.workspaceMode.mode, "local");
+      assert.equal(report.workspaceMode.workspaceRoot, target);
+      assert.equal(report.workspaceMode.configured, true);
+      assert.equal(report.config.valid, true);
+      assert.deepEqual(report.adapterRuns, []);
+      assert.match(formatAiuStatusReport(report), /workspaceMode: local/u);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run configured trusted commands in local mode", async () => {
+    const { runAiuStatus } = await loadStatus();
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-status-local-sentinel-"));
+    const sentinel = path.join(target, "trusted-command-ran.txt");
+    try {
+      await mkdir(path.join(target, ".git"));
+      await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+      await writeFile(path.join(target, ".qube", "mode.json"), JSON.stringify({ version: 1, mode: "local" }));
+      await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
+        version: 1,
+        trustedStateCommands: {
+          sentinel: {
+            argv: [process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
+          },
+        },
+      }));
+
+      const report = await runAiuStatus({ cwd: target });
+
+      assert.equal(report.workspaceMode.mode, "local");
+      assert.deepEqual(report.adapterRuns, []);
+      await assert.rejects(access(sentinel), { code: "ENOENT" });
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on malformed workspace mode without running trusted commands", async () => {
+    const { runAiuStatus } = await loadStatus();
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-status-malformed-mode-"));
+    const sentinel = path.join(target, "trusted-command-ran.txt");
+    try {
+      await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+      await writeFile(path.join(target, ".qube", "mode.json"), JSON.stringify({ version: 1, mode: "unexpected" }));
+      await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
+        version: 1,
+        trustedStateCommands: {
+          sentinel: {
+            argv: [process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
+          },
+        },
+      }));
+
+      const report = await runAiuStatus({ cwd: target });
+
+      assert.equal(report.workspaceMode.valid, false);
+      assert.equal(report.workspaceMode.mode, "unknown");
+      assert.deepEqual(report.adapterRuns, []);
+      assert.ok(report.errors.some((error) => error.code === "status-workspace-mode-invalid" && /Correct the mode file/u.test(error.message)));
+      await assert.rejects(access(sentinel), { code: "ENOENT" });
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
   it("renders typed reports for continue, repair, wait, and stop decisions", async () => {
     const { createAiuStatusReport } = await loadStatus();
 

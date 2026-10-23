@@ -5,8 +5,9 @@ const { cloneGitRepo } = require('./git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { basename, join } = require('node:path');
+const { basename, dirname, join } = require('node:path');
 
+const { resolveTrustedLocalStore } = require('../../dist/trusted_local_store.js');
 const { getDefaults } = require('../../dist/config/index.js');
 const { renderAgentPrompt } = require('../../dist/agent_descriptors.js');
 const { laneContextLines, promptStack, hash: promptTextHashFromLines, readRouteFaults } = require('../../dist/app/local_review_runner_support.js');
@@ -261,11 +262,11 @@ function safeEvidenceSegment(value) {
 }
 
 function trustedLocalHostProvenancePath(repo, issueNumber, prNumber, headSha, lane) {
-  return join(repo, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeEvidenceSegment(headSha), `${lane}.json`);
+  return join(resolveTrustedLocalStore(repo).path, 'host-provenance', String(issueNumber), String(prNumber), safeEvidenceSegment(headSha), `${lane}.json`);
 }
 
 function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, headSha, lane, provenance, evidenceSha256 }) {
-  const directory = join(repo, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeEvidenceSegment(headSha));
+  const directory = dirname(trustedLocalHostProvenancePath(repo, issueNumber, prNumber, headSha, lane));
   mkdirSync(directory, { recursive: true });
   writeFileSync(trustedLocalHostProvenancePath(repo, issueNumber, prNumber, headSha, lane), `${JSON.stringify({
     version: 1,

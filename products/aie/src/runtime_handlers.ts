@@ -1,5 +1,6 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
 import { createGuidedPresenter } from '@tjalve/qube-cli/guided';
+import { readWorkspaceMode } from '@tjalve/qube-core';
 import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/pr_body.js';
 import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
@@ -937,7 +938,8 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'deps ready': handleDepsReady,
   gates: topic(['Use `aie gates plan --dry-run`, `aie gates plan --stage pre-pr --json`, or `aie gates status --json`.', 'Gate commands are read from trusted repository config and are never executed by Executor.']),
   'gates plan': async context => {
-    const loaded = await loadConfigFile();
+    const workspaceMode = readWorkspaceMode(process.cwd());
+    const loaded = await loadConfigFile(process.cwd(), workspaceMode.mode === 'local' ? { workspaceRoot: workspaceMode.workspaceRoot } : {});
     if (!loaded.ok) return configLoadFailure(context, 'gates plan', loaded, 'Fix the selected Executor config, then run the gate plan again.');
     const stage = stringFlag(context, 'stage');
     const round = stringFlag(context, 'round');
@@ -945,16 +947,20 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const config = loaded.config ?? getDefaults();
     let layout: { available: boolean; summary: string | null } | undefined;
     if (changedPaths.length > 0) {
-      try {
-        const affected = await inspectAffected({ config, cwd: loaded.root ?? undefined, changedPaths });
-        layout = {
-          available: true,
-          summary: affected.layout.projects.length > 0
-            ? `${affected.layout.projects.length} layout project(s) inspected`
-            : 'Layout inspection returned no projects',
-        };
-      } catch {
-        layout = { available: false, summary: 'Layout inspection was unavailable; path matching used explicit --changed paths only.' };
+      if (workspaceMode.mode === 'local') {
+        layout = { available: false, summary: 'Workspace mode is local; path matching used explicit --changed paths without Git inspection.' };
+      } else {
+        try {
+          const affected = await inspectAffected({ config, cwd: loaded.root ?? undefined, changedPaths });
+          layout = {
+            available: true,
+            summary: affected.layout.projects.length > 0
+              ? `${affected.layout.projects.length} layout project(s) inspected`
+              : 'Layout inspection returned no projects',
+          };
+        } catch {
+          layout = { available: false, summary: 'Layout inspection was unavailable; path matching used explicit --changed paths only.' };
+        }
       }
     }
     const result = buildGatePlan(config, {

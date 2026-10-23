@@ -10,7 +10,7 @@ import {
   type PreStartPolicyCheck,
   type PreStartPolicyResult,
 } from '../lifecycle.js';
-import { BaseRefStatus, listOpenPullRequests, PullRequestSummary, WorktreeStatus } from '../repo/index.js';
+import { BaseRefStatus, isBlockingPullRequest, listOpenPullRequests, PullRequestSummary, WorktreeStatus } from '../repo/index.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
 import { findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 
@@ -29,7 +29,7 @@ export async function buildPreStartPolicy(input: {
   let blockingPullRequests: PullRequestSummary[] = [];
   if (!input.bypassForResume) {
     const pullRequests = await listOpenPullRequests(input.config, { exec: input.exec, cwd: repoState.root ?? input.cwd });
-    blockingPullRequests = pullRequests.filter(pr => !pr.ignored);
+    blockingPullRequests = pullRequests.filter(isBlockingPullRequest);
   }
   const branchChecks = evaluatePreStartBranchChecks({
     repoState,

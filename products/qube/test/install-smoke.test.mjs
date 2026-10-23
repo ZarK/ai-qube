@@ -125,6 +125,13 @@ describe("packed QUBE package and init smoke", () => {
     const aibFixture = fakeComponents.find(component => component.command === "aib");
     assert.ok(aibFixture);
     assert.equal(dispatched.stdout.trim(), `${aibFixture.command} ${aibFixture.version} status --json`);
+
+    const reviewPlan = await runPnpm(["exec", "qube", "aie", "pr", "gate", "12", "--dry-run", "--json", "--local-review-prompts"], target);
+    const aieFixture = fakeComponents.find(component => component.command === "aie");
+    assert.ok(aieFixture);
+    assert.equal(reviewPlan.stdout.trim(), `${aieFixture.command} ${aieFixture.version} pr gate 12 --dry-run --json --local-review-prompts`);
+    const reviewHelp = await runPnpm(["exec", "qube", "aie", "pr", "gate", "--help"], target);
+    assert.match(reviewHelp.stdout, /--local-review-prompts/);
   });
 
   it("initializes a prospective repository from a package-manager-installed QUBE tarball", async () => {
@@ -411,6 +418,12 @@ async function createFakeComponentTarball(component, root, packDir) {
     binPath,
     [
       "#!/usr/bin/env node",
+      ...(component.name === "@tjalve/aie" ? [
+        "if (process.argv.slice(2).join(' ') === 'pr gate --help') {",
+        "  console.log('Usage: aie pr gate <pr> [--dry-run] [--json] [--local-review-prompts]');",
+        "  process.exit(0);",
+        "}",
+      ] : []),
       `console.log(${JSON.stringify(`${component.command} ${component.version}`)}, process.argv.slice(2).join(" "));`
     ].join("\n")
   );

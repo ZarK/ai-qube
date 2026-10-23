@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { dirname, join } = require('node:path');
@@ -22,8 +22,13 @@ const {
 } = require('../dist/app/model_review_runner.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
+const { resolveTrustedLocalStore } = require('../dist/trusted_local_store.js');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
 function reviewInput(repoRoot, host = 'grok-build') {
+  if (existsSync(repoRoot) && !existsSync(join(repoRoot, '.git'))) {
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+  }
   const plan = {
     host,
     tier: 'review',
@@ -306,7 +311,7 @@ describe('model review runner', () => {
       const terminalArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'terminal', path: 'terminal:test run', sha256: null }] });
       assert.equal(terminalArtifact.evidence, null);
       assert.equal(terminalArtifact.reasonCode, 'model-route-contract-mismatch');
-      const rawPath = isolatedRawOutputPath(repoRoot, 309, 310, 'abc123', 'code-quality');
+      const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
       assert.equal(existsSync(rawPath), true);
       assert.match(terminalArtifact.error, /Raw output:/);
       assert.match(terminalArtifact.error, /\.raw-output\.json/);
@@ -386,6 +391,106 @@ describe('model review runner', () => {
     assert.equal(existsSync(capturedSchemaPath), false);
   });
 
+  it('keeps review schemas, prompts, and raw diagnostics in the linked worktree git directory', async t => {
+    const primary = cloneGitRepo('committed', 'aie-route-primary-');
+    const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-route-linked-'));
+    const repoRoot = join(worktreeParent, 'checkout');
+    t.after(() => {
+      rmSync(worktreeParent, { recursive: true, force: true });
+      rmSync(primary, { recursive: true, force: true });
+    });
+    execFileSync('git', ['worktree', 'add', '-b', 'review', repoRoot], { cwd: primary, stdio: 'ignore' });
+    const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const routeDirectory = join(gitDir, 'qube', 'aie', 'model-route');
+
+    for (const host of ['codex', 'grok-build']) {
+      let privatePath = null;
+      const result = await runModelReview({
+        ...reviewInput(repoRoot, host),
+        resolveExecutable: async () => 'review.exe',
+        runProcess: async invocation => {
+          privatePath = host === 'codex' ? invocation.schemaPath : invocation.promptPath;
+          assert.equal(dirname(privatePath), routeDirectory);
+          const content = readFileSync(privatePath, 'utf8');
+          if (host === 'codex') assert.equal(JSON.parse(content).properties.lane.const, 'code-quality');
+          else assert.match(content, /INSPECT EXACT LANE PROMPT/);
+          return {
+            exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+            stdout: host === 'codex'
+              ? `${JSON.stringify({ type: 'thread.started', thread_id: 'review-session' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '{}' } })}\n`
+              : JSON.stringify({ text: '{}', sessionId: 'review-session' }),
+          };
+        },
+      });
+      assert.equal(result.reasonCode, 'model-route-contract-mismatch');
+      assert.equal(existsSync(privatePath), false);
+      const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+      assert.equal(rawPath, join(routeDirectory, 'raw', '309', '310', 'abc123', 'code-quality.raw-output.json'));
+      assert.equal(JSON.parse(readFileSync(rawPath, 'utf8')).reasonCode, 'model-route-contract-mismatch');
+      assert.equal(existsSync(join(primary, '.git', 'qube', 'aie')), false);
+    }
+  });
+
+  for (const linked of [false, true]) {
+    for (const changesCheckout of [false, true]) {
+      it(`${changesCheckout ? 'rejects checkout writes' : 'allows trusted store writes'} when a ${linked ? 'linked' : 'primary'} checkout review completes immediately`, async t => {
+        const primary = cloneGitRepo('committed', 'aie-route-monitor-');
+        const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-route-monitor-linked-'));
+        const repoRoot = linked ? join(worktreeParent, 'checkout') : primary;
+        t.after(() => {
+          rmSync(worktreeParent, { recursive: true, force: true });
+          rmSync(primary, { recursive: true, force: true });
+        });
+        if (linked) execFileSync('git', ['worktree', 'add', '-b', 'review', repoRoot], { cwd: primary, stdio: 'ignore' });
+        const store = resolveTrustedLocalStore(repoRoot);
+        const result = await runModelReview({
+          ...reviewInput(repoRoot),
+          resolveCheckoutState: async () => 'unchanged',
+          resolveExecutable: async () => 'review.exe',
+          runProcess: async invocation => {
+            assert.equal(dirname(invocation.promptPath), join(store.path, 'model-route'));
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review started\n');
+            if (changesCheckout) writeFileSync(join(repoRoot, 'README.md'), 'changed during review\n');
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review completed\n');
+            return {
+              exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+              stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'review-session' }),
+            };
+          },
+        });
+        assert.equal(result.reasonCode, changesCheckout ? 'model-route-checkout-mismatch' : null, result.error);
+        if (changesCheckout) {
+          assert.equal(result.evidence, null);
+          assert.match(result.error, /README\.md/);
+        } else {
+          assert.equal(result.evidence.status, 'passed');
+        }
+      });
+    }
+  }
+
+  it('refuses a symlinked model route directory before starting a review', async t => {
+    const repoRoot = cloneGitRepo('committed', 'aie-route-symlink-');
+    const outside = mkdtempSync(join(tmpdir(), 'aie-route-outside-'));
+    t.after(() => {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    });
+    const store = resolveTrustedLocalStore(repoRoot);
+    mkdirSync(store.path, { recursive: true });
+    symlinkSync(outside, join(store.path, 'model-route'), process.platform === 'win32' ? 'junction' : 'dir');
+    let started = false;
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'review.exe',
+      runProcess: async () => { started = true; throw new Error('Review must not start.'); },
+    });
+    assert.equal(result.reasonCode, 'model-route-unavailable');
+    assert.match(result.error, /symlink|junction/i);
+    assert.equal(started, false);
+    assert.deepEqual(readdirSync(outside), []);
+  });
+
   it('records host-reported usage on routed evidence and omits it when the host reports none', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-usage-'));
     const withUsage = await runModelReview({
@@ -425,7 +530,7 @@ describe('model review runner', () => {
 
   it('accepts one bounded Cursor ACP preface and retains only its fixed local diagnostic', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-preface-'));
-    const rawPreface = 'Cursor inspected the current head; private host chatter must not persist. ';
+    const rawPreface = `Cursor inspected the current head; private host chatter must not persist. ${'progress '.repeat(2_048)}`;
     const accepted = await runModelReview({
       ...reviewInput(repoRoot, 'cursor'),
       transport: 'acp',
@@ -760,6 +865,41 @@ describe('model review runner', () => {
     assert.equal(existsSync(capturedPromptPath), false);
   });
 
+  it('prefers a valid Grok structured result over provisional text objects', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-grok-structured-'));
+    const provisional = { issueNumber: 309, prNumber: 310, headSha: 'abc123', lane: 'code-quality', status: 'pending', recommendation: 'pending', blockers: [], findings: [] };
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: `${JSON.stringify(provisional)}${JSON.stringify(provisional)}`, structuredOutput: laneResult(), sessionId: 'grok-structured' }),
+      }),
+    });
+
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-structured');
+
+    const wrongHead = { ...laneResult(), headSha: 'stale-head' };
+    const rejected = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(laneResult()), structuredOutput: wrongHead, sessionId: 'grok-stale-structured' }),
+      }),
+    });
+    assert.equal(rejected.evidence, null);
+    assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+  });
+
   it('executes the exact probed Cursor transport model and records fallback provenance', { skip: process.platform !== 'win32' }, async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-cursor-transport-'));
     let capturedArgs = null;
@@ -864,6 +1004,26 @@ describe('model review runner', () => {
     assert.match(result.evidence.artifacts[1].path, /\[REDACTED\]\.md/);
     assert.equal(result.evidence.contextReviewed[0].source, reviewedPath);
     assert.match(result.evidence.commands[1], /\[REDACTED\]\.md/);
+  });
+
+  it('drops findings copied from the routed spawn prompt', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-prompt-fragment-'));
+    const body = laneResult();
+    body.severity = 'low';
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
+    body.findings = [
+      { id: 'Cursor ACP review capability boundary: use only repository reads.', severity: 'advisory', message: 'Copied identifier.', location: null },
+      { id: 'PROMPT-2', severity: 'advisory', message: 'Copied path.', location: { path: 'Do not request shell or terminal commands during review.' } },
+      { id: 'PROMPT-3', severity: 'advisory', message: 'Do not emit JSON progress, pending envelopes, or interim verdicts.', location: null },
+    ];
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ structuredOutput: body, sessionId: 'prompt-fragments' }) }),
+    });
+
+    assert.equal(result.error, null);
+    assert.deepEqual(result.evidence.findings, []);
   });
 
   it('accepts a confidence-bearing advisory and preserves confidence into routed evidence', async () => {
@@ -1090,8 +1250,8 @@ describe('model review runner', () => {
         stdout: JSON.stringify({ text: `${JSON.stringify(contradictoryPending)}\n${JSON.stringify(laneResult())}`, sessionId: 'contradictory' }),
       }),
     });
-    assert.equal(contradictorySequence.error, null);
-    assert.equal(contradictorySequence.evidence.status, 'passed', 'nonterminal transient JSON must not affect the final verdict');
+    assert.equal(contradictorySequence.evidence, null);
+    assert.equal(contradictorySequence.reasonCode, 'model-route-contract-mismatch');
 
     const nonterminalFinal = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),

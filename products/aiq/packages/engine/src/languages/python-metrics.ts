@@ -11,6 +11,7 @@ import {
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
+  createSharedMetricsStageResult,
 } from "./shared-metrics-support.js";
 import {
   addCachedMetricDuration,
@@ -63,10 +64,12 @@ async function runPythonMetricsTask(
   try {
     const projects = await resolvePythonProjects(runtime.graph, files);
     for (const project of projects) {
-      const cachedMetrics = await getPythonMetricsProjectMetrics(
-        await resolvePythonSourceProject(project, runtime),
-        runtime,
-      );
+      const sourceProject = await resolvePythonSourceProject(project, runtime);
+      if (sourceProject.files.length === 0) {
+        continue;
+      }
+
+      const cachedMetrics = await getPythonMetricsProjectMetrics(sourceProject, runtime);
       addCachedMetricDuration(totals, cachedMetrics);
       addPythonFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
@@ -128,12 +131,16 @@ async function runPythonMetricsTask(
     unsupportedFiles,
   });
 
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
+  return createSharedMetricsStageResult(
+    {
+      diagnostics,
+      durationMs: totals.totalDurationMs,
+      notes,
+      stageId: task.stageId,
+      toolRuns,
+    },
+    totals.scannedFileCount,
+    "Python",
+    files[0] ?? runtime.cwd,
+  );
 }

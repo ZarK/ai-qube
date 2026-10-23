@@ -150,7 +150,7 @@ async function probeAcpModels(options: RunnerOptions): Promise<void> {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`Cursor ACP ${method} timed out during model compatibility inspection.`));
-      }, 4_000);
+      }, method === "authenticate" ? 12_000 : 4_000);
       pending.set(id, {
         resolve(value) { clearTimeout(timer); resolve(value); },
         reject(error) { clearTimeout(timer); reject(error); },

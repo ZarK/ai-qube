@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import * as hostTools from "../src/tools/host-tools.js";
 import {
+  os,
+  path,
   ToolRunner,
   buildEngineContext,
   hasPythonQualityToolchain,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   tempDirs,
   withToolRunnerOverride,
@@ -67,20 +68,8 @@ describe("engine runners", () => {
       stdout: "[]",
     });
 
-    const pythonCommand = process.platform === "win32" ? "python" : "python3";
-    const tyCommand = process.platform === "win32" ? "ty.exe" : "ty";
-
-    vi.spyOn(toolRunner, "resolveInstalledBinary").mockImplementation(async (commandName) => {
-      if (commandName === pythonCommand) {
-        return "/tmp/fake-python";
-      }
-
-      if (commandName === tyCommand) {
-        return "/tmp/fake-ty";
-      }
-
-      return undefined;
-    });
+    vi.spyOn(hostTools, "requirePathCommand").mockResolvedValue("/tmp/fake-ty");
+    vi.spyOn(hostTools, "resolvePythonInterpreter").mockResolvedValue("/tmp/fake-python");
 
     const engineContext = withToolRunnerOverride(
       await buildEngineContext({

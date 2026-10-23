@@ -39,7 +39,9 @@ function hasRunManifest(value: unknown): boolean {
 }
 
 function isRunStatus(value: unknown): value is RunResult["summary"]["status"] {
-  return value === "failed" || value === "not_implemented" || value === "passed";
+  return (
+    value === "failed" || value === "not_implemented" || value === "passed" || value === "warning"
+  );
 }
 
 function isRunStage(value: unknown): value is RunResult["stages"][number] {
@@ -56,7 +58,9 @@ function isRunStage(value: unknown): value is RunResult["stages"][number] {
 }
 
 function isStageStatus(value: unknown): value is StageStatus {
-  return value === "failed" || value === "not_implemented" || value === "passed";
+  return (
+    value === "failed" || value === "not_implemented" || value === "passed" || value === "warning"
+  );
 }
 
 function isDiagnostic(value: unknown): value is RunResult["stages"][number]["diagnostics"][number] {

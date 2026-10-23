@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { mkdirSync, mkdtempSync } = require('node:fs');
+const { execFileSync } = require('node:child_process');
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { homedir, tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
@@ -14,6 +15,7 @@ const {
   redactRemoteUrl,
 } = require('../dist/index.js');
 const { buildInitPlan } = require('../dist/init/index.js');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
 const policy = {
   branch: {
@@ -165,6 +167,47 @@ describe('Git repository prerequisites', () => {
     assert.equal(prerequisiteCheck(result, 'identity-email').safeDetails.source, 'included');
     assert.equal(JSON.stringify(result).includes('Repository Person'), false);
     assert.equal(JSON.stringify(result).includes('private@example.test'), false);
+  });
+
+  it('recognizes repository identity and policy in a linked worktree', async t => {
+    const root = cloneGitRepo('committed', 'aie-prerequisites-primary-');
+    const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-prerequisites-linked-'));
+    const worktree = join(worktreeParent, 'checkout');
+    t.after(() => {
+      rmSync(worktreeParent, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    });
+    execFileSync('git', ['worktree', 'add', '-b', 'review', worktree], { cwd: root, stdio: 'ignore' });
+
+    const allowedPolicy = { branch: { ...policy.branch, requirePrimaryCheckout: false } };
+    const result = await evaluateGitPrerequisites({ cwd: worktree, policy: allowedPolicy, offline: true });
+    assert.equal(prerequisiteCheck(result, 'repository').status, 'ready');
+    assert.equal(prerequisiteCheck(result, 'identity-name').safeDetails.source, 'repository');
+    assert.equal(prerequisiteCheck(result, 'identity-email').safeDetails.source, 'repository');
+    assert.equal(prerequisiteCheck(result, 'worktree').status, 'ready');
+    assert.equal(prerequisiteCheck(result, 'worktree').safeDetails.linked, true);
+
+    const restricted = await evaluateGitPrerequisites({ cwd: worktree, policy, offline: true });
+    assert.equal(prerequisiteCheck(restricted, 'worktree').reasonCode, 'linked-worktree');
+
+    const included = join(root, 'identity.inc');
+    writeFileSync(included, '[user]\n\tname = Repository Person\n');
+    execFileSync('git', ['config', 'include.path', included], { cwd: root, stdio: 'ignore' });
+    const withInclude = await evaluateGitPrerequisites({ cwd: worktree, policy: allowedPolicy, offline: true });
+    assert.equal(prerequisiteCheck(withInclude, 'identity-name').safeDetails.source, 'included');
+  });
+
+  it('leaves repository identity unverified when its configuration path cannot be resolved', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-git-identity-path-'));
+    const runner = readyRunner(root, {
+      'rev-parse --git-common-dir': { exitCode: 1, stdout: '', stderr: 'metadata unavailable' },
+      'config --includes --show-origin --show-scope --get user.name': { exitCode: 0, stdout: 'local\tfile:.git/config\tRepository Person\n', stderr: '' },
+    });
+    const result = await evaluateGitPrerequisites({ cwd: root, policy, offline: true, git: runner.run });
+
+    assert.equal(prerequisiteCheck(result, 'identity-name').status, 'unverified');
+    assert.equal(prerequisiteCheck(result, 'identity-name').safeDetails.source, null);
+    assert.match(prerequisiteCheck(result, 'identity-name').summary, /could not be resolved/);
   });
 
   it('keeps unborn and remote-less local setup observable without inventing identity', async () => {

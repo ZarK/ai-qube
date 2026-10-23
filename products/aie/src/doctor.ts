@@ -15,6 +15,7 @@ import {
   getInstructionStatus,
   getPlanningStatus,
   getRepositoryIdentity,
+  isBlockingPullRequest,
   listMilestones,
   listOpenPullRequests,
   PullRequestSummary,
@@ -359,7 +360,7 @@ class DoctorDiagnosticsBuilder {
       pullRequestError = err instanceof Error ? err.message : String(err);
       if (config.blockOnOpenPRs) recommendations.push(`Open pull request check failed: ${pullRequestError}. Fix gh auth or repository state, then rerun \`aie doctor\`.`);
     }
-    const blockingPullRequests = openPullRequests.filter(pr => !pr.ignored);
+    const blockingPullRequests = openPullRequests.filter(isBlockingPullRequest);
     if (config.blockOnOpenPRs && blockingPullRequests.length > 0) recommendations.push(`Open pull requests block new issue work: ${blockingPullRequests.map(pr => `#${pr.number}`).join(', ')}. Merge, close, or configure ignored automation authors before starting new work.`);
     return { openPullRequests, blockingPullRequests, pullRequestError };
   }

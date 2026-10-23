@@ -22,7 +22,7 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
@@ -955,7 +955,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     routeProbe: options.routeProbe,
     providerLaneReuse,
   });
-  const readCurrentLocalReviewGate = (reuse: ProviderLaneReuse | undefined) => readLocalReviewGate({
+  const readCurrentLocalReviewGate = (reuse: ProviderLaneReuse | undefined, focuses: readonly LocalReviewLaneId[] = activeFocuses) => readLocalReviewGate({
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
     prNumber: options.prNumber,
@@ -966,12 +966,20 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     severityThreshold: config.reviewSeverityThreshold,
     shadow: localShadow,
     expectedPromptStackHashes: expectedPromptStackHashes(localReviewRunner),
-    activeFocuses,
+    activeFocuses: focuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
     carryForwardScope,
     providerLaneReuse: reuse,
   });
   let localReview = readCurrentLocalReviewGate(providerLaneReuse);
+  const completedCurrentHeadLaneIds = new Set<string>();
+  for (const run of localReviewRunner.lanes) {
+    if (run.status !== 'completed' || (run.evidenceSource !== 'fresh-run' && run.evidenceSource !== 'local')) continue;
+    const laneGate = readCurrentLocalReviewGate(providerLaneReuse, [run.lane]);
+    if (laneGate.status === 'passed' || laneGate.status === 'failed' || laneGate.status === 'needs-work') {
+      completedCurrentHeadLaneIds.add(run.lane);
+    }
+  }
   for (const evidence of localReview.evidence) {
     for (const lane of evidence.lanes) {
       if (!activeFocuses.includes(lane.id)) continue;
@@ -1209,7 +1217,21 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
-  const reviewSourceContract = evaluateReviewSourceContract(reviewSources, finalSnapshot.item, finalSnapshot.pr.headRefOid, carriedForwardLanes);
+  let reviewSourceContract = evaluateReviewSourceContract(reviewSources, finalSnapshot.item, finalSnapshot.pr.headRefOid, carriedForwardLanes);
+  if (!batchComplete && (localReviewPublish.status === 'published' || localReviewPublish.status === 'skipped') && completedCurrentHeadLaneIds.size > 0) {
+    reviewSourceContract = {
+      ...reviewSourceContract,
+      sources: reviewSourceContract.sources.map(source => {
+        if (source.identity !== 'lane') return source;
+        const received = source.expected.filter(laneId => source.received.includes(laneId) || completedCurrentHeadLaneIds.has(laneId));
+        return {
+          ...source,
+          received,
+          missing: source.expected.filter(laneId => !received.includes(laneId)),
+        };
+      }),
+    };
+  }
   const unsatisfiedBlockingSources = reviewSourceContract.sources.filter(source => source.blocking && !source.satisfied);
   const feedback = prFeedback(finalSnapshot.item);
   const mergeBlockers = prMergeBlockers(finalSnapshot.item);
@@ -1228,7 +1250,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       : []),
   ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
-  const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
+  const requiredLocalRunnerBlocked = localRequired
+    && localReview.status === 'missing'
+    && completedCurrentHeadLaneIds.size === 0
+    && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const gateDecisionStatus = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
   // The configured review-source contract is a generic, kind-agnostic overlay:
   // any unsatisfied blocking source holds the gate at pending regardless of
@@ -1368,7 +1393,8 @@ export function formatPrGate(result: PrGateResult): string {
     lines.push(`Shared review digest: builder=${result.localReviewRunner.headDigest.builder}; sha256=${result.localReviewRunner.headDigest.sha256}; path=${result.localReviewRunner.headDigest.path}`);
   }
   for (const lane of result.localReviewRunner.lanes) {
-    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; source=${lane.evidenceSource ?? 'none'}; evidence=${lane.evidencePath}`);
+    const failureReason = (lane.status === 'failed' || lane.status === 'unavailable') && lane.blocker ? `; reason=${lane.blocker}` : '';
+    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; source=${lane.evidenceSource ?? 'none'}; evidence=${lane.evidencePath}${failureReason}`);
   }
   if (result.selfCheck) {
     lines.push(...formatImplementerSelfCheck(result.selfCheck));

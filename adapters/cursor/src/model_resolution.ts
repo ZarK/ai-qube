@@ -22,6 +22,7 @@ export interface CursorAcpCatalog {
 interface CursorModelSemantics {
   readonly base: string;
   readonly effort: string | null;
+  readonly thinking: boolean;
   readonly fast: boolean;
   readonly unknownOptions: readonly string[];
   readonly valid: boolean;
@@ -38,6 +39,7 @@ function normalizeBase(value: string): string {
 function parseDisplayId(displayId: string): CursorModelSemantics {
   const parts = displayId.trim().replace(/^cursor-/iu, "").split("-");
   let effort: string | null = null;
+  let thinking = false;
   let fast = false;
   let valid = true;
   while (parts.length > 1) {
@@ -45,6 +47,12 @@ function parseDisplayId(displayId: string): CursorModelSemantics {
     if (token === "fast") {
       if (fast) valid = false;
       fast = true;
+      parts.pop();
+      continue;
+    }
+    if (token === "thinking") {
+      if (thinking) valid = false;
+      thinking = true;
       parts.pop();
       continue;
     }
@@ -59,6 +67,7 @@ function parseDisplayId(displayId: string): CursorModelSemantics {
   return {
     base: normalizeBase(parts.join("-")),
     effort,
+    thinking,
     fast,
     unknownOptions: Object.freeze([]),
     valid: valid && parts.join("-").trim() !== "",
@@ -67,10 +76,12 @@ function parseDisplayId(displayId: string): CursorModelSemantics {
 
 function parseTransportValue(value: string): CursorModelSemantics {
   const match = /^([^\[\]]+?)(?:\[([^\]]*)\])?$/u.exec(value.trim());
-  if (!match) return { base: "", effort: null, fast: false, unknownOptions: Object.freeze([]), valid: false };
+  if (!match) return { base: "", effort: null, thinking: false, fast: false, unknownOptions: Object.freeze([]), valid: false };
   let effort: string | null = null;
+  let thinking = false;
   let fast = false;
   let effortSeen = false;
+  let thinkingSeen = false;
   let fastSeen = false;
   let valid = true;
   const unknownOptions: string[] = [];
@@ -87,6 +98,10 @@ function parseTransportValue(value: string): CursorModelSemantics {
         if (effortSeen || !/^(?:low|medium|high|xhigh)$/u.test(optionValue)) valid = false;
         else effort = optionValue;
         effortSeen = true;
+      } else if (key === "thinking") {
+        if (thinkingSeen || (optionValue !== "true" && optionValue !== "false")) valid = false;
+        else thinking = optionValue === "true";
+        thinkingSeen = true;
       } else if (key === "fast") {
         if (fastSeen || (optionValue !== "true" && optionValue !== "false")) valid = false;
         else fast = optionValue === "true";
@@ -99,6 +114,7 @@ function parseTransportValue(value: string): CursorModelSemantics {
   return {
     base: normalizeBase(match[1]),
     effort,
+    thinking,
     fast,
     unknownOptions: Object.freeze(unknownOptions.sort()),
     valid: valid && match[1].trim() !== "",
@@ -113,6 +129,7 @@ function aliasMatches(displayId: string, option: CursorAcpModelOption): boolean 
     && available.unknownOptions.length === 0
     && requested.base === available.base
     && requested.effort === available.effort
+    && requested.thinking === available.thinking
     && requested.fast === available.fast;
 }
 

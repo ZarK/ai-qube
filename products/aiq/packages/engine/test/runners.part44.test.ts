@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  path,
   createDotNetCompetingSolutionProject,
   createDotNetFixtureProject,
   hasDotNet10Toolchain,
-  path,
   readdir,
   runPlannedTask,
   writeFile,
@@ -60,7 +60,7 @@ describe("engine runners", () => {
           cacheHit: false,
           exitCode: 0,
           status: "passed",
-          tool: "aiq-csharp-metrics",
+          tool: "lizard",
         });
       } finally {
         vi.doUnmock("node:fs/promises");

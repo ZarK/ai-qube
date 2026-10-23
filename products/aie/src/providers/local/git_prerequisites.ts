@@ -157,7 +157,7 @@ function cleanRoot(root: string, cwd: string): string | null {
   }
 }
 
-function identitySource(stdout: string, root: string): string | null {
+function identitySource(stdout: string, root: string, localConfig: string | null): string | null {
   const line = stdout.trim().split(/\r?\n/).at(-1);
   if (!line) return null;
   const parts = line.split(/\t+/);
@@ -165,9 +165,9 @@ function identitySource(stdout: string, root: string): string | null {
   const origin = parts[1]?.replace(/^file:/, '').trim();
   if (!scope) return null;
   if ((scope === 'local' || scope === 'worktree') && origin) {
-    const localConfig = normalize(join(root, '.git', 'config')).toLowerCase();
+    if (scope === 'local' && !localConfig) return null;
     const normalizedOrigin = normalize(isAbsolute(origin) ? origin : resolve(root, origin)).toLowerCase();
-    return scope === 'worktree' || normalizedOrigin === localConfig || /[\\/]\.git[\\/]worktrees[\\/].+[\\/]config(?:\.worktree)?$/i.test(normalizedOrigin)
+    return scope === 'worktree' || normalizedOrigin === localConfig
       ? 'repository'
       : 'included';
   }
@@ -272,12 +272,22 @@ export async function evaluateGitPrerequisites(options: EvaluateGitPrerequisites
   }
   rows.push(check('repository', ALL_STAGES, 'ready', null, 'Git repository metadata is readable.', null, GIT_SETUP_URL, { root }));
 
+  const gitDir = await invoke(options.git, ['rev-parse', '--git-dir'], { cwd: root });
+  const commonDir = await invoke(options.git, ['rev-parse', '--git-common-dir'], { cwd: root });
+  const localConfig = commonDir.exitCode === 0 && commonDir.stdout.trim()
+    ? normalize(resolve(root, commonDir.stdout.trim(), 'config')).toLowerCase()
+    : null;
+
   for (const [id, key, reasonCode, label] of [
     ['identity-name', 'user.name', 'identity-name-missing', 'Author name'],
     ['identity-email', 'user.email', 'identity-email-missing', 'Author email'],
   ] as const) {
     const result = await invoke(options.git, ['config', '--includes', '--show-origin', '--show-scope', '--get', key], { cwd: root });
-    const source = result.exitCode === 0 ? identitySource(result.stdout, root) : null;
+    if (result.exitCode === 0 && /^local\t/.test(result.stdout.trim()) && !localConfig) {
+      rows.push(check(id, WORKFLOW_STAGES, 'unverified', null, `${label} configuration source could not be resolved.`, 'Repair repository metadata or permissions, then rerun diagnostics.', GIT_SETUP_URL, { present: true, source: null }));
+      continue;
+    }
+    const source = result.exitCode === 0 ? identitySource(result.stdout, root, localConfig) : null;
     rows.push(source
       ? check(id, WORKFLOW_STAGES, 'ready', null, `${label} is configured from ${source} Git configuration.`, null, GIT_SETUP_URL, { present: true, source })
       : check(id, WORKFLOW_STAGES, 'needs-action', reasonCode, `${label} is not configured.`, `Configure ${key} for this repository (recommended) or for all repositories, then rerun \`qube init\`.`, GIT_SETUP_URL, { present: false, source: null }));
@@ -297,8 +307,6 @@ export async function evaluateGitPrerequisites(options: EvaluateGitPrerequisites
       ? check('branch', WORKFLOW_STAGES, 'needs-action', 'detached-head', 'HEAD is detached.', 'Switch to a named branch before starting issue work.', GIT_SETUP_URL, { detached: true, branch: null })
       : check('branch', WORKFLOW_STAGES, 'unverified', null, 'The unborn repository initial branch could not be confirmed.', 'Create or switch to a named initial branch before starting issue work.', GIT_SETUP_URL, { detached: null, branch: null }));
 
-  const gitDir = await invoke(options.git, ['rev-parse', '--git-dir'], { cwd: root });
-  const commonDir = await invoke(options.git, ['rev-parse', '--git-common-dir'], { cwd: root });
   const worktreeObserved = gitDir.exitCode === 0 && commonDir.exitCode === 0;
   const linked = worktreeObserved && normalize(gitDir.stdout.trim()) !== normalize(commonDir.stdout.trim()) && normalize(gitDir.stdout.trim()).replace(/\\/g, '/').includes('/worktrees/');
   rows.push(!worktreeObserved

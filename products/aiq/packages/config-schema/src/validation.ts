@@ -115,9 +115,23 @@ function parseStageConfigOverrides(
     }
 
     const stageConfig = requireRecord(rawStageConfig, `${source}.${stageId}`);
-    assertAllowedKeys(stageConfig, ["enabled", "languages"], `${source}.${stageId}`);
+    assertAllowedKeys(
+      stageConfig,
+      stageId === "sloc" ? ["enabled", "languages", "limit"] : ["enabled", "languages"],
+      `${source}.${stageId}`,
+    );
 
     const parsedConfig: AiqStageConfigFile = {};
+    if (stageConfig.limit !== undefined) {
+      if (
+        typeof stageConfig.limit !== "number" ||
+        !Number.isSafeInteger(stageConfig.limit) ||
+        stageConfig.limit <= 0
+      ) {
+        throw new Error(`${source}.${stageId}.limit must be a positive integer.`);
+      }
+      parsedConfig.limit = stageConfig.limit;
+    }
     if (stageConfig.enabled !== undefined) {
       if (typeof stageConfig.enabled !== "boolean") {
         throw new Error(`${source}.${stageId}.enabled must be a boolean.`);

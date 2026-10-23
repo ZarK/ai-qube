@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   mkdir,
-  path,
   runCli,
   writeFile,
 } from "./cli-test-support.js";
@@ -107,7 +107,6 @@ describe("CLI foundation", () => {
 
   it("returns explicit setup guidance for operational commands", async () => {
     const commands: Array<[string[], string]> = [
-      [["node", "aiq", "hook", "install"], "Hook setup uses the dedicated Quality hook adapter"],
       [["node", "aiq", "ci", "setup"], "CI setup uses explicit workflow configuration"],
       [["node", "aiq", "ignore", "write"], "Ignored inputs are configured"],
     ];

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { resolveTrustedLocalStore, type TrustedLocalStore } from './trusted_local_store.js';
 import { parseReviewRouteProvenance, reviewRouteFingerprint, type ReviewFinding, type ReviewRouteProvenance } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
 import { acceptedProviderLane } from './provider_lane_evidence.js';
@@ -582,8 +583,8 @@ export function localReviewEvidenceSha256(value: unknown): string {
   return hash(canonicalJson(value));
 }
 
-// Trusted stores under .git/qube and .qube/aie are read and created through
-// a verified literal chain: every existing component from the repository
+// Trusted git-directory stores and .qube/aie are read and created through
+// a verified literal chain: every existing component from the containment
 // root to the target must be a real directory or file, never a symlink or
 // junction, so a relocated ancestor can neither redirect reads nor make a
 // missing target look legitimately absent. A missing component ends the
@@ -605,8 +606,9 @@ export function verifyTrustedStoreChain(repoRoot: string, subtree: readonly stri
     let stats;
     try {
       stats = lstatSync(current);
-    } catch {
-      return;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new Error(`Refusing to access the trusted store because its directory chain could not be verified at ${current}.`, { cause: error });
     }
     if (stats.isSymbolicLink()) {
       throw new Error(`Refusing to access the trusted store through a symlink or junction at ${current}. Remove the link, then rerun.`);
@@ -625,8 +627,8 @@ export function readTrustedStoreJson(repoRoot: string, subtree: readonly string[
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-export function trustedLocalHostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
-  return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+export function trustedLocalHostProvenancePath(store: TrustedLocalStore, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(store.path, 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
 }
 
 function configuredReviewer(reviewers: readonly string[]): LocalReviewEvidence['reviewer'] {
@@ -782,13 +784,14 @@ function explicitExpectedPromptHash(input: { issueNumber: number; laneId: LocalR
 }
 
 function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, laneId: LocalReviewLaneId): TrustedLocalHostProvenance | null {
-  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = trustedLocalHostProvenancePath(store, issueNumber, prNumber, headSha, laneId);
   if (!existsSync(path)) {
-    verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
+    verifyTrustedStoreChain(store.root, store.subtree, path);
     return null;
   }
   try {
-    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.git', 'qube', 'aie'], path);
+    const parsed: unknown = readTrustedStoreJson(store.root, store.subtree, path);
     if (!isRecord(parsed) || parsed.version !== 1) return null;
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha || parsed.lane !== laneId) return null;
     if (parsed.runnerKind !== 'local-host' || typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;

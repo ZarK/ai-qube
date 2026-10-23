@@ -214,6 +214,7 @@ export type {
   AiuStatusSourceSummary,
   AiuStatusStateSummary,
   AiuStatusWarning,
+  AiuStatusWorkspaceMode,
 } from "./status.js";
 export type {
   AiuBaseState,

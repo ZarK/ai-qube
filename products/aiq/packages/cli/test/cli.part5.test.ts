@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   mkdtemp,
-  os,
-  path,
   readFile,
   runCli,
   tempDirs,
@@ -81,22 +81,21 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality first run");
-    expect(stdout.value).toContain("Detected project: TypeScript (tsconfig.json)");
-    expect(stdout.value).toContain("Target: .");
-    expect(stdout.value).toContain("Stages: lint");
-    expect(stdout.value).toContain("Change stage: aiq config --set-stage <0-9>");
-    expect(stdout.value).toContain("Prepare missing tools/config: aiq setup");
-    expect(stdout.value).toContain("Quality run");
-    expect(stdout.value).toContain("Stages: 1 lint passed");
-    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).toContain("Stage 1 (lint): PASSED");
+    expect(stdout.value).toContain("Total execution time:");
+    expect(stdout.value).not.toContain("Detected project:");
 
     await expect(
       readFile(path.join(project.root, ".qube", "aiq", "config.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
     const progress = JSON.parse(
       await readFile(path.join(project.root, ".qube", "aiq", "progress.json"), "utf8"),
-    ) as { current_stage: number; disabled: number[]; last_run: string | null; order: number[] };
+    ) as {
+      current_stage: number;
+      disabled: number[];
+      last_run: string | null;
+      order: number[];
+    };
     expect(progress).toEqual({
       current_stage: 1,
       disabled: [],

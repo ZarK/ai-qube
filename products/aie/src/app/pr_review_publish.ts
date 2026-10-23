@@ -1,3 +1,4 @@
+import { resolveTrustedLocalStore } from '../trusted_local_store.js';
 import type { Config } from '../config/index.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
@@ -273,8 +274,9 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
 }
 
 function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, evidence: Record<string, unknown>, evidencePath: string, provenance: Record<string, unknown>): void {
-  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane);
-  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = trustedLocalHostProvenancePath(store, issueNumber, prNumber, headSha, lane);
+  verifyTrustedStoreChain(store.root, store.subtree, path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));

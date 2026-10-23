@@ -1086,9 +1086,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     }
   }
   if (runnableJobs.length > 0) {
-    // Keep repository evidence writes batch-atomic. Concurrent lane checkout
-    // monitors must never observe another lane's trusted bookkeeping as a host
-    // mutation, and incomplete batches must not leave partial lane evidence.
+    // Defer repository evidence writes until every routed lane finishes.
+    // Concurrent checkout monitors must not observe another lane's trusted
+    // bookkeeping as a host mutation. A real checkout mutation invalidates the
+    // complete routed batch, while other lane failures preserve valid siblings.
     const routedOutcomes: Array<ModelReviewRunResult | null | undefined> = [];
     await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
       const job = runnableJobs[jobIndex];
@@ -1116,9 +1117,18 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
       routedOutcomes[jobIndex] = routed;
     });
+    const checkoutMutation = routedOutcomes.find(outcome => outcome?.reasonCode === 'model-route-checkout-mismatch');
     for (let jobIndex = 0; jobIndex < runnableJobs.length; jobIndex += 1) {
       const job = runnableJobs[jobIndex];
       const routed = routedOutcomes[jobIndex];
+      if (checkoutMutation) {
+        failed = true;
+        const summary = routed?.reasonCode === 'model-route-checkout-mismatch'
+          ? ((routed.error ?? '').trim() || 'Local checkout changed during isolated review execution.')
+          : 'Routed review batch was invalidated because the local checkout changed during isolated review execution.';
+        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, 'model-route-checkout-mismatch', cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
+        continue;
+      }
       if (!routed || !routed.evidence) {
         failed = true;
         const reasonCode = routed?.reasonCode ?? 'invalid model route output';

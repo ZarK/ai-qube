@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, cpSync, existsSync, fchmodSync, fsyncSync, l
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { promptInstallerChoice, promptInstallerChoices, type InstallerChoice } from "@tjalve/qube-cli/installer";
 import { createGuidedPresenter, type GuidedPresenter } from "@tjalve/qube-cli/guided";
@@ -21,6 +21,7 @@ import {
   getAgentHostProfileSync,
   listHostModels,
   listInitExternalReviewers,
+  validateConfig as validateAieConfig,
   evaluateGitPrerequisites,
   notRequiredGitPrerequisites,
   prerequisiteCheck,
@@ -30,14 +31,17 @@ import {
 import { aiqStageMetadata } from "@tjalve/aiq/config";
 import { AIU_POST_ISSUE_SCOPES } from "@tjalve/aiu";
 import { evaluateGitHubReadiness, type GitHubReadiness, type GitHubRole } from "@tjalve/qube-adapter-github";
-import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
+import type { AgentHostId, AutoresearchArena, AutoresearchEvaluator, WorkspaceMode } from "@tjalve/qube-core";
 import {
   AGENT_HOST_IDS,
+  configureWorkspaceMode,
   getAgentHostCapabilityProfile,
   hashEvaluatorInputs,
   observeAgentHostReadiness,
   QUBE_INIT_LAYER_CONTEXT_ENV,
   qubeCommandSurfaceContracts,
+  readWorkspaceMode,
+  renderLocalDevelopmentPrompt,
   resolveExecutable,
   serializeInitLayerContext,
 } from "@tjalve/qube-core";
@@ -106,7 +110,7 @@ import {
   type GuidedReviewModelCapability,
   type GuidedReviewSource,
 } from "./init_questions.js";
-import { formatPackageInstallCommand, selectedAdapterInstallSpecs } from "./install_packages.js";
+import { adapterPackageVersions, formatPackageInstallCommand, selectedAdapterInstallSpecs } from "./install_packages.js";
 import { buildShellCommandPlan, quoteShellArgument } from "./process_launch.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
@@ -149,6 +153,11 @@ const jsonFlag = defineFlag({
 const dryRunFlag = defineFlag({
   name: "dry-run",
   description: "Print the plan without running mapped commands.",
+  type: "boolean"
+});
+const localReviewPromptsFlag = defineFlag({
+  name: "local-review-prompts",
+  description: "Include full local review prompts for independent host review.",
   type: "boolean"
 });
 const yesFlag = defineFlag({
@@ -280,7 +289,7 @@ interface AutoresearchPromotion {
   readonly promotedAt: string;
 }
 
-const makeItSoFlowValues = ["planned", "issue", "direct-local"] as const;
+const makeItSoFlowValues = ["planned", "issue"] as const;
 type MakeItSoFlow = typeof makeItSoFlowValues[number];
 
 interface MakeItSoMappedCommand {
@@ -294,8 +303,8 @@ interface MakeItSoPlan {
   readonly intent: string | null;
   readonly target: string;
   readonly dryRun: boolean;
-  readonly status: "dispatch" | "blocked";
-  readonly mappedCommand: MakeItSoMappedCommand | null;
+  readonly status: "dispatch";
+  readonly mappedCommand: MakeItSoMappedCommand;
   readonly boundaries: readonly string[];
   readonly nextAction: string;
 }
@@ -439,30 +448,42 @@ const autoresearchCommand = defineCommand({
   })
 });
 
-const oneshotCommand = defineCommand({
+const modeCommand = defineCommand({
   kind: "command",
-  name: "oneshot",
-  description: "Show that one-shot execution is not available yet.",
+  name: "mode",
+  description: "Show or set the workspace development mode.",
   arguments: [
     defineArgument({
-      name: "args",
-      description: "One-shot request.",
-      multiple: true
+      name: "mode",
+      description: "Workspace mode: local or shipping.",
+      required: false
     })
   ],
   flags: [
     jsonFlag,
+    dryRunFlag,
     defineFlag({
-      name: "help",
-      short: "h",
-      description: "Show command help.",
+      name: "prompt",
+      description: "Include the reusable local development prompt.",
       type: "boolean"
     })
   ],
   examples: [
     {
-      description: "Create a Bootstrap plan for the idea instead.",
-      command: "qube make-it-so --flow planned \"Ship a local notes CLI\""
+      description: "Show the effective workspace mode.",
+      command: "qube mode"
+    },
+    {
+      description: "Use local development mode in this workspace.",
+      command: "qube mode local"
+    },
+    {
+      description: "Preview a return to the shipping workflow.",
+      command: "qube mode shipping --dry-run --json"
+    },
+    {
+      description: "Print the reusable local development prompt.",
+      command: "qube mode --prompt"
     }
   ],
   output: {
@@ -471,21 +492,26 @@ const oneshotCommand = defineCommand({
   },
   interactions: {
     json: true,
+    dryRun: {
+      supported: true
+    },
     noColor: true,
     nonInteractive: true,
     ttyPrompt: false
   },
-  extensions: passthroughExtensions
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  })
 });
 
 const makeItSoCommand = defineCommand({
   kind: "command",
   name: "make-it-so",
-  description: "Map an intent to the safest real QUBE workflow.",
+  description: "Continue the active workspace mode with an optional request.",
   arguments: [
     defineArgument({
       name: "args",
-      description: "Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
+      description: "Local request, planning intent, or issue selector.",
       multiple: true
     })
   ],
@@ -512,8 +538,8 @@ const makeItSoCommand = defineCommand({
   ],
   examples: [
     {
-      description: "Start planning from a concise intent.",
-      command: "qube make-it-so \"Ship a local notes CLI\""
+      description: "Continue with a task-specific request in local mode.",
+      command: "qube make-it-so \"Add CSV export to the report command\""
     },
     {
       description: "Start the next provider-backed issue through Executor.",
@@ -730,6 +756,56 @@ const initCommand = defineCommand({
   })
 });
 
+const hostsCommand = defineCommand({
+  kind: "command",
+  name: "hosts",
+  description: "Show or change the primary and Review agent harnesses without running the full setup flow.",
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    yesFlag,
+    defineFlag({
+      name: "global",
+      description: "Change user-global host settings instead of repository settings.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "host",
+      description: `Comma-separated agent harnesses. The first harness is primary. Use one or more of: ${executorHostSurfaces.map(option => option.id).join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "review-mode",
+      description: "Run Review through an external service, the primary harness, or another installed harness.",
+      type: "option",
+      options: [...QUBE_REVIEW_MODES]
+    }),
+    defineFlag({
+      name: "review-harness",
+      description: "Installed harness that runs isolated Review. It must differ from the primary harness and export an isolated Review runner.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "review-model",
+      description: "Exact model from the selected Review harness live model list.",
+      type: "string"
+    })
+  ],
+  examples: [
+    { description: "Show the current repository host roles.", command: "qube hosts --json" },
+    { description: "Preview a repository host change.", command: "qube hosts --host codex,cursor --review-mode isolated --review-harness cursor --dry-run --json" },
+    { description: "Change user-global host roles.", command: "qube hosts --global" }
+  ],
+  interactions: {
+    json: true,
+    dryRun: { supported: true },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: true
+  },
+  mutation: defineMutationMetadata({ categories: mutationCategories("local-config") })
+});
+
 const directCommandDefinitions: readonly DirectQubeCommand[] = [
   {
     command: defineCommand({
@@ -809,7 +885,7 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
   createDirectCommand("pr view", "Show concise pull request state.", "aie", "pr view"),
   createDirectCommand("pr body", "Draft a pull request body for issue work.", "aie", "pr body"),
-  createDirectCommand("pr gate", "Request and inspect configured pull request reviews.", "aie", "pr gate"),
+  createDirectCommand("pr gate", "Request and inspect configured pull request reviews.", "aie", "pr gate", { flags: [dryRunFlag, localReviewPromptsFlag], supportsDryRun: true }),
   createDirectCommand("deps", "Show Executor dependency helpers.", "aie", "deps", { supportsJson: false }),
   createDirectCommand("deps blockers", "List direct blockers for an issue.", "aie", "deps blockers"),
   createDirectCommand("deps blocked", "List blocked open issues.", "aie", "deps blocked"),
@@ -908,10 +984,10 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, modeCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function renderCommandSurfacesDoc(): string {
-  const composerCommands = [componentsCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
+  const composerCommands = [componentsCommand, initCommand, hostsCommand, doctorCommand, autoresearchCommand, modeCommand, makeItSoCommand, runCommand];
   const lines: string[] = [
     "# QUBE Command Surfaces",
     "",
@@ -921,8 +997,6 @@ export function renderCommandSurfacesDoc(): string {
     "",
     "Generated from the composer command registry. Do not edit by hand; regenerate with `pnpm --dir products/qube run docs:surfaces` after a build.",
     "",
-    "See also the static command-flow visual: [QUBE Command Surface: Idea to Complete Implementation](./qube-command-surface-visual.html).",
-    "",
     "## Composer-level commands",
     "",
     "| Command | Description |",
@@ -931,12 +1005,14 @@ export function renderCommandSurfacesDoc(): string {
     "",
     "### Make It So",
     "",
-    "`qube make-it-so` exposes its selected command and workflow boundary. The",
+    "In local mode, `qube make-it-so <request>` prints instructions for the current",
+    "agent to implement the request and prepare a concise manual-testing handoff.",
+    "This path does not require Git, a provider, an issue, or a branch. In shipping",
+    "mode, `qube make-it-so` exposes its selected command and workflow boundary. The",
     "`planned` flow maps free-form intent to `qube aib init <target> --idea <intent>`.",
     "It creates planning state without a GitHub issue, branch, pull request, or",
     "review request. The `issue` flow maps `next`, a number, or `#number` to",
-    "`qube aie start`; all Executor checks remain active. The `direct-local` flow is",
-    "currently refused and directs the user to the planned flow.",
+    "`qube aie start`; all Executor checks remain active.",
     "Use `--dry-run --json` to inspect the mapping without dispatching it.",
     "",
     "### Autoresearch",
@@ -968,12 +1044,13 @@ export function renderCommandSurfacesDoc(): string {
     "files and stops on candidate changes or target conflicts. If apply fails, QUBE",
     "restores affected files. Run promotion again after an interruption.",
     "",
-    "### One-shot",
+    "### Workspace mode",
     "",
-    "One-shot is not available yet.",
-    "",
-    "Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.",
-    "Local checks and self-review do not count as pull request approval.",
+    "Use `qube mode local` for persistent direct development with the current agent.",
+    "Use `qube mode shipping` to return to the issue and pull request workflow.",
+    "Run `qube mode` from the workspace or a nested directory to show the effective",
+    "mode. A mode change updates only workspace mode state and its bounded agent",
+    "instruction section. It does not start work or publish changes.",
     "",
     "## Direct workflow commands",
     "",
@@ -1027,8 +1104,8 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   if (args[0] === "autoresearch") {
     return planAutoresearch(args.slice(1), environment);
   }
-  if (args[0] === "oneshot") {
-    return planOneshot(args.slice(1), environment);
+  if (args[0] === "mode") {
+    return planWorkspaceMode(args.slice(1), environment);
   }
   if (args[0] === "make-it-so") {
     return planMakeItSo(args.slice(1), environment);
@@ -1133,9 +1210,10 @@ function createQubeCli(environment: CliEnvironment) {
           throw error;
         }
       }),
+      createRuntimeCommand(hostsCommand, async ({ flags }) => executeQubeHosts(flags, environment)),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
-      createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
+      createRuntimeCommand(modeCommand, ({ argv }) => executeWorkspaceMode(argv, environment)),
       createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
@@ -2899,6 +2977,454 @@ async function recoverGitHubCredential(
     windowsHide: true,
   });
   return recovery.status === 0;
+}
+
+const HOSTS_QUESTION_ORDER = Object.freeze([
+  "agent-harnesses",
+  "review-source",
+  "review-harness",
+  "review-model",
+] as const satisfies readonly GuidedInitQuestionId[]);
+
+type InstalledHost = Readonly<{ isolatedRunner: boolean }>;
+
+async function installedHosts(environment: CliEnvironment, projectRoot: string | null): Promise<ReadonlyMap<AgentHostId, InstalledHost>> {
+  const installed = new Map<AgentHostId, InstalledHost>();
+  const packageRoot = environment.packageRoot ?? defaultPackageRoot(environment.env);
+  const aie = qubeComponents.find(component => component.command === "aie");
+  const aieResolution = aie ? resolveComponentCommand(aie, environment) : undefined;
+  for (const option of executorHostSurfaces) {
+    const host = option.id as AgentHostId;
+    const adapterPackage = option.packageName;
+    if (!adapterPackage) continue;
+    const expectedVersion = (adapterPackageVersions as Readonly<Record<string, string>>)[adapterPackage];
+    if (!expectedVersion || installedInitPackageVersion(adapterPackage, environment, projectRoot) !== expectedVersion) continue;
+    const packageParts = adapterPackage.split("/");
+    const manifest = [
+      resolvePackageManifest(adapterPackage, packageRoot),
+      ...(projectRoot ? [resolvePackageManifest(adapterPackage, projectRoot)] : []),
+      path.join(packageRoot, "node_modules", ...packageParts, "package.json"),
+      ...(projectRoot ? [path.join(projectRoot, "node_modules", ...packageParts, "package.json")] : []),
+      ...(aieResolution?.packageJsonPath ? [path.join(path.dirname(aieResolution.packageJsonPath), "node_modules", ...packageParts, "package.json")] : []),
+    ].find(candidate => candidate && readPackageVersion(adapterPackage, candidate) === expectedVersion);
+    let isolatedRunner = false;
+    try {
+      if (manifest) {
+        const entry = createRequire(manifest).resolve(adapterPackage);
+        const adapter = await import(pathToFileURL(entry).href) as Record<string, unknown>;
+        const runner = adapter.isolatedReviewHostAdapter as Record<string, unknown> | undefined;
+        isolatedRunner = runner?.id === host
+          && typeof runner.buildInvocation === "function"
+          && typeof runner.parseEnvelope === "function";
+      }
+    } catch {
+      // An installed package without a loadable runner can still be a primary host.
+    }
+    installed.set(host, Object.freeze({ isolatedRunner }));
+  }
+  return installed;
+}
+
+function hostsRepositoryRoot(cwd: string): string | null {
+  let current = path.resolve(cwd);
+  while (true) {
+    if (existsSync(path.join(current, ".git"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function createHostsCapabilities(input: {
+  readonly environment: CliEnvironment;
+  readonly installed: ReadonlyMap<AgentHostId, InstalledHost>;
+  readonly registeredReviewers: readonly { readonly id: string; readonly label: string }[];
+  readonly modelHosts?: readonly AgentHostId[];
+  readonly modelListings: Map<AgentHostId, ReturnType<typeof listHostModels>>;
+}): GuidedInitCapabilities {
+  const capabilities = createGuidedInitCapabilities(input);
+  const pathHosts = new Set(detectInstalledReviewHostsOnPath(command => (
+    resolveExecutable(command, { env: input.environment.env }).status === "found"
+  )));
+  return Object.freeze({
+    ...capabilities,
+    agentHarnesses: Object.freeze(capabilities.agentHarnesses
+      .filter(choice => input.installed.has(choice.value as AgentHostId))
+      .map(choice => {
+        const host = choice.value as AgentHostId;
+        const declared = getAgentHostCapabilityProfile(host).capabilities["review-isolated"].support !== "unsupported";
+        const isolatedRunner = input.installed.get(host)?.isolatedRunner === true;
+        return Object.freeze({
+          ...choice,
+          recommended: pathHosts.size > 0 ? pathHosts.has(host) : choice.recommended,
+          canRunSeparateReview: declared && isolatedRunner,
+          ...(!declared || isolatedRunner ? {} : {
+            separateReviewUnavailableReason: `${choice.label} adapter does not export an isolated Review runner. Use native host review or install a compatible adapter.`,
+          }),
+        });
+      })),
+  });
+}
+
+async function promptHostsQuestion(question: GuidedInitQuestion, saved: GuidedInitAnswers): Promise<GuidedInitQuestion["selectedValue"]> {
+  const mapped = guidedQuestionChoices(question, saved);
+  if (mapped.savedUnavailable) process.stdout.write(`Saved review model "${mapped.savedUnavailable}" is unavailable. Select an available model.\n`);
+  if (question.selection === "multiple") {
+    const selected = await promptInstallerChoices({
+      command: hostsCommand,
+      promptName: question.label,
+      message: question.label,
+      choices: mapped.choices,
+      ...(mapped.initialValues ? { initialValues: mapped.initialValues } : {}),
+      jsonMode: false,
+      yes: false,
+    });
+    const values = selected.map(value => mapped.values.get(value)!);
+    if (question.id !== "agent-harnesses" || values.length < 2) return Object.freeze(values);
+    const primary = await promptInstallerChoice({
+      command: hostsCommand,
+      promptName: "Primary host",
+      message: "Which selected agent harness is primary?",
+      choices: values.map(value => Object.freeze({
+        value,
+        label: question.options.find(option => option.value === value)?.label ?? value,
+      })),
+      initialValue: values[0],
+      jsonMode: false,
+      yes: false,
+    });
+    return Object.freeze([primary, ...values.filter(value => value !== primary)]);
+  }
+  const selected = await promptInstallerChoice({
+    command: hostsCommand,
+    promptName: question.label,
+    message: question.label,
+    choices: mapped.choices,
+    ...(mapped.initialValue ? { initialValue: mapped.initialValue } : {}),
+    jsonMode: false,
+    yes: false,
+  });
+  return mapped.values.get(selected) ?? null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function mergeRecords(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    merged[key] = value !== null && typeof value === "object" && !Array.isArray(value)
+      ? mergeRecords(recordValue(base[key]), value as Record<string, unknown>)
+      : value;
+  }
+  return merged;
+}
+
+function readJsonRecord(filePath: string): Record<string, unknown> | null {
+  if (!existsSync(filePath)) return null;
+  if (lstatSync(filePath).isSymbolicLink()) throw new Error(`Refusing to read host settings through a symlink: ${filePath}`);
+  const value = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`Host settings must be a JSON object: ${filePath}`);
+  return value as Record<string, unknown>;
+}
+
+function aieHostConflict(overlay: Record<string, unknown> | null): string | null {
+  const policy = recordValue(overlay?.policy);
+  const reviews = recordValue(policy.reviews);
+  if (policy.modelRouting !== undefined) return "policy.modelRouting";
+  for (const field of ["mode", "route", "models", "lanes"] as const) {
+    if (reviews[field] !== undefined) return `policy.reviews.${field}`;
+  }
+  return null;
+}
+
+function projectAieHosts(input: {
+  readonly scope: "global" | "repository";
+  readonly cwd: string;
+  readonly home: string;
+  readonly hosts: readonly string[];
+  readonly mode: QubeReviewMode;
+  readonly reviewHarness?: string;
+  readonly reviewModel?: string | null;
+}): { readonly path: string; readonly config: Record<string, unknown>; readonly changed: boolean } {
+  const globalPath = path.join(input.home, ".qube", "aie", "config.json");
+  const repoPath = path.join(input.cwd, ".qube", "aie", "config.json");
+  const overlayPath = path.join(input.cwd, ".qube", "aie", "config.local.json");
+  const globalRaw = readJsonRecord(globalPath) ?? {};
+  const repoRaw = input.scope === "repository" ? readJsonRecord(repoPath) ?? {} : {};
+  if (input.scope === "repository") {
+    const conflict = aieHostConflict(readJsonRecord(overlayPath));
+    if (conflict) throw new Error(`Machine-local Executor config overrides ${conflict} at ${overlayPath}. Remove that override before changing repository hosts.`);
+  }
+  const targetPath = input.scope === "global" ? globalPath : repoPath;
+  const targetRaw = input.scope === "global" ? globalRaw : repoRaw;
+  const effectiveRaw = input.scope === "global" ? globalRaw : mergeRecords(globalRaw, repoRaw);
+  const validation = validateAieConfig({ version: 1, ...effectiveRaw });
+  if (!validation.ok || !validation.config) {
+    const reason = validation.errors.map(error => `${error.path}: ${error.message}`).join("; ");
+    throw new Error(`Executor config is invalid: ${reason}`);
+  }
+  const current = validation.config;
+  const primaryId = current.policy.modelRouting.primary;
+  const currentPrimary = current.policy.modelRouting.catalog.find(entry => entry.id === primaryId);
+  if (!currentPrimary) throw new Error("Executor model routing has no primary catalog entry.");
+  const primaryHost = input.hosts[0]! as AgentHostId;
+  const primaryChanged = currentPrimary.host !== primaryHost;
+  const projectedPrimaryId = primaryChanged ? "primary" : primaryId;
+  const oldReviewHost = current.policy.reviews.mode === "isolated"
+    ? current.policy.reviews.route?.host
+    : current.policy.reviews.mode === "host" ? currentPrimary.host : undefined;
+  const reviewHost = input.mode === "isolated" ? input.reviewHarness : input.mode === "host" ? primaryHost : undefined;
+  const replacePrimaryId = (id: string): string => id === primaryId ? projectedPrimaryId : id;
+  const modelRouting = {
+    ...current.policy.modelRouting,
+    primary: projectedPrimaryId,
+    catalog: current.policy.modelRouting.catalog
+      .filter(entry => !primaryChanged || entry.id !== projectedPrimaryId || entry.id === primaryId)
+      .map(entry => entry.id === primaryId
+        ? { ...entry, id: projectedPrimaryId, host: primaryHost, transport: "host" }
+        : { ...entry }),
+    routes: {
+      ...current.policy.modelRouting.routes,
+      "mechanical-implementation": {
+        preferred: replacePrimaryId(current.policy.modelRouting.routes["mechanical-implementation"].preferred),
+        fallback: current.policy.modelRouting.routes["mechanical-implementation"].fallback.map(replacePrimaryId),
+      },
+      "exploration-investigation": {
+        preferred: replacePrimaryId(current.policy.modelRouting.routes["exploration-investigation"].preferred),
+        fallback: current.policy.modelRouting.routes["exploration-investigation"].fallback.map(replacePrimaryId),
+      },
+      "synthesis-judgment": {
+        preferred: replacePrimaryId(current.policy.modelRouting.routes["synthesis-judgment"].preferred),
+        fallback: current.policy.modelRouting.routes["synthesis-judgment"].fallback.map(replacePrimaryId),
+      },
+    },
+  };
+  const reviewModels = {
+    review: { ...current.policy.reviews.models.review },
+    economy: { ...current.policy.reviews.models.economy },
+    synthesis: { ...current.policy.reviews.models.synthesis },
+  } as Record<string, Record<string, unknown>>;
+  if (oldReviewHost && oldReviewHost !== reviewHost) delete reviewModels.review[oldReviewHost];
+  if (reviewHost && input.reviewModel) reviewModels.review[reviewHost] = { model: input.reviewModel, effort: null };
+  else if (reviewHost && input.reviewModel === null) delete reviewModels.review[reviewHost];
+  const previousRoute = current.policy.reviews.route;
+  const route = input.mode === "isolated" && input.reviewHarness
+    ? { ...(previousRoute ?? { tier: "review", timeoutSeconds: 600, maxTurns: 8 }), host: input.reviewHarness }
+    : null;
+  const lanes = current.policy.reviews.lanes.map(lane => (
+    input.mode === "isolated" && input.reviewHarness && oldReviewHost && lane.route?.host === oldReviewHost
+      ? { ...lane, route: { ...lane.route, host: input.reviewHarness } }
+      : lane
+  ));
+  const targetPolicy = recordValue(targetRaw.policy);
+  const targetReviews = recordValue(targetPolicy.reviews);
+  const projected = {
+    ...targetRaw,
+    version: 1,
+    policy: {
+      ...targetPolicy,
+      modelRouting,
+      reviews: {
+        ...targetReviews,
+        mode: input.mode,
+        route,
+        models: reviewModels,
+        ...(JSON.stringify(lanes) === JSON.stringify(current.policy.reviews.lanes) ? {} : { lanes }),
+      },
+    },
+  };
+  const projectedEffective = input.scope === "global" ? projected : mergeRecords(globalRaw, projected);
+  const projectedValidation = validateAieConfig(projectedEffective);
+  if (!projectedValidation.ok) {
+    const reason = projectedValidation.errors.map(error => `${error.path}: ${error.message}`).join("; ");
+    throw new Error(`Planned Executor host settings are invalid: ${reason}`);
+  }
+  return Object.freeze({ path: targetPath, config: projected, changed: JSON.stringify(targetRaw) !== JSON.stringify(projected) });
+}
+
+function writeAieHostConfig(filePath: string, config: Record<string, unknown>): void {
+  if (existsSync(filePath) && lstatSync(filePath).isSymbolicLink()) throw new Error(`Refusing to write Executor host settings through a symlink: ${filePath}`);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function executeQubeHosts(flags: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const json = flags.json === true;
+  const dryRun = flags["dry-run"] === true;
+  const scope = flags.global === true ? "global" : "repository";
+  const home = homeDirectory(environment);
+  const repositoryRoot = scope === "repository" ? hostsRepositoryRoot(environment.cwd) : null;
+  if (scope === "repository" && !repositoryRoot) {
+    const error = "Repository host settings require a Git repository.";
+    const payload = { ok: false, command: "hosts", scope, changed: false, error, nextAction: "Run `qube hosts --global`, or run the command in an initialized Git repository." };
+    return json ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 2, stderr: `${error}\n` };
+  }
+  const targetRoot = repositoryRoot ?? environment.cwd;
+  const globalPath = userQubeConfigPath(home);
+  const repositoryPath = repoQubeConfigPath(targetRoot);
+  const globalRead = readQubeInitConfig(globalPath);
+  const repositoryRead = scope === "repository" ? readQubeInitConfig(repositoryPath) : missingConfigRead(repositoryPath);
+  const configError = initConfigError("user-global", globalRead)
+    ?? (scope === "repository" ? initConfigError("repository", repositoryRead) : undefined);
+  if (configError) return { exitCode: 2, stderr: `${configError}\n` };
+  const effective = scope === "global" ? mergeQubeInitConfigs(globalRead.config, null) : mergeQubeInitConfigs(globalRead.config, repositoryRead.config);
+  const savedCurrent = guidedAnswersFromConfig(effective);
+  const current: GuidedInitAnswers = Object.freeze({
+    ...savedCurrent,
+    issueTracker: savedCurrent.issueTracker ?? effective.workProviders?.[0] ?? "github",
+  });
+  const requestedHosts = readOptionList<string>(flags, "host");
+  const requestedMode = readOption<QubeReviewMode>(flags, "review-mode");
+  const requestedHarness = readOption<string>(flags, "review-harness");
+  const requestedModel = readOption<string>(flags, "review-model");
+  let answers: GuidedInitAnswers = Object.freeze({
+    ...(requestedHosts ? { agentHarnesses: requestedHosts } : {}),
+    ...(requestedMode ? { reviewSource: guidedReviewSource(requestedMode) } : {}),
+    ...(requestedHarness ? { reviewHarness: requestedHarness } : {}),
+    ...(requestedModel ? { reviewModel: requestedModel } : {}),
+  });
+  const explicitSelection = [requestedHosts, requestedMode, requestedHarness, requestedModel].some(value => value !== undefined);
+  if (json && !explicitSelection && flags.yes !== true) {
+    const currentReviewHost = effective.review?.mode === "isolated" ? effective.review.harness : effective.review?.mode === "host" ? effective.hosts?.[0] : undefined;
+    const currentModels = effective.review?.models ?? Object.freeze([]);
+    const unanswered = Object.freeze([
+      ...(!effective.hosts?.[0] ? ["agent-harnesses"] : []),
+      ...(!effective.review?.mode ? ["review-source"] : []),
+      ...(effective.review?.mode === "isolated" && !effective.review.harness ? ["review-harness"] : []),
+    ]);
+    const plannedFields = Object.freeze([
+      { id: "hosts", current: effective.hosts ?? [], planned: effective.hosts ?? [] },
+      { id: "review.mode", current: effective.review?.mode ?? null, planned: effective.review?.mode ?? null },
+      { id: "review.harness", current: effective.review?.harness ?? null, planned: effective.review?.harness ?? null },
+      { id: "review.models", current: currentModels, planned: currentModels },
+    ]);
+    const payload = {
+      ok: true, command: "hosts", scope, mode: flags["dry-run"] === true ? "plan" : "status", changed: false,
+      current: { hosts: effective.hosts ?? [], primaryHost: effective.hosts?.[0] ?? null, review: { mode: effective.review?.mode ?? null, harness: currentReviewHost ?? null, model: configuredReviewModel(effective, currentReviewHost) ?? null } },
+      plannedFields, unanswered, writes: [],
+    };
+    return { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n` };
+  }
+  const detected = detectInitPackagePlacement({ ...environment, cwd: targetRoot });
+  const available = await installedHosts(environment, detected.projectRoot);
+  const unavailableHost = requestedHosts?.find(host => !available.has(host as AgentHostId));
+  const isolatedUnavailable = requestedMode === "isolated" && requestedHarness
+    ? !available.has(requestedHarness as AgentHostId) || available.get(requestedHarness as AgentHostId)?.isolatedRunner !== true
+    : false;
+  if (unavailableHost || isolatedUnavailable) {
+    const host = unavailableHost ?? requestedHarness!;
+    const error = `Selected host ${host} does not have an installed compatible adapter${isolatedUnavailable ? " with an isolated Review runner" : ""}.`;
+    const payload = { ok: false, command: "hosts", scope, changed: false, reasonCode: "missing-adapter", error, nextAction: "Install the matching adapter package, then rerun `qube hosts`." };
+    return json ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 2, stderr: `${error}\n` };
+  }
+  const registeredReviewers = await listInitExternalReviewers();
+  const modelListings = new Map<AgentHostId, ReturnType<typeof listHostModels>>();
+  let mutableCurrent = current;
+  let prompted = false;
+  const questions = (): readonly GuidedInitQuestion[] => {
+    const firstCapabilities = createHostsCapabilities({ environment, installed: available, registeredReviewers, modelListings });
+    const first = buildGuidedInitQuestions({ capabilities: firstCapabilities, answers, current: mutableCurrent, defaults: current, resolveDefaults: flags.yes === true, promptCurrent: !json && !explicitSelection && flags.yes !== true });
+    const capabilities = createHostsCapabilities({ environment, installed: available, registeredReviewers, modelHosts: selectedGuidedModelHosts(first), modelListings });
+    return buildGuidedInitQuestions({ capabilities, answers, current: mutableCurrent, defaults: current, resolveDefaults: flags.yes === true, promptCurrent: !json && !explicitSelection && flags.yes !== true });
+  };
+  for (const id of HOSTS_QUESTION_ORDER) {
+    let question = questions().find(candidate => candidate.id === id);
+    if (!question?.applicable) continue;
+    if (question.validationError && !hasGuidedAnswer(answers, id)) {
+      mutableCurrent = omitGuidedAnswer(mutableCurrent, id);
+      question = questions().find(candidate => candidate.id === id);
+    }
+    if (question?.promptNeeded && !question.validationError && evaluatePromptGate({ command: hostsCommand, jsonMode: json }).allowed) {
+      answers = addGuidedAnswer(answers, question, await promptHostsQuestion(question, current));
+      prompted = true;
+    }
+  }
+  const finalQuestions = questions();
+  const blocker = HOSTS_QUESTION_ORDER.map(id => finalQuestions.find(question => question.id === id))
+    .find(question => question?.applicable && question.validationError);
+  const unanswered = Object.freeze(HOSTS_QUESTION_ORDER.filter(id => {
+    const question = finalQuestions.find(candidate => candidate.id === id);
+    return question?.applicable && question.promptNeeded;
+  }));
+  if (blocker && explicitSelection) {
+    const error = blocker.validationError!;
+    const payload = { ok: false, command: "hosts", scope, changed: false, error, nextAction: "Choose installed compatible host settings, then rerun `qube hosts`." };
+    return json ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 2, stderr: `${error}\n` };
+  }
+  const selected = new Map(finalQuestions.map(question => [question.id, question.selectedValue]));
+  const hosts = selected.get("agent-harnesses");
+  const reviewSource = selected.get("review-source");
+  if (!Array.isArray(hosts) || hosts.length === 0 || typeof reviewSource !== "string") {
+    const payload = { ok: true, command: "hosts", scope, mode: "status", changed: false, current, plannedFields: [], unanswered };
+    return json ? { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 0, stdout: `Host settings need answers: ${unanswered.join(", ")}\n` };
+  }
+  const mode = guidedReviewMode(reviewSource as GuidedReviewSource);
+  const reviewHarness = mode === "isolated" ? selected.get("review-harness") : mode === "host" ? hosts[0] : undefined;
+  const modelValue = selected.get("review-model");
+  const reviewModel = mode === "external" ? null : modelValue === GUIDED_INIT_UNPINNED_MODEL || modelValue === null ? null : modelValue as string;
+  const currentReviewHost = effective.review?.mode === "isolated" ? effective.review.harness : effective.review?.mode === "host" ? effective.hosts?.[0] : undefined;
+  const plannedModels = mode === "external" || !reviewHarness || !reviewModel ? Object.freeze([]) : Object.freeze([`${reviewHarness}:${reviewModel}`]);
+  const plannedFields = Object.freeze([
+    { id: "hosts", current: effective.hosts ?? [], planned: hosts },
+    { id: "review.mode", current: effective.review?.mode ?? null, planned: mode },
+    { id: "review.harness", current: effective.review?.harness ?? null, planned: mode === "isolated" ? reviewHarness ?? null : null },
+    { id: "review.models", current: effective.review?.models ?? [], planned: plannedModels },
+  ]);
+  const changed = plannedFields.some(field => JSON.stringify(field.current) !== JSON.stringify(field.planned));
+  const currentRoles = {
+    hosts: effective.hosts ?? [],
+    primaryHost: effective.hosts?.[0] ?? null,
+    review: { mode: effective.review?.mode ?? null, harness: currentReviewHost ?? null, model: configuredReviewModel(effective, currentReviewHost) ?? null },
+  };
+  const writeIntent = explicitSelection || flags.yes === true || prompted;
+  if (!writeIntent) {
+    const payload = { ok: true, command: "hosts", scope, mode: dryRun ? "plan" : "status", changed: false, current: currentRoles, plannedFields, unanswered, writes: [] };
+    return json ? { exitCode: 0, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 0, stdout: `Current host settings: primary ${hosts[0]}, Review ${mode}${reviewHarness ? ` (${reviewHarness})` : ""}.\n` };
+  }
+  const targetRead = scope === "global" ? globalRead : repositoryRead;
+  const targetConfig: QubeInitConfig = targetRead.config ?? Object.freeze({ version: 1 as const });
+  const projectedQube: QubeInitConfig = Object.freeze({
+    ...targetConfig,
+    hosts: Object.freeze([...hosts]),
+    review: Object.freeze({
+      ...targetConfig.review,
+      mode,
+      ...(mode === "isolated" && typeof reviewHarness === "string" ? { harness: reviewHarness } : { harness: undefined }),
+      models: plannedModels,
+    }),
+  });
+  let aiePlan;
+  try {
+    aiePlan = projectAieHosts({ scope, cwd: targetRoot, home, hosts, mode, ...(typeof reviewHarness === "string" ? { reviewHarness } : {}), reviewModel });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const payload = { ok: false, command: "hosts", scope, changed: false, error: message, nextAction: "Correct the Executor config conflict, then rerun `qube hosts`." };
+    return json ? { exitCode: 2, jsonStdout: `${JSON.stringify(payload)}\n` } : { exitCode: 2, stderr: `${message}\n` };
+  }
+  const apply = writeIntent && (changed || aiePlan.changed) && !dryRun && unanswered.length === 0;
+  if (apply) {
+    if (changed) writeQubeInitConfig(scope === "global" ? globalPath : repositoryPath, projectedQube);
+    if (aiePlan.changed) writeAieHostConfig(aiePlan.path, aiePlan.config);
+  }
+  const payload = {
+    ok: true,
+    command: "hosts",
+    scope,
+    mode: dryRun ? "plan" : apply ? "apply" : "status",
+    changed: dryRun ? changed || aiePlan.changed : apply,
+    current: currentRoles,
+    plannedFields,
+    unanswered,
+    writes: Object.freeze([
+      { path: scope === "global" ? globalPath : repositoryPath, changed },
+      { path: aiePlan.path, changed: aiePlan.changed },
+    ]),
+  };
+  if (json) return { exitCode: unanswered.length > 0 && explicitSelection ? 2 : 0, jsonStdout: `${JSON.stringify(payload)}\n` };
+  const label = dryRun ? "Host plan" : apply ? "Host settings updated" : "Current host settings";
+  return { exitCode: 0, stdout: `${label}: primary ${hosts[0]}, Review ${mode}${reviewHarness ? ` (${reviewHarness})` : ""}.\n` };
 }
 
 async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -5487,53 +6013,115 @@ function renderAutoresearchHelp(): string {
   ].join("\n") + "\n";
 }
 
-function planOneshot(args: readonly string[], _environment: CliEnvironment): CliExecution {
-  if (isOneshotHelpRequest(args)) {
-    return { exitCode: 0, stdout: renderOneshotHelp(), stderr: "" };
+function planWorkspaceMode(args: readonly string[], environment: CliEnvironment, apply = false): CliExecution {
+  const json = hasTopLevelJsonFlag(args);
+  try {
+    const parsed = parseWorkspaceModeArgs(args);
+    if ("error" in parsed) return workspaceModeError(parsed.error, json);
+    const dryRun = parsed.dryRun || (parsed.mode !== undefined && !apply);
+    const change = parsed.mode
+      ? configureWorkspaceMode(environment.cwd, parsed.mode, { dryRun })
+      : undefined;
+    const result = change ?? readWorkspaceMode(environment.cwd);
+    const prompt = parsed.prompt ? renderLocalDevelopmentPrompt() : undefined;
+    const payload = {
+      mode: result.mode,
+      workspaceRoot: result.workspaceRoot,
+      configPath: result.configPath,
+      configured: result.configured,
+      changed: change?.changed ?? false,
+      dryRun,
+      writes: change?.writes ?? [],
+      ...(prompt ? { prompt } : {})
+    };
+    if (json) {
+      return {
+        exitCode: 0,
+        stdout: `${JSON.stringify({ ok: true, command: "mode", ...payload })}\n`,
+        stderr: ""
+      };
+    }
+    return { exitCode: 0, stdout: renderWorkspaceMode(payload), stderr: "" };
+  } catch (error) {
+    return workspaceModeError(error instanceof Error ? error.message : String(error), json);
   }
-  return renderOneshotUnavailable(hasTopLevelJsonFlag(args));
 }
 
-async function executeOneshot(args: readonly string[], _environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  if (isOneshotHelpRequest(args)) {
-    return { exitCode: 0, stdout: renderOneshotHelp() };
-  }
-  const json = hasTopLevelJsonFlag(args);
-  const result = renderOneshotUnavailable(json);
-  return json
-    ? { exitCode: result.exitCode, jsonStdout: result.stdout }
+function executeWorkspaceMode(args: readonly string[], environment: CliEnvironment): RuntimeCommandResult {
+  const result = planWorkspaceMode(args, environment, true);
+  return hasTopLevelJsonFlag(args)
+    ? { exitCode: result.exitCode, jsonStdout: result.stdout, stderr: result.stderr }
     : { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 }
 
-function renderOneshotUnavailable(json: boolean): CliExecution {
-  const error = createCliError({
-    command: "oneshot",
-    kind: "feature-unavailable",
-    operation: "run one-shot",
-    likelyCause: "One-shot is not available yet.",
-    suggestedNextAction: "Use `qube make-it-so --flow planned <idea>` to create a Bootstrap plan.",
-    category: "validation"
-  });
-  return json
-    ? { exitCode: error.exitCode, stdout: renderJsonError(error), stderr: "" }
-    : { exitCode: error.exitCode, stdout: "", stderr: renderCliErrorText(error) };
+function parseWorkspaceModeArgs(args: readonly string[]):
+  | { readonly mode?: WorkspaceMode; readonly json: boolean; readonly dryRun: boolean; readonly prompt: boolean }
+  | { readonly error: string } {
+  let mode: WorkspaceMode | undefined;
+  let json = false;
+  let dryRun = false;
+  let prompt = false;
+  for (const token of args) {
+    if (token === "--json") json = true;
+    else if (token === "--dry-run") dryRun = true;
+    else if (token === "--prompt") prompt = true;
+    else if (token === "local" || token === "shipping") {
+      if (mode) return { error: "Specify one workspace mode: local or shipping." };
+      mode = token;
+    } else {
+      return { error: `Unknown mode argument: ${token}. Use local or shipping.` };
+    }
+  }
+  return { mode, json, dryRun, prompt };
 }
 
-function isOneshotHelpRequest(args: readonly string[]): boolean {
-  const topLevelArgs = topLevelTokens(args);
-  return topLevelArgs.includes("--help") || topLevelArgs.includes("-h");
+function renderWorkspaceMode(result: {
+  readonly mode: WorkspaceMode;
+  readonly workspaceRoot: string;
+  readonly configPath: string;
+  readonly configured: boolean;
+  readonly changed: boolean;
+  readonly dryRun: boolean;
+  readonly writes: readonly string[];
+  readonly prompt?: string;
+}): string {
+  const lines = [
+    `Mode: ${result.mode}`,
+    `Workspace: ${result.workspaceRoot}`,
+    `Configuration: ${result.configured ? result.configPath : "default (not configured)"}`,
+  ];
+  if (result.writes.length > 0) {
+    lines.push(result.dryRun ? "Planned writes:" : "Writes:", ...result.writes.map(file => `- ${file}`));
+  }
+  if (result.dryRun) lines.push("No files were changed.");
+  if (result.prompt) lines.push("", result.prompt.trimEnd());
+  return `${lines.join("\n")}\n`;
 }
 
-function renderOneshotHelp(): string {
-  return [
-    "oneshot",
-    "One-shot is not available yet.",
-    "",
-    "Supported next step:",
-    "  qube make-it-so --flow planned <idea>",
-    "",
-    "Use --json for a machine-readable error."
-  ].join("\n") + "\n";
+function workspaceModeError(message: string, json: boolean): CliExecution {
+  const nextAction = "Correct the workspace mode state, or use `qube mode local` or `qube mode shipping`.";
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "mode",
+        error: {
+          kind: "workspace-mode-error",
+          likelyCause: message,
+          suggestedNextAction: nextAction,
+          category: "validation",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return {
+    exitCode: 2,
+    stdout: "",
+    stderr: `Cannot read or update the workspace mode: ${message}\nNext action: ${nextAction}\n`
+  };
 }
 
 function readTextIfPresent(filePath: string): string {
@@ -5592,30 +6180,30 @@ function topLevelTokens(args: readonly string[]): readonly string[] {
 function renderMakeItSoHelp(): string {
   return [
     "make-it-so",
-    "Map an intent to the safest real QUBE workflow.",
+    "Continue the active workspace mode with an optional request.",
     "",
     "Usage:",
     "  qube make-it-so [args] [--json] [--dry-run] [--flow <value>] [--target <value>]",
     "",
     "Arguments:",
-    "  [args]  Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
+    "  [args]  Local request, planning intent, or issue selector.",
     "",
     "Flags:",
     "  --json            Render machine-readable JSON output.",
     "  --dry-run         Print the plan without running mapped commands.",
     "  -h, --help        Show command help.",
-    "  --flow <value>    Workflow to run.; options: planned, issue, direct-local",
+    "  --flow <value>    Shipping workflow to run.; options: planned, issue",
     "  --target <value>  Planning target path for the planned flow.",
     "",
     "Examples:",
-    "  qube make-it-so \"Ship a local notes CLI\"  # Start planning from a concise intent.",
+    "  qube make-it-so \"Add CSV export to the report command\"  # Continue with a task-specific request in local mode.",
     "  qube make-it-so --flow issue next --json  # Start the next provider-backed issue through Executor.",
     "  qube make-it-so \"Ship a local notes CLI\" --dry-run --json  # Preview the mapped workflow without running it.",
     "",
     "Behavior:",
     "  JSON output: supported",
     "  Dry run: supported",
-    "  Mutation: none",
+    "  Mutation: local mode prints instructions; shipping mode dispatches the selected workflow",
     "  Supply chain: standard"
   ].join("\n") + "\n";
 }
@@ -5747,43 +6335,50 @@ function mapIdeaArgs(args: readonly string[]): readonly string[] {
 }
 
 function planMakeItSo(args: readonly string[], environment: CliEnvironment): CliExecution {
+  let workspaceMode: ReturnType<typeof readWorkspaceMode>;
+  try {
+    workspaceMode = readWorkspaceMode(environment.cwd);
+  } catch (error) {
+    return makeItSoModeError(error instanceof Error ? error.message : String(error), hasTopLevelJsonFlag(args));
+  }
   const parsed = parseMakeItSoArgs(args);
   if ("error" in parsed) {
     return parsed.error;
   }
-  const plan = createMakeItSoPlan(parsed.flags, parsed.positionals);
-  if ("error" in plan) {
-    return makeItSoError(plan.error, parsed.flags.json === true);
+  const explicitFlow = readOption<string>(parsed.flags, "flow");
+  if (explicitFlow && !makeItSoFlowValues.includes(explicitFlow as MakeItSoFlow)) {
+    return makeItSoError(`Invalid make-it-so flow: ${explicitFlow}. Use one of: ${makeItSoFlowValues.join(", ")}.`, parsed.flags.json === true);
   }
-  if (plan.status === "blocked" && parsed.flags["dry-run"] !== true) {
+  if (workspaceMode.mode === "local") {
+    const request = parsed.positionals.join(" ").trim() || undefined;
+    const prompt = renderLocalDevelopmentPrompt(request);
     if (parsed.flags.json === true) {
       return {
-        exitCode: 2,
+        exitCode: 0,
         stdout: `${JSON.stringify({
-          ok: false,
+          ok: true,
           command: "make-it-so",
-          makeItSo: plan,
-          error: {
-            kind: "unsupported-flow",
-            likelyCause: "Direct-local make-it-so execution is not available.",
-            suggestedNextAction: plan.nextAction,
-            category: "usage",
-            exitCode: 2
-          }
+          mode: workspaceMode.mode,
+          workspaceRoot: workspaceMode.workspaceRoot,
+          configPath: workspaceMode.configPath,
+          configured: workspaceMode.configured,
+          request: request ?? null,
+          prompt
         })}\n`,
         stderr: ""
       };
     }
-    return { exitCode: 2, stdout: renderMakeItSoPlan(plan), stderr: "" };
+    return { exitCode: 0, stdout: prompt, stderr: "" };
+  }
+  const plan = createMakeItSoPlan(parsed.flags, parsed.positionals);
+  if ("error" in plan) {
+    return makeItSoError(plan.error, parsed.flags.json === true);
   }
   if (parsed.flags["dry-run"] === true) {
     if (parsed.flags.json === true) {
       return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "make-it-so", makeItSo: plan })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderMakeItSoPlan(plan), stderr: "" };
-  }
-  if (!plan.mappedCommand) {
-    return makeItSoError("No mapped command is available for this make-it-so flow.", parsed.flags.json === true);
   }
   return planQubeDispatch(plan.mappedCommand.component, plan.mappedCommand.args, environment);
 }
@@ -5803,22 +6398,6 @@ function createMakeItSoPlan(
   const intent = hasSelectorOrIntent ? first : null;
   const rest = hasSelectorOrIntent ? remaining : positionals;
   const wantsJson = flags.json === true;
-
-  if (flow === "direct-local") {
-    return {
-      flow,
-      intent,
-      target,
-      dryRun: flags["dry-run"] === true,
-      status: "blocked",
-      mappedCommand: null,
-      boundaries: [
-        "Direct-local artifact generation is not available.",
-        "No GitHub issue, branch, pull request, dependency, or workspace mutation is performed."
-      ],
-      nextAction: "Use `qube make-it-so --flow planned <intent>` to create a Bootstrap plan."
-    };
-  }
 
   if (flow === "issue") {
     const selector = intent ?? "next";
@@ -5975,6 +6554,28 @@ function makeItSoError(message: string, json: boolean): CliExecution {
     };
   }
   return { exitCode: 2, stdout: "", stderr: `${message}\n` };
+}
+
+function makeItSoModeError(message: string, json: boolean): CliExecution {
+  const nextAction = "Correct the workspace mode file, then run `qube mode --json` before continuing.";
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "make-it-so",
+        error: {
+          kind: "workspace-mode-error",
+          likelyCause: message,
+          suggestedNextAction: nextAction,
+          category: "validation",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return { exitCode: 2, stdout: "", stderr: `${message}\nNext action: ${nextAction}\n` };
 }
 
 function translateJsonFlag(args: readonly string[]): readonly string[] {
@@ -6248,7 +6849,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly ttyPrompt?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly supportsDryRun?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly ttyPrompt?: boolean; readonly flags?: readonly ReturnType<typeof defineFlag>[] } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -6263,7 +6864,7 @@ function createDirectCommand(
           multiple: true
         })
       ],
-      flags: supportsJson ? [jsonFlag] : [],
+      flags: [...(supportsJson ? [jsonFlag] : []), ...(options.flags ?? [])],
       examples: [
         {
           description,
@@ -6272,6 +6873,7 @@ function createDirectCommand(
       ],
       interactions: {
         json: supportsJson,
+        ...(options.supportsDryRun ? { dryRun: { supported: true as const } } : {}),
         noColor: true,
         nonInteractive: true,
         ttyPrompt: options.ttyPrompt === true

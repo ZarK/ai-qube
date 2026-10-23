@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  path,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,
   fixtureFile,
   initializeGitRepository,
-  path,
   runCli,
   writeFile,
 } from "./cli-test-support.js";
@@ -26,12 +26,34 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality run");
+    expect(stdout.value).toContain("Total execution time:");
     expect(stdout.value).toContain("Run:");
     expect(stdout.value).toContain("Artifacts:");
-    expect(stdout.value).toContain("Verbose tool details:");
-    expect(stdout.value).toContain("- typecheck: tsc");
-    expect(stdout.value).toContain("status=passed");
+    expect(stdout.value.indexOf("Run:")).toBeGreaterThan(
+      stdout.value.indexOf("Total execution time:"),
+    );
+    expect(stdout.value).toContain("  tsc ");
+    expect(stdout.value).toContain("(passed, exit 0)");
+  });
+
+  it("uses terminal colors only when NO_COLOR is unset", async () => {
+    vi.stubEnv("NO_COLOR", undefined);
+    try {
+      for (const noColor of [false, true]) {
+        if (noColor) vi.stubEnv("NO_COLOR", "");
+        const stdout = Object.assign(new MemoryOutput(), { isTTY: true });
+        const exitCode = await runCli(["node", "aiq", "run", fixtureFile, "--only", "3"], {
+          cwd: process.cwd(),
+          stderr: new MemoryOutput(),
+          stdin: new MemoryInput(),
+          stdout,
+        });
+        expect(exitCode).toBe(0);
+        expect(stdout.value.includes("\u001b[32mPASSED\u001b[0m")).toBe(!noColor);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("records diff-only intent and keeps safe stages scoped to the changed manifest", async () => {

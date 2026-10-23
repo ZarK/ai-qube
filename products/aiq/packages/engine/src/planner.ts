@@ -71,9 +71,7 @@ function resolveTaskFiles(
   fullRunFiles: readonly string[],
 ): string[] {
   if (request.diffOnly && diffOnlySafeStages.has(stageId)) {
-    return request.diffOnlyFiles.length > 0
-      ? [...request.diffOnlyFiles]
-      : [...request.manifest.files];
+    return [...request.diffOnlyFiles];
   }
 
   return [...fullRunFiles];

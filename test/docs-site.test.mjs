@@ -72,10 +72,14 @@ describe("QUBE public docs site", () => {
       "products/qube/README.md"
     ].map((path) => [path, read(path)]);
 
-    assert.match(page, /QUBE moves ideas to completed implementation/);
+    for (const flow of ["Bootstrap", "Executor", "Quality", "Umpire", "QUBE Review"]) {
+      assert.match(page, new RegExp(`<h[23]>${flow}</h[23]>`), flow);
+    }
     assert.match(page, /qube make-it-so/);
-    assert.match(page, /qube run aie -- queue --json/);
-    assert.match(page, /qube-command-surface-visual\.html/);
+    assert.match(page, /aie pr gate/);
+    for (const asset of page.matchAll(/(?:src|href)="(design\/[^"]+)"/g)) {
+      assert.equal(existsSync(new URL(`../docs/${asset[1]}`, import.meta.url)), true, asset[1]);
+    }
     assert.match(rootReadme, /docs\/index\.html/);
     for (const [path, readme] of packageReadmes) {
       assert.match(readme, /https:\/\/zark\.github\.io\/ai-qube\//, path);
@@ -129,6 +133,6 @@ describe("QUBE public docs site", () => {
 
     const home = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(home.status, 200);
-    assert.match(await home.text(), /QUBE moves ideas to completed implementation/);
+    assert.match(await home.text(), /<h2>QUBE Review<\/h2>/);
   });
 });

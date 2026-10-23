@@ -69,6 +69,7 @@ export type JavaScriptE2eRunner =
       name: "agent-browser" | "e2e" | "playwright";
     }
   | {
+      command: string;
       installMessage: string;
       kind: "missing-playwright";
       name: "playwright";

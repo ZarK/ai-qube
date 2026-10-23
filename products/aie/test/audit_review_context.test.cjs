@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
@@ -122,6 +123,7 @@ describe('audit review context', () => {
 
   it('puts typed audit evidence in the local visual-lane prompt', async () => {
     const { home, repo } = homeRepo();
+    execFileSync('git', ['init', '--quiet', repo]);
     writeAudit(home, 548);
     mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
     writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify({ version: 1, policy: { audit: { manualUiAudit: true } } })}\n`);

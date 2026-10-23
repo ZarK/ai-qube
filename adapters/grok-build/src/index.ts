@@ -256,9 +256,22 @@ function grokTextPayload(record: Record<string, unknown>): string | null {
   return null;
 }
 
+function grokStructuredPayload(record: Record<string, unknown>): string | null {
+  const value = record.structuredOutput;
+  if (isRecord(value)) return JSON.stringify(value);
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
   const records = parseGrokEnvelopeRecords(stdout.trim());
   const objects: string[] = [];
+  let structuredText: string | null = null;
   let sessionId: string | null = null;
   let reportedModel: string | undefined;
   let usage: Record<string, unknown> | undefined;
@@ -270,15 +283,16 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
       ?? readGrokUsage(record.tokenUsage)
       ?? readGrokUsage(record.tokens)
       ?? usage;
+    structuredText = grokStructuredPayload(record) ?? structuredText;
     const payload = grokTextPayload(record);
     if (!payload) continue;
     const sequence = jsonObjectSequence(payload);
     if (sequence) objects.push(...sequence);
   }
-  if (objects.length === 0) return null;
+  if (!structuredText && objects.length === 0) return null;
   return {
-    text: objects[objects.length - 1]!,
-    transientTexts: objects.slice(0, -1),
+    text: structuredText ?? objects[objects.length - 1]!,
+    ...(structuredText ? {} : { transientTexts: objects.slice(0, -1) }),
     sessionId,
     ...(reportedModel ? { reportedModel } : {}),
     ...(usage ? { usage } : {}),

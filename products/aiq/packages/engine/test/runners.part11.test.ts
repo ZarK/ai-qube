@@ -19,7 +19,7 @@ describe("engine runners", () => {
         process.cwd(),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status).toBe("warning");
       expect(result.diagnostics).toEqual([]);
       expect(result.notes).toEqual([`No supported files were selected for ${stageId}.`]);
       expect(result.toolRuns).toEqual([]);

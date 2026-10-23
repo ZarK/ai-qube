@@ -103,6 +103,32 @@ describe("grok-build adapter", () => {
     assert.equal(parsed.usage.inputTokens, 10);
   });
 
+  it("prefers structured output over provisional text objects", () => {
+    const pending = { status: "inconclusive", findings: [], blockers: [] };
+    const final = { status: "passed", findings: [], blockers: [] };
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope(JSON.stringify({
+      text: `${JSON.stringify(pending)}${JSON.stringify(pending)}`,
+      structuredOutput: final,
+      sessionId: "grok-structured",
+    }));
+
+    assert.deepEqual(JSON.parse(parsed.text), final);
+    assert.equal("transientTexts" in parsed, false);
+    assert.equal(parsed.sessionId, "grok-structured");
+  });
+
+  it("falls back to the last text object when structured output is not an object", () => {
+    const pending = JSON.stringify({ status: "pending" });
+    const final = JSON.stringify({ status: "passed" });
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope(JSON.stringify({
+      text: `${pending}${final}`,
+      structuredOutput: "not-json",
+    }));
+
+    assert.equal(parsed.text, final);
+    assert.deepEqual(parsed.transientTexts, [pending]);
+  });
+
   it("parses a Grok stop-hook payload and rejects Claude snake_case", () => {
     const parsed = adapter.parseGrokStopPayload({
       cwd: "/repo",
