@@ -102,8 +102,7 @@ describe("extracted helper regressions", () => {
       "--outputFile=/tmp/report.json",
       "--run",
       "--pool=threads",
-      "--poolOptions.threads.maxThreads=1",
-      "--poolOptions.threads.minThreads=1",
+      "--maxWorkers=1",
       "--no-file-parallelism",
     ]);
     expect(npmJest).toEqual({

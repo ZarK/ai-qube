@@ -23,8 +23,7 @@ export function createDirectJavaScriptTestArgs(options: JavaScriptTestArgsOption
       `--outputFile=${reportPath}`,
       "--run",
       "--pool=threads",
-      "--poolOptions.threads.maxThreads=1",
-      "--poolOptions.threads.minThreads=1",
+      "--maxWorkers=1",
       "--no-file-parallelism",
     ];
     if (mode === "coverage") {

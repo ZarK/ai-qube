@@ -465151,8 +465151,7 @@ function createDirectJavaScriptTestArgs(options8) {
       `--outputFile=${reportPath}`,
       "--run",
       "--pool=threads",
-      "--poolOptions.threads.maxThreads=1",
-      "--poolOptions.threads.minThreads=1",
+      "--maxWorkers=1",
       "--no-file-parallelism"
     ];
     if (mode === "coverage") {
