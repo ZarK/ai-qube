@@ -27,13 +27,19 @@ let lastEngineSetupPromise: Promise<CachedEngineSetup> | undefined;
 
 export async function resolveRunRequest(request: RunRequest): Promise<ResolvedRunRequest> {
   const cwd = path.resolve(request.cwd ?? process.cwd());
+  const manifest = await normalizeFileManifest(request.manifest, cwd);
 
   const resolved: ResolvedRunRequest = {
     context: request.context ?? "serve",
     cwd,
     diffOnly: request.diffOnly === true,
-    diffOnlyFiles: await normalizeDiffOnlyFiles(request.diffOnlyFiles, cwd),
-    manifest: await normalizeFileManifest(request.manifest, cwd),
+    diffOnlyFiles: await normalizeDiffOnlyFiles(
+      request.diffOnlyFiles ?? manifest.files,
+      cwd,
+      request.manifest.ignore,
+    ),
+    manifest,
+    ...(request.manifest.ignore === undefined ? {} : { ignore: [...request.manifest.ignore] }),
     mode: request.mode,
     outDir: resolveArtifactOutDir(cwd, request.outDir ?? defaultOutDir),
     selection: {
@@ -57,12 +63,18 @@ export async function resolveRunRequest(request: RunRequest): Promise<ResolvedRu
 async function normalizeDiffOnlyFiles(
   diffOnlyFiles: readonly string[] | undefined,
   cwd: string,
+  ignore: readonly string[] | undefined,
 ): Promise<string[]> {
   if (diffOnlyFiles === undefined || diffOnlyFiles.length === 0) {
     return [];
   }
 
-  return (await normalizeFileManifest({ files: diffOnlyFiles, source: "direct" }, cwd)).files;
+  return (
+    await normalizeFileManifest(
+      { files: diffOnlyFiles, source: "direct", ...(ignore === undefined ? {} : { ignore }) },
+      cwd,
+    )
+  ).files;
 }
 
 export async function buildEngineContextFromResolvedRequest(

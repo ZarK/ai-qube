@@ -9,6 +9,7 @@ import {
   fixtureFile,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   runCli,
   tempDirs,
@@ -54,13 +55,25 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Quality first run");
-    expect(stdout.value).toContain("Quality run");
-    expect(stdout.value).toContain("3 typecheck failed");
-    expect(stdout.value).toContain("Next: aiq setup");
-    expect(stdout.value).toContain("Quality failures:");
-    expect(stdout.value).toContain("First-run diagnostics:");
-    expect(stdout.value).toContain("Remediation: fix the listed diagnostics");
+    expect(stdout.value).toContain("Stage 3 (typecheck): FAILED");
+    expect(stdout.value).toContain("To debug failed stages:");
+    expect(stdout.value).toContain("aiq --only 3 --verbose");
+    expect(stdout.value).not.toContain("First-run diagnostics:");
+    const hint = stdout.value.match(/^\s+(aiq --only 3 --verbose)\s+#/mu)?.[1];
+    expect(hint).toBeDefined();
+    const debugStdout = new MemoryOutput();
+    const debugStderr = new MemoryOutput();
+    const debugExitCode = await runCli(["node", ...(hint ?? "").split(" ")], {
+      cwd: project.root,
+      stderr: debugStderr,
+      stdin: new MemoryInput(),
+      stdout: debugStdout,
+    });
+    expect(debugExitCode).toBe(1);
+    expect(debugStderr.value).toBe("");
+    expect(debugStdout.value).toContain("Stage 3 (typecheck): FAILED");
+    expect(debugStdout.value.match(/Stage \d+ \(/gu)).toHaveLength(1);
+    expect(debugStdout.value).toContain("Type 'number' is not assignable to type 'string'");
   });
 
   it("returns a distinct internal error code when first-run cannot inspect cwd", async () => {
@@ -81,7 +94,7 @@ describe("CLI foundation", () => {
     expect(stderr.value).toContain("ENOENT");
   });
 
-  it("warns when first-run input collection reaches the safety limit", async () => {
+  it("selects every supported first-run input without truncation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-first-run-truncated-"));
     tempDirs.push(tempDir);
     await writeFile(path.join(tempDir, "package.json"), '{"name":"truncated"}\n', "utf8");
@@ -92,7 +105,7 @@ describe("CLI foundation", () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
-    const exitCode = await runCli(["node", "aiq"], {
+    const exitCode = await runCli(["node", "aiq", "--verbose"], {
       cwd: tempDir,
       stderr,
       stdin: new MemoryInput(),
@@ -101,10 +114,16 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("Warning: first-run input collection reached its safety limit");
+    expect(stdout.value).toContain("Stage 1 (lint): PASSED");
+    const report = JSON.parse(
+      await readFile(path.join(tempDir, ".qube", "aiq", "out", "aiq.report.json"), "utf8"),
+    );
+    expect(
+      report.request.manifest.files.filter((file: string) => file.endsWith(".sql")),
+    ).toHaveLength(505);
   });
 
-  it("warns when first-run skips an unreadable subdirectory", async () => {
+  it("fails when first-run cannot read a selected subdirectory", async () => {
     if (process.platform === "win32") {
       return;
     }
@@ -121,16 +140,16 @@ describe("CLI foundation", () => {
     const stderr = new MemoryOutput();
 
     try {
-      const exitCode = await runCli(["node", "aiq"], {
+      const exitCode = await runCli(["node", "aiq", "--verbose"], {
         cwd: tempDir,
         stderr,
         stdin: new MemoryInput(),
         stdout,
       });
 
-      expect(exitCode).toBe(0);
-      expect(stderr.value).toBe("");
-      expect(stdout.value).toContain("Warning: Skipped unreadable directory");
+      expect(exitCode).toBe(2);
+      expect(stderr.value).toContain("EACCES");
+      expect(stdout.value).not.toContain("PASSED");
     } finally {
       await chmod(unreadableDir, 0o700).catch(() => undefined);
     }

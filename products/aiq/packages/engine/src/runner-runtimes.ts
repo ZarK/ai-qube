@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import type {
   BashRunnerRuntime,
   DotNetRunnerRuntime,
@@ -45,11 +43,11 @@ import {
   resolveDotNetCommand,
   resolveGradleCommand,
   resolveInstalledBinary,
+  resolveUvxCommand,
   resolveMavenCommand,
   resolvePowerShellModuleManifest,
   resolveRequiredBinary,
   resolveRequiredPowerShellModuleManifest,
-  resolveUvxCommand,
   runExecutable,
   runNodeTool,
   runPowerShellScript,
@@ -297,10 +295,10 @@ export function createDotNetRunnerRuntime(
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
     isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
-    readFileText: (filePath) => readFile(filePath, "utf8"),
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveDotNetCommand,
+    resolveUvxCommand,
     runExecutable,
     signal,
     throwIfAbortError,

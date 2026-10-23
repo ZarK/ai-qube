@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  os,
+  path,
   ToolRunner,
   buildEngineContext,
   createDotNetFixtureProject,
   expectBashSetupFailure,
   expectProjectResolutionFailure,
   mkdtemp,
-  os,
-  path,
   runPlannedTask,
   tempDirs,
   withToolRunnerOverride,
@@ -84,7 +84,7 @@ describe("engine runners", () => {
         process.cwd(),
       );
 
-      expect(result.status).toBe("passed");
+      expect(result.status).toBe("warning");
       expect(result.diagnostics).toEqual([]);
       expect(result.notes).toEqual(["No supported files were selected for unit."]);
       expect(result.toolRuns).toEqual([]);

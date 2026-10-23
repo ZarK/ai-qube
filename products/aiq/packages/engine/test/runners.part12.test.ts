@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  createCustomJavaScriptE2eProject,
-  mkdtemp,
   os,
   path,
+  createCustomJavaScriptE2eProject,
+  mkdtemp,
   runPlannedTask,
   tempDirs,
   writeFile,
 } from "./runners-test-support.js";
 describe("engine runners", () => {
-  it("passes e2e as noop when no JavaScript or TypeScript project files are selected", async () => {
+  it("warns for e2e when no JavaScript or TypeScript project files are selected", async () => {
     const textFile = path.join(await mkdtemp(path.join(os.tmpdir(), "aiq-e2e-no-js-")), "note.txt");
     tempDirs.push(path.dirname(textFile));
     await writeFile(textFile, "notes\n", "utf8");
@@ -24,7 +24,7 @@ describe("engine runners", () => {
       process.cwd(),
     );
 
-    expect(result.status).toBe("passed");
+    expect(result.status).toBe("warning");
     expect(result.toolRuns).toEqual([]);
     expect(result.notes[0]).toContain("No supported files were selected for e2e.");
   });

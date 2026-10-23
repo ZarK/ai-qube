@@ -1,5 +1,10 @@
 {
   "version": 1,
+  "stages": {
+    "sloc": {
+      "limit": 800
+    }
+  },
   "inputs": {
     "ignore": [
       "node_modules/**",

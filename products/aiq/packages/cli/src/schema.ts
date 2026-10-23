@@ -207,9 +207,16 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-plan", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-plan", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -254,14 +261,21 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
       reason: "Quality benchmarks may execute repository fixtures and quality toolchains.",
     },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-benchmark", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-benchmark", contexts: ["standalone"] },
+    },
   },
   {
     kind: "command",
@@ -298,7 +312,12 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
@@ -306,7 +325,9 @@ export const aiqCommandMetadata = [
         "Quality watch may repeatedly execute project quality tools selected by repository configuration.",
     },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-watch", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-watch", contexts: ["standalone"] },
+    },
   },
   {
     kind: "command",
@@ -340,14 +361,21 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
       reason: "Quality server executes project quality tools in response to local requests.",
     },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-server", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-server", contexts: ["standalone"] },
+    },
   },
   {
     kind: "command",
@@ -370,9 +398,16 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-diagnostics", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-diagnostics", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -395,9 +430,16 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-setup", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-setup", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -411,9 +453,16 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-status", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-status", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -470,7 +519,9 @@ export const aiqCommandMetadata = [
     },
     mutation: { categories: ["local-config"] },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-config", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-config", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -492,7 +543,12 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["json"], defaultFormat: "json" },
-    interactions: { json: true, noColor: true, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: true,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: [
       {
         code: 0,
@@ -506,7 +562,9 @@ export const aiqCommandMetadata = [
         description: "The command line or local evidence query failed.",
       },
     ],
-    extensions: { aiq: { capability: "quality-evidence", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-evidence", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
@@ -528,7 +586,12 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["json"], defaultFormat: "json" },
-    interactions: { json: true, noColor: true, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: true,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: [
       {
         code: 0,
@@ -541,30 +604,46 @@ export const aiqCommandMetadata = [
         description: "The command line was invalid.",
       },
     ],
-    extensions: { aiq: { capability: "quality-schema", contexts: ["cli", "qube"] } },
+    extensions: {
+      aiq: { capability: "quality-schema", contexts: ["cli", "qube"] },
+    },
   },
   {
     kind: "command",
     name: "hook",
-    description: "Render standalone hook adapter setup guidance.",
+    description: "Install or run the Quality pre-commit hook.",
     arguments: [
       {
         name: "subcommand",
-        description: "Hook setup subcommand. Use install.",
+        description: "Hook subcommand: install or run.",
         required: false,
       },
     ],
-    flags: outputFlags,
+    flags: [
+      ...outputFlags,
+      {
+        name: "verbose",
+        description: "Show diagnostics and tool details.",
+        type: "boolean",
+      },
+    ],
     examples: [
       {
         command: "aiq hook install",
-        description: "Show hook installation guidance.",
+        description: "Install the Quality pre-commit hook.",
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-hook-guidance", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-hook", contexts: ["standalone"] },
+    },
   },
   {
     kind: "command",
@@ -585,9 +664,16 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-ci-guidance", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-ci-guidance", contexts: ["standalone"] },
+    },
   },
   {
     kind: "command",
@@ -608,13 +694,22 @@ export const aiqCommandMetadata = [
       },
     ],
     output: { formats: ["text", "json"], defaultFormat: "text" },
-    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    interactions: {
+      json: true,
+      noColor: false,
+      nonInteractive: true,
+      ttyPrompt: false,
+    },
     exitCodes: commonExitCodes,
-    extensions: { aiq: { capability: "quality-ignore-guidance", contexts: ["standalone"] } },
+    extensions: {
+      aiq: { capability: "quality-ignore-guidance", contexts: ["standalone"] },
+    },
   },
 ] as const satisfies readonly CommandMetadata[];
 
-export const aiqCommandRegistry = createCommandRegistry({ commands: aiqCommandMetadata });
+export const aiqCommandRegistry = createCommandRegistry({
+  commands: aiqCommandMetadata,
+});
 
 const aiqSchemaOptions = {
   packageName: aiqPackageName,

@@ -14,7 +14,9 @@ import {
   setAiqProgressStage,
 } from "@tjalve/aiq/config";
 import {
+  createLayoutConsumption,
   createRunPlan,
+  normalizeFileManifest,
   resolvePlanArtifactPath,
   resolveReportArtifactPath,
   runEngine,
@@ -24,7 +26,7 @@ import type { LanguageId, RunRequest, RunResult, StageId } from "@tjalve/aiq/mod
 
 import { createAiqQualityEvidence, formatAiqQualityEvidenceJson } from "./evidence.js";
 import {
-  collectFirstRunManifestFiles,
+  type FirstRunManifestCollection,
   createFirstRunSetupGuidance,
   formatFirstRunDetectedProjects,
   inferFirstRunProjects,
@@ -37,13 +39,12 @@ import {
   type DoctorCommandOutput,
   type SetupCommandOutput,
   formatBenchmarkOutput,
-  formatConfigSetupOutput,
   formatConfigOutput,
+  formatConfigSetupOutput,
   formatConfigStageOutput,
   formatDoctorOutput,
   formatDryRunOutput,
   formatFirstRunDetectionOutput,
-  formatFirstRunResultDetails,
   formatFirstRunSetupOutput,
   formatPlanOutput,
   formatRunResultOutput,
@@ -63,6 +64,7 @@ import {
   cliStageShortcutIds,
 } from "./types.js";
 import { createDefaultRunOutput, createRunWorkflowOutput, resolveNextCommand } from "./workflow.js";
+import { inspectWorkspaceLayout } from "./workspace-layout.js";
 export { runDoctorCommand, runSetupCommand } from "./doctor-command.js";
 export { runStatusCommand } from "./status-command.js";
 import { loadOptionalRunProgress } from "./status-command.js";
@@ -113,7 +115,9 @@ export async function runConfigCommand(parsed: ParsedArgs, io: CliIo): Promise<n
           ...(resolvedConfig.configPath === undefined
             ? {}
             : { configPath: resolvedConfig.configPath }),
-          ...(resolvedConfig.configPaths === undefined ? {} : { configPaths: resolvedConfig.configPaths }),
+          ...(resolvedConfig.configPaths === undefined
+            ? {}
+            : { configPaths: resolvedConfig.configPaths }),
           ...(resolvedConfig.sources === undefined ? {} : { sources: resolvedConfig.sources }),
           progress: loadedProgress.progress,
           progressPath: loadedProgress.path,
@@ -136,12 +140,15 @@ export async function runConfigCommand(parsed: ParsedArgs, io: CliIo): Promise<n
   } catch (error) {
     const message = formatError(error);
     if (parsed.format === "json") {
-      io.stdout.write(`${JSON.stringify({
-        ok: false,
-        command: "config",
-        error: message,
-        nextAction: "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
-      })}\n`);
+      io.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          command: "config",
+          error: message,
+          nextAction:
+            "Select stage IDs from `aiq schema --format json`, then rerun `aiq config --stages <ids> --format json`.",
+        })}\n`,
+      );
     } else {
       io.stderr.write(`${message}\n`);
     }
@@ -222,26 +229,47 @@ export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise
     return 3;
   }
 
-  let manifestCollection: Awaited<ReturnType<typeof collectFirstRunManifestFiles>>;
+  let manifestCollection: FirstRunManifestCollection;
   try {
-    const layout = await loadLayoutConsumption({
+    const detectedLayout = await loadLayoutConsumption({
       cwd: io.cwd,
-      required: true,
+      required: false,
       ...(parsed.layoutInspect === undefined ? {} : { inspectPath: parsed.layoutInspect }),
       ...(parsed.layoutAffected === undefined ? {} : { affectedPath: parsed.layoutAffected }),
     });
-    if (layout === undefined) {
+    const workspaceLayout = detectedLayout ?? (await inspectWorkspaceLayout(io.cwd));
+    if (workspaceLayout === undefined) {
       throw new Error(
         "Layout inspect JSON is missing. Provide --layout-inspect or AIQ_LAYOUT_INSPECT, or run aie repo inspect --json.",
       );
     }
+    const layout = createLayoutConsumption({
+      inspect: workspaceLayout.inspect,
+      source: workspaceLayout.scope.source,
+    });
     if (layout.scope.avoidRepoRoot) {
       throw new Error(
         `${layout.scope.warnings.at(-1) ?? "Repository layout is uncertain, so Quality will not run a repository-root gate."} Use aiq run with explicit project paths.`,
       );
     }
 
-    manifestCollection = await collectFirstRunManifestFiles(io.cwd, projects);
+    const config = await resolveCliConfig(parsed, io, {
+      surface: "cli",
+      includeProgressStage: true,
+    });
+    const manifest = await normalizeFileManifest(
+      {
+        files:
+          layout.scope.affectedProjectPaths.length > 0 ? layout.scope.affectedProjectPaths : ["."],
+        source: "direct",
+        ignore: [
+          ...config.config.inputs.ignore,
+          ...[...defaultProjectScopeIgnoredDirectoryNames].map((name) => `${name}/**`),
+        ],
+      },
+      io.cwd,
+    );
+    manifestCollection = { files: manifest.files, truncated: false, warnings: [] };
     const scoped = await scopeFilesWithLayout({
       files: manifestCollection.files,
       cwd: io.cwd,
@@ -262,26 +290,28 @@ export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise
       surface: "cli",
     });
 
-    io.stdout.write(
-      formatFirstRunDetectionOutput(parsed.format, {
-        configCreated: initialization.configCreated,
-        configPath: initialization.configPath,
-        detectedProjects: formatFirstRunDetectedProjects(projects, io.cwd),
-        layout: {
-          affectedProjects: [...scoped.layout.scope.affectedProjectIds],
-          kind: scoped.layout.inspect.kind,
-          scope: scoped.layout.scope.kind,
-          source: scoped.layout.scope.source,
-          suggestedGates: [...scoped.layout.scope.suggestedGates],
-        },
-        progressCreated: initialization.progressCreated,
-        progressPath: initialization.progressPath,
-        stages: [...(request.stages ?? [])],
-        target: scoped.layout.scope.affectedProjectPaths[0] ?? ".",
-        truncated: manifestCollection.truncated,
-        warnings: uniqueFirstRunWarnings([...manifestCollection.warnings, ...scoped.warnings]),
-      }),
-    );
+    if (parsed.format === "json" || parsed.verbose) {
+      io.stdout.write(
+        formatFirstRunDetectionOutput(parsed.format, {
+          configCreated: initialization.configCreated,
+          configPath: initialization.configPath,
+          detectedProjects: formatFirstRunDetectedProjects(projects, io.cwd),
+          layout: {
+            affectedProjects: [...scoped.layout.scope.affectedProjectIds],
+            kind: scoped.layout.inspect.kind,
+            scope: scoped.layout.scope.kind,
+            source: scoped.layout.scope.source,
+            suggestedGates: [...scoped.layout.scope.suggestedGates],
+          },
+          progressCreated: initialization.progressCreated,
+          progressPath: initialization.progressPath,
+          stages: [...(request.stages ?? [])],
+          target: scoped.layout.scope.affectedProjectPaths[0] ?? ".",
+          truncated: manifestCollection.truncated,
+          warnings: uniqueFirstRunWarnings([...manifestCollection.warnings, ...scoped.warnings]),
+        }),
+      );
+    }
   } catch (error) {
     io.stderr.write(`${formatError(error)}\n`);
     return 2;
@@ -325,11 +355,12 @@ async function executeFirstRunEngine(
   io.stdout.write(
     writeFirstRunJsonPrelude(parsed.format)
       ? formatRunResultOutput(parsed.format, result)
-      : formatRunResultOutput(parsed.format, result, "run", { verbose: parsed.verbose }),
+      : formatRunResultOutput(parsed.format, result, "run", {
+          verbose: parsed.verbose,
+          color: io.stdout.isTTY === true,
+          targets: debugTargetArguments(parsed),
+        }),
   );
-  if (parsed.format === "text") {
-    io.stdout.write(formatFirstRunResultDetails(result));
-  }
   return result.ok ? 0 : 1;
 }
 
@@ -362,6 +393,8 @@ export async function runCheckCommand(parsed: ParsedArgs, io: CliIo): Promise<nu
     io.stdout.write(
       formatRunResultOutput(parsed.format, result, outputCommand, {
         verbose: parsed.verbose,
+        color: io.stdout.isTTY === true,
+        targets: debugTargetArguments(parsed),
         ...(loadedProgress === undefined
           ? {}
           : { workflow: createRunWorkflowOutput(loadedProgress, request, result) }),
@@ -374,20 +407,20 @@ export async function runCheckCommand(parsed: ParsedArgs, io: CliIo): Promise<nu
   }
 }
 
+function debugTargetArguments(parsed: ParsedArgs): string[] {
+  return [
+    ...parsed.files,
+    ...(parsed.filesFrom === undefined ? [] : ["--files-from", parsed.filesFrom]),
+    ...(parsed.stdinFileList ? ["--stdin-file-list"] : []),
+  ];
+}
+
 function uniqueFirstRunWarnings(warnings: readonly string[]): string[] {
   return [...new Set(warnings)];
 }
 
 function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: string) {
   switch (command) {
-    case "hook":
-      return {
-        command,
-        requested: `hook ${subcommand ?? ""}`.trim(),
-        summary: "Hook setup uses the dedicated Quality hook adapter.",
-        replacement:
-          "Use your repository hook manager to invoke the aiq-hook package, or run aiq check/run directly in pre-commit automation.",
-      };
     case "ci":
       return {
         command,

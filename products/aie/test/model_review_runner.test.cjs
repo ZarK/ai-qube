@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { dirname, join } = require('node:path');
@@ -22,8 +22,13 @@ const {
 } = require('../dist/app/model_review_runner.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
+const { resolveTrustedLocalStore } = require('../dist/trusted_local_store.js');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
 function reviewInput(repoRoot, host = 'grok-build') {
+  if (existsSync(repoRoot) && !existsSync(join(repoRoot, '.git'))) {
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+  }
   const plan = {
     host,
     tier: 'review',
@@ -306,7 +311,7 @@ describe('model review runner', () => {
       const terminalArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'terminal', path: 'terminal:test run', sha256: null }] });
       assert.equal(terminalArtifact.evidence, null);
       assert.equal(terminalArtifact.reasonCode, 'model-route-contract-mismatch');
-      const rawPath = isolatedRawOutputPath(repoRoot, 309, 310, 'abc123', 'code-quality');
+      const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
       assert.equal(existsSync(rawPath), true);
       assert.match(terminalArtifact.error, /Raw output:/);
       assert.match(terminalArtifact.error, /\.raw-output\.json/);
@@ -384,6 +389,106 @@ describe('model review runner', () => {
     assert.equal(result.evidence.modelTier, 'review');
     assert.equal(result.evidence.usage, undefined);
     assert.equal(existsSync(capturedSchemaPath), false);
+  });
+
+  it('keeps review schemas, prompts, and raw diagnostics in the linked worktree git directory', async t => {
+    const primary = cloneGitRepo('committed', 'aie-route-primary-');
+    const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-route-linked-'));
+    const repoRoot = join(worktreeParent, 'checkout');
+    t.after(() => {
+      rmSync(worktreeParent, { recursive: true, force: true });
+      rmSync(primary, { recursive: true, force: true });
+    });
+    execFileSync('git', ['worktree', 'add', '-b', 'review', repoRoot], { cwd: primary, stdio: 'ignore' });
+    const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const routeDirectory = join(gitDir, 'qube', 'aie', 'model-route');
+
+    for (const host of ['codex', 'grok-build']) {
+      let privatePath = null;
+      const result = await runModelReview({
+        ...reviewInput(repoRoot, host),
+        resolveExecutable: async () => 'review.exe',
+        runProcess: async invocation => {
+          privatePath = host === 'codex' ? invocation.schemaPath : invocation.promptPath;
+          assert.equal(dirname(privatePath), routeDirectory);
+          const content = readFileSync(privatePath, 'utf8');
+          if (host === 'codex') assert.equal(JSON.parse(content).properties.lane.const, 'code-quality');
+          else assert.match(content, /INSPECT EXACT LANE PROMPT/);
+          return {
+            exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+            stdout: host === 'codex'
+              ? `${JSON.stringify({ type: 'thread.started', thread_id: 'review-session' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '{}' } })}\n`
+              : JSON.stringify({ text: '{}', sessionId: 'review-session' }),
+          };
+        },
+      });
+      assert.equal(result.reasonCode, 'model-route-contract-mismatch');
+      assert.equal(existsSync(privatePath), false);
+      const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+      assert.equal(rawPath, join(routeDirectory, 'raw', '309', '310', 'abc123', 'code-quality.raw-output.json'));
+      assert.equal(JSON.parse(readFileSync(rawPath, 'utf8')).reasonCode, 'model-route-contract-mismatch');
+      assert.equal(existsSync(join(primary, '.git', 'qube', 'aie')), false);
+    }
+  });
+
+  for (const linked of [false, true]) {
+    for (const changesCheckout of [false, true]) {
+      it(`${changesCheckout ? 'rejects checkout writes' : 'allows trusted store writes'} when a ${linked ? 'linked' : 'primary'} checkout review completes immediately`, async t => {
+        const primary = cloneGitRepo('committed', 'aie-route-monitor-');
+        const worktreeParent = mkdtempSync(join(tmpdir(), 'aie-route-monitor-linked-'));
+        const repoRoot = linked ? join(worktreeParent, 'checkout') : primary;
+        t.after(() => {
+          rmSync(worktreeParent, { recursive: true, force: true });
+          rmSync(primary, { recursive: true, force: true });
+        });
+        if (linked) execFileSync('git', ['worktree', 'add', '-b', 'review', repoRoot], { cwd: primary, stdio: 'ignore' });
+        const store = resolveTrustedLocalStore(repoRoot);
+        const result = await runModelReview({
+          ...reviewInput(repoRoot),
+          resolveCheckoutState: async () => 'unchanged',
+          resolveExecutable: async () => 'review.exe',
+          runProcess: async invocation => {
+            assert.equal(dirname(invocation.promptPath), join(store.path, 'model-route'));
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review started\n');
+            if (changesCheckout) writeFileSync(join(repoRoot, 'README.md'), 'changed during review\n');
+            writeFileSync(join(store.path, 'model-route', 'review.log'), 'review completed\n');
+            return {
+              exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+              stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'review-session' }),
+            };
+          },
+        });
+        assert.equal(result.reasonCode, changesCheckout ? 'model-route-checkout-mismatch' : null, result.error);
+        if (changesCheckout) {
+          assert.equal(result.evidence, null);
+          assert.match(result.error, /README\.md/);
+        } else {
+          assert.equal(result.evidence.status, 'passed');
+        }
+      });
+    }
+  }
+
+  it('refuses a symlinked model route directory before starting a review', async t => {
+    const repoRoot = cloneGitRepo('committed', 'aie-route-symlink-');
+    const outside = mkdtempSync(join(tmpdir(), 'aie-route-outside-'));
+    t.after(() => {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    });
+    const store = resolveTrustedLocalStore(repoRoot);
+    mkdirSync(store.path, { recursive: true });
+    symlinkSync(outside, join(store.path, 'model-route'), process.platform === 'win32' ? 'junction' : 'dir');
+    let started = false;
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'review.exe',
+      runProcess: async () => { started = true; throw new Error('Review must not start.'); },
+    });
+    assert.equal(result.reasonCode, 'model-route-unavailable');
+    assert.match(result.error, /symlink|junction/i);
+    assert.equal(started, false);
+    assert.deepEqual(readdirSync(outside), []);
   });
 
   it('records host-reported usage on routed evidence and omits it when the host reports none', async () => {

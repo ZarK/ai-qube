@@ -88,6 +88,36 @@ describe("CLI layout consumption", () => {
     ).toBe(true);
   });
 
+  it("runs all declared workspace members without changed paths or layout files", async () => {
+    const root = await copyLayoutFixture("workspace-gate", aieJsWorkspace);
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const exitCode = await runCli(["node", "aiq", "--dry-run", "--format", "json"], {
+      cwd: root,
+      stdout,
+      stderr,
+      stdin: new MemoryInput(),
+    });
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const payload = JSON.parse(stdout.value.slice(stdout.value.indexOf('{\n  "dryRun"')));
+    expect(payload.plan.layout.scope.affectedProjectPaths.sort()).toEqual([
+      "apps/web",
+      "packages/core",
+      "tools/cli",
+    ]);
+    expect(
+      payload.plan.input.files.some((file: string) =>
+        file.replace(/\\/gu, "/").includes("packages/core/src"),
+      ),
+    ).toBe(true);
+    expect(
+      payload.plan.input.files.some((file: string) =>
+        file.replace(/\\/gu, "/").includes("apps/web/src"),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps a nested single-app change on the root app", async () => {
     await access(path.join(aieSingleApp, "src", "index.ts"));
     const root = await copyLayoutFixture("single-app", aieSingleApp);
@@ -293,8 +323,107 @@ describe("CLI layout consumption", () => {
     expect(
       payload.plan.input.files.some((file) => file.replace(/\\/g, "/").includes("/dist/")),
     ).toBe(false);
-    expect(payload.plan.layout.scope.classifiedPaths).toEqual(
-      expect.arrayContaining([{ path: "dist/bundle.js", classification: "generated" }]),
+    expect(
+      payload.plan.layout.scope.classifiedPaths.some((entry) => entry.path === "dist/bundle.js"),
+    ).toBe(false);
+  });
+  it("reports ignored explicit files as failed JSON stages", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-ignored-target-");
+    await mkdir(path.join(project.root, "dist"));
+    await writeFile(path.join(project.root, "dist", "bundle.js"), "export {};\n");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const exitCode = await runCli(
+      ["node", "aiq", "run", "dist/bundle.js", "--only", "5", "--format", "json"],
+      {
+        cwd: project.root,
+        stdout,
+        stderr,
+        stdin: new MemoryInput(),
+      },
     );
+    expect(exitCode).toBe(1);
+    expect(stderr.value).toBe("");
+    const report = JSON.parse(stdout.value);
+    expect(report.stages[0]).toMatchObject({
+      status: "failed",
+      notes: ["Explicit target selected no files."],
+    });
+    expect(report.plan.input.files).toEqual([]);
+  });
+
+  it.each([
+    { name: "file list", args: ["--files-from", "empty.txt"] },
+    { name: "standard input", args: ["--stdin-file-list"] },
+  ])("reports an explicit empty $name as a failed stage in JSON", async ({ args }) => {
+    const project = await createTypeScriptFixtureProject("aiq-empty-list-");
+    await writeFile(path.join(project.root, "empty.txt"), "");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const exitCode = await runCli(
+      ["node", "aiq", "run", ...args, "--only", "5", "--format", "json"],
+      { cwd: project.root, stdout, stderr, stdin: new MemoryInput() },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr.value).toBe("");
+    const report = JSON.parse(stdout.value);
+    expect(report.summary.status).toBe("failed");
+    expect(report.stages).toEqual([
+      expect.objectContaining({
+        stageId: "sloc",
+        status: "failed",
+        notes: ["Explicit target selected no files."],
+      }),
+    ]);
+    expect(report.plan.input.files).toEqual([]);
+  });
+
+  it("keeps an ignored explicit target empty for diff-only full-run stages", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-empty-diff-target-");
+    await mkdir(path.join(project.root, "dist"));
+    await writeFile(path.join(project.root, "dist", "bundle.js"), "var value = 1;\n");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const exitCode = await runCli(
+      ["node", "aiq", "run", "dist/bundle.js", "--diff-only", "--only", "3", "--format", "json"],
+      { cwd: project.root, stdout, stderr, stdin: new MemoryInput() },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr.value).toBe("");
+    const report = JSON.parse(stdout.value);
+    expect(report.summary.status).toBe("failed");
+    expect(report.stages).toEqual([
+      expect.objectContaining({
+        stageId: "typecheck",
+        status: "failed",
+        notes: ["Explicit target selected no files."],
+        toolRuns: [],
+      }),
+    ]);
+    expect(report.plan.input.files).toEqual([]);
+  });
+
+  it("reports an unmeasured Shell selection as warning in JSON", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-unmeasured-target-");
+    await writeFile(path.join(project.root, "script.sh"), "echo hello\n");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const exitCode = await runCli(
+      ["node", "aiq", "run", "script.sh", "--only", "5", "--format", "json"],
+      {
+        cwd: project.root,
+        stdout,
+        stderr,
+        stdin: new MemoryInput(),
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const report = JSON.parse(stdout.value);
+    expect(report.summary.status).toBe("warning");
+    expect(report.stages[0]).toMatchObject({
+      status: "warning",
+      notes: ["No supported files were selected for sloc."],
+    });
   });
 });

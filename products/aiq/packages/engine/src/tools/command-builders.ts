@@ -120,7 +120,7 @@ export interface RuffCheckCommandOptions {
 }
 
 export function createRuffCheckArgs(options: RuffCheckCommandOptions): string[] {
-  return ["-m", "ruff", "check", "--output-format", "json", ...options.files];
+  return ["check", "--output-format", "json", ...options.files];
 }
 
 export interface RuffFormatCommandOptions {
@@ -128,7 +128,7 @@ export interface RuffFormatCommandOptions {
 }
 
 export function createRuffFormatArgs(options: RuffFormatCommandOptions): string[] {
-  return ["-m", "ruff", "format", ...options.files, "--check"];
+  return ["format", ...options.files, "--check"];
 }
 
 export interface TyCheckCommandOptions {
@@ -414,6 +414,8 @@ export function createTscArgs(options: TscCommandOptions): string[] {
   ];
 }
 
+export const lizardVersion = "1.24.1";
+
 export interface LizardCommandOptions {
   inputFile: string;
   languages: string[];
@@ -422,6 +424,8 @@ export interface LizardCommandOptions {
 
 export function createLizardArgs(options: LizardCommandOptions): string[] {
   const args = [
+    "--from",
+    `lizard==${lizardVersion}`,
     "lizard",
     "--csv",
     ...options.languages.flatMap((lang) => ["-l", lang]),

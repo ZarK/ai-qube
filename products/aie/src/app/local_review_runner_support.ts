@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import { resolveTrustedLocalStore, type TrustedLocalStore, type TrustedStoreContainment } from '../trusted_local_store.js';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact, redactKnownSecrets } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
@@ -83,17 +84,22 @@ export interface RouteFaultLedger {
 }
 
 // The ledger influences which provider executes review, so it lives under
-// .git beside the trusted host-provenance store where pull request content
+// the git directory beside the trusted host-provenance store where pull request content
 // can never supply or forge it; working-tree copies are never consumed.
-export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNumber: number): string {
-  return join(repoRoot, '.git', 'qube', 'aie', 'route-faults', String(issueNumber), `${prNumber}.json`);
+export function routeFaultLedgerPath(store: TrustedLocalStore, issueNumber: number, prNumber: number): string {
+  return join(store.path, 'route-faults', String(issueNumber), `${prNumber}.json`);
 }
 
 export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
-  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = routeFaultLedgerPath(store, issueNumber, prNumber);
+  return readRouteFaultLedger(store, path);
+}
+
+function readRouteFaultLedger(store: TrustedLocalStore, path: string): RouteFaultLedger {
   // Chain verification runs before the existence probe so a relocated
   // ancestor cannot make recorded faults read as legitimately absent.
-  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
+  verifyTrustedStoreChain(store.root, store.subtree, path);
   // The ledger is a trusted store that steers configured-versus-failover
   // routing, so reads apply the same containment contract as writes: an
   // absent ledger means no faults, but a symlinked ledger file or a
@@ -112,7 +118,7 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   if (!ledgerStats.isFile()) {
     throw new Error(`Refusing to read the route-fault ledger through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
   }
-  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  verifyReviewWriteContainment(path, store);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -161,12 +167,12 @@ function lockHolderAlive(lockDir: string): boolean | null {
 // overlapped; pid reuse combined with the age threshold is the residual risk.
 // A hard deadline turns an unremovable or hostile lock into an explicit error
 // instead of an unbounded hang.
-function withRouteFaultLock<T>(repoRoot: string, path: string, update: () => T): T {
+function withRouteFaultLock<T>(store: TrustedLocalStore, path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
-  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  mkdirTrustedStoreSync(dirname(path), store);
   // The lock directory and its holder record share the ledger's parent chain;
   // a symlinked route-faults descendant must refuse the lock write too.
-  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  verifyReviewWriteContainment(path, store);
   const hardDeadline = Date.now() + ROUTE_FAULT_LOCK_HARD_DEADLINE_MS;
   for (;;) {
     try {
@@ -219,31 +225,20 @@ function withRouteFaultLock<T>(repoRoot: string, path: string, update: () => T):
 
 
 // Evidence, raw-output, bundle, and provenance writes refuse symlinked
-// destinations and verify the whole containment chain: the expected subtree
-// must resolve to its literal location under the repository root (a symlinked
-// .qube or .git segment is refused), and the destination parent must resolve
-// inside that subtree. The lstat-to-write window is the residual risk on
-// hosts without O_NOFOLLOW semantics.
-interface ReviewWriteContainment {
-  repoRoot: string;
-  subtree: readonly string[];
-}
-
-// Verify the whole containment chain for a destination path: the expected
-// subtree must resolve to its literal location under the repository root (a
-// symlinked .qube or .git segment is refused), and the destination parent must
-// resolve inside that subtree with every descendant segment literal, so a
-// symlinked issue, PR, or head directory cannot redirect a write into another
-// head's evidence or outside the repository.
-export function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
+// destinations and verify the whole containment chain. The subtree and each
+// descendant must resolve to their literal location under the containment
+// root. The lstat-to-write window is the residual risk on hosts without
+// O_NOFOLLOW semantics.
+export function verifyReviewWriteContainment(path: string, containment: TrustedStoreContainment): void {
   try {
-    const repoReal = realpathSync(containment.repoRoot);
-    const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
+    verifyTrustedStoreChain(containment.root, containment.subtree, path);
+    const repoReal = realpathSync(containment.root);
+    const containReal = realpathSync(join(containment.root, ...containment.subtree));
     if (containReal !== join(repoReal, ...containment.subtree)) {
-      throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the repository root.`);
+      throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the containment root.`);
     }
-    const relativeParent = relative(join(containment.repoRoot, ...containment.subtree), dirname(path));
-    if (relativeParent.startsWith('..')) {
+    const relativeParent = relative(join(containment.root, ...containment.subtree), dirname(path));
+    if (relativeParent.startsWith('..') || isAbsolute(relativeParent)) {
       throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path}.`);
     }
     const parentReal = realpathSync(dirname(path));
@@ -260,12 +255,12 @@ export function verifyReviewWriteContainment(path: string, containment: ReviewWr
 // Create a trusted-store directory only after verifying its literal ancestor
 // chain, so recursive mkdir can never materialize directories through an
 // existing symlinked or junctioned ancestor before the containment guard runs.
-export function mkdirTrustedStoreSync(directory: string, containment: ReviewWriteContainment): void {
-  verifyTrustedStoreChain(containment.repoRoot, containment.subtree, directory);
+export function mkdirTrustedStoreSync(directory: string, containment: TrustedStoreContainment): void {
+  verifyTrustedStoreChain(containment.root, containment.subtree, directory);
   mkdirSync(directory, { recursive: true });
 }
 
-export function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
+export function writeReviewFileGuarded(path: string, content: string, containment?: TrustedStoreContainment, mode?: number): void {
   let symlink = false;
   try {
     symlink = lstatSync(path).isSymbolicLink();
@@ -288,11 +283,11 @@ export function writeReviewFileGuarded(path: string, content: string, containmen
   // the temp write and the rename could otherwise redirect the final entry
   // outside the trusted store.
   const revalidate = (): void => {
-    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, path);
+    if (containment) verifyTrustedStoreChain(containment.root, containment.subtree, path);
   };
   try {
-    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, tempPath);
-    writeFileSync(tempPath, content, { flag: 'wx' });
+    if (containment) verifyTrustedStoreChain(containment.root, containment.subtree, tempPath);
+    writeFileSync(tempPath, content, { flag: 'wx', mode });
     try {
       revalidate();
       renameSync(tempPath, path);
@@ -308,7 +303,7 @@ export function writeReviewFileGuarded(path: string, content: string, containmen
         // with exclusive create (no replacement symlink can be followed) and
         // only then discard the temp copy — content is never silently lost.
         revalidate();
-        writeFileSync(path, content, { flag: 'wx' });
+        writeFileSync(path, content, { flag: 'wx', mode });
         rmSync(tempPath, { force: true });
       }
     }
@@ -319,27 +314,29 @@ export function writeReviewFileGuarded(path: string, content: string, containmen
 }
 
 export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
-  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  return withRouteFaultLock(repoRoot, path, () => {
-    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = routeFaultLedgerPath(store, issueNumber, prNumber);
+  return withRouteFaultLock(store, path, () => {
+    const ledger = readRouteFaultLedger(store, path);
     // A tally is only meaningful against one primary route identity; a config
     // change to the lane's primary route restarts the count so the changed
     // primary is actually tested before failover engages again.
     const existing = ledger.lanes[lane];
     const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
     ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, store);
     return count;
   });
 }
 
 export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId): void {
-  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  withRouteFaultLock(repoRoot, path, () => {
-    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = routeFaultLedgerPath(store, issueNumber, prNumber);
+  withRouteFaultLock(store, path, () => {
+    const ledger = readRouteFaultLedger(store, path);
     if (!(lane in ledger.lanes)) return;
     delete ledger.lanes[lane];
-    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, store);
   });
 }
 
@@ -536,8 +533,8 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     Reflect.deleteProperty(body, 'usage');
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
-    mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
-    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    mkdirTrustedStoreSync(dirname(path), { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     return path;
   } catch {
     return null;
@@ -596,8 +593,8 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
     // and again through containment: a symlinked issue, PR, or head directory
     // could otherwise redirect the lock write outside the repository or into
     // another head's evidence. Fail closed so lanes skip an untrustworthy lock.
-    mkdirTrustedStoreSync(dirname(path), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
-    verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    mkdirTrustedStoreSync(dirname(path), { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    verifyReviewWriteContainment(path, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   } catch {
     return { held: false, activeLock: null };
   }
@@ -634,7 +631,7 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
 export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
   try {
-    verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+    verifyReviewWriteContainment(path, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   } catch {
     return; // Never remove through a symlinked or unverifiable path chain.
   }
@@ -894,7 +891,7 @@ export function laneContextLines(host: ReviewModelHostId, lane: LocalReviewLaneI
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
     `Include runnerProvenance with runnerKind local-host, host ${host}, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, a complete route object that separately records selected and executed Review routes, and the subagent task/session/thread id when the host exposes one. The route must name its source, selected host/model/effort/tier, executed host/requestedModel/transportModel/reportedModel/modelSource/effort/tier/transport, bounded reason, substitutions, and degradedReviewerSeparation.`,
-    `The main session binds validated local-host evidence to same-user host provenance at this exact path: ${trustedLocalHostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
+    `The main session binds validated local-host evidence to same-user host provenance at this exact path: ${trustedLocalHostProvenancePath(resolveTrustedLocalStore(repoRoot), primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
     'The main session creates host provenance with version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, route, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the validated evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
@@ -1281,8 +1278,8 @@ export async function executableReviewCommandsTrusted(repoRoot: string, baseRef:
   return gitQuiet(repoRoot, ['diff', '--quiet', `${baseRef}...HEAD`, '--', '.qube/aie/config.json']);
 }
 
-function reviewBundlePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
-  return join(repoRoot, '.git', 'qube', 'aie', 'review-inputs', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+function reviewBundlePath(store: TrustedLocalStore, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(store.path, 'review-inputs', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
 }
 
 function rawOutputPath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
@@ -1303,8 +1300,9 @@ function writeReviewBundle(input: {
   promptStackHash: string;
   evidencePath: string;
 }): string {
-  const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-  mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  const store = resolveTrustedLocalStore(input.repoRoot);
+  const path = reviewBundlePath(store, input.issueNumber, input.prNumber, input.headSha, input.lane);
+  mkdirTrustedStoreSync(dirname(path), store);
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber: input.issueNumber,
@@ -1319,7 +1317,7 @@ function writeReviewBundle(input: {
     promptText: input.promptText,
     outputContract: input.outputContract,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  }, null, 2)}\n`, store);
   return path;
 }
 
@@ -1359,7 +1357,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeReviewFileGuarded(rawPath, rawBodyText, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  writeReviewFileGuarded(rawPath, rawBodyText, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha, repoRoot);
@@ -1379,7 +1377,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
 
 export function writeLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, lane: LaneEvidence, adapter: 'local-command' | 'local-host'): string {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
-  mkdirTrustedStoreSync(directory, { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  mkdirTrustedStoreSync(directory, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   const reviewerId = adapter === 'local-host' ? (lane.runnerProvenance?.host?.trim() || 'unknown-host') : 'local-command';
   const reviewerName = adapter === 'local-host' ? reviewerDisplayName(reviewerId) : 'local-command';
@@ -1396,7 +1394,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { root: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   return path;
 }
 
@@ -1406,8 +1404,9 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
   const evidencePath = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   const evidence: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
   if (!isRecord(evidence)) return null;
-  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
-  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  const store = resolveTrustedLocalStore(repoRoot);
+  const path = trustedLocalHostProvenancePath(store, issueNumber, prNumber, headSha, lane.id);
+  mkdirTrustedStoreSync(dirname(path), store);
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber,
@@ -1430,6 +1429,6 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
       ? 'cursor-bounded-preface-normalized'
       : null,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  }, null, 2)}\n`, store);
   return path;
 }

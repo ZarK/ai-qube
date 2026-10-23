@@ -153,6 +153,7 @@ function readRunStatus(value: Record<string, unknown>): StatusLastRun["status"] 
     case "failed":
     case "not_implemented":
     case "passed":
+    case "warning":
       return summary.status;
     default:
       return undefined;
@@ -193,11 +194,14 @@ function resolveLastRunCurrentStageSatisfied(
   return stage === undefined ? undefined : stage.status === "passed";
 }
 
-function readStageStatus(value: unknown): "failed" | "not_implemented" | "passed" | undefined {
+function readStageStatus(
+  value: unknown,
+): "failed" | "not_implemented" | "passed" | "warning" | undefined {
   switch (value) {
     case "failed":
     case "not_implemented":
     case "passed":
+    case "warning":
       return value;
     default:
       return undefined;

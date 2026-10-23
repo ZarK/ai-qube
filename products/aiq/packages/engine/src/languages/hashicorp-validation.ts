@@ -6,6 +6,7 @@ import path from "node:path";
 
 import type { Diagnostic } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
+import { isIgnoredRunnerInput } from "../runner-context.js";
 import * as commands from "../tools/command-builders.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { HashicorpRunnerRuntime } from "./contracts.js";
@@ -20,7 +21,10 @@ export async function runTerraformProjectValidateTask(
 
   try {
     const tempProjectRoot = path.join(tempDir, "project");
-    await cp(project.projectRoot, tempProjectRoot, { recursive: true });
+    await cp(project.projectRoot, tempProjectRoot, {
+      recursive: true,
+      filter: (source) => !isIgnoredRunnerInput(source),
+    });
 
     const terraformBinary = await runtime.resolveRequiredBinary(
       ["terraform"],
@@ -356,6 +360,9 @@ async function findMatchingFiles(
   directory: string,
   predicate: (filePath: string) => boolean,
 ): Promise<string[]> {
+  if (isIgnoredRunnerInput(directory)) {
+    return [];
+  }
   const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
     left.name.localeCompare(right.name),
   );
@@ -363,6 +370,9 @@ async function findMatchingFiles(
 
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);
+    if (isIgnoredRunnerInput(entryPath)) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (shouldSkipTerraformValidationDirectory(entryPath)) {
         continue;

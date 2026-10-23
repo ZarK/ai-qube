@@ -1,8 +1,9 @@
 import type { Diagnostic, StageResult, ToolRunResult } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
 import * as commands from "../tools/command-builders.js";
-import type { BashRunnerRuntime } from "./contracts.js";
+import { requirePathCommand } from "../tools/host-tools.js";
 import { runBashProjectTestTask, summarizeProjectStageStatus } from "./bash-test.js";
+import type { BashRunnerRuntime } from "./contracts.js";
 import { resolveScriptProjects } from "./script.js";
 
 export async function runBashLintLanguageTask(
@@ -13,11 +14,7 @@ export async function runBashLintLanguageTask(
 
   try {
     const outcome = await runtime.runExecutable(
-      await runtime.resolveRequiredBinary(
-        process.platform === "win32" ? ["shellcheck.exe", "shellcheck"] : ["shellcheck"],
-        "ShellCheck",
-        "Install ShellCheck to enable Bash linting.",
-      ),
+      await requirePathCommand("shellcheck"),
       args,
       runtime.cwd,
       runtime.signal,
@@ -63,11 +60,7 @@ export async function runBashFormatLanguageTask(
 
   try {
     const outcome = await runtime.runExecutable(
-      await runtime.resolveRequiredBinary(
-        process.platform === "win32" ? ["shfmt.exe", "shfmt"] : ["shfmt"],
-        "shfmt",
-        "Install shfmt to enable Bash formatting checks.",
-      ),
+      await requirePathCommand("shfmt"),
       args,
       runtime.cwd,
       runtime.signal,

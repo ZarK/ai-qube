@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RunResult } from "../../model/src/index.js";
 import {
   collectGitHubAnnotations,
@@ -65,103 +66,122 @@ describe("reporters", () => {
     expect(output).toBe("::warning file=README.md,title=AIQ/aiq::Line one%0ALine two\n");
   });
 
-  it("groups human output into actionable problem categories", () => {
-    const workspaceRoot = path.join(path.sep, "repo");
-    const missingPython = createRunResult({
-      cwd: workspaceRoot,
-      diagnostics: [
-        {
-          file: path.join(workspaceRoot, "src", "main.py"),
-          message: "ty was not detected. Install Astral ty to run Python typecheck.",
-          severity: "error",
-          source: "ty",
-        },
-      ],
-      stageId: "typecheck",
-      status: "failed",
-    });
-    const unsupportedJs = createRunResult({
-      cwd: workspaceRoot,
+  it("renders selected stages with their start time, duration, reason, and target debug commands", () => {
+    const result = createRunResult({
+      cwd: "/repo",
       diagnostics: [],
-      notes: ["No supported JavaScript or TypeScript test runner was detected for unit in: ."],
-      stageId: "unit",
-      status: "failed",
-    });
-    const qualityFailure = createRunResult({
-      cwd: workspaceRoot,
-      diagnostics: [
-        {
-          file: path.join(workspaceRoot, "src", "index.ts"),
-          message: "Unexpected var, use let or const instead.",
-          severity: "error",
-          source: "biome",
-        },
-      ],
       stageId: "lint",
-      status: "failed",
+      status: "passed",
     });
-    const metricFailure = createRunResult({
-      cwd: workspaceRoot,
-      diagnostics: [
-        {
-          code: "metrics/complexity-limit",
-          file: path.join(workspaceRoot, "src", "workflow.ts"),
-          message: "runWorkflow complexity 13 is greater than 12.",
-          severity: "error",
-          source: "lizard",
-        },
-      ],
+    result.durationMs = 25_900;
+    const firstStage = result.stages[0];
+    if (firstStage === undefined) throw new Error("Expected a selected stage.");
+    firstStage.durationMs = 21_100;
+    result.stages.push({
       stageId: "complexity",
       status: "failed",
-    });
-    const setupFailure = createRunResult({
-      cwd: workspaceRoot,
-      diagnostics: [
-        {
-          file: workspaceRoot,
-          message: "Project config is missing required test runner settings.",
-          severity: "error",
-          source: "aiq",
-        },
-      ],
-      stageId: "unit",
-      status: "failed",
-    });
-    const multiWordTool = createRunResult({
-      cwd: workspaceRoot,
+      startedAt: "2026-03-23T00:00:22.000Z",
+      durationMs: 2100,
       diagnostics: [],
-      notes: ["go test was not detected. Install Go to run unit tests."],
-      stageId: "unit",
-      status: "failed",
+      notes: [],
+      toolRuns: [],
     });
+    result.stages.push({
+      stageId: "coverage",
+      status: "warning",
+      startedAt: "2026-03-23T00:00:24.000Z",
+      durationMs: 1000,
+      diagnostics: [],
+      notes: ["zero tests detected"],
+      toolRuns: [],
+    });
+    expect(formatRunResultAsText(result, { targets: ["src", "test folder"] })).toBe(
+      [
+        "[00m00s/00m21s] Stage 1 (lint): PASSED",
+        "[00m22s/00m02s] Stage 6 (complexity): FAILED",
+        "[00m24s/00m01s] Stage 8 (coverage): WARNING (zero tests detected)",
+        "",
+        "Total execution time: 00m25s",
+        "",
+        "To debug failed stages:",
+        "  aiq run src 'test folder' --only 6 --verbose  # Debug stage 6 (complexity)",
+        "",
+      ].join("\n"),
+    );
+  });
 
-    expect(formatRunResultAsText(missingPython)).toContain("Missing tools:");
-    expect(formatRunResultAsText(missingPython)).toContain("[stage 3 typecheck] Python/ty");
-    expect(formatRunResultAsText(missingPython)).toContain("aiq setup");
-    expect(formatRunResultAsText(unsupportedJs)).toContain("Unsupported projects:");
-    expect(formatRunResultAsText(qualityFailure)).toContain("Quality failures:");
-    expect(formatRunResultAsText(qualityFailure)).toContain(
-      "Next: aiq run <paths...> --only 1 --verbose",
+  it("passes shell metacharacters in debug targets as literal arguments", () => {
+    const windows = process.platform === "win32";
+    const targets = [
+      "$(Write-Output INJECTED).ts",
+      "$(printf INJECTED).ts",
+      "`echo INJECTED`.ts",
+      "quote'$(echo INJECTED).ts",
+      "a; echo INJECTED; #.ts",
+      ...(windows ? [] : ['double"quote.ts', "a&echo INJECTED|cat.ts"]),
+      "test folder/file.ts",
+      "C:\\source\\file.ts",
+    ];
+    const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+    const output = formatRunResultAsText(result, { targets });
+    const command = output.split("\n").find((line) => line.startsWith("  aiq run "));
+    expect(command).toBeDefined();
+    const script = windows
+      ? `function aiq { ConvertTo-Json -InputObject ([string[]]$args) -Compress }; ${command}`
+      : `aiq() { printf '%s\\0' "$@"; }; ${command}`;
+    const stdout = execFileSync(
+      windows ? "powershell.exe" : "/bin/sh",
+      windows ? ["-NoProfile", "-NonInteractive", "-Command", script] : ["-c", script],
+      { encoding: "utf8" },
     );
-    expect(formatRunResultAsText(qualityFailure)).not.toContain("Artifacts:");
-    expect(formatRunResultAsText(qualityFailure)).not.toContain("aiq setup");
-    expect(formatRunResultAsText(metricFailure)).toContain("metric diagnostic from lizard");
-    expect(formatRunResultAsText(metricFailure)).toContain(
-      "Metric remediation is behavior-preserving",
-    );
-    expect(formatRunResultAsText(metricFailure)).toContain(
-      "preserve public APIs, command behavior, tool selection, execution order, existing pathways",
-    );
-    expect(formatRunResultAsText(metricFailure)).toContain(
-      "Do not use metric failures as authorization for feature changes, command semantic changes, stage/language/tool boundary changes, or architecture rewrites",
-    );
-    expect(formatRunResultAsText(metricFailure)).toContain("Use direct purpose-revealing names");
-    expect(formatRunResultAsText(metricFailure)).toContain(
-      "no vague helper/manager/processor names",
-    );
-    expect(formatRunResultAsText(setupFailure)).toContain("Setup issues:");
-    expect(formatRunResultAsText(setupFailure)).toContain("aiq setup");
-    expect(formatRunResultAsText(multiWordTool)).toContain("Go/go test");
+    const args = windows ? JSON.parse(stdout) : stdout.split("\0").slice(0, -1);
+    expect(args).toEqual(["run", ...targets, "--only", "1", "--verbose"]);
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "omits targets unsafe for Windows command shims or PowerShell quotes",
+    () => {
+      const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+      for (const character of ['"', "&", "|", "<", ">", "%", "^", "\u2018", "\u2019"]) {
+        const output = formatRunResultAsText(result, { targets: [`a${character}b.ts`] });
+        expect(output).toContain("Debug command omitted");
+        expect(output).not.toContain("aiq run");
+      }
+    },
+  );
+
+  it("omits executable hints when a target contains control characters", () => {
+    const result = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+    for (const target of ["line\nbreak.ts", "escape\u001b.ts", "line\u2028break.ts"]) {
+      const output = formatRunResultAsText(result, { targets: ["src", target] });
+      expect(output).toContain("Debug command omitted");
+      expect(output).not.toContain("aiq run");
+      expect(output).not.toContain(target);
+    }
+  });
+
+  it("colors terminal output and honors NO_COLOR", () => {
+    const result = createRunResult({
+      cwd: "/repo",
+      diagnostics: [],
+      status: "passed",
+    });
+    vi.stubEnv("NO_COLOR", undefined);
+    try {
+      expect(formatRunResultAsText(result, { color: true })).toContain("\u001b[32mPASSED\u001b[0m");
+      expect(formatRunResultAsText(result, { color: true })).toContain("\u001b[2m[00m00s/00m00s]");
+      expect(formatRunResultAsText(result)).not.toContain("\u001b[");
+      const failed = createRunResult({ cwd: "/repo", diagnostics: [], status: "failed" });
+      const warning = createRunResult({ cwd: "/repo", diagnostics: [], status: "warning" });
+      expect(formatRunResultAsText(failed, { color: true })).toContain("\u001b[31mFAILED\u001b[0m");
+      expect(formatRunResultAsText(warning, { color: true })).toContain(
+        "\u001b[33mWARNING\u001b[0m",
+      );
+      vi.stubEnv("NO_COLOR", "");
+      expect(formatRunResultAsText(result, { color: true })).not.toContain("\u001b[");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("keeps detailed human output available for verbose callers", () => {

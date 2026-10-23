@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  path,
   createDotNetCompetingSolutionProject,
   createDotNetFixtureProject,
   createGoFixtureProject,
   fixturePythonFile,
   hasDotNet10Toolchain,
   hasPythonQualityToolchain,
-  path,
   runPlannedTask,
 } from "./runners-test-support.js";
 describe("engine runners", () => {
@@ -31,7 +31,7 @@ describe("engine runners", () => {
     expect(result.toolRuns[0]).toMatchObject({
       exitCode: 0,
       status: "passed",
-      tool: "aiq-csharp-metrics",
+      tool: "lizard",
     });
   });
 
@@ -53,7 +53,7 @@ describe("engine runners", () => {
       expect(result.status).toBe("passed");
       expect(result.toolRuns).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ status: "passed", tool: "aiq-csharp-metrics" }),
+          expect.objectContaining({ status: "passed", tool: "lizard" }),
           expect.objectContaining({ status: "passed", tool: "radon" }),
         ]),
       );
@@ -91,7 +91,7 @@ describe("engine runners", () => {
           expect.objectContaining({
             cacheHit: false,
             status: "passed",
-            tool: "aiq-csharp-metrics",
+            tool: "lizard",
           }),
           expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
         ]),
@@ -99,7 +99,7 @@ describe("engine runners", () => {
       expect(maintainability.status).toBe("passed");
       expect(maintainability.toolRuns).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ cacheHit: true, status: "passed", tool: "aiq-csharp-metrics" }),
+          expect.objectContaining({ cacheHit: true, status: "passed", tool: "lizard" }),
           expect.objectContaining({ cacheHit: true, status: "passed", tool: "lizard" }),
         ]),
       );

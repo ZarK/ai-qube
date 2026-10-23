@@ -216,6 +216,7 @@ export async function getRepositoryIdentity(options: { exec?: GhExec; cwd?: stri
 export async function listOpenPullRequests(config: Config, options: { exec?: GhExec; cwd?: string } = {}): Promise<PullRequestSummary[]> {
   const result = await runGh(['pr', 'list', '--state', 'open', '--json', 'number,title,author,isDraft,url,headRefName', '--limit', '1000'], options);
   const raw = parseJsonOutput<RawPr[]>(result.stdout, 'gh pr list', isRawPrArray);
+  const ignoredAuthors = new Set(config.ignoredAutomationAuthors.map(normalizeAutomationAuthor));
   return raw.map(pr => ({
     number: pr.number,
     title: pr.title,
@@ -223,8 +224,16 @@ export async function listOpenPullRequests(config: Config, options: { exec?: GhE
     isDraft: pr.isDraft,
     url: pr.url,
     headRefName: pr.headRefName,
-    ignored: config.ignoredAutomationAuthors.includes(pr.author.login),
+    ignored: ignoredAuthors.has(normalizeAutomationAuthor(pr.author.login)),
   }));
+}
+
+function normalizeAutomationAuthor(login: string): string {
+  return login.toLowerCase().replace(/^app\//, '').replace(/\[bot\]$/, '');
+}
+
+export function isBlockingPullRequest(pr: Pick<PullRequestSummary, 'isDraft' | 'ignored'>): boolean {
+  return !pr.isDraft && !pr.ignored;
 }
 
 export async function listMilestones(repository: RepositoryIdentity, options: { exec?: GhExec; cwd?: string } = {}): Promise<MilestoneSummary[]> {
@@ -420,7 +429,7 @@ export async function buildRepoPrimePlan(options: { config: Config; dryRun: bool
 
   const worktree = getWorktreeStatus(repoRoot);
   const baseRef = getBaseRefStatus(options.config, repoRoot);
-  const blockingPullRequests = pullRequests.filter(pr => !pr.ignored);
+  const blockingPullRequests = pullRequests.filter(isBlockingPullRequest);
   if (options.config.noWorktree && worktree.isWorktree) {
     warnings.push('Linked git worktree detected. Use the primary checkout before starting issue work.');
   }
