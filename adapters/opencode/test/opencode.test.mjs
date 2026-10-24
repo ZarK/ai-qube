@@ -89,6 +89,7 @@ describe("opencode adapter", () => {
     });
     assert.equal(parseOpenCodeOutput(JSON.stringify({ type: "error", sessionID: "ses-1", part: { type: "error" } })), null);
     assert.equal(parseOpenCodeOutput("not json"), null);
+    assert.equal(parseOpenCodeOutput(`not-json\n${events}`), null);
   });
 
   it("checks the configured model against the live catalog during probe", () => {

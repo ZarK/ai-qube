@@ -44,7 +44,9 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
     try {
       event = JSON.parse(line);
     } catch {
-      continue;
+      // The JSON event stream is the whole output contract: any malformed
+      // line makes the output untrustworthy, not just that line.
+      return null;
     }
     if (!isRecord(event)) continue;
     if (typeof event.sessionID === "string" && event.sessionID !== "") sessionId = event.sessionID;
