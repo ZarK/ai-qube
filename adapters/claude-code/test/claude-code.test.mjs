@@ -106,11 +106,14 @@ describe("claude-code adapter", () => {
   });
 
   it("probes capability flags before reporting the route ready", () => {
+    const runCommand = (executable, args) => args.includes("auth")
+      ? JSON.stringify({ loggedIn: true, authMethod: "oauth" })
+      : "Usage: claude --json-schema --permission-mode --output-format";
     const ready = isolatedReviewHostAdapter.probeAfterVersion({
       model: "claude-test",
       executable: "claude",
       prefixArgs: [],
-      runCommand: () => "Usage: claude --json-schema --permission-mode --output-format",
+      runCommand,
       version: "2.1.278",
     });
     assert.equal(ready.status, "ready");
@@ -124,6 +127,17 @@ describe("claude-code adapter", () => {
     });
     assert.equal(blocked.status, "blocked");
     assert.match(blocked.diagnostic, /--json-schema/);
+    const unauthenticated = isolatedReviewHostAdapter.probeAfterVersion({
+      model: null,
+      executable: "claude",
+      prefixArgs: [],
+      runCommand: (executable, args) => args.includes("auth")
+        ? JSON.stringify({ loggedIn: false, authMethod: "none" })
+        : "Usage: claude --json-schema --permission-mode --output-format",
+      version: "2.1.278",
+    });
+    assert.equal(unauthenticated.status, "blocked");
+    assert.match(unauthenticated.diagnostic, /not authenticated/);
   });
 
   it("does not present CLI help examples as an account model catalog", () => {

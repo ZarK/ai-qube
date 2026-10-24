@@ -108,6 +108,20 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
         diagnostic: `The Claude Code CLI (${version}) does not expose required isolated-review flags (${missing.join(", ")}). Update the official CLI before running routed review lanes.`,
       };
     }
+    let loggedIn = false;
+    try {
+      const status: unknown = JSON.parse(runCommand(executable, [...prefixArgs, "auth", "status"]));
+      loggedIn = isRecord(status) && status.loggedIn === true;
+    } catch {
+      loggedIn = false;
+    }
+    if (!loggedIn) {
+      return {
+        status: "blocked",
+        modelListed: null,
+        diagnostic: "The Claude Code CLI is not authenticated. Run `claude auth login` outside QUBE, then rerun.",
+      };
+    }
     // Claude Code exposes no non-interactive model catalog, so a configured
     // model cannot be listed here; the lane result reports the model that ran.
     return { status: "ready", modelListed: null, diagnostic: null };
