@@ -21,7 +21,7 @@ describe('canonical agent harness registry', () => {
 
   it('registers isolated execution only for harnesses that implement it', async () => {
     const { AGENT_HOST_IDS } = await import('@tjalve/qube-core');
-    assert.deepEqual(listReviewHostIds(), ['codex', 'grok-build', 'cursor']);
+    assert.deepEqual(listReviewHostIds(), ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor']);
     for (const host of listReviewHostIds()) assert.equal(getReviewHostAdapter(host).id, host);
     assert.equal(AGENT_HOST_IDS.includes('grok'), false);
   });

@@ -1,6 +1,8 @@
+import { isolatedReviewHostAdapter as claudeCodeReviewHostAdapter } from '@tjalve/qube-adapter-claude-code';
 import { isolatedReviewHostAdapter as codexReviewHostAdapter } from '@tjalve/qube-adapter-codex';
 import { isolatedReviewHostAdapter as cursorReviewHostAdapter } from '@tjalve/qube-adapter-cursor';
 import { isolatedReviewHostAdapter as grokBuildReviewHostAdapter } from '@tjalve/qube-adapter-grok-build';
+import { isolatedReviewHostAdapter as opencodeReviewHostAdapter } from '@tjalve/qube-adapter-opencode';
 import { AGENT_HOST_REGISTRATIONS } from '@tjalve/qube-core';
 import type { ReviewModelEffort } from '../core/policy.js';
 import { redact } from '../redact.js';
@@ -109,6 +111,8 @@ export function sanitizeProbeText(value: string): string {
 
 const BUILTIN_REVIEW_HOST_ADAPTERS: readonly ReviewHostAdapter[] = Object.freeze([
   codexReviewHostAdapter as ReviewHostAdapter,
+  claudeCodeReviewHostAdapter as ReviewHostAdapter,
+  opencodeReviewHostAdapter as ReviewHostAdapter,
   grokBuildReviewHostAdapter as ReviewHostAdapter,
   cursorReviewHostAdapter as ReviewHostAdapter,
 ]);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeHostProfile } from "../dist/index.js";
+import { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeHostProfile, isolatedReviewHostAdapter, parseClaudeOutput } from "../dist/index.js";
 
 describe("claude-code adapter", () => {
   it("builds the native continuation verification invocation", () => {
@@ -43,7 +43,9 @@ describe("claude-code adapter", () => {
       "claude-review-digest-agent",
       "claude-review-librarian-agent",
     ]);
-    assert.equal(claudeCodeHostProfile.review.isolated.support, "unsupported");
+    assert.equal(claudeCodeHostProfile.review.isolated.support, "supported");
+    assert.equal(claudeCodeHostProfile.review.isolated.readOnly, true);
+    assert.equal(claudeCodeHostProfile.review.isolated.freshContext, true);
     assert.deepEqual(claudeCodeHostProfile.review.isolated.agents, []);
     assert.equal(claudeCodeHostProfile.modelDiscovery.support, "unsupported");
     assert.equal("executableNames" in claudeCodeHostProfile.modelDiscovery, false);
@@ -52,6 +54,90 @@ describe("claude-code adapter", () => {
     assert.deepEqual(claudeCodeHostProfile.umpire.probe.command, ["qube", "aiu", "doctor", "--json"]);
     assert.equal(claudeCodeHostProfile.trust.required, true);
     assert.deepEqual(claudeCodeHostProfile.trust.actions[0].paths, [".claude/settings.json"]);
+  });
+
+  it("runs an isolated review in plan mode with schema-bound JSON output", () => {
+    const context = {
+      repoRoot: "/repo",
+      model: "claude-test",
+      effort: "high",
+      maxTurns: 8,
+      prompt: "inspect",
+      promptPath: null,
+      schemaPath: null,
+      schemaJson: "{\"type\":\"object\"}",
+    };
+    const built = isolatedReviewHostAdapter.buildInvocation(context);
+    assert.deepEqual(built.args, [
+      "-p",
+      "--output-format", "json",
+      "--json-schema", "{\"type\":\"object\"}",
+      "--permission-mode", "plan",
+      "--no-session-persistence",
+      "--model", "claude-test",
+      "--effort", "high",
+    ]);
+    assert.equal(built.stdin, "inspect");
+    for (const forbidden of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--resume", "--continue"]) {
+      assert.equal(built.args.includes(forbidden), false, forbidden);
+    }
+  });
+
+  it("parses the Claude result envelope and rejects error or malformed output", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "",
+      structured_output: { status: "passed" },
+      session_id: "session-1",
+      usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2 },
+      modelUsage: { "claude-test": {} },
+    });
+    assert.deepEqual(parseClaudeOutput(envelope), {
+      text: "{\"status\":\"passed\"}",
+      sessionId: "session-1",
+      reportedModel: "claude-test",
+      usage: { inputTokens: 10, outputTokens: 4, cachedInputTokens: 2, totalTokens: 16 },
+    });
+    assert.equal(parseClaudeOutput(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "failed" })), null);
+    assert.equal(parseClaudeOutput("not json"), null);
+    assert.equal(parseClaudeOutput(JSON.stringify({ type: "other", result: "{}" })), null);
+  });
+
+  it("probes capability flags before reporting the route ready", () => {
+    const runCommand = (executable, args) => args.includes("auth")
+      ? JSON.stringify({ loggedIn: true, authMethod: "oauth" })
+      : "Usage: claude --json-schema --permission-mode --output-format";
+    const ready = isolatedReviewHostAdapter.probeAfterVersion({
+      model: "claude-test",
+      executable: "claude",
+      prefixArgs: [],
+      runCommand,
+      version: "2.1.278",
+    });
+    assert.equal(ready.status, "ready");
+    assert.equal(ready.modelListed, null);
+    const blocked = isolatedReviewHostAdapter.probeAfterVersion({
+      model: null,
+      executable: "claude",
+      prefixArgs: [],
+      runCommand: () => "Usage: claude",
+      version: "2.1.278",
+    });
+    assert.equal(blocked.status, "blocked");
+    assert.match(blocked.diagnostic, /--json-schema/);
+    const unauthenticated = isolatedReviewHostAdapter.probeAfterVersion({
+      model: null,
+      executable: "claude",
+      prefixArgs: [],
+      runCommand: (executable, args) => args.includes("auth")
+        ? JSON.stringify({ loggedIn: false, authMethod: "none" })
+        : "Usage: claude --json-schema --permission-mode --output-format",
+      version: "2.1.278",
+    });
+    assert.equal(unauthenticated.status, "blocked");
+    assert.match(unauthenticated.diagnostic, /not authenticated/);
   });
 
   it("does not present CLI help examples as an account model catalog", () => {

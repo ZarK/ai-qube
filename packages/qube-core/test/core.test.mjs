@@ -122,9 +122,9 @@ describe("qube core contracts", () => {
 
   it("defines one complete capability profile row for each agent harness", () => {
     const rows = [
-      { id: "opencode", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".opencode/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "supported" },
+      { id: "opencode", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".opencode/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "supported" },
       { id: "codex", instructionPath: "AGENTS.md", makeItSoKind: "skill", makeItSoPath: ".agents/skills/make-it-so/SKILL.md", invocation: "$make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
-      { id: "claude-code", instructionPath: "CLAUDE.md", makeItSoKind: "command", makeItSoPath: ".claude/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "experimental" },
+      { id: "claude-code", instructionPath: "CLAUDE.md", makeItSoKind: "command", makeItSoPath: ".claude/commands/make-it-so.md", invocation: "/make-it-so", taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
       { id: "grok-build", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".grok/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental" },
       { id: "cursor", instructionPath: "AGENTS.md", makeItSoKind: "command", makeItSoPath: ".cursor/commands/make-it-so.md", invocation: "/make-it-so", taskList: "unsupported", subagents: "unsupported", localReview: "unsupported", isolatedReview: "supported", umpire: "supported" },
     ];

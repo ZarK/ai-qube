@@ -34,7 +34,7 @@ function fakeAdapter(overrides = {}) {
 
 describe('review host adapter registry', () => {
   it('lists and resolves the packaged review host adapters', () => {
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'cursor', 'grok-build']);
+    assert.deepEqual(listReviewHostIds().sort(), ['claude-code', 'codex', 'cursor', 'grok-build', 'opencode']);
     assert.equal(isRegisteredReviewHost('codex'), true);
     assert.equal(isRegisteredReviewHost('grok-build'), true);
     assert.equal(isRegisteredReviewHost('cursor'), true);
@@ -81,7 +81,7 @@ describe('review host adapter registry', () => {
     } finally {
       resetReviewHostAdaptersForTests();
     }
-    assert.deepEqual(listReviewHostIds().sort(), ['codex', 'cursor', 'grok-build']);
+    assert.deepEqual(listReviewHostIds().sort(), ['claude-code', 'codex', 'cursor', 'grok-build', 'opencode']);
   });
 
   it('parses a Grok json-schema envelope when text is already an object', () => {

@@ -11,19 +11,17 @@ function defaultFile() {
 }
 
 describe('isolated review harness contract', () => {
-  it('accepts the three implemented isolated harnesses and rejects native-only harnesses', () => {
-    for (const host of ['codex', 'grok-build', 'cursor']) {
+  it('accepts every implemented isolated harness as a review route', () => {
+    for (const host of ['codex', 'claude-code', 'opencode', 'grok-build', 'cursor']) {
       const input = defaultFile();
       input.policy.reviews.route = { host, tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
       assert.equal(validateConfig(input).errors.some((error) => error.path === 'policy.reviews.route.host'), false, host);
     }
-    for (const host of ['claude-code', 'opencode']) {
-      const input = defaultFile();
-      input.policy.reviews.route = { host, tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
-      const result = validateConfig(input);
-      assert.equal(result.ok, false, host);
-      assert.ok(result.errors.some((error) => error.path === 'policy.reviews.route.host' && error.message.includes(host)));
-    }
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'not-a-host', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    const result = validateConfig(input);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'policy.reviews.route.host'));
   });
 
   it('builds the Grok Build isolated invocation from the required adapter', () => {
@@ -56,9 +54,9 @@ describe('isolated review harness contract', () => {
     const models = questions.find((item) => item.id === 'review-models');
     const values = models.options.map((option) => String(option.value));
     assert.ok(values.some((value) => value.startsWith('codex:')));
+    assert.ok(values.some((value) => value.startsWith('claude-code:')));
+    assert.ok(values.some((value) => value.startsWith('opencode:')));
     assert.ok(values.some((value) => value.startsWith('grok-build:')));
     assert.ok(values.some((value) => value.startsWith('cursor:')));
-    assert.ok(!values.some((value) => value.startsWith('claude-code:')));
-    assert.ok(!values.some((value) => value.startsWith('opencode:')));
   });
 });

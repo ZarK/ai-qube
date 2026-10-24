@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeHostProfile, parseOpenCodeModelCatalog } from "../dist/index.js";
+import { buildOpenCodeVerifyInvocation, isolatedReviewHostAdapter, opencodeContinuationAdapter, opencodeHostProfile, parseOpenCodeModelCatalog, parseOpenCodeOutput } from "../dist/index.js";
 
 describe("opencode adapter", () => {
   it("builds the native continuation verification invocation", () => {
@@ -35,7 +35,9 @@ describe("opencode adapter", () => {
       "opencode-review-digest-agent",
       "opencode-review-librarian-agent",
     ]);
-    assert.equal(opencodeHostProfile.review.isolated.support, "unsupported");
+    assert.equal(opencodeHostProfile.review.isolated.support, "supported");
+    assert.equal(opencodeHostProfile.review.isolated.readOnly, true);
+    assert.equal(opencodeHostProfile.review.isolated.freshContext, true);
     assert.deepEqual(opencodeHostProfile.review.isolated.agents, []);
     assert.equal("executableNames" in opencodeHostProfile.modelDiscovery, false);
     assert.equal(opencodeHostProfile.umpire.continuation.delivery, "host");
@@ -46,6 +48,73 @@ describe("opencode adapter", () => {
       ".opencode/package.json",
       ".opencode/plugins/ai-umpire-continuation.ts",
     ]);
+  });
+
+  it("runs an isolated review with the read-only plan agent and JSON events", () => {
+    const context = {
+      repoRoot: "/repo",
+      model: "opencode/big-pickle",
+      effort: "high",
+      maxTurns: 8,
+      prompt: "inspect",
+      promptPath: null,
+      schemaPath: null,
+      schemaJson: "{\"type\":\"object\"}",
+    };
+    const built = isolatedReviewHostAdapter.buildInvocation(context);
+    assert.deepEqual(built.args, [
+      "run",
+      "--format", "json",
+      "--agent", "plan",
+      "--pure",
+      "--dir", "/repo",
+      "--model", "opencode/big-pickle",
+      "--variant", "high",
+    ]);
+    assert.match(built.stdin, /^inspect/);
+    assert.match(built.stdin, /\{"type":"object"\}$/);
+    assert.equal(built.args.includes("--auto"), false);
+  });
+
+  it("parses the last OpenCode text event and rejects errors or malformed output", () => {
+    const events = [
+      JSON.stringify({ type: "step_start", sessionID: "ses-1", part: { type: "step-start" } }),
+      JSON.stringify({ type: "text", sessionID: "ses-1", part: { type: "text", text: "{\"status\":\"passed\"}" } }),
+      JSON.stringify({ type: "step_finish", sessionID: "ses-1", part: { type: "step-finish", tokens: { total: 20, input: 15, output: 5, cache: { read: 3 } } } }),
+    ].join("\n");
+    assert.deepEqual(parseOpenCodeOutput(events), {
+      text: "{\"status\":\"passed\"}",
+      sessionId: "ses-1",
+      usage: { inputTokens: 15, outputTokens: 5, cachedInputTokens: 3, totalTokens: 20 },
+    });
+    assert.equal(parseOpenCodeOutput(JSON.stringify({ type: "error", sessionID: "ses-1", part: { type: "error" } })), null);
+    assert.equal(parseOpenCodeOutput("not json"), null);
+    assert.equal(parseOpenCodeOutput(`not-json\n${events}`), null);
+    assert.equal(parseOpenCodeOutput(`42\n${events}`), null);
+    assert.equal(parseOpenCodeOutput(`${JSON.stringify({ type: "text", sessionID: "ses-1" })}\n${events}`), null);
+    const malformedText = [
+      JSON.stringify({ type: "text", sessionID: "ses-1", part: { type: "text", text: "not-json" } }),
+      events,
+    ].join("\n");
+    assert.equal(parseOpenCodeOutput(malformedText), null);
+    const nonStringText = [
+      JSON.stringify({ type: "text", sessionID: "ses-1", part: { type: "text", text: 42 } }),
+      events,
+    ].join("\n");
+    assert.equal(parseOpenCodeOutput(nonStringText), null);
+  });
+
+  it("checks the configured model against the live catalog during probe", () => {
+    const runCommand = () => "opencode/big-pickle\nopencode-go/glm-5.1\n";
+    const ready = isolatedReviewHostAdapter.probeAfterVersion({
+      model: "opencode/big-pickle", executable: "opencode", prefixArgs: [], runCommand, version: "1.18.30",
+    });
+    assert.deepEqual(ready, { status: "ready", modelListed: true, diagnostic: null });
+    const blocked = isolatedReviewHostAdapter.probeAfterVersion({
+      model: "opencode/absent", executable: "opencode", prefixArgs: [], runCommand, version: "1.18.30",
+    });
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.modelListed, false);
   });
 
   it("discovers live OpenCode models without refreshing the remote catalog", () => {

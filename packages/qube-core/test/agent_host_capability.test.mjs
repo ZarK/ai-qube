@@ -45,9 +45,9 @@ describe("canonical agent host capability profiles", () => {
 
   it("declares the current task, subagent, review, model-catalog, and continuation support levels", () => {
     const rows = {
-      opencode: ["supported", "supported", "supported", "unsupported", "supported", "supported"],
+      opencode: ["supported", "supported", "supported", "supported", "supported", "supported"],
       codex: ["supported", "supported", "supported", "supported", "supported", "experimental"],
-      "claude-code": ["supported", "supported", "supported", "unsupported", "unsupported", "experimental"],
+      "claude-code": ["supported", "supported", "supported", "supported", "unsupported", "experimental"],
       "grok-build": ["unsupported", "supported", "supported", "supported", "supported", "experimental"],
       cursor: ["unsupported", "unsupported", "unsupported", "supported", "supported", "supported"],
     };

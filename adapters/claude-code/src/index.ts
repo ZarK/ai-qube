@@ -81,11 +81,10 @@ export const claudeCodeHostProfile = defineAgentHostProfile({
       agents: Object.freeze([CLAUDE_REVIEW_FOCUS_AGENT, CLAUDE_REVIEW_EXPLORER_AGENT, CLAUDE_REVIEW_DIGEST_AGENT, CLAUDE_REVIEW_LIBRARIAN_AGENT]),
     }),
     isolated: Object.freeze({
-      support: "unsupported",
-      description: "QUBE has no tested Claude Code CLI invocation that combines fresh non-interactive execution, read-only isolation, and structured review output.",
-      nextAction: "Use Claude Code native review subagents or select a host with a tested isolated review adapter.",
-      freshContext: false,
-      readOnly: false,
+      support: "supported",
+      description: "QUBE starts a fresh Claude Code print-mode session in plan mode with schema-bound JSON output and validates one structured result.",
+      freshContext: true,
+      readOnly: true,
       agents: Object.freeze([]),
     }),
   }),
@@ -134,3 +133,4 @@ export const claudeCodeHostProfile = defineAgentHostProfile({
 } satisfies AgentHostProfile);
 
 export { buildClaudeCodeVerifyInvocation, claudeCodeContinuationAdapter, claudeCodeContinuationDeclaration } from "./continuation.js";
+export { isolatedReviewHostAdapter, parseClaudeOutput, reviewHostAdapter } from "./isolated_review.js";

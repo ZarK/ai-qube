@@ -1179,7 +1179,7 @@ describe("qube composer CLI", () => {
     const expectedHarnesses = [
       {
         host: "opencode", instructionPath: "AGENTS.md", makeItSoPath: ".opencode/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
-        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "supported", models: "supported" },
+        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "supported", models: "supported" },
       },
       {
         host: "codex", instructionPath: "AGENTS.md", makeItSoPath: ".agents/skills/make-it-so/SKILL.md", makeItSoKind: "skill", invocation: "$make-it-so",
@@ -1187,7 +1187,7 @@ describe("qube composer CLI", () => {
       },
       {
         host: "claude-code", instructionPath: "CLAUDE.md", makeItSoPath: ".claude/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
-        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "unsupported", umpire: "experimental", models: "unsupported" },
+        support: { taskList: "supported", subagents: "supported", localReview: "supported", isolatedReview: "supported", umpire: "experimental", models: "unsupported" },
       },
       {
         host: "grok-build", instructionPath: "AGENTS.md", makeItSoPath: ".grok/commands/make-it-so.md", makeItSoKind: "command", invocation: "/make-it-so",
@@ -4131,16 +4131,16 @@ describe("qube init orchestrator", () => {
         error: /other than the primary harness/,
       },
       {
-        hosts: "codex,opencode",
-        mode: "isolated",
-        harness: "opencode",
-        error: /OpenCode isolated review is not available yet.*--review-mode host/,
+        hosts: "opencode,codex",
+        mode: "host",
+        harness: "codex",
+        error: /Primary-harness review must use opencode/,
       },
       {
-        hosts: "codex,claude-code",
+        hosts: "claude-code,codex",
         mode: "isolated",
         harness: "claude-code",
-        error: /Claude Code isolated review is not available yet.*--review-mode host/,
+        error: /other than the primary harness/,
       },
     ];
 
