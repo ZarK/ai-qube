@@ -73,6 +73,42 @@ describe('criterion proof verification', () => {
     assert.equal(f.writes().length, 1);
   });
 
+  it('does not treat a dotted config key in criterion text as a cited file', async () => {
+    const f = fixture();
+    const text = 'The guide describes a bounded stop rule for `inputs.ignore` handling.';
+    f.record.criterion.text = text;
+    f.record.criterionToProof = map(text);
+    f.body = `Intro\r\n- [ ] ${text}\r\n- [x] Another requirement\r\nFooter`;
+    f.save();
+    const result = await f.verify();
+    assert.equal(result.evidence.status, 'verified', result.evidence.errors.join('\n'));
+    assert.equal(f.writes().length, 1);
+  });
+
+  it('rejects a supporting citation that names no repository file', async () => {
+    const f = fixture();
+    f.record.criterionToProof = map(criterionText, '`missing.md`');
+    f.save();
+    const result = await f.verify();
+    assert.match(result.evidence.errors.join('\n'), /The cited file missing\.md does not exist in the repository/);
+    assert.equal(f.writes().length, 0);
+  });
+
+  it('still requires a hashed input for a cited file that exists', async () => {
+    const f = fixture();
+    writeFileSync(join(f.repo, 'behavior.cjs'), 'module.exports = {};\n');
+    git(f.repo, ['add', 'behavior.cjs']);
+    git(f.repo, ['commit', '-m', 'Add behavior fixture']);
+    f.head = git(f.repo, ['rev-parse', 'HEAD']);
+    f.record.revision.headSha = f.head;
+    f.record.criterionToProof = map(criterionText, '`guide.md` and `behavior.cjs`');
+    f.record.inputs = [input(f.repo, 'behavior.cjs', 'test')];
+    f.save();
+    const result = await f.verify();
+    assert.match(result.evidence.errors.join('\n'), /The cited file guide\.md is missing its required hash/);
+    assert.equal(f.writes().length, 0);
+  });
+
   it('renders a reusable criterion-specific template without requiring an independent reviewer', async () => {
     const f = fixture();
     const result = await f.verify({ promptOnly: true });
@@ -151,7 +187,7 @@ describe('criterion proof verification', () => {
     ['escaping path', f => { f.record.inputs[0].path = '../guide.md'; }, /repository-relative/],
     ['absolute path', f => { f.record.inputs[0].path = join(f.repo, 'guide.md'); }, /repository-relative/],
     ['duplicate inputs', f => { f.record.inputs.push(f.record.inputs[0]); }, /duplicate/],
-    ['unbound cited file', f => { f.record.criterionToProof = map(criterionText, '`guide.md` and `behavior.cjs`'); }, /missing its required/],
+    ['nonexistent cited file', f => { f.record.criterionToProof = map(criterionText, '`guide.md` and `behavior.cjs`'); }, /does not exist in the repository/],
     ['different PR proof map', f => { f.prBody = map(criterionText, '`guide.md`', 'A changed observation of `guide.md`.'); }, /current PR entry/],
     ['uncommitted PR behavior', f => { writeFileSync(join(f.repo, 'guide.md'), 'Changed rule.\n'); f.record.inputs = [input(f.repo, 'guide.md')]; }, /current PR revision/],
     ['self-declared execution', f => { f.record.proof = { ...f.record.proof, kind: 'test-result', execution: { path: 'passed.log', sha256: '0'.repeat(64) }, runner: 'trusted' }; }, /behavioral test/],
