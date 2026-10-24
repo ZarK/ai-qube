@@ -53,6 +53,13 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
     if (event.type === "error") sawError = true;
     if (!isRecord(event.part)) return null;
     if (event.type === "text" && event.part.type === "text" && typeof event.part.text === "string") {
+      // The review contract is exactly one JSON object: a text part that is
+      // not a JSON object is malformed output, not a transient message.
+      try {
+        if (!isRecord(JSON.parse(event.part.text))) return null;
+      } catch {
+        return null;
+      }
       texts.push(event.part.text);
     }
     if (event.type === "step_finish") {
