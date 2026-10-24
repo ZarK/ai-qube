@@ -270,6 +270,15 @@ describe("Cursor isolated review adapter", () => {
       ),
       null,
     );
+    // A node.exe/index.js pair beside a shim outside versions/ is not a
+    // Cursor runtime: resolution must fall through to the versions listing.
+    const outside = cursor.resolveCursorWindowsShim(
+      "C:\\Tools\\cursor-agent.cmd",
+      () => true,
+      undefined,
+      () => ["2026.08.11-e8db854"],
+    );
+    assert.match(outside.prefixArgs.join("\n"), /2026\.08\.11-e8db854/);
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {

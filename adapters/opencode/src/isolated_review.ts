@@ -48,7 +48,7 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
       // line makes the output untrustworthy, not just that line.
       return null;
     }
-    if (!isRecord(event)) continue;
+    if (!isRecord(event)) return null;
     if (typeof event.sessionID === "string" && event.sessionID !== "") sessionId = event.sessionID;
     if (event.type === "error") sawError = true;
     if (!isRecord(event.part)) continue;

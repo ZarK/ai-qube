@@ -428,8 +428,12 @@ export function resolveCursorWindowsShim(
 ): IsolatedReviewHostExecutable | null {
   const shimDir = windowsPath.dirname(shim);
   // A running Cursor session puts its version directory first on PATH, so the
-  // resolved shim can sit beside node.exe and index.js instead of above versions/.
-  if (fileExists(windowsPath.join(shimDir, "node.exe")) && fileExists(windowsPath.join(shimDir, "index.js"))) {
+  // resolved shim can sit inside versions/<version> beside node.exe and
+  // index.js instead of above versions/. Only that layout qualifies; a stray
+  // node.exe/index.js pair beside any other shim is not a Cursor runtime.
+  const insideVersions = windowsPath.basename(windowsPath.dirname(shimDir)).toLowerCase() === "versions"
+    && /^\d{4}\.\d{1,2}\.\d{1,2}(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/iu.test(windowsPath.basename(shimDir));
+  if (insideVersions && fileExists(windowsPath.join(shimDir, "node.exe")) && fileExists(windowsPath.join(shimDir, "index.js"))) {
     return cursorAcpExecutable(shimDir);
   }
   const versions = windowsPath.join(shimDir, "versions");

@@ -22,9 +22,9 @@ QUBE uses a command asset where the harness supports project commands. Codex use
 
 | Harness | Task list | Subagents | Host-local review | Isolated review | Live model list | Umpire continuation |
 | --- | --- | --- | --- | --- | --- | --- |
-| OpenCode | Supported | Supported | Supported | Unsupported | Supported | Supported |
+| OpenCode | Supported | Supported | Supported | Supported | Supported | Supported |
 | Codex | Supported | Supported | Supported | Supported | Supported | Experimental |
-| Claude Code | Supported | Supported | Supported | Unsupported | Unsupported | Experimental |
+| Claude Code | Supported | Supported | Supported | Supported | Unsupported | Experimental |
 | Grok Build | Unsupported | Supported | Supported | Supported | Supported | Experimental |
 | Cursor | Unsupported | Unsupported | Unsupported | Supported | Supported | Supported |
 
