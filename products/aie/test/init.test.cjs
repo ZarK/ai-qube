@@ -1787,7 +1787,7 @@ describe('init command metadata', () => {
     assert.equal(config.policy.reviews.lanes.find(lane => lane.id === 'security').route.host, 'cursor');
   });
 
-  it('rejects a selected harness that does not support isolated review', () => {
+  it('rejects an isolated review harness with no registered adapter', () => {
     const repo = makeGitRepo();
     const result = binRun([
       'init',
@@ -1797,7 +1797,7 @@ describe('init command metadata', () => {
       '--review-mode',
       'isolated',
       '--isolated-review-agent',
-      'opencode',
+      'not-a-host',
       '--yes',
       '--json',
     ], repo);
@@ -1805,7 +1805,7 @@ describe('init command metadata', () => {
     assert.equal(result.status, 1, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
-    assert.match(parsed.errors.join('\n'), /OpenCode isolated review is not available yet.*--review-mode host/);
+    assert.match(parsed.errors.join('\n'), /Isolated review agent "not-a-host" is not a supported agent harness/);
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
   });
 
