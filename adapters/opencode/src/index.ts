@@ -92,11 +92,10 @@ export const opencodeHostProfile = defineAgentHostProfile({
       agents: OPENCODE_REVIEW_TARGETS,
     }),
     isolated: Object.freeze({
-      support: "unsupported",
-      description: "QUBE has no tested OpenCode CLI invocation that combines fresh non-interactive execution, read-only isolation, and structured review output.",
-      nextAction: "Use an OpenCode native review subagent or select a host with a tested isolated review adapter.",
-      freshContext: false,
-      readOnly: false,
+      support: "supported",
+      description: "QUBE starts a fresh OpenCode run with the read-only plan agent and JSON events, then validates one structured result.",
+      freshContext: true,
+      readOnly: true,
       agents: Object.freeze([]),
     }),
   }),
@@ -147,3 +146,4 @@ export const opencodeHostProfile = defineAgentHostProfile({
 } satisfies AgentHostProfile);
 
 export { buildOpenCodeVerifyInvocation, opencodeContinuationAdapter, opencodeContinuationDeclaration } from "./continuation.js";
+export { isolatedReviewHostAdapter, parseOpenCodeOutput, reviewHostAdapter } from "./isolated_review.js";

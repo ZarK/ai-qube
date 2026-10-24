@@ -240,9 +240,12 @@ export function resolveModelHostExecutableSync(
       const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
       const script = adapter.windowsNodeModulesScriptPath(dirname(shim));
-      if (script) {
+      if (script && existsSync(script)) {
+        // Some hosts ship a native binary behind the npm shim; run it
+        // directly instead of through Node.
+        if (/\.(?:exe|com)$/i.test(script)) return script;
         const node = findOnPathSync('node.exe');
-        if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
+        if (node) return { executable: node, prefixArgs: [script] };
       }
     }
   }
