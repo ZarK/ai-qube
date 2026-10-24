@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { isAbsolute, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { CriterionIdentity } from '../checklist.js';
 import type { Config } from '../config/index.js';
 import { localReviewEvidenceSha256, readLocalReviewGate } from '../local_review_evidence.js';
@@ -83,7 +83,19 @@ export function prepareCriterionEvidence(context: CriterionEvidenceContext): Pre
       if (mapping.entry) {
         if (mapping.entry.citedPaths.length === 0) result.errors.push('The criterion-to-proof entry must cite its supporting source or observation files.');
         const cited = new Set([...inputs.inputs, ...artifacts.inputs].map(input => input.path));
-        for (const path of mapping.entry.citedPaths) if (!cited.has(path)) result.errors.push(`The cited file ${path} is missing its required hash.`);
+        // A path-shaped token is a citation only when it names a real file.
+        // Dotted keys in criterion prose (for example a config key) are not
+        // files and need no hash; a supporting citation that names no real
+        // file is a broken citation and still fails.
+        const isRepositoryFile = (path: string): boolean => {
+          try { return statSync(join(context.repoRoot, path)).isFile(); } catch { return false; }
+        };
+        for (const path of mapping.entry.supportingPaths) {
+          if (!isRepositoryFile(path)) result.errors.push(`The cited file ${path} does not exist in the repository.`);
+        }
+        for (const path of mapping.entry.citedPaths) {
+          if (isRepositoryFile(path) && !cited.has(path)) result.errors.push(`The cited file ${path} is missing its required hash.`);
+        }
         for (const input of inputs.inputs) if (!mapping.entry.citedPaths.includes(input.path) && input.kind !== 'config' && input.kind !== 'dependency') result.errors.push(`Required input ${input.path} is not cited by the criterion-to-proof entry.`);
       }
       if (proof.kind === 'direct-observation' && artifacts.inputs.length === 0) result.errors.push('Direct observation needs at least one current observation artifact.');

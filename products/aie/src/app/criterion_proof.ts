@@ -7,6 +7,15 @@ export interface CriterionProofEntry {
   negativeCase: string;
   section: string;
   citedPaths: string[];
+  /** Backticked path-shaped tokens inside the Implemented at / Proven by fields only. */
+  supportingPaths: string[];
+}
+
+function pathTokens(text: string): string[] {
+  return [...new Set([...text.matchAll(/`([^`\n]+)`/gu)]
+    .map(match => match[1].trim())
+    .filter(value => /^[\w@./-]+\.[a-z0-9]{1,10}(?::\d+)?$/iu.test(value))
+    .map(value => value.replace(/:\d+$/u, '')))];
 }
 
 export function readCriterionProof(body: string, criterion: CriterionIdentity): { entry: CriterionProofEntry | null; errors: string[] } {
@@ -27,12 +36,10 @@ export function readCriterionProof(body: string, criterion: CriterionIdentity): 
   for (const [name, value] of [['Implemented at', implementedAt], ['Proven by', provenBy], ['Negative case', negativeCase]] as const) {
     if (!value || /\[(?:UNFILLED|TODO)|<[^>]+>|TBD/iu.test(value)) errors.push(`Criterion ${criterion.index} has an incomplete ${name} field.`);
   }
-  const citedPaths = [...new Set([...selected.section.matchAll(/`([^`\n]+)`/gu)]
-    .map(match => match[1].trim())
-    .filter(value => /^[\w@./-]+\.[a-z0-9]{1,10}(?::\d+)?$/iu.test(value))
-    .map(value => value.replace(/:\d+$/u, '')))];
+  const citedPaths = pathTokens(selected.section);
+  const supportingPaths = pathTokens(`${implementedAt}\n${provenBy}`);
   return {
-    entry: { criterion, implementedAt, provenBy, negativeCase, section: selected.section, citedPaths },
+    entry: { criterion, implementedAt, provenBy, negativeCase, section: selected.section, citedPaths, supportingPaths },
     errors,
   };
 }
