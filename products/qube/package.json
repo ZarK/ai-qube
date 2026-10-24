@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "QUBE CLI for Quality, Umpire, Bootstrap, and Executor.",
   "keywords": [
     "cli",
@@ -47,14 +47,14 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/aib": "0.2.13",
-    "@tjalve/aie": "0.2.13",
-    "@tjalve/aiq": "0.2.7",
-    "@tjalve/aiu": "0.0.14",
-    "@tjalve/qube-adapter-codex": "0.1.11",
-    "@tjalve/qube-adapter-github": "0.1.9",
-    "@tjalve/qube-cli": "0.2.3",
-    "@tjalve/qube-core": "0.2.10"
+    "@tjalve/aib": "0.2.14",
+    "@tjalve/aie": "0.2.14",
+    "@tjalve/aiq": "0.2.8",
+    "@tjalve/aiu": "0.0.15",
+    "@tjalve/qube-adapter-codex": "0.1.12",
+    "@tjalve/qube-adapter-github": "0.1.10",
+    "@tjalve/qube-cli": "0.2.4",
+    "@tjalve/qube-core": "0.2.11"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

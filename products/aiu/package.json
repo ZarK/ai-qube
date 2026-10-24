@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiu",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Umpire CLI for safe agent continuation.",
   "keywords": [
     "cli",
@@ -63,12 +63,12 @@
     "typescript": "6.0.2"
   },
   "dependencies": {
-    "@tjalve/qube-adapter-claude-code": "0.1.9",
-    "@tjalve/qube-adapter-codex": "0.1.11",
-    "@tjalve/qube-adapter-cursor": "0.1.3",
-    "@tjalve/qube-adapter-grok-build": "0.1.11",
-    "@tjalve/qube-adapter-opencode": "0.1.8",
-    "@tjalve/qube-cli": "0.2.3",
-    "@tjalve/qube-core": "0.2.10"
+    "@tjalve/qube-adapter-claude-code": "0.1.10",
+    "@tjalve/qube-adapter-codex": "0.1.12",
+    "@tjalve/qube-adapter-cursor": "0.1.4",
+    "@tjalve/qube-adapter-grok-build": "0.1.12",
+    "@tjalve/qube-adapter-opencode": "0.1.9",
+    "@tjalve/qube-cli": "0.2.4",
+    "@tjalve/qube-core": "0.2.11"
   }
 }

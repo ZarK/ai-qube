@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/aiq-workspace",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "packageManager": "pnpm@11.0.4",
   "engines": {
