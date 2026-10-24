@@ -66,6 +66,7 @@ describe("opencode adapter", () => {
       "run",
       "--format", "json",
       "--agent", "plan",
+      "--pure",
       "--dir", "/repo",
       "--model", "opencode/big-pickle",
       "--variant", "high",

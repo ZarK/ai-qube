@@ -94,8 +94,10 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
       "run",
       "--format", "json",
       // The plan agent cannot edit files, so the review cannot change the
-      // checkout while it inspects it.
+      // checkout while it inspects it. --pure keeps project plugins (which
+      // may write logs or state) out of the isolated session.
       "--agent", "plan",
+      "--pure",
       "--dir", context.repoRoot,
     ];
     if (context.model) args.push("--model", context.model);
