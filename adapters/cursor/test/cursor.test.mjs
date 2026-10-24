@@ -232,8 +232,44 @@ describe("Cursor isolated review adapter", () => {
       },
     );
     assert.equal(cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => false, undefined, () => ["2026.08.11-e8db854"]), null);
-    const newest = cursor.resolveCursorWindowsShim("C:\\Tools\\cursor-agent.cmd", () => true, undefined, () => ["2026.9.30-a", "2026.10.1-b"]);
+    const newest = cursor.resolveCursorWindowsShim(
+      "C:\\Tools\\cursor-agent.cmd",
+      path => path !== "C:\\Tools\\node.exe" && path !== "C:\\Tools\\index.js",
+      undefined,
+      () => ["2026.9.30-a", "2026.10.1-b"],
+    );
     assert.match(newest.prefixArgs.join("\n"), /2026\.10\.1-b/);
+  });
+
+  it("resolves a Windows shim that sits inside its version directory", () => {
+    const versionRoot = "C:\\Tools\\versions\\2026.09.08-6caf4ff";
+    const resolved = cursor.resolveCursorWindowsShim(
+      `${versionRoot}\\cursor-agent.cmd`,
+      path => path === `${versionRoot}\\node.exe` || path === `${versionRoot}\\index.js`,
+      undefined,
+      () => { throw new Error("the version directory shim needs no versions listing"); },
+    );
+    assert.deepEqual(resolved, {
+      executable: process.execPath,
+      prefixArgs: [
+        fileURLToPath(new URL("../dist/cursor-acp-runner.js", import.meta.url)),
+        "--cursor-executable",
+        `${versionRoot}\\node.exe`,
+        "--cursor-prefix-json",
+        JSON.stringify([`${versionRoot}\\index.js`]),
+        "--",
+      ],
+    });
+    // A partial runtime beside the shim is not enough: both files are required.
+    assert.equal(
+      cursor.resolveCursorWindowsShim(
+        `${versionRoot}\\cursor-agent.cmd`,
+        path => path === `${versionRoot}\\node.exe`,
+        undefined,
+        () => [],
+      ),
+      null,
+    );
   });
 
   it("builds one fresh read-only JSON invocation with no publishing or approval flags", () => {

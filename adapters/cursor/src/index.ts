@@ -406,6 +406,18 @@ export function buildCursorInvocation(
   return { args, stdin: reviewPrompt(context) };
 }
 
+function cursorAcpExecutable(runtimeDir: string): IsolatedReviewHostExecutable {
+  return {
+    executable: process.execPath,
+    prefixArgs: [
+      fileURLToPath(new URL("./cursor-acp-runner.js", import.meta.url)),
+      "--cursor-executable", windowsPath.join(runtimeDir, "node.exe"),
+      "--cursor-prefix-json", JSON.stringify([windowsPath.join(runtimeDir, "index.js")]),
+      "--",
+    ],
+  };
+}
+
 export function resolveCursorWindowsShim(
   shim: string,
   fileExists: (path: string) => boolean = existsSync,
@@ -414,7 +426,13 @@ export function resolveCursorWindowsShim(
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name),
 ): IsolatedReviewHostExecutable | null {
-  const versions = windowsPath.join(windowsPath.dirname(shim), "versions");
+  const shimDir = windowsPath.dirname(shim);
+  // A running Cursor session puts its version directory first on PATH, so the
+  // resolved shim can sit beside node.exe and index.js instead of above versions/.
+  if (fileExists(windowsPath.join(shimDir, "node.exe")) && fileExists(windowsPath.join(shimDir, "index.js"))) {
+    return cursorAcpExecutable(shimDir);
+  }
+  const versions = windowsPath.join(shimDir, "versions");
   let names: string[];
   try { names = listDirectory(versions); }
   catch { return null; }
@@ -435,17 +453,7 @@ export function resolveCursorWindowsShim(
     .find(name => fileExists(windowsPath.join(versions, name, "node.exe"))
       && fileExists(windowsPath.join(versions, name, "index.js")));
   if (!selected) return null;
-  const cursorNode = windowsPath.join(versions, selected, "node.exe");
-  const cursorScript = windowsPath.join(versions, selected, "index.js");
-  return {
-    executable: process.execPath,
-    prefixArgs: [
-      fileURLToPath(new URL("./cursor-acp-runner.js", import.meta.url)),
-      "--cursor-executable", cursorNode,
-      "--cursor-prefix-json", JSON.stringify([cursorScript]),
-      "--",
-    ],
-  };
+  return cursorAcpExecutable(windowsPath.join(versions, selected));
 }
 
 export function probeCursor(
