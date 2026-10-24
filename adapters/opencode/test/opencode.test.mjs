@@ -97,6 +97,11 @@ describe("opencode adapter", () => {
       events,
     ].join("\n");
     assert.equal(parseOpenCodeOutput(malformedText), null);
+    const nonStringText = [
+      JSON.stringify({ type: "text", sessionID: "ses-1", part: { type: "text", text: 42 } }),
+      events,
+    ].join("\n");
+    assert.equal(parseOpenCodeOutput(nonStringText), null);
   });
 
   it("checks the configured model against the live catalog during probe", () => {
