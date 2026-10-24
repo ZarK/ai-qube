@@ -51,7 +51,7 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
     if (!isRecord(event)) return null;
     if (typeof event.sessionID === "string" && event.sessionID !== "") sessionId = event.sessionID;
     if (event.type === "error") sawError = true;
-    if (!isRecord(event.part)) continue;
+    if (!isRecord(event.part)) return null;
     if (event.type === "text" && event.part.type === "text" && typeof event.part.text === "string") {
       texts.push(event.part.text);
     }
