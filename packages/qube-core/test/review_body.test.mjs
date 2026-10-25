@@ -244,7 +244,7 @@ describe("renderRoundReviewBody", () => {
           host: "grok-build",
           model: "grok-4.6",
           effort: "high",
-          evidencePath: "F:\\\\code\\\\ai-qube\\\\.qube\\\\aie\\\\reviews\\\\1\\\\2\\\\abc\\\\issue-compliance.json",
+          evidencePath: "C:\\\\work\\\\qube\\\\.qube\\\\aie\\\\reviews\\\\1\\\\2\\\\abc\\\\issue-compliance.json",
         }),
         lane({
           laneId: "code-quality",
@@ -261,7 +261,7 @@ describe("renderRoundReviewBody", () => {
     assert.match(render.body, /issue-compliance: Grok Build \/ grok-4\.6 \(high\)/);
     assert.match(render.body, /code-quality: Codex \/ gpt-5\.6-luna \(medium\)/);
     assert.doesNotMatch(render.body, /hosts: codex/);
-    assert.doesNotMatch(render.body, /F:\\\\code\\\\ai-qube/);
+    assert.doesNotMatch(render.body, /C:\\\\work\\\\qube/);
     assert.match(render.body, /\.qube\/aie\/reviews\/1\/2\/abc\/code-quality\.json/);
     assert.match(render.body, /rerun: `aie pr gate 528`/);
   });

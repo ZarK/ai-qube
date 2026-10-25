@@ -52,5 +52,4 @@ IPC is critical path; minimize latency.
 When defining IPC:
 - Specify contracts first; implement handlers.
 - Keep diffs small; test compatibility.
-- If changing protocol, document migration path.</content>
-<parameter name="filePath">/Users/tjalve/Github/memex/.windsurf/rules/ipc.md
+- If changing protocol, document migration path.

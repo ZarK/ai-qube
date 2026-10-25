@@ -4,7 +4,7 @@
 
 ## Planning UX
 
-Bootstrap should reproduce the productive loop from Codex session `019e2728-ee2d-72a0-a26a-ba878d9ffe4c`:
+Bootstrap should reproduce the productive loop from an earlier Codex working session:
 
 - read nearby repositories and reference material before asking questions
 - ask concrete questions in the human's language
