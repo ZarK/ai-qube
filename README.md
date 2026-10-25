@@ -5,6 +5,22 @@ repository. It has four parts: Bootstrap, Executor, Quality, and Umpire. The
 name comes from their initials. Each part is its own npm package and works on
 its own. The `@tjalve/qube` composer CLI runs whichever parts are installed.
 
+> **This repository runs autonomous agents.** QUBE is developed with QUBE.
+> The agent instructions in `AGENTS.md` and `CLAUDE.md` and the settings in
+> `.qube/` tell a coding agent that opens this repository (Codex, Claude Code,
+> Cursor, OpenCode or Grok Build) that it may run tests, commit, push, open pull
+> requests, and merge when the required checks pass, without asking first.
+> To turn this off:
+>
+> - For one task, tell your agent to ask before it commits, pushes, or merges.
+>   Your instruction overrides the repository's.
+> - For your checkout, run `qube mode local`. The agent then works on your task
+>   directly and does not create branches, commit, push, or open pull requests.
+>   Run `qube mode shipping` to switch back.
+> - For a fork or another repository, run `qube aie init --no-autonomous`. It
+>   turns off autonomous shipping in `.qube/aie/config.json` and rewrites the
+>   agent instructions.
+
 Work moves through the parts in this order:
 
 1. **Bootstrap** (`aib`) turns an idea into a spec, milestones, and work items.

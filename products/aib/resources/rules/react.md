@@ -62,5 +62,4 @@ Frontend handles large media libraries; 60fps scrolling essential.
 When implementing UI:
 - Deliver a minimal working slice end-to-end (component → hook → test).
 - Keep diffs small; focus on user value.
-- If adding a library, justify: why it exists, what it replaces, how to remove.</content>
-<parameter name="filePath">/Users/tjalve/Github/memex/.windsurf/rules/react.md
+- If adding a library, justify: why it exists, what it replaces, how to remove.

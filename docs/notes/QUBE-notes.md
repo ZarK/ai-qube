@@ -159,7 +159,7 @@ Bootstrap should preserve the thinking separately in planning state or work item
 
 ## CLI Concepts To Reuse Across QUBE
 
-Source: `/Users/tjalve/Github/ai-executor/docs/spec.md` and `/Users/tjalve/Github/ai-executor/docs/M1-package-and-cli-foundation.md`.
+Source: the earlier ai-executor repository, `docs/spec.md` and `docs/M1-package-and-cli-foundation.md`.
 
 All QUBE CLIs should be explorable by humans and deterministic for agents:
 
@@ -228,7 +228,7 @@ These rules are not only Executor implementation rules. Bootstrap should include
 
 ## Core Supply-Chain Guard
 
-Source: `/Users/tjalve/.agents/skills/supply-chain-guard/SKILL.md`.
+Source: the supply-chain-guard skill (ZarK/ai-supply-chain-guard).
 
 QUBE should include supply-chain protection as built-in behavior rather than assuming the host agent has a local skill installed. Relevant defaults:
 
@@ -360,7 +360,7 @@ Primary sources checked during this pass included OpenCode docs, Claude Code doc
 
 ## Bootstrap Planning UX
 
-Source: Codex session `019e2728-ee2d-72a0-a26a-ba878d9ffe4c`, "Package Executor as npm package", run in `/Users/tjalve/Github/ai-executor` on 2026-05-14.
+Source: a working session, "Package Executor as npm package", in the earlier ai-executor repository on 2026-05-14.
 
 The process used for `ai-executor` should become a core `ai-bootstrap` experience. A human can arrive with a built-out idea, rough notes, or only an initial direction. Bootstrap should help turn that into a dry functional spec, milestone docs, and durable work items through a guided loop.
 

@@ -51,5 +51,4 @@ UI must be snappy; large galleries require efficient styles.
 When styling:
 - Use utilities in components; add custom CSS only for tokens.
 - Keep styles modular; document custom classes.
-- If extending Tailwind, justify additions.</content>
-<parameter name="filePath">/Users/tjalve/Github/memex/.windsurf/rules/tailwind.md
+- If extending Tailwind, justify additions.
