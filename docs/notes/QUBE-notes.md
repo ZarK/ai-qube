@@ -210,7 +210,7 @@ The Executor M1 milestone establishes a safety baseline that should apply across
 
 ## Core Implementation Guardrails
 
-Source: later Executor planning work in Codex session `019e2728-ee2d-72a0-a26a-ba878d9ffe4c`, current `ai-executor/docs/spec.md`, and `ai-executor/docs/M4-init-agent-instructions-and-make-it-so.md`.
+Source: later Executor planning work in a Codex working session, current `ai-executor/docs/spec.md`, and `ai-executor/docs/M4-init-agent-instructions-and-make-it-so.md`.
 
 QUBE should treat these as family-wide agent guardrails, with Bootstrap generating them into work items/instructions and Executor installing/enforcing them during work item execution:
 
