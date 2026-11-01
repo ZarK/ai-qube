@@ -1525,6 +1525,32 @@ describe('model review runner', () => {
     }
   });
 
+  it('ignores the Umpire continuation lock but still detects other files under .qube', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-lock-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, '.gitignore'), '.qube/\n');
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      const locks = join(repoRoot, '.qube', 'aiu', 'locks');
+      mkdirSync(locks, { recursive: true });
+      writeFileSync(join(locks, 'continuation.lock'), '{}\n');
+      writeFileSync(join(locks, 'continuation.lock.owner-1.stale'), '{}\n');
+      rmSync(join(locks, 'continuation.lock'), { force: true });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assert.equal(monitor.violation(), null);
+      writeFileSync(join(locks, 'other.lock'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assert.match(monitor.violation(), /other\.lock/);
+    } finally {
+      monitor.close();
+    }
+  });
+
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-grok-shim-'));
     const script = join(root, 'node_modules', '@xai', 'grok', 'bin', 'grok.js');

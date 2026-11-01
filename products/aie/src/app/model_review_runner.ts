@@ -883,7 +883,17 @@ function isInternalReviewPath(path: string): boolean {
     || normalized === '.qube'
     || normalized === '.qube/aie'
     || normalized === '.qube/aie/reviews'
-    || normalized.startsWith('.qube/aie/reviews/');
+    || normalized.startsWith('.qube/aie/reviews/')
+    || isContinuationLockPath(normalized);
+}
+
+// The Umpire stop hook takes a lock file under .qube/aiu/locks while a host
+// session ends. Only that lock file, its stale-recovery copies and the
+// directories leading to them are exempt; every other path stays checked.
+function isContinuationLockPath(normalized: string): boolean {
+  return normalized === '.qube/aiu'
+    || normalized === '.qube/aiu/locks'
+    || /^\.qube\/aiu\/locks\/continuation\.lock(?:\.[A-Za-z0-9_-]+\.stale)?$/.test(normalized);
 }
 
 function isHostScratchPath(path: string): boolean {
