@@ -19,6 +19,7 @@ const {
   resolveWindowsNodeShim,
   resolveModelReviewCheckoutState,
   watchModelReviewCheckout,
+  isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
@@ -1546,6 +1547,65 @@ describe('model review runner', () => {
       writeFileSync(join(locks, 'other.lock'), '{}\n');
       await new Promise(resolve => setTimeout(resolve, 150));
       assert.match(monitor.violation(), /other\.lock/);
+    } finally {
+      monitor.close();
+    }
+  });
+
+  it('exempts exactly the paths the Umpire stop hook writes, in both separator forms', () => {
+    const exempt = [
+      '.qube/aiu', '.qube/aiu/locks', '.qube/aiu/state', '.qube/aiu/logs',
+      '.qube/aiu/locks/continuation.lock',
+      '.qube/aiu/locks/continuation.lock.0123abcd.stale',
+      '.qube/aiu/state/continuation.json',
+      '.qube/aiu/state/continuation.json.4242.1790000000000.tmp',
+      '.qube/aiu/logs/continuation.jsonl',
+      '.qube/aiu/logs/continuation.jsonl.1',
+    ];
+    for (const path of exempt) {
+      assert.equal(isInternalReviewPath(path), true, path);
+      assert.equal(isInternalReviewPath(path.replaceAll('/', '\\')), true, path.replaceAll('/', '\\'));
+    }
+    const counted = [
+      '.qube/aiu/logs/other.jsonl',
+      '.qube/aiu/logs/continuation.jsonl.2',
+      '.qube/aiu/logs/continuation.jsonl.1/x',
+      '.qube/aiu/state/continuation.json.bak',
+      '.qube/aiu/state/host-activation/codex.json',
+      '.qube/aiu/state/host-activation',
+      '.qube/aiu/whip.json',
+      '.qube/aiu/locks/other.lock',
+      '.qube/aiu/logs/sub/continuation.jsonl',
+      '.qube/aiu2/logs/continuation.jsonl',
+    ];
+    for (const path of counted) {
+      assert.equal(isInternalReviewPath(path), false, path);
+      assert.equal(isInternalReviewPath(path.replaceAll('/', '\\')), false, path.replaceAll('/', '\\'));
+    }
+  });
+
+  it('ignores the hook continuation log during a monitored checkout', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-log-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'QUBE Test']);
+    writeFileSync(join(repoRoot, '.gitignore'), '.qube/\n');
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    execFileSync('git', ['-C', repoRoot, 'add', '.gitignore', 'tracked.txt']);
+    execFileSync('git', ['-C', repoRoot, 'commit', '--quiet', '-m', 'fixture']);
+    const monitor = watchModelReviewCheckout(repoRoot);
+    try {
+      const logs = join(repoRoot, '.qube', 'aiu', 'logs');
+      const state = join(repoRoot, '.qube', 'aiu', 'state');
+      mkdirSync(logs, { recursive: true });
+      mkdirSync(state, { recursive: true });
+      writeFileSync(join(logs, 'continuation.jsonl'), '{}\n');
+      writeFileSync(join(state, 'continuation.json'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assert.equal(monitor.violation(), null);
+      writeFileSync(join(logs, 'other.jsonl'), '{}\n');
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assert.match(monitor.violation(), /other\.jsonl/);
     } finally {
       monitor.close();
     }
