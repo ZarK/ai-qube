@@ -1053,16 +1053,18 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // Routes without shell cannot run git, so the trusted runner prepares
     // the diff itself as readable files before the checkout is monitored.
     if (!routeHasShell(input) && !input.reviewInputFiles) {
-      const diff = await computeReviewDiff(input.repoRoot, input.baseRef ?? 'origin/main', input.headSha);
-      if (diff === null) {
+      const prepared = await computeReviewDiff(input.repoRoot, input.baseRef ?? 'origin/main', input.headSha);
+      if (prepared.kind === 'unavailable') {
         // A route without shell cannot inspect without the prepared diff;
         // approving here would repeat the no-diff review this input prevents.
         return { evidence: null, reasonCode: 'model-route-review-input-unavailable', error: 'The trusted runner could not compute the review diff for a route without shell. Check the base ref and head, then rerun the gate.' };
       }
-      const reviewInputFiles = writeReviewInputFiles(input.repoRoot, invocationId, diff);
-      input = { ...input, reviewInputFiles };
-      if (reviewInputFiles.length > 0) {
-        createdReviewInputDirectory = join(input.repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
+      if (prepared.kind === 'diff') {
+        const reviewInputFiles = writeReviewInputFiles(input.repoRoot, invocationId, prepared.diff);
+        input = { ...input, reviewInputFiles };
+        if (reviewInputFiles.length > 0) {
+          createdReviewInputDirectory = join(input.repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
+        }
       }
     }
     const prompt = buildModelReviewPrompt(input);

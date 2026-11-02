@@ -1869,10 +1869,14 @@ describe('review input diff parsing', () => {
   });
 
   it('fails closed when a no-shell route has no prepared diff and git cannot compute one', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-missing-'));
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-missing-');
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       reviewInputFiles: undefined,
+      headSha,
+      baseRef: 'refs/heads/missing-base',
+      resolveHead: async () => headSha,
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => { throw new Error('must not run'); },
     });

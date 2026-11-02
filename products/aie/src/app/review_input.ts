@@ -158,23 +158,41 @@ export function writeReviewInputFiles(repoRoot: string, invocationId: string, di
   });
 }
 
+export type PreparedReviewDiff =
+  | { kind: 'skip' }
+  | { kind: 'unavailable' }
+  | { kind: 'diff'; diff: string };
+
+async function gitText(repoRoot: string, args: readonly string[]): Promise<string> {
+  const result = await execFileAsync('git', ['-C', repoRoot, ...args], {
+    encoding: 'utf8', timeout: 30_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+  return result.stdout;
+}
+
 /**
- * Compute `git diff <merge-base>...<head>` for the reviewed range. Returns
- * null when git cannot resolve the range (for example a test fixture with
- * no real commits); callers then proceed without review-input files.
+ * Compute `git diff <merge-base>...<head>` for the reviewed range. The
+ * preparation only applies when the checkout is at the requested head —
+ * the same condition the runner verifies before spawning a lane. When the
+ * checkout is elsewhere, preparation is skipped and the existing
+ * checkout-mismatch check reports the problem. When the checkout is at
+ * the head but the range cannot be resolved, the diff is unavailable and
+ * a route without shell must not approve without it.
  */
-export async function computeReviewDiff(repoRoot: string, baseRef: string, headSha: string): Promise<string | null> {
+export async function computeReviewDiff(repoRoot: string, baseRef: string, headSha: string): Promise<PreparedReviewDiff> {
+  let head: string;
   try {
-    const mergeBase = (await execFileAsync('git', ['-C', repoRoot, 'merge-base', baseRef, headSha], {
-      encoding: 'utf8', timeout: 30_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024,
-    })).stdout.trim();
-    if (mergeBase === '') return null;
-    const diff = await execFileAsync('git', ['-C', repoRoot, 'diff', `${mergeBase}...${headSha}`], {
-      encoding: 'utf8', timeout: 30_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024,
-    });
-    return diff.stdout;
+    head = (await gitText(repoRoot, ['rev-parse', '--verify', 'HEAD'])).trim();
   } catch {
-    return null;
+    return { kind: 'skip' };
+  }
+  if (head !== headSha) return { kind: 'skip' };
+  try {
+    const mergeBase = (await gitText(repoRoot, ['merge-base', baseRef, headSha])).trim();
+    if (mergeBase === '') return { kind: 'unavailable' };
+    return { kind: 'diff', diff: await gitText(repoRoot, ['diff', `${mergeBase}...${headSha}`]) };
+  } catch {
+    return { kind: 'unavailable' };
   }
 }
 
