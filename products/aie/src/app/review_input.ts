@@ -24,13 +24,42 @@ export interface ParsedDiffFile {
   diff: string;
 }
 
+const GIT_ESCAPES: Readonly<Record<string, number>> = {
+  a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34,
+};
+
+/** Decode a git C-style quoted path, including octal byte escapes. */
 function unquoteGitPath(value: string): string {
-  if (!value.startsWith('"')) return value;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (typeof parsed === 'string') return parsed;
-  } catch { /* Fall through to the manual unescape. */ }
-  return value.slice(1, -1).replace(/\\(.)/g, '$1');
+  if (!value.startsWith('"') || !value.endsWith('"')) return value;
+  const inner = value.slice(1, -1);
+  const bytes: number[] = [];
+  for (let index = 0; index < inner.length; index += 1) {
+    const character = inner[index];
+    if (character !== '\\') {
+      for (const byte of new TextEncoder().encode(character)) bytes.push(byte);
+      continue;
+    }
+    const next = inner[index + 1];
+    if (next !== undefined && next >= '0' && next <= '7') {
+      let octal = '';
+      while (octal.length < 3 && inner[index + 1 + octal.length] >= '0' && inner[index + 1 + octal.length] <= '7') {
+        octal += inner[index + 1 + octal.length];
+      }
+      bytes.push(Number.parseInt(octal, 8));
+      index += octal.length;
+      continue;
+    }
+    if (next !== undefined && next in GIT_ESCAPES) {
+      bytes.push(GIT_ESCAPES[next]);
+      index += 1;
+      continue;
+    }
+    if (next !== undefined) {
+      for (const byte of new TextEncoder().encode(next)) bytes.push(byte);
+      index += 1;
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
 function stripDiffPrefix(value: string): string {

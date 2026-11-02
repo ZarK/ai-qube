@@ -1863,6 +1863,8 @@ describe('review input diff parsing', () => {
     const files = parseDiffByFile(diff);
     assert.equal(files.length, 1);
     assert.equal(files[0].path, 'src/my file.ts');
+    const octal = parseDiffByFile('diff --git "a/h\\303\\251.ts" "b/h\\303\\251.ts"\n--- "a/h\\303\\251.ts"\n+++ "b/h\\303\\251.ts"\n@@ -1 +1 @@\n-old\n+new\n');
+    assert.equal(octal[0].path, 'hé.ts');
     assert.equal(files[0].added, 1);
     assert.match(files[0].diff, /2 \+\+\+i;/);
     assert.match(files[0].diff, /3  const b = 2;/);
