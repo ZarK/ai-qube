@@ -289,6 +289,54 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(plans[0].withheldByLaneCap, 1);
   });
 
+  it('withholds a blocking finding that cites a file missing at the reviewed head', () => {
+    const missing = finding({ severity: 'blocking', message: 'Missing file blocker.', location: { path: 'src/missing.ts', line: 500 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'security', findings: [missing] }],
+      { nitCap: 10, headLineCount: () => null },
+    );
+
+    assert.equal(plans[0].published.length, 0, 'a blocking finding citing a missing file must not be published as blocking');
+    assert.equal(plans[0].withheldMissingAtHead, 1);
+    assert.match(plans[0].withheldFindings[0].disposition, /cites code missing at the reviewed head/);
+    assert.match(plans[0].withheldFindings[0].disposition, /src\/missing\.ts:500 does not exist/);
+  });
+
+  it('withholds a blocking finding that cites a line past the end of the file at the reviewed head', () => {
+    const pastEnd = finding({ severity: 'blocking', message: 'Past-end blocker.', location: { path: 'src/short.ts', line: 240, endLine: 248 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'security', findings: [pastEnd] }],
+      { nitCap: 10, headLineCount: path => (path === 'src/short.ts' ? 215 : null) },
+    );
+
+    assert.equal(plans[0].published.length, 0);
+    assert.equal(plans[0].withheldMissingAtHead, 1);
+    assert.match(plans[0].withheldFindings[0].disposition, /past the end of src\/short\.ts, which has 215 line\(s\)/);
+  });
+
+  it('still publishes a blocking finding with a valid path and line range at the reviewed head', () => {
+    const valid = finding({ severity: 'blocking', message: 'Real blocker.', location: { path: 'src/real.ts', line: 12, endLine: 15 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'security', findings: [valid] }],
+      { nitCap: 10, headLineCount: () => 600 },
+    );
+
+    assert.equal(plans[0].published.length, 1);
+    assert.equal(plans[0].published[0].severity, 'blocking');
+    assert.equal(plans[0].withheldMissingAtHead, 0);
+  });
+
+  it('does not judge a citation when the reviewed head cannot be read', () => {
+    const located = finding({ severity: 'blocking', message: 'Unjudged blocker.', location: { path: 'src/real.ts', line: 12 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'security', findings: [located] }],
+      { nitCap: 10, headLineCount: () => undefined },
+    );
+
+    assert.equal(plans[0].published.length, 1);
+    assert.equal(plans[0].withheldMissingAtHead, 0);
+  });
+
   it('throws a plain Error for an invalid nitCap', () => {
     for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       assert.throws(

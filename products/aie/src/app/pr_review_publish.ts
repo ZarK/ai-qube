@@ -8,6 +8,7 @@ import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, carryForwa
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider } from '../providers/review_forge_provider.js';
+import { createHeadLineCounter } from '../finding_location.js';
 import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
 import type { PrGateExec } from './pr_gate.js';
 
@@ -507,6 +508,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   ];
   const synthesisPlan = planFindingPublication(synthesisLanes, {
     changedPaths,
+    headLineCount: createHeadLineCounter(repoRoot, headSha),
     nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
     laneSuppress: options.laneSuppress,
     laneAdvisoryCaps: options.laneAdvisoryCaps,

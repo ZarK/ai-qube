@@ -104,6 +104,16 @@ describe("grok-build adapter", () => {
     assert.equal(parsed.sessionId, "grok-session");
     assert.equal(parsed.reportedModel, "grok-4.6");
     assert.equal(parsed.usage.inputTokens, 10);
+    assert.equal(parsed.successfulToolCalls, undefined);
+  });
+
+  it("keeps a host-reported tool-call count from the envelope", () => {
+    const final = JSON.stringify({ status: "passed" });
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope(
+      JSON.stringify({ text: final, sessionId: "grok-session", toolCalls: 0 }),
+    );
+
+    assert.equal(parsed.successfulToolCalls, 0);
   });
 
   it("prefers structured output over provisional text objects", () => {

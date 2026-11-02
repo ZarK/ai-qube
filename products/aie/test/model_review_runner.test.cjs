@@ -22,6 +22,7 @@ const {
   isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
 const { writeReviewInputFiles, parseDiffByFile } = require('../dist/app/review_input.js');
+const { createHeadLineCounter } = require('../dist/finding_location.js');
 const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
 const { notInspectedFiles } = require('../dist/local_review_evidence.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
@@ -310,7 +311,7 @@ describe('model review runner', () => {
       resolveExecutable: async () => 'codex.exe',
       runProcess: async () => ({
         exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
-        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } })}\n`,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'ok' } })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } })}\n`,
       }),
     });
     return (async () => {
@@ -739,6 +740,7 @@ describe('model review runner', () => {
               aggregated_output: '721: return /blocked by policy|rejected:\\s*blocked/i.test(inspectionPolicyHaystack(result));',
             },
           }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'ok' } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
         ].join('\n'),
       }),
@@ -810,7 +812,7 @@ describe('model review runner', () => {
         stderr: '',
         timedOut: false,
         stdinDelivered: true,
-        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-git' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(inspected) } })}\n`,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-git' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'abc123' } })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'diff' } })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(inspected) } })}\n`,
       }),
     });
     assert.equal(result.error, null);
@@ -1035,6 +1037,8 @@ describe('model review runner', () => {
 
   it('accepts a confidence-bearing advisory and preserves confidence into routed evidence', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-confidence-'));
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'parser.ts'), Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n'));
     const body = laneResult();
     body.status = 'needs-work';
     body.severity = 'high';
@@ -1093,6 +1097,7 @@ describe('model review runner', () => {
         stdinDelivered: true,
         stdout: [
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'not-json' } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'ok' } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
         ].join('\n'),
       }),
@@ -1134,6 +1139,7 @@ describe('model review runner', () => {
         stdout: [
           JSON.stringify({ type: 'thread.started', thread_id: 'codex-progress' }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(codexProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'ok' } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
         ].join('\n'),
       }),
@@ -1168,6 +1174,7 @@ describe('model review runner', () => {
         stdout: [
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(attestedProgress) } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(secondAttestedProgress) } }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', exit_code: 0, aggregated_output: 'ok' } }),
           JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
         ].join('\n'),
       }),
@@ -1845,6 +1852,153 @@ describe('review input for routes without shell', () => {
     assert.equal(result.evidence.status, 'passed');
     assert.doesNotMatch(promptText, /Prefer Git and Node\.js/);
     assert.match(diffContent, /2 \+added review line/);
+  });
+});
+
+describe('finding locations at the reviewed head', () => {
+  function blockingBody(location) {
+    const body = laneResult();
+    body.status = 'needs-work';
+    body.severity = 'high';
+    body.recommendation = 'request-changes';
+    body.blockers = ['Fix the cited defect.'];
+    body.findings = [{ severity: 'blocking', message: 'Fix the cited defect.', location, confidence: 0.9 }];
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
+    return body;
+  }
+
+  function grokRun(repoRoot, body, extra = {}) {
+    return runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'head-check', ...extra }) }),
+    });
+  }
+
+  it('withholds a blocking finding that cites a file missing at the head and leaves the lane inconclusive', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-missing-file-'));
+    const result = await grokRun(repoRoot, blockingBody({ path: 'src/missing.ts', line: 500 }));
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.notEqual(result.evidence.status, 'passed');
+    assert.equal(result.evidence.recommendation, 'inconclusive');
+    assert.deepEqual(result.evidence.findings, []);
+    assert.deepEqual(result.evidence.blockers, []);
+    assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
+    assert.match(result.evidence.summary, /Withheld finding citing code missing at the reviewed head: src\/missing\.ts:500 does not exist at the reviewed head/);
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    assert.equal(existsSync(rawPath), true);
+    assert.match(JSON.parse(readFileSync(rawPath, 'utf8')).stdout, /src\/missing\.ts/);
+  });
+
+  it('withholds a blocking finding that cites a line past the end of the file at the head', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-past-eof-'));
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'short.ts'), 'one\ntwo\nthree\n');
+    const result = await grokRun(repoRoot, blockingBody({ path: 'src/short.ts', line: 240, endLine: 248 }));
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.deepEqual(result.evidence.findings, []);
+    assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
+    assert.match(result.evidence.summary, /src\/short\.ts:240 is past the end of src\/short\.ts, which has 3 line\(s\) at the reviewed head/);
+  });
+
+  it('still publishes a blocking finding with a valid path and line range at the head', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-valid-'));
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'real.ts'), Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n'));
+    const result = await grokRun(repoRoot, blockingBody({ path: 'src/real.ts', line: 12, endLine: 15 }));
+
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.equal(result.evidence.status, 'needs-work');
+    assert.equal(result.evidence.findings.length, 1);
+    assert.equal(result.evidence.findings[0].severity, 'blocking');
+    assert.deepEqual(result.evidence.findings[0].location, { path: 'src/real.ts', line: 12, endLine: 15 });
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    assert.equal(existsSync(rawPath), true, 'raw model output is kept for a published finding, not only on failure');
+    assert.equal(JSON.parse(readFileSync(rawPath, 'utf8')).reasonCode, 'model-route-completed');
+  });
+
+  it('makes a lane inconclusive when the host reports 0 successful tool calls but the result claims tools and findings', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-no-tools-'));
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'real.ts'), Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-no-tools' }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(blockingBody({ path: 'src/real.ts', line: 4 })) } }),
+        ].join('\n'),
+      }),
+    });
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.equal(result.reasonCode, 'model-route-no-successful-tool-calls');
+    assert.deepEqual(result.evidence.findings, []);
+    assert.match(result.evidence.summary, /Host reported 0 successful tool calls while the result claimed/);
+  });
+
+  it('makes a lane inconclusive when the host explicitly reports 0 tool calls and the result claims tools', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-reported-no-tools-'));
+    const result = await grokRun(repoRoot, laneResult(), { toolCalls: 0 });
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.equal(result.reasonCode, 'model-route-no-successful-tool-calls');
+  });
+
+  it('keeps a passed lane that claims no tools, commands, or findings when the host reports 0 tool calls', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-no-claims-'));
+    writeFileSync(join(repoRoot, 'README.md'), 'fixture\n');
+    const body = {
+      ...laneResult(),
+      commands: [],
+      toolsUsed: [],
+      artifacts: [{ kind: 'source', path: 'README.md', sha256: null }],
+    };
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-no-claims' }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(body) } }),
+        ].join('\n'),
+      }),
+    });
+
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.equal(result.evidence.status, 'passed');
+  });
+});
+
+describe('head line counter', () => {
+  it('reads line counts from git objects at the head, not from the checkout', () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-head-counter-');
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    writeFileSync(join(repoRoot, 'README.md'), 'changed\nin\nthe\ncheckout\n');
+    const counter = createHeadLineCounter(repoRoot, headSha);
+
+    assert.equal(counter('README.md'), 1);
+    assert.equal(counter('src/missing.ts'), null);
+    assert.equal(counter('../outside.ts'), null);
+    assert.equal(counter('/absolute.ts'), null);
+    assert.equal(createHeadLineCounter(repoRoot, 'refs/heads/missing-head')('README.md'), undefined);
   });
 });
 

@@ -150,6 +150,7 @@ describe("Cursor Windows ACP runner", () => {
     assert.equal(envelope.type, "result");
     assert.equal(envelope.session_id, "fresh-acp");
     assert.equal(envelope.result, '{"status":"passed"}');
+    assert.equal(envelope.successfulToolCalls, 0);
   });
 
   it("preserves the nullable model contract by keeping the ACP session default", () => {

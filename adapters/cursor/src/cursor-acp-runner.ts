@@ -230,6 +230,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
   const pending = new Map<number, PendingRequest>();
   let nextId = 1;
   let agentText = "";
+  let successfulToolCalls = 0;
   let protocolFault: Error | null = null;
   let stderr = "";
   let finalEnvelope: JsonObject | null = null;
@@ -277,6 +278,9 @@ async function runAcp(options: RunnerOptions): Promise<void> {
     }
     if (message.method === "session/update" && isRecord(message.params) && isRecord(message.params.update)) {
       const update = message.params.update;
+      if (update.sessionUpdate === "tool_call_update" && update.status === "completed") {
+        successfulToolCalls += 1;
+      }
       if (update.sessionUpdate === "agent_message_chunk" && isRecord(update.content) && typeof update.content.text === "string") {
         agentText += update.content.text;
       } else if (update.type === "agent_message_chunk" && typeof update.textDelta === "string") {
@@ -321,6 +325,7 @@ async function runAcp(options: RunnerOptions): Promise<void> {
       result: agentText,
       session_id: session.sessionId,
       model: transportModel ?? null,
+      successfulToolCalls,
     };
   } finally {
     rejectPending(new Error("Cursor ACP process closed."));

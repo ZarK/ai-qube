@@ -66,11 +66,20 @@ function usageFromCodexEvent(record: Record<string, unknown>): Record<string, un
   return undefined;
 }
 
+const NON_TOOL_ITEM_TYPES = new Set(["agent_message", "reasoning", "usage", "error"]);
+
+function isSuccessfulToolItem(item: Record<string, unknown>): boolean {
+  if (typeof item.type !== "string" || NON_TOOL_ITEM_TYPES.has(item.type)) return false;
+  if (item.type === "command_execution") return item.exit_code === 0;
+  return item.status === undefined || item.status === "completed";
+}
+
 function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
   const messages: string[] = [];
   let sessionId: string | null = null;
   let reportedModel: string | undefined;
   let usage: Record<string, unknown> | undefined;
+  let successfulToolCalls = 0;
   for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== "")) {
     let event: unknown;
     try {
@@ -85,6 +94,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
     if (record.type === "item.completed" && record.item && typeof record.item === "object" && !Array.isArray(record.item)) {
       const item = record.item as Record<string, unknown>;
       if (item.type === "agent_message" && typeof item.text === "string") messages.push(item.text);
+      else if (isSuccessfulToolItem(item)) successfulToolCalls += 1;
     }
     const eventUsage = usageFromCodexEvent(record);
     if (eventUsage) usage = eventUsage;
@@ -96,6 +106,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
     ...(reportedModel ? { reportedModel } : {}),
     ...(messages.length > 1 ? { transientTexts: messages.slice(0, -1) } : {}),
     ...(usage ? { usage } : {}),
+    successfulToolCalls,
   };
 }
 

@@ -7,6 +7,7 @@ import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgeRoundSummaryPublishResult } from '../providers/review_forge_provider.js';
+import { createHeadLineCounter } from '../finding_location.js';
 import { planFindingPublication, threadDispositionsFromPlans, type SynthesisLaneInput } from '../review_synthesis.js';
 import { renderInlineCommentBody, renderRoundSummaryBody, type RoundSummaryLaneInput } from '../review_round_summary.js';
 import { loadValidatedRoundLanes } from './pr_review_publish.js';
@@ -209,7 +210,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   }
 
   const synthesisLanes: SynthesisLaneInput[] = validatedLanes.map(lane => ({ laneId: lane.laneId, findings: lane.findings }));
-  const plans = planFindingPublication(synthesisLanes, { changedPaths, nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP, laneSuppress: options.laneSuppress, laneAdvisoryCaps: options.laneAdvisoryCaps });
+  const plans = planFindingPublication(synthesisLanes, { changedPaths, headLineCount: createHeadLineCounter(repoRoot, headSha), nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP, laneSuppress: options.laneSuppress, laneAdvisoryCaps: options.laneAdvisoryCaps });
   const planByLane = new Map(plans.map(plan => [plan.laneId, plan] as const));
 
   const roundSummaryLanes: RoundSummaryLaneInput[] = validatedLanes.map(lane => {
