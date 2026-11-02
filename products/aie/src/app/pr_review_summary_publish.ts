@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitChangedPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -203,7 +203,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   const changedPaths = options.changedPaths !== undefined
     ? options.changedPaths
     : options.deltaBaseRef
-      ? gitDeltaPathsSync(repoRoot, options.deltaBaseRef, headSha)
+      ? gitChangedPathsSync(repoRoot, options.deltaBaseRef, headSha)
       : undefined;
   if (changedPaths === null) {
     throw new Error('publish round review summary failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch and the PR head, then rerun publish.');
@@ -302,7 +302,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
 export async function runPrReviewSummaryPublishService(config: Config, options: PrReviewSummaryPublishOptions): Promise<PrReviewSummaryPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
-  const laneActivationPaths = options.changedPaths ?? gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
+  const laneActivationPaths = options.changedPaths ?? gitChangedPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
   const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, laneActivationPaths);
   return runPrReviewSummaryPublishWithProvider(provider, {
     ...options,

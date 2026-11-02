@@ -22,7 +22,7 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, gitDeltaPathsSync, notInspectedFiles, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitChangedPathsSync, notInspectedFiles, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
@@ -1123,7 +1123,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       } else {
         try {
           const providerReuseRoutesForSummary = (providerLaneReuse?.accepted ?? []).map(entry => ({ lane: entry.lane, route: entry.route }));
-          const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
+          const summaryDeltaPaths = gitChangedPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
           const summaryPublished = await runPrReviewSummaryPublishWithProvider(provider, {
             prNumber: options.prNumber,
             issueNumber: issueNumberForSummary,

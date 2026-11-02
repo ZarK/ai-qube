@@ -3,7 +3,7 @@ import type { Config } from '../config/index.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { parseReviewRouteProvenance, reviewRouteFingerprint, type ReviewFinding, type ReviewRouteProvenance } from '@tjalve/qube-core';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitChangedPathsSync, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, carryForwardScopeFromConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -475,7 +475,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   const changedPaths = options.changedPaths !== undefined
     ? options.changedPaths
     : options.deltaBaseRef
-      ? gitDeltaPathsSync(repoRoot, options.deltaBaseRef, headSha)
+      ? gitChangedPathsSync(repoRoot, options.deltaBaseRef, headSha)
       : undefined;
   if (changedPaths === null) {
     throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch and the PR head, then rerun publish.');
@@ -555,7 +555,7 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
   // itself binds to the resolved publish head inside the provider run via
   // deltaBaseRef; a failed observation there fails publication closed after
   // own-lane evidence validation has raised its more actionable errors.
-  const laneActivationPaths = options.changedPaths ?? gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
+  const laneActivationPaths = options.changedPaths ?? gitChangedPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
   const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, laneActivationPaths);
   return runPrReviewPublishWithProvider(provider, {
     ...options,

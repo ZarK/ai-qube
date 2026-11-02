@@ -1,5 +1,5 @@
 import type { Config } from '../config/index.js';
-import { gitDeltaPathsSync, type LocalReviewLaneId, isLocalReviewLaneId } from '../local_review_evidence.js';
+import { gitChangedPathsSync, type LocalReviewLaneId, isLocalReviewLaneId } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner } from './local_review_runner.js';
@@ -137,7 +137,7 @@ export async function runPrLaneRerunService(config: Config, options: {
     ...config.providers.review.connection,
   });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
-  const changedPaths = gitDeltaPathsSync(options.repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
+  const changedPaths = gitChangedPathsSync(options.repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
   return runPrLaneRerun({
     config,
     repoRoot: options.repoRoot,
