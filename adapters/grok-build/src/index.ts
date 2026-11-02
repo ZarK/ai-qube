@@ -299,7 +299,7 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
   };
 }
 
-const FULL_CAPABILITIES = Object.freeze({ structuredOutput: true, readOnlySandbox: true });
+const FULL_CAPABILITIES = Object.freeze({ structuredOutput: true, readOnlySandbox: true, shell: false });
 const FULL_REQUIRED = Object.freeze(["structured-output", "read-only-sandbox"] as const);
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({

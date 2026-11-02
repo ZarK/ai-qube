@@ -942,6 +942,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptStackHash: jobPromptStackHash,
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
+              baseRef: `${config.baseRemote}/${config.baseBranch}`,
               reviewScope: plannedScope,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed

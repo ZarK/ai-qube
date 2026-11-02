@@ -589,7 +589,7 @@ export function probeCursor(
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
   id: CURSOR_HOST_ID,
-  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
+  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true, shell: false }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   executableNames: Object.freeze(["cursor-agent"]),
   windowsExecutableNames: Object.freeze([]),

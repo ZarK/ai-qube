@@ -62,7 +62,7 @@ export function parseClaudeOutput(stdout: string): IsolatedReviewHostParsedEnvel
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
   id: "claude-code",
-  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
+  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true, shell: true }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   requiresPromptFile: false,
   requiresSchemaFile: false,

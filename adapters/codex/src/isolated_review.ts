@@ -101,7 +101,7 @@ function parseCodexOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nu
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
   id: "codex",
-  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
+  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true, shell: true }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   requiresPromptFile: false,
   requiresSchemaFile: true,

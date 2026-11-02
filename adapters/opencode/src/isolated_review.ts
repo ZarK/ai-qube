@@ -87,7 +87,7 @@ function reviewPrompt(context: IsolatedReviewHostInvocationContext): string {
 
 export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freeze({
   id: "opencode",
-  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true }),
+  capabilities: Object.freeze({ structuredOutput: true, readOnlySandbox: true, shell: true }),
   requiredCapabilities: Object.freeze(["structured-output", "read-only-sandbox"] as const),
   requiresPromptFile: false,
   requiresSchemaFile: false,
