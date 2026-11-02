@@ -157,6 +157,38 @@ describe('GitHub round summary publish', () => {
     assert.equal(reviewPost, undefined, 'a skip-matched republish must not create a new review');
   });
 
+  it('replaces a CHANGES_REQUESTED review for the same head with an APPROVE review when the rerun passes', async () => {
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    assert.equal(render.verdict, 'approve');
+    const staleReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'CHANGES_REQUESTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({ prViews: [basePr({ reviews: [staleReview], latestReviews: [staleReview] })], pullReviews: [staleReview] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.publishKind, 'pull-request-review');
+    const tombstone = fixture.reviewPayloads.find(payload => payload.update === 'repos/example/repo/pulls/12/reviews/555');
+    assert.ok(tombstone, 'expected the stale review to be tombstoned');
+    assert.match(String(tombstone.body), /"superseded":true/);
+    const created = fixture.reviewPayloads.find(payload => payload.event === 'APPROVE');
+    assert.ok(created, 'expected a new review that approves');
+  });
+
+  it('replaces an APPROVED review for the same head with a REQUEST_CHANGES review when the verdict turns blocking', async () => {
+    const approving = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const staleReview = { id: 555, author: { login: 'executor' }, body: approving.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({ prViews: [basePr({ reviews: [staleReview], latestReviews: [staleReview] })], pullReviews: [staleReview] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const blocking = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Now blocking.', findings: [{ id: 'b1', severity: 'blocking', message: 'New blocker.' }], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: null });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(blocking));
+
+    assert.equal(result.status, 'published');
+    assert.ok(fixture.reviewPayloads.some(payload => payload.update === 'repos/example/repo/pulls/12/reviews/555'), 'expected the stale review to be tombstoned');
+    assert.ok(fixture.reviewPayloads.some(payload => payload.event === 'REQUEST_CHANGES'), 'expected a new review that requests changes');
+  });
+
   it('does not reopen a resolved current finding on an unchanged same-round republish', async () => {
     const current = findingAnchor();
     const commentBody = renderInlineCommentBody(current);

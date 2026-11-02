@@ -876,14 +876,31 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
   return hash.digest('hex');
 }
 
-function isInternalReviewPath(path: string): boolean {
+export function isInternalReviewPath(path: string): boolean {
   const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
   return normalized === '.git'
     || normalized.startsWith('.git/')
     || normalized === '.qube'
     || normalized === '.qube/aie'
     || normalized === '.qube/aie/reviews'
-    || normalized.startsWith('.qube/aie/reviews/');
+    || normalized.startsWith('.qube/aie/reviews/')
+    || isContinuationLockPath(normalized);
+}
+
+// The Umpire stop hook ('aiu hook-stop') writes runtime files under .qube/aiu
+// while a host session ends: the continuation lock and its stale-recovery
+// copies, the continuation state file and its atomic-write temp file, and the
+// continuation log with its single rotated copy. Only those files and the
+// directories leading to them are exempt; every other path stays checked,
+// including host-activation state, whip state and any other name.
+function isContinuationLockPath(normalized: string): boolean {
+  return normalized === '.qube/aiu'
+    || normalized === '.qube/aiu/locks'
+    || normalized === '.qube/aiu/state'
+    || normalized === '.qube/aiu/logs'
+    || /^\.qube\/aiu\/locks\/continuation\.lock(?:\.[A-Za-z0-9_-]+\.stale)?$/.test(normalized)
+    || /^\.qube\/aiu\/state\/continuation\.json(?:\.\d+\.\d+\.tmp)?$/.test(normalized)
+    || /^\.qube\/aiu\/logs\/continuation\.jsonl(?:\.1)?$/.test(normalized);
 }
 
 function isHostScratchPath(path: string): boolean {

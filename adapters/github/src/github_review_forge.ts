@@ -2958,7 +2958,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
     const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
     const live = existingRecords.filter(record => record.superseded !== true && record.prNumber === input.prNumber);
-    const sameRoundRecord = live.find(record => record.head === input.headSha && record.round === input.round) ?? null;
+    let sameRoundRecord = live.find(record => record.head === input.headSha && record.round === input.round) ?? null;
     const priorHeadRecords = live.filter(record => record.head !== input.headSha);
 
     const ghOptions = { ...this.options, token: publisher.accessToken ?? undefined };
@@ -2997,6 +2997,46 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         // Best-effort supersession; the current summary still publishes below.
       } finally {
         cleanupReviewPayload(payloadPath);
+      }
+    }
+
+    // A body PUT cannot change the formal event of a submitted review. When the
+    // verdict for this head changed since the review was submitted (for example
+    // a lane failed, then a rerun passed), the old review is tombstoned and a
+    // fresh review with the correct event is created below; the newest review
+    // from the same publisher replaces its earlier formal state.
+    if (sameRoundRecord && sameRoundRecord.kind === 'review' && publisher.identity.formalEventCapability) {
+      const staleRecord = sameRoundRecord;
+      const submitted = reviews.find(review => String(review.id) === staleRecord.id);
+      const expectedState = input.verdict === 'approve' ? 'APPROVED' : input.verdict === 'request-changes' ? 'CHANGES_REQUESTED' : 'COMMENTED';
+      const submittedState = submitted?.state;
+      if ((submittedState === 'APPROVED' || submittedState === 'CHANGES_REQUESTED') && submittedState !== expectedState) {
+        const tombstoneBody = [
+          `<!-- ${ROUND_SUMMARY_MARKER_PREFIX}:${JSON.stringify({ version: 1, head: staleRecord.head, round: staleRecord.round, prNumber: staleRecord.prNumber, findingDigest: staleRecord.findingDigest, superseded: true })} -->`,
+          '',
+          'This round summary was superseded within its review round by an updated verdict; see the latest QUBE round summary for this pull request.',
+        ].join('\n');
+        const tombstonePath = reviewPayloadPath({ body: tombstoneBody });
+        try {
+          await assertHeadUnchanged();
+          const tombstoneResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${staleRecord.id}`, '--method', 'PUT', '--input', tombstonePath], ghOptions);
+          if (tombstoneResult.exitCode !== 0) throw new Error(tombstoneResult.stderr || tombstoneResult.stdout || 'gh api round summary tombstone failed');
+          supersededPriorSummaries += 1;
+          sameRoundRecord = null;
+        } catch (error: unknown) {
+          return roundSummaryPublishResult({
+            status: 'failed',
+            marker: input.marker,
+            body: input.body,
+            publisherDowngradeReason,
+            supersededPriorSummaries,
+            publisher: publisher.identity,
+            failure: redact(error instanceof Error ? error.message : String(error)),
+            nextAction: `The earlier round review recorded ${submittedState} but the verdict is now ${input.verdict}. Fix GitHub review update permissions or connectivity, then rerun the round summary publish for #${input.prNumber}.`,
+          });
+        } finally {
+          cleanupReviewPayload(tombstonePath);
+        }
       }
     }
 
