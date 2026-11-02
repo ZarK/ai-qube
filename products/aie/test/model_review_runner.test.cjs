@@ -55,6 +55,9 @@ function reviewInput(repoRoot, host = 'grok-build') {
     promptStackHash: 'hash123',
     promptText: 'INSPECT EXACT LANE PROMPT',
     promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+    // Most fake-host tests do not exercise review-input preparation; an
+    // explicit empty list marks that preparation as already done.
+    reviewInputFiles: [],
     resolveHead: async () => 'abc123',
   };
 }
@@ -1824,6 +1827,7 @@ describe('review input for routes without shell', () => {
     let diffContent = '';
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles: undefined,
       headSha,
       baseRef: 'origin/main',
       resolveHead: async () => headSha,
@@ -1841,5 +1845,38 @@ describe('review input for routes without shell', () => {
     assert.equal(result.evidence.status, 'passed');
     assert.doesNotMatch(promptText, /Prefer Git and Node\.js/);
     assert.match(diffContent, /2 \+added review line/);
+  });
+});
+
+describe('review input diff parsing', () => {
+  it('numbers added lines that look like file headers and parses quoted paths', () => {
+    const diff = [
+      'diff --git "a/src/my file.ts" "b/src/my file.ts"',
+      '--- "a/src/my file.ts"',
+      '+++ "b/src/my file.ts"',
+      '@@ -1,2 +1,3 @@',
+      ' const a = 1;',
+      '+++i;',
+      ' const b = 2;',
+      '',
+    ].join('\n');
+    const files = parseDiffByFile(diff);
+    assert.equal(files.length, 1);
+    assert.equal(files[0].path, 'src/my file.ts');
+    assert.equal(files[0].added, 1);
+    assert.match(files[0].diff, /2 \+\+\+i;/);
+    assert.match(files[0].diff, /3  const b = 2;/);
+  });
+
+  it('fails closed when a no-shell route has no prepared diff and git cannot compute one', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-missing-'));
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles: undefined,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => { throw new Error('must not run'); },
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-review-input-unavailable');
   });
 });

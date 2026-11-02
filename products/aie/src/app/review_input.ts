@@ -24,10 +24,29 @@ export interface ParsedDiffFile {
   diff: string;
 }
 
+function unquoteGitPath(value: string): string {
+  if (!value.startsWith('"')) return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === 'string') return parsed;
+  } catch { /* Fall through to the manual unescape. */ }
+  return value.slice(1, -1).replace(/\\(.)/g, '$1');
+}
+
+function stripDiffPrefix(value: string): string {
+  return value.startsWith('a/') || value.startsWith('b/') ? value.slice(2) : value;
+}
+
 function diffFilePath(line: string): string | null {
-  const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-  if (match) return match[2];
-  return null;
+  const match = /^diff --git ("(?:\\.|[^"])*"|a\/\S+) ("(?:\\.|[^"])*"|b\/\S+)$/.exec(line);
+  if (match) return stripDiffPrefix(unquoteGitPath(match[2]));
+  const fallback = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+  return fallback ? fallback[2] : null;
+}
+
+function headerFilePath(line: string): string | null {
+  const match = /^\+\+\+ ("(?:\\.|[^"])*"|b\/\S+)$/.exec(line);
+  return match ? stripDiffPrefix(unquoteGitPath(match[1])) : null;
 }
 
 /**
@@ -53,7 +72,7 @@ export function annotateDiffWithLineNumbers(diff: string): string {
       output.push(line);
       continue;
     }
-    if (!inHunk || line.startsWith('---') || line.startsWith('+++') || line.startsWith('\\')) {
+    if (!inHunk || line.startsWith('\\')) {
       output.push(line);
       continue;
     }
@@ -74,17 +93,23 @@ export function annotateDiffWithLineNumbers(diff: string): string {
 /** Split a unified diff into one annotated entry per changed file. */
 export function parseDiffByFile(diff: string): ParsedDiffFile[] {
   const files: ParsedDiffFile[] = [];
-  let current: { path: string; lines: string[] } | null = null;
+  let current: { path: string; headerPath: string | null; lines: string[] } | null = null;
   const flush = (): void => {
     if (!current) return;
     let added = 0;
     let removed = 0;
+    let inHunk = false;
     for (const line of current.lines) {
-      if (line.startsWith('+') && !line.startsWith('+++')) added += 1;
-      else if (line.startsWith('-') && !line.startsWith('---')) removed += 1;
+      if (line.startsWith('@@ ')) {
+        inHunk = true;
+        continue;
+      }
+      if (!inHunk) continue;
+      if (line.startsWith('+')) added += 1;
+      else if (line.startsWith('-')) removed += 1;
     }
     files.push({
-      path: current.path,
+      path: current.path !== 'unknown' ? current.path : current.headerPath ?? current.path,
       added,
       removed,
       diff: annotateDiffWithLineNumbers(current.lines.join('\n')),
@@ -94,10 +119,13 @@ export function parseDiffByFile(diff: string): ParsedDiffFile[] {
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ')) {
       flush();
-      current = { path: diffFilePath(line) ?? 'unknown', lines: [line] };
+      current = { path: diffFilePath(line) ?? 'unknown', headerPath: null, lines: [line] };
       continue;
     }
-    if (current) current.lines.push(line);
+    if (current) {
+      if (current.headerPath === null && line.startsWith('+++ ')) current.headerPath = headerFilePath(line);
+      current.lines.push(line);
+    }
   }
   flush();
   return files.filter(file => file.path !== 'unknown' || file.added + file.removed > 0);

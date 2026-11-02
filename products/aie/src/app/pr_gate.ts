@@ -1292,7 +1292,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     twoRoundMergeMet: false,
     hostRequestRecorded,
     inconclusiveLanes,
-    notInspectedFiles: notInspectedFiles(localReview.evidence),
+    notInspectedFiles: localReview.status === 'inconclusive' ? notInspectedFiles(localReview.evidence) : [],
     prNumber: options.prNumber,
     fallback: fallbackNextAction,
   });

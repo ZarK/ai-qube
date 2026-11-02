@@ -1054,12 +1054,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // the diff itself as readable files before the checkout is monitored.
     if (!routeHasShell(input) && !input.reviewInputFiles) {
       const diff = await computeReviewDiff(input.repoRoot, input.baseRef ?? 'origin/main', input.headSha);
-      if (diff) {
-        const reviewInputFiles = writeReviewInputFiles(input.repoRoot, invocationId, diff);
-        if (reviewInputFiles.length > 0) {
-          createdReviewInputDirectory = join(input.repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
-          input = { ...input, reviewInputFiles };
-        }
+      if (diff === null) {
+        // A route without shell cannot inspect without the prepared diff;
+        // approving here would repeat the no-diff review this input prevents.
+        return { evidence: null, reasonCode: 'model-route-review-input-unavailable', error: 'The trusted runner could not compute the review diff for a route without shell. Check the base ref and head, then rerun the gate.' };
+      }
+      const reviewInputFiles = writeReviewInputFiles(input.repoRoot, invocationId, diff);
+      input = { ...input, reviewInputFiles };
+      if (reviewInputFiles.length > 0) {
+        createdReviewInputDirectory = join(input.repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
       }
     }
     const prompt = buildModelReviewPrompt(input);
