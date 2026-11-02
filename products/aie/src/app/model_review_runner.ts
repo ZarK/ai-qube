@@ -16,6 +16,7 @@ import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocati
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 import { computeReviewDiff, reviewInputPromptLines, unreadReviewInputFiles, writeReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
+import { countTextLines, missingAtHeadReason } from '../finding_location.js';
 
 export type { ReviewInputFile } from './review_input.js';
 
@@ -761,14 +762,13 @@ export function isolatedRawOutputPath(
   return join(store.path, 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
 }
 
-function captureRawOutput(
+function writeRawOutput(
   store: TrustedLocalStore,
   input: ModelReviewRunInput,
-  result: ModelRouteProcessResult | null,
+  result: ModelRouteProcessResult,
   reasonCode: string,
   error: string,
-): ModelReviewRunResult {
-  if (!result) return { evidence: null, reasonCode, error };
+): string | null {
   try {
     const path = isolatedRawOutputPath(store, input.issueNumber, input.prNumber, input.headSha, input.lane);
     mkdirTrustedStoreSync(dirname(path), store);
@@ -787,11 +787,92 @@ function captureRawOutput(
       timedOut: result.timedOut,
       recordedAt: new Date().toISOString(),
     }, null, 2)}\n`, store);
-    const relativePath = relative(input.repoRoot, path).replace(/\\/g, '/');
-    return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
+    return relative(input.repoRoot, path).replace(/\\/g, '/');
   } catch {
-    return { evidence: null, reasonCode, error };
+    return null;
   }
+}
+
+function captureRawOutput(
+  store: TrustedLocalStore,
+  input: ModelReviewRunInput,
+  result: ModelRouteProcessResult | null,
+  reasonCode: string,
+  error: string,
+): ModelReviewRunResult {
+  if (!result) return { evidence: null, reasonCode, error };
+  const relativePath = writeRawOutput(store, input, result, reasonCode, error);
+  if (relativePath === null) return { evidence: null, reasonCode, error };
+  return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
+}
+
+function workspaceLineCount(repoRoot: string, path: string): number | null {
+  const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (normalized === '' || normalized.includes('\0') || normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) return null;
+  if (normalized.split('/').includes('..')) return null;
+  try {
+    const resolvedRoot = realpathSync(repoRoot);
+    const resolvedPath = realpathSync(resolve(repoRoot, normalized));
+    const relativePath = relative(resolvedRoot, resolvedPath);
+    if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return null;
+    if (!statSync(resolvedPath).isFile()) return null;
+    return countTextLines(readFileSync(resolvedPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+interface FindingHeadCheck {
+  evidence: LaneEvidence;
+  withheld: string[];
+  withheldBlocking: boolean;
+}
+
+/**
+ * Withhold every located finding whose file or line range is missing at
+ * the reviewed head. The runner has already verified the checkout sits
+ * at `headSha` with unchanged contents, so workspace files are the head.
+ */
+function checkFindingsAtHead(evidence: LaneEvidence, repoRoot: string): FindingHeadCheck {
+  const kept: LaneEvidence['findings'] = [];
+  const withheld: string[] = [];
+  let withheldBlocking = false;
+  for (const finding of evidence.findings) {
+    if (!finding.location) {
+      kept.push(finding);
+      continue;
+    }
+    const reason = missingAtHeadReason(workspaceLineCount(repoRoot, finding.location.path), finding.location);
+    if (reason === null) {
+      kept.push(finding);
+      continue;
+    }
+    if (finding.severity === 'blocking') withheldBlocking = true;
+    withheld.push(`Withheld finding citing code missing at the reviewed head: ${reason}.`);
+  }
+  if (withheld.length === 0) return { evidence, withheld, withheldBlocking };
+  return { evidence: { ...evidence, findings: kept }, withheld, withheldBlocking };
+}
+
+function appendReviewNotes(evidence: LaneEvidence, notes: readonly string[]): LaneEvidence {
+  if (notes.length === 0) return evidence;
+  const text = notes.join(' ');
+  return {
+    ...evidence,
+    summary: evidence.summary.includes(notes[0]) ? evidence.summary : `${evidence.summary} ${text}`,
+    completeness: evidence.completeness.includes(notes[0]) ? evidence.completeness : `${evidence.completeness} ${text}`,
+  };
+}
+
+function asInconclusive(evidence: LaneEvidence, notes: readonly string[]): LaneEvidence {
+  const noted = appendReviewNotes(evidence, notes);
+  return {
+    ...noted,
+    status: 'inconclusive',
+    recommendation: 'inconclusive',
+    severity: noted.severity === 'high' || noted.severity === 'critical' ? 'none' : noted.severity,
+    blockers: [],
+  };
 }
 
 function inspectionPolicyHaystack(result: ModelRouteProcessResult): string {
@@ -1177,13 +1258,41 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       if (digestViolation) return captureRawOutput(store, input, result, 'model-route-artifact-digest', digestViolation);
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
     }
+    const headChecked = checkFindingsAtHead(evidence, input.repoRoot);
+    let finalEvidence = appendReviewNotes(headChecked.evidence, headChecked.withheld);
+    let outcomeReasonCode: string | null = null;
+    if (headChecked.withheldBlocking && !finalEvidence.findings.some(finding => finding.severity === 'blocking')) {
+      // The lane's blocking obligation rested on code that is not at the
+      // head, so it can neither fail nor pass on that finding.
+      finalEvidence = asInconclusive(finalEvidence, []);
+      outcomeReasonCode = 'model-route-finding-missing-at-head';
+    }
+    const reportedToolCalls = parsedHostOutput.successfulToolCalls;
+    if (typeof reportedToolCalls === 'number' && reportedToolCalls === 0
+      && (finalEvidence.commands.length > 0 || finalEvidence.toolsUsed.length > 0 || finalEvidence.findings.length > 0)) {
+      // The host's own record shows no successful tool call, so claimed
+      // commands, tools, and findings have no inspected basis.
+      const claimed = [
+        finalEvidence.commands.length > 0 ? `${finalEvidence.commands.length} command(s)` : null,
+        finalEvidence.toolsUsed.length > 0 ? `${finalEvidence.toolsUsed.length} tool(s)` : null,
+        finalEvidence.findings.length > 0 ? `${finalEvidence.findings.length} finding(s)` : null,
+      ].filter((entry): entry is string => entry !== null).join(', ');
+      finalEvidence = asInconclusive(
+        { ...finalEvidence, findings: [] },
+        [`Host reported 0 successful tool calls while the result claimed ${claimed}; the claimed findings are withheld and the lane is inconclusive (model-route-no-successful-tool-calls).`],
+      );
+      outcomeReasonCode = 'model-route-no-successful-tool-calls';
+    }
+    // Keep the raw model output for accepted lanes too, not only for
+    // failures, so every published finding can be re-checked later.
+    writeRawOutput(store, input, result, outcomeReasonCode ?? 'model-route-completed', '');
     return {
       evidence: {
-        ...evidence,
+        ...finalEvidence,
         modelTier: input.plan.tier,
         ...(parsedHostOutput.usage ? { usage: parsedHostOutput.usage } : {}),
       },
-      reasonCode: null,
+      reasonCode: outcomeReasonCode,
       error: null,
     };
   } catch (error: unknown) {

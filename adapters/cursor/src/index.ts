@@ -354,6 +354,9 @@ export function parseCursorEnvelope(stdout: string): IsolatedReviewHostEnvelopeR
     sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : null,
     ...(typeof parsed.model === "string" && parsed.model.trim() !== "" ? { reportedModel: parsed.model.trim() } : {}),
     ...(decoded.diagnostic ? { resultDecodeDiagnostic: decoded.diagnostic } : {}),
+    ...(typeof parsed.successfulToolCalls === "number" && Number.isSafeInteger(parsed.successfulToolCalls) && parsed.successfulToolCalls >= 0
+      ? { successfulToolCalls: parsed.successfulToolCalls }
+      : {}),
   };
 }
 

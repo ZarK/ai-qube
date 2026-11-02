@@ -1,4 +1,5 @@
 import { reviewFindingFingerprint, type ReviewFinding } from '@tjalve/qube-core';
+import { missingAtHeadReason } from './finding_location.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { pathsTouchPatterns } from './risk_cards/glob.js';
 
@@ -16,6 +17,14 @@ export interface SynthesisPlanOptions {
    * re-confirmed and are withheld. Dedupe and the nit cap always apply.
    */
   readonly changedPaths?: readonly string[];
+  /**
+   * Line count of a path at the reviewed head: null when the file is
+   * missing there, undefined when the head cannot be read (the citation
+   * is then not judged). When provided, a located finding that cites
+   * code missing at the head is withheld for every severity, blocking
+   * included, instead of being published on the model's word alone.
+   */
+  readonly headLineCount?: (path: string) => number | null | undefined;
   readonly nitCap: number;
   readonly laneSuppress?: Readonly<Record<string, readonly string[]>>;
   readonly laneAdvisoryCaps?: Readonly<Record<string, number>>;
@@ -30,6 +39,7 @@ export interface LanePublicationPlan {
   readonly laneId: LocalReviewLaneId;
   readonly published: ReviewFinding[];
   readonly withheldDuplicates: number;
+  readonly withheldMissingAtHead: number;
   readonly withheldOffDiff: number;
   readonly withheldByCap: number;
   readonly withheldBySuppress: number;
@@ -51,6 +61,7 @@ interface WorkingFinding {
 }
 
 const DISPOSITION_DUPLICATE = 'Dropped: duplicate of another lane.';
+const DISPOSITION_MISSING_AT_HEAD = 'Dropped: finding cites code missing at the reviewed head.';
 const DISPOSITION_OFF_DIFF = 'Dropped: advisory is off the current diff.';
 const DISPOSITION_SUPPRESS = 'Dropped: path is suppressed for this lane.';
 const DISPOSITION_LANE_CAP = 'Dropped: advisory lane cap.';
@@ -121,12 +132,14 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
 
   const survivingByLane = new Map<LocalReviewLaneId, WorkingFinding[]>();
   const withheldDuplicatesByLane = new Map<LocalReviewLaneId, number>();
+  const withheldMissingAtHeadByLane = new Map<LocalReviewLaneId, number>();
   const withheldOffDiffByLane = new Map<LocalReviewLaneId, number>();
   const withheldBySuppressByLane = new Map<LocalReviewLaneId, number>();
   const withheldFindingsByLane = new Map<LocalReviewLaneId, WithheldPublicationFinding[]>();
   for (const lane of lanes) {
     survivingByLane.set(lane.laneId, []);
     withheldDuplicatesByLane.set(lane.laneId, 0);
+    withheldMissingAtHeadByLane.set(lane.laneId, 0);
     withheldOffDiffByLane.set(lane.laneId, 0);
     withheldBySuppressByLane.set(lane.laneId, 0);
     withheldFindingsByLane.set(lane.laneId, []);
@@ -139,6 +152,17 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         withheldDuplicatesByLane.set(lane.laneId, (withheldDuplicatesByLane.get(lane.laneId) ?? 0) + 1);
         withheldFindingsByLane.get(lane.laneId)!.push({ finding, disposition: DISPOSITION_DUPLICATE });
         continue;
+      }
+      // A located finding must cite code that exists at the reviewed head.
+      // A citation the head cannot support is withheld for every severity:
+      // a blocking finding earns no publication from an invented anchor.
+      if (finding.location && options.headLineCount) {
+        const reason = missingAtHeadReason(options.headLineCount(finding.location.path), finding.location);
+        if (reason !== null) {
+          withheldMissingAtHeadByLane.set(lane.laneId, (withheldMissingAtHeadByLane.get(lane.laneId) ?? 0) + 1);
+          withheldFindingsByLane.get(lane.laneId)!.push({ finding, disposition: `${DISPOSITION_MISSING_AT_HEAD} ${reason}.` });
+          continue;
+        }
       }
       // An advisory is re-confirmable against the diff only through its
       // anchor: with an observed changed-path set, both off-diff anchors and
@@ -241,6 +265,7 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
       laneId: lane.laneId,
       published: plan.published,
       withheldDuplicates: withheldDuplicatesByLane.get(lane.laneId) ?? 0,
+      withheldMissingAtHead: withheldMissingAtHeadByLane.get(lane.laneId) ?? 0,
       withheldOffDiff: withheldOffDiffByLane.get(lane.laneId) ?? 0,
       withheldByCap: plan.withheldByCap,
       withheldBySuppress: withheldBySuppressByLane.get(lane.laneId) ?? 0,

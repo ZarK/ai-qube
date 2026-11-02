@@ -268,6 +268,16 @@ function grokStructuredPayload(record: Record<string, unknown>): string | null {
   }
 }
 
+function readReportedToolCalls(record: Record<string, unknown>): number | undefined {
+  for (const field of ["successfulToolCalls", "toolCalls", "tool_calls", "numToolCalls", "num_tool_calls"]) {
+    const value = record[field];
+    if (Array.isArray(value)) return value.length;
+    const count = readNonNegativeNumber(value);
+    if (count !== undefined && Number.isSafeInteger(count)) return count;
+  }
+  return undefined;
+}
+
 function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
   const records = parseGrokEnvelopeRecords(stdout.trim());
   const objects: string[] = [];
@@ -275,7 +285,9 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
   let sessionId: string | null = null;
   let reportedModel: string | undefined;
   let usage: Record<string, unknown> | undefined;
+  let successfulToolCalls: number | undefined;
   for (const record of records) {
+    successfulToolCalls = readReportedToolCalls(record) ?? successfulToolCalls;
     if (typeof record.sessionId === "string") sessionId = record.sessionId;
     else if (typeof record.session_id === "string") sessionId = record.session_id;
     if (typeof record.model === "string" && record.model.trim() !== "") reportedModel = record.model.trim();
@@ -296,6 +308,7 @@ function parseGrokOutput(stdout: string): IsolatedReviewHostParsedEnvelope | nul
     sessionId,
     ...(reportedModel ? { reportedModel } : {}),
     ...(usage ? { usage } : {}),
+    ...(successfulToolCalls !== undefined ? { successfulToolCalls } : {}),
   };
 }
 

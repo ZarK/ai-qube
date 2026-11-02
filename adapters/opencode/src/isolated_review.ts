@@ -38,6 +38,7 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
   const texts: string[] = [];
   let sessionId: string | null = null;
   let usage: Record<string, unknown> | undefined;
+  let successfulToolCalls = 0;
   let sawError = false;
   for (const line of stdout.split(/\r?\n/).filter(entry => entry.trim() !== "")) {
     let event: unknown;
@@ -66,6 +67,9 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
     if (event.type === "step_finish") {
       usage = readOpenCodeUsage(event.part.tokens) ?? usage;
     }
+    if (event.part.type === "tool" && isRecord(event.part.state) && event.part.state.status === "completed") {
+      successfulToolCalls += 1;
+    }
   }
   if (sawError || texts.length === 0) return null;
   return {
@@ -73,6 +77,7 @@ export function parseOpenCodeOutput(stdout: string): IsolatedReviewHostParsedEnv
     ...(texts.length > 1 ? { transientTexts: texts.slice(0, -1) } : {}),
     sessionId,
     ...(usage ? { usage } : {}),
+    successfulToolCalls,
   };
 }
 

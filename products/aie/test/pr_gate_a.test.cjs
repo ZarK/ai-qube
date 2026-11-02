@@ -1121,6 +1121,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
   it('publishes blocking lane markers at the reviewed head before any fix commit', async () => {
     const repo = makeGitRepo();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'review.ts'), 'export const kept = true;\nexport const reviewed = true;\n');
     const config = localHostConfig(null);
     trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
@@ -1177,6 +1179,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
   it('withholds provider publication until slower siblings finish', async () => {
     const repo = makeGitRepo();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'review.ts'), 'export const kept = true;\nexport const reviewed = true;\n');
     const config = localHostConfig(null);
     trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
@@ -1237,6 +1241,8 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
 
   it('publishes one terminal status when a failed lane leaves the round incomplete', async () => {
     const repo = makeGitRepo();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'review.ts'), 'export const kept = true;\nexport const reviewed = true;\n');
     const config = localHostConfig(null);
     trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';

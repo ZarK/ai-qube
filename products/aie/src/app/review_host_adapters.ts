@@ -27,6 +27,8 @@ export interface ReviewHostParsedEnvelope {
   resultDecodeDiagnostic?: string;
   transientTexts?: string[];
   usage?: LaneUsage;
+  /** Successful tool calls reported or enumerated by the host; omitted when unreported. */
+  successfulToolCalls?: number;
 }
 
 export interface ReviewHostEnvelopeFailure {

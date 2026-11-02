@@ -86,7 +86,14 @@ describe("opencode adapter", () => {
       text: "{\"status\":\"passed\"}",
       sessionId: "ses-1",
       usage: { inputTokens: 15, outputTokens: 5, cachedInputTokens: 3, totalTokens: 20 },
+      successfulToolCalls: 0,
     });
+    const withTool = [
+      JSON.stringify({ type: "tool_use", sessionID: "ses-1", part: { type: "tool", tool: "read", state: { status: "completed" } } }),
+      JSON.stringify({ type: "tool_use", sessionID: "ses-1", part: { type: "tool", tool: "grep", state: { status: "error" } } }),
+      events,
+    ].join("\n");
+    assert.equal(parseOpenCodeOutput(withTool).successfulToolCalls, 1);
     assert.equal(parseOpenCodeOutput(JSON.stringify({ type: "error", sessionID: "ses-1", part: { type: "error" } })), null);
     assert.equal(parseOpenCodeOutput("not json"), null);
     assert.equal(parseOpenCodeOutput(`not-json\n${events}`), null);

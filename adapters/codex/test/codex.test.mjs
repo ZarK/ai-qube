@@ -160,5 +160,19 @@ describe("codex adapter", () => {
     assert.deepEqual(parsed.transientTexts, [progress]);
     assert.equal(parsed.sessionId, "thread-1");
     assert.equal(parsed.reportedModel, "gpt-5.6-luna");
+    assert.equal(parsed.successfulToolCalls, 0);
+  });
+
+  it("counts only successful host tool items as reported tool calls", () => {
+    const terminal = JSON.stringify({ status: "passed" });
+    const parsed = isolatedReviewHostAdapter.parseEnvelope([
+      JSON.stringify({ type: "thread.started", thread_id: "thread-2" }),
+      JSON.stringify({ type: "item.completed", item: { type: "command_execution", exit_code: 0, aggregated_output: "ok" } }),
+      JSON.stringify({ type: "item.completed", item: { type: "command_execution", exit_code: 1, aggregated_output: "failed" } }),
+      JSON.stringify({ type: "item.completed", item: { type: "reasoning", text: "thinking" } }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: terminal } }),
+    ].join("\n"));
+
+    assert.equal(parsed.successfulToolCalls, 1);
   });
 });

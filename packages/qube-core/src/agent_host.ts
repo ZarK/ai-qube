@@ -55,6 +55,12 @@ export interface IsolatedReviewHostParsedEnvelope {
   readonly resultDecodeDiagnostic?: string;
   readonly transientTexts?: readonly string[];
   readonly usage?: Record<string, unknown>;
+  /**
+   * Successful tool calls the host itself reports or enumerates in its
+   * output stream. Omitted when the host format gives no such count, so
+   * an unreported count is never read as zero.
+   */
+  readonly successfulToolCalls?: number;
 }
 
 export interface IsolatedReviewHostEnvelopeFailure {
