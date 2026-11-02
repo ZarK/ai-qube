@@ -17,6 +17,7 @@ export type ReviewHostCapabilityNeed = 'structured-output' | 'read-only-sandbox'
 export interface ReviewHostCapabilities {
   structuredOutput: boolean;
   readOnlySandbox: boolean;
+  shell: boolean;
 }
 
 export interface ReviewHostParsedEnvelope {

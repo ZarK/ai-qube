@@ -21,6 +21,9 @@ const {
   watchModelReviewCheckout,
   isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
+const { writeReviewInputFiles, parseDiffByFile } = require('../dist/app/review_input.js');
+const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
+const { notInspectedFiles } = require('../dist/local_review_evidence.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
 const { resolveTrustedLocalStore } = require('../dist/trusted_local_store.js');
@@ -52,6 +55,9 @@ function reviewInput(repoRoot, host = 'grok-build') {
     promptStackHash: 'hash123',
     promptText: 'INSPECT EXACT LANE PROMPT',
     promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+    // Most fake-host tests do not exercise review-input preparation; an
+    // explicit empty list marks that preparation as already done.
+    reviewInputFiles: [],
     resolveHead: async () => 'abc123',
   };
 }
@@ -1733,5 +1739,150 @@ describe('transient host coverage isolation', () => {
     });
     assert.equal(result.error, null);
     assert.equal(result.evidence.status, 'passed');
+  });
+});
+
+describe('review input for routes without shell', () => {
+  it('gives a route without shell the changed-file list and diff paths without the Git and Node.js line', () => {
+    const input = {
+      ...reviewInput('C:\\repo', 'grok-build'),
+      reviewInputFiles: [{ path: 'src/example.ts', added: 2, removed: 1, diffPath: '.qube/aie/review-input/test-run/0000.diff' }],
+    };
+    const prompt = buildModelReviewPrompt(input);
+    assert.match(prompt, /You have no shell on this route/);
+    assert.match(prompt, /Use Read and Grep/);
+    assert.match(prompt, /src\/example\.ts \(\+2 -1\) -> \.qube\/aie\/review-input\/test-run\/0000\.diff/);
+    assert.doesNotMatch(prompt, /Prefer Git and Node\.js/);
+  });
+
+  it('keeps the current inspection text for routes with shell', () => {
+    for (const host of ['codex', 'claude-code']) {
+      const prompt = buildModelReviewPrompt(reviewInput('C:\\repo', host));
+      assert.match(prompt, /Prefer Git and Node\.js for portable file inspection/);
+      assert.doesNotMatch(prompt, /You have no shell on this route/);
+    }
+  });
+
+  it('keeps the prompt within a fixed bound for 300 changed files while every diff file is readable', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-large-'));
+    const chunks = [];
+    for (let index = 0; index < 300; index += 1) {
+      const name = `src/file-${String(index).padStart(3, '0')}.ts`;
+      chunks.push(`diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1,2 +1,2 @@\n context\n-old line\n+new line ${'x'.repeat(200)}\n`);
+    }
+    const files = writeReviewInputFiles(repoRoot, 'large-run', chunks.join(''));
+    assert.equal(files.length, 300);
+    for (const file of files) {
+      const content = readFileSync(join(repoRoot, file.diffPath), 'utf8');
+      assert.match(content, /^\d+ \+new line/m);
+    }
+    const prompt = buildModelReviewPrompt({ ...reviewInput(repoRoot, 'grok-build'), reviewInputFiles: files });
+    assert.ok(prompt.length < 50_000, `prompt was ${prompt.length} characters`);
+    assert.equal(parseDiffByFile(chunks.join('')).length, 300);
+  });
+
+  it('makes a lane that leaves changed files unread inconclusive and names them', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-unread-'));
+    const reviewInputFiles = [
+      { path: 'src/read.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0000.diff' },
+      { path: 'src/unread.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0001.diff' },
+    ];
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify({ ...laneResult(), surfaces: [reviewInputFiles[0].diffPath] }), sessionId: 'grok-session' }),
+      }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.match(result.evidence.summary, /Not inspected: src\/unread\.ts/);
+    assert.match(result.evidence.completeness, /Not inspected: src\/unread\.ts/);
+    assert.deepEqual(notInspectedFiles([{ lanes: [result.evidence] }]), ['src/unread.ts']);
+    const nextAction = computePrGateNextAction({
+      shipReady: false,
+      twoRoundMergeMet: false,
+      hostRequestRecorded: false,
+      inconclusiveLanes: ['code-quality'],
+      notInspectedFiles: notInspectedFiles([{ lanes: [result.evidence] }]),
+      prNumber: 310,
+      fallback: 'rerun',
+    });
+    assert.match(nextAction, /Split the pull request/);
+    assert.match(nextAction, /src\/unread\.ts/);
+  });
+
+  it('prepares line-numbered diff files from git and lets a no-shell lane cite them without git', async () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-git-');
+    writeFileSync(join(repoRoot, 'README.md'), 'fixture\nadded review line\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'change'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    let promptText = '';
+    let diffContent = '';
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles: undefined,
+      headSha,
+      baseRef: 'origin/main',
+      resolveHead: async () => headSha,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async invocation => {
+        promptText = readFileSync(invocation.promptPath, 'utf8');
+        const match = /-> (\.qube\/aie\/review-input\/\S+\.diff)/.exec(promptText);
+        assert.ok(match, 'prompt lists a diff file');
+        diffContent = readFileSync(join(repoRoot, match[1]), 'utf8');
+        const lane = { ...laneResult(), headSha, surfaces: [match[1]], toolsUsed: ['Read'], commands: [] };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(lane), sessionId: 'grok-session' }) };
+      },
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.doesNotMatch(promptText, /Prefer Git and Node\.js/);
+    assert.match(diffContent, /2 \+added review line/);
+  });
+});
+
+describe('review input diff parsing', () => {
+  it('numbers added lines that look like file headers and parses quoted paths', () => {
+    const diff = [
+      'diff --git "a/src/my file.ts" "b/src/my file.ts"',
+      '--- "a/src/my file.ts"',
+      '+++ "b/src/my file.ts"',
+      '@@ -1,2 +1,3 @@',
+      ' const a = 1;',
+      '+++i;',
+      ' const b = 2;',
+      '',
+    ].join('\n');
+    const files = parseDiffByFile(diff);
+    assert.equal(files.length, 1);
+    assert.equal(files[0].path, 'src/my file.ts');
+    const octal = parseDiffByFile('diff --git "a/h\\303\\251.ts" "b/h\\303\\251.ts"\n--- "a/h\\303\\251.ts"\n+++ "b/h\\303\\251.ts"\n@@ -1 +1 @@\n-old\n+new\n');
+    assert.equal(octal[0].path, 'hé.ts');
+    assert.equal(files[0].added, 1);
+    assert.match(files[0].diff, /2 \+\+\+i;/);
+    assert.match(files[0].diff, /3  const b = 2;/);
+  });
+
+  it('fails closed when a no-shell route has no prepared diff and git cannot compute one', async () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-missing-');
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles: undefined,
+      headSha,
+      baseRef: 'refs/heads/missing-base',
+      resolveHead: async () => headSha,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => { throw new Error('must not run'); },
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-review-input-unavailable');
   });
 });

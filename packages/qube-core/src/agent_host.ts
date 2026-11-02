@@ -40,6 +40,8 @@ export type IsolatedReviewHostCapabilityNeed = "structured-output" | "read-only-
 export interface IsolatedReviewHostCapabilities {
   readonly structuredOutput: boolean;
   readonly readOnlySandbox: boolean;
+  /** Whether the isolated route may run shell commands (git, test runners). */
+  readonly shell: boolean;
 }
 
 export type IsolatedReviewHostExecutable = string | { executable: string; prefixArgs: string[] };

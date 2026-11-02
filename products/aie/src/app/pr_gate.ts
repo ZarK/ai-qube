@@ -22,7 +22,7 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitDeltaPathsSync, notInspectedFiles, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
@@ -1292,6 +1292,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     twoRoundMergeMet: false,
     hostRequestRecorded,
     inconclusiveLanes,
+    notInspectedFiles: localReview.status === 'inconclusive' ? notInspectedFiles(localReview.evidence) : [],
     prNumber: options.prNumber,
     fallback: fallbackNextAction,
   });

@@ -3,12 +3,17 @@ export interface PrGateNextActionState {
   twoRoundMergeMet: boolean;
   hostRequestRecorded: boolean;
   inconclusiveLanes: readonly string[];
+  /** Changed files a lane reported as not inspected, when any. */
+  notInspectedFiles?: readonly string[];
   prNumber: number;
   fallback: string;
 }
 
 export function computePrGateNextAction(state: PrGateNextActionState): string {
   if (state.shipReady || state.twoRoundMergeMet) return 'Merge this pull request.';
+  if (state.notInspectedFiles && state.notInspectedFiles.length > 0) {
+    return `Split the pull request into smaller pull requests so every changed file can be inspected. Files not inspected: ${state.notInspectedFiles.join(', ')}. Then rerun \`aie pr gate ${state.prNumber}\`.`;
+  }
   if (state.inconclusiveLanes.length > 0) {
     const lane = state.inconclusiveLanes[0];
     return `Run \`aie pr lane rerun ${state.prNumber} ${lane}\` once, then rerun \`aie pr gate ${state.prNumber}\`.`;

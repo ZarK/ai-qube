@@ -65,6 +65,9 @@ describe("grok-build adapter", () => {
     }, "grok");
     assert.ok(built.args.includes("--prompt-file"));
     assert.ok(built.args.includes("--sandbox"));
+    assert.equal(built.args[built.args.indexOf("--deny")], "--deny");
+    assert.ok(built.args.includes("Bash(*)"), "Grok Build route must keep the Bash(*) shell deny");
+    assert.equal(adapter.isolatedReviewHostAdapter.capabilities.shell, false);
     assert.equal(built.stdin, null);
   });
 

@@ -15,6 +15,9 @@ import { laneEvidencePath, mkdirTrustedStoreSync, normalizeExternalLane, writeRe
 import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 import { buildReviewRouteProvenance } from '../review_route_provenance.js';
+import { computeReviewDiff, reviewInputPromptLines, unreadReviewInputFiles, writeReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
+
+export type { ReviewInputFile } from './review_input.js';
 
 export type { ModelHostExecutable } from './review_host_adapters.js';
 
@@ -162,6 +165,10 @@ export interface ModelReviewRunInput {
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
   coverageAreas?: readonly string[];
+  /** Per-file diffs prepared by the trusted runner for routes without shell. */
+  reviewInputFiles?: readonly ReviewInputFile[];
+  /** Base ref used to compute the review diff (`<merge-base>...<head>`). */
+  baseRef?: string;
   reviewScope?: ReviewScopeSelection;
   routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
@@ -283,14 +290,27 @@ function reviewResultContract(input: ModelReviewRunInput): string {
   ].join('\n');
 }
 
+/** Whether the route for this run may run shell commands. */
+export function routeHasShell(input: Pick<ModelReviewRunInput, 'plan'>): boolean {
+  try {
+    const shell = getReviewHostAdapter(input.plan.host).capabilities.shell;
+    if (typeof shell === 'boolean') return shell;
+  } catch { /* Unknown hosts keep the historical shell inspection text. */ }
+  return true;
+}
+
 export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
+  const hasShell = routeHasShell(input);
   return [
     'You are an isolated read-only QUBE review lane runner.',
     `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
-    'Prefer Git and Node.js for portable file inspection. If a PowerShell built-in module fails to load, continue with Git, Node.js, or cmd.exe read-only equivalents; do not retry the broken cmdlet or mistake its source text for a policy rejection.',
+    hasShell
+      ? 'Prefer Git and Node.js for portable file inspection. If a PowerShell built-in module fails to load, continue with Git, Node.js, or cmd.exe read-only equivalents; do not retry the broken cmdlet or mistake its source text for a policy rejection.'
+      : 'You have no shell on this route: do not run git, Node.js, or any terminal command. Use Read and Grep on the review input diff files and repository files listed below.',
     'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section.',
     reviewResultContract(input),
     input.reviewScope ? buildDeltaPromptSection(input.reviewScope) : 'Inspect the full current-head diff for this lane.',
+    ...(hasShell ? [] : reviewInputPromptLines(input.reviewInputFiles ?? [])),
     '',
     '--- EXACT QUBE LANE PROMPT START ---',
     input.promptText,
@@ -551,6 +571,21 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     // the gate reruns the lane instead of accepting a partial pass.
     candidate.status = 'inconclusive';
     candidate.recommendation = 'inconclusive';
+  }
+  const reviewInputFiles = input.reviewInputFiles ?? [];
+  if (reviewInputFiles.length > 0) {
+    const unread = unreadReviewInputFiles(reviewInputFiles, isStringArray(value.surfaces) ? value.surfaces : []);
+    if (unread.length > 0) {
+      // A changed file the lane never read is not inspected. Name it and fail
+      // closed to inconclusive so the gate can say to split the pull request.
+      const note = `Not inspected: ${unread.join(', ')}.`;
+      if (typeof candidate.summary === 'string' && !candidate.summary.includes('Not inspected:')) candidate.summary = `${candidate.summary} ${note}`;
+      if (typeof candidate.completeness === 'string' && !candidate.completeness.includes('Not inspected:')) candidate.completeness = `${candidate.completeness} ${note}`;
+      if (candidate.status === 'passed') {
+        candidate.status = 'inconclusive';
+        candidate.recommendation = 'inconclusive';
+      }
+    }
   }
   return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
 }
@@ -884,6 +919,8 @@ export function isInternalReviewPath(path: string): boolean {
     || normalized === '.qube/aie'
     || normalized === '.qube/aie/reviews'
     || normalized.startsWith('.qube/aie/reviews/')
+    || normalized === REVIEW_INPUT_DIRECTORY
+    || normalized.startsWith(`${REVIEW_INPUT_DIRECTORY}/`)
     || isContinuationLockPath(normalized);
 }
 
@@ -1008,11 +1045,29 @@ async function hashCheckoutPath(hash: Hash, repoRoot: string, path: string): Pro
 
 export async function runModelReview(input: ModelReviewRunInput): Promise<ModelReviewRunResult> {
   const invocationId = randomUUID();
-  const prompt = buildModelReviewPrompt(input);
   let promptPath: string | null = null;
   let schemaPath: string | null = null;
   let checkoutMonitor: ModelReviewCheckoutMonitor | null = null;
+  let createdReviewInputDirectory: string | null = null;
   try {
+    // Routes without shell cannot run git, so the trusted runner prepares
+    // the diff itself as readable files before the checkout is monitored.
+    if (!routeHasShell(input) && !input.reviewInputFiles) {
+      const prepared = await computeReviewDiff(input.repoRoot, input.baseRef ?? 'origin/main', input.headSha);
+      if (prepared.kind === 'unavailable') {
+        // A route without shell cannot inspect without the prepared diff;
+        // approving here would repeat the no-diff review this input prevents.
+        return { evidence: null, reasonCode: 'model-route-review-input-unavailable', error: 'The trusted runner could not compute the review diff for a route without shell. Check the base ref and head, then rerun the gate.' };
+      }
+      if (prepared.kind === 'diff') {
+        const reviewInputFiles = writeReviewInputFiles(input.repoRoot, invocationId, prepared.diff);
+        input = { ...input, reviewInputFiles };
+        if (reviewInputFiles.length > 0) {
+          createdReviewInputDirectory = join(input.repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
+        }
+      }
+    }
+    const prompt = buildModelReviewPrompt(input);
     const store = resolveTrustedLocalStore(input.repoRoot);
     const routeDirectory = join(store.path, 'model-route');
     mkdirTrustedStoreSync(routeDirectory, store);
@@ -1137,5 +1192,6 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     checkoutMonitor?.close();
     if (promptPath) rmSync(promptPath, { force: true });
     if (schemaPath) rmSync(schemaPath, { force: true });
+    if (createdReviewInputDirectory) rmSync(createdReviewInputDirectory, { recursive: true, force: true });
   }
 }

@@ -1238,7 +1238,25 @@ function gateStatus(evidence: readonly LocalReviewEvidence[]): LocalReviewStatus
   return evidence.reduce<LocalReviewStatus>((current, item) => statusPriority(item.status) > statusPriority(current) ? item.status : current, 'passed');
 }
 
-function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFirst = false): string {
+/** Files a lane named as not inspected (`Not inspected: ...` in its summary or completeness). */
+export function notInspectedFiles(evidence: readonly LocalReviewEvidence[]): string[] {
+  const files = new Set<string>();
+  for (const item of evidence) {
+    for (const lane of item.lanes) {
+      for (const text of [lane.summary, lane.completeness]) {
+        const match = /Not inspected:\s*(.+?)\.(?:\s|$)/.exec(text);
+        if (!match) continue;
+        for (const file of match[1].split(',')) {
+          const trimmed = file.trim();
+          if (trimmed !== '') files.add(trimmed);
+        }
+      }
+    }
+  }
+  return [...files];
+}
+
+function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFirst = false, notInspected: readonly string[] = []): string {
   const rerunCommand = prNumber > 0 ? `\`aie pr gate ${prNumber}\`` : '`aie pr gate <pr>`';
   if (status === 'passed') return prNumber > 0
     ? `Local review evidence is recorded for PR #${prNumber}; inspect PR state, PR comments, reviews, checks, issue checklist, and any feedback before merge.`
@@ -1248,6 +1266,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFir
   }
   if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
   if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun the PR gate for one re-review round.';
+  if (status === 'inconclusive' && notInspected.length > 0) return `Split the pull request into smaller pull requests so every changed file can be inspected. Files not inspected: ${notInspected.join(', ')}. Then rerun ${rerunCommand}.`;
   if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
   return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;
@@ -1297,7 +1316,7 @@ export function readLocalReviewGate(input: {
     evidence,
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
-    nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false),
+    nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false, notInspectedFiles(evidence)),
     providerReuse: input.providerLaneReuse,
   };
 }
@@ -1567,6 +1586,6 @@ export function readLocalIssueReviewGate(input: {
     evidence,
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'} PR #${item.prNumber || 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
-    nextAction: gateNextAction(status, evidence.find(item => item.prNumber > 0)?.prNumber ?? 0),
+    nextAction: gateNextAction(status, evidence.find(item => item.prNumber > 0)?.prNumber ?? 0, false, notInspectedFiles(evidence)),
   };
 }

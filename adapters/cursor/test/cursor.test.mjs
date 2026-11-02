@@ -207,6 +207,13 @@ describe("Cursor isolated review adapter", () => {
     }
   });
 
+  it("keeps the Cursor route without shell", () => {
+    assert.equal(cursor.isolatedReviewHostAdapter.capabilities.shell, false);
+    // The Windows ACP runner's strict config denies Shell(*) (see
+    // cursor-acp-runner.test.mjs, whose fake server exits non-zero when the
+    // deny is missing); that deny must stay.
+  });
+
   it("supports Windows, macOS, and Linux with a direct Windows shim resolution", () => {
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("win32"), true);
     assert.equal(cursor.isolatedReviewHostAdapter.supportsPlatform("linux"), true);
