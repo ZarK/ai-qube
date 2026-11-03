@@ -854,13 +854,93 @@ function trustedLocalHostBlockers(input: {
 
 type LaneAdapterMap = ReadonlyMap<LocalReviewLaneId, LocalReviewEvidence['adapter']>;
 
-export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
+function gitNameOnlySync(repoRoot: string, range: string): string[] | null {
   try {
-    const output = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${fromHeadSha}..${toHeadSha}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    const output = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', range], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     return output.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
   } catch {
     return null;
   }
+}
+
+/** Paths a pull request itself changes: the three-dot diff from the merge-base of `baseRef` and `headSha`. */
+export function gitChangedPathsSync(repoRoot: string, baseRef: string, headSha: string): string[] | null {
+  return gitNameOnlySync(repoRoot, `${baseRef}...${headSha}`);
+}
+
+function gitParentsSync(repoRoot: string, commit: string): string[] | null {
+  try {
+    const output = execFileSync('git', ['-C', repoRoot, 'rev-list', '--parents', '-n', '1', commit], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    return output.trim().split(/\s+/).filter(part => part !== '').slice(1);
+  } catch {
+    return null;
+  }
+}
+
+function gitMergeBaseSync(repoRoot: string, commits: readonly string[]): string | null {
+  try {
+    const output = execFileSync('git', ['-C', repoRoot, 'merge-base', ...commits], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    const base = output.trim();
+    return base === '' ? null : base;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Paths a pull request itself changed between two of its heads, following the
+ * first-parent chain. A plain commit contributes its own diff. A merge
+ * contributes a path when its merged result differs from the first parent and
+ * either differs from a merged-in parent (a conflict resolution or combined
+ * change) or the first parent had already changed that path against the
+ * parents' merge-base (the merge replaced the pull request version, for
+ * example by keeping the base version). Files a base merge brought in
+ * untouched are identical to the merged-in parent and match the merge-base
+ * on the first-parent side, so they are excluded, and a clean base merge
+ * yields an empty delta. Returns null when any git observation fails, so
+ * callers fail closed.
+ */
+export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
+  let commits: string[];
+  try {
+    const output = execFileSync('git', ['-C', repoRoot, 'rev-list', '--first-parent', '--reverse', `${fromHeadSha}..${toHeadSha}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    commits = output.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+  } catch {
+    return null;
+  }
+  const paths = new Set<string>();
+  for (const commit of commits) {
+    const parents = gitParentsSync(repoRoot, commit);
+    if (parents === null) return null;
+    if (parents.length === 0) {
+      const own = gitNameOnlySync(repoRoot, `4b825dc642cb6eb9a060e54bf8d69288fbee4904..${commit}`);
+      if (own === null) return null;
+      for (const path of own) paths.add(path);
+      continue;
+    }
+    if (parents.length === 1) {
+      const own = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
+      if (own === null) return null;
+      for (const path of own) paths.add(path);
+      continue;
+    }
+    const mergeBase = gitMergeBaseSync(repoRoot, parents);
+    if (mergeBase === null) return null;
+    const firstParentDiff = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
+    const firstParentTouched = gitNameOnlySync(repoRoot, `${mergeBase}..${parents[0]}`);
+    if (firstParentDiff === null || firstParentTouched === null) return null;
+    const mergedInDiffs: string[][] = [];
+    for (const parent of parents.slice(1)) {
+      const diff = gitNameOnlySync(repoRoot, `${parent}..${commit}`);
+      if (diff === null) return null;
+      mergedInDiffs.push(diff);
+    }
+    const touched = new Set(firstParentTouched);
+    for (const path of firstParentDiff) {
+      if (touched.has(path) || mergedInDiffs.some(diff => diff.includes(path))) paths.add(path);
+    }
+  }
+  return [...paths];
 }
 
 function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile), carryForwardScope?: CarryForwardScope): string[] {

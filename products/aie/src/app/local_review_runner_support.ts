@@ -7,7 +7,7 @@ import { resolveTrustedLocalStore, type TrustedLocalStore, type TrustedStoreCont
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact, redactKnownSecrets } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, laneArtifactViolation, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
 import { parseReviewRouteProvenance, type RepoAffectedResult, type RepoPathSignal, type ReviewFinding } from '@tjalve/qube-core';
@@ -375,14 +375,9 @@ export function expectedLaneFragmentDigest(host: ReviewModelHostId, lane: LocalR
   return builtinFragmentDigest(promptStack(host, lane, [`Run local review lane ${lane}.`], [], repoRoot, configuredFragments, changedPaths).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
 
-async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
-  try {
-    const result = await execFileAsync('git', ['-C', repoRoot, 'diff', '--name-only', `${fromHeadSha}..${toHeadSha}`], { maxBuffer: 16 * 1024 * 1024 });
-    return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
-  } catch {
-    return null;
-  }
-}
+// The delta walk lives in local_review_evidence (`gitDeltaPathsSync`); the
+// carry-forward scan is synchronous git work either way, so both call sites
+// share that one implementation instead of drifting copies.
 
 export async function evaluateCarryForwardDecision(input: {
   repoRoot: string;
@@ -428,7 +423,7 @@ export async function evaluateCarryForwardDecision(input: {
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       priorApproved = true;
-      const deltaPaths = await gitDeltaPaths(input.repoRoot, priorHeadSha, input.headSha);
+      const deltaPaths = gitDeltaPathsSync(input.repoRoot, priorHeadSha, input.headSha);
       if (deltaPaths === null) sawUnknownDelta = true;
       const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '';
       if (!latest || recordedAt >= latest.recordedAt) latest = { recordedAt, deltaPaths };
@@ -504,7 +499,7 @@ export async function findCarryForwardSource(input: {
   }
   candidates.sort((first, second) => second.recordedAt.localeCompare(first.recordedAt));
   for (const candidate of candidates.slice(0, 5)) {
-    const deltaPaths = await gitDeltaPaths(input.repoRoot, candidate.fromHeadSha, input.headSha);
+    const deltaPaths = gitDeltaPathsSync(input.repoRoot, candidate.fromHeadSha, input.headSha);
     if (deltaPaths === null) continue;
     if (carryForwardDeltaTouched(deltaPaths, input.matchPatterns, input.contextPatterns, input.contextMode ?? defaultCarryForwardContext(input.lane))) continue;
     const deltaSummary = deltaPaths.length === 0
