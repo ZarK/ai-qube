@@ -37,7 +37,8 @@ export function isUnfinishedReviewText(text: string): boolean {
     /^(?:the\s+)?(?:review|inspection) continues$/i,
   ];
   if (wholeStatus.some(pattern => pattern.test(wholeText))) return true;
-  const firstSentence = wholeText.split(/[.!?]/, 1)[0] ?? '';
+  const firstSentence = wholeText.split(/[.!?;]/, 1)[0] ?? '';
+  if (wholeStatus.some(pattern => pattern.test(firstSentence))) return true;
   const firstSentencePatterns = [
     /(?:review|inspection|completeness)\s+(?:is|was|remains)\s+(?:still\s+)?(?:in progress|not (?:yet )?complet(?:e|ed)|incomplete|pending|unfinished)\b/i,
     /(?:review|inspection|completeness)\s+(?:still\s+)?(?:in progress|inspecting)\b/i,

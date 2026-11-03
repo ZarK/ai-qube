@@ -1295,6 +1295,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         if (priorResultStrict.evidence) {
           return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
+        if (priorResultStrict.rejection.rule === 'incomplete-result') {
+          return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
+        }
         return captureRawOutput(store, input, result, 'model-route-contract-mismatch', `Model review route returned an invalid transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)}`);
       }
     }

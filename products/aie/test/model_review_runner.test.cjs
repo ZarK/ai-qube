@@ -2207,6 +2207,19 @@ describe('incomplete results and the turn limit', () => {
     assert.match(noToolsResult.error, /field: toolsUsed/);
   });
 
+  it('names the incomplete result, not a contract mismatch, for an unfinished transient result', async () => {
+    const unfinished = laneResult();
+    unfinished.summary = 'Inspection is not yet complete because the diff is large.';
+    unfinished.completeness = 'Inspection is not yet complete because the diff is large.';
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-transient-incomplete-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(unfinished)}\n${JSON.stringify(laneResult())}`, sessionId: 'transient-incomplete' }) }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-incomplete-result');
+  });
+
   it('names the max-turns code, not a contract mismatch, when transient messages reach the turn limit', async () => {
     const lines = [JSON.stringify({ type: 'thread.started', thread_id: 'max-turns' })];
     for (let index = 0; index < 8; index += 1) {
@@ -2259,6 +2272,15 @@ describe('incomplete results and the turn limit', () => {
     const subjectResult = await grokResult(subjectStatus);
     assert.equal(subjectResult.evidence, null);
     assert.equal(subjectResult.reasonCode, 'model-route-incomplete-result');
+
+    for (const leadingStatus of ['Pending. No blocking defects found.', 'placeholder. No blocking defects found.', 'Not yet inspected. The runner was read.', 'Pending; no defects found.']) {
+      const body = laneResult();
+      body.summary = leadingStatus;
+      body.completeness = leadingStatus;
+      const result = await grokResult(body);
+      assert.equal(result.evidence, null, leadingStatus);
+      assert.equal(result.reasonCode, 'model-route-incomplete-result', leadingStatus);
+    }
   });
 
   it('accepts a finished result that uses incomplete for the inspected code', async () => {
