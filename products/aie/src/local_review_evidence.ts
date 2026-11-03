@@ -11,6 +11,7 @@ import { redact } from './redact.js';
 import type { ReviewModelTierId } from './core/policy.js';
 import { readHostUsage, type LaneUsage } from './review_usage.js';
 import { validateDeltaLaneEvidence } from './app/review_delta_scope.js';
+import { incompleteReviewResult } from './review_incomplete.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
 export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
@@ -1046,25 +1047,40 @@ function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, 
     });
     if (!deltaCheck.ok) return null;
     const status = readStatus(parsed.status);
+    const summary = stringValue(parsed.summary, `${id} local review lane did not provide a summary.`);
+    const completeness = typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '';
+    const contextReviewed = readContextReviewed(parsed.contextReviewed);
+    const toolsUsed = stringArray(parsed.toolsUsed);
+    const commands = stringArray(parsed.commands);
+    const findings = readFindings(parsed.findings);
+    // A stored passed verdict with placeholder or progress wording never
+    // counted as a finished review; read it back as inconclusive so the
+    // gate, reuse, and carry-forward all see the lane as not passed.
+    const incomplete = status === 'passed'
+      ? incompleteReviewResult({ summary, completeness, contextReviewed, toolsUsed, commands, findings })
+      : null;
+    const incompleteNote = incomplete ? ` Incomplete result (model-route-incomplete-result): ${incomplete.detail}; the lane is not passed.` : '';
+    const effectiveStatus: LocalReviewStatus = incomplete ? 'inconclusive' : status;
+    const severity = readSeverity(parsed.severity);
     return {
       adapter: readAdapter(parsed.adapter),
       evidenceSha256: localReviewEvidenceSha256(parsed),
       lane: {
         id,
-        status,
-        severity: readSeverity(parsed.severity),
-        recommendation: readRecommendation(parsed.recommendation, status),
-        summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
-        blockers: stringArray(parsed.blockers),
-        findings: readFindings(parsed.findings),
+        status: effectiveStatus,
+        severity: incomplete && (severity === 'high' || severity === 'critical') ? 'none' : severity,
+        recommendation: incomplete ? 'inconclusive' : readRecommendation(parsed.recommendation, status),
+        summary: `${summary}${incompleteNote}`,
+        blockers: incomplete ? [] : stringArray(parsed.blockers),
+        findings,
         artifacts: artifactArray(parsed.artifacts),
         artifactsRaw: parsed.artifacts,
-        commands: stringArray(parsed.commands),
+        commands,
         surfaces: stringArray(parsed.surfaces),
-        contextReviewed: readContextReviewed(parsed.contextReviewed),
+        contextReviewed,
         promptStack: readPromptStack(parsed.promptStack),
-        toolsUsed: stringArray(parsed.toolsUsed),
-        completeness: typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '',
+        toolsUsed,
+        completeness: `${completeness}${incompleteNote}`,
         preconditions: Array.isArray(parsed.preconditions) ? stringArray(parsed.preconditions) : null,
         carriedForward: readCarriedForward(parsed.carriedForward),
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),

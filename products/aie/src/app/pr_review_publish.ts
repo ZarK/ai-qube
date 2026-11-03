@@ -9,6 +9,7 @@ import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider } from '../providers/review_forge_provider.js';
 import { createHeadLineCounter } from '../finding_location.js';
+import { incompleteReviewResult } from '../review_incomplete.js';
 import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
 import type { PrGateExec } from './pr_gate.js';
 
@@ -364,6 +365,17 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   const completeness = stringField(raw, 'completeness');
   if (completeness === '') {
     throw laneEvidenceFailure(path, 'completeness must be a non-empty self-check stating what was inspected and what was not.');
+  }
+  if (raw.status === 'passed') {
+    const incomplete = incompleteReviewResult({
+      summary,
+      completeness,
+      contextReviewed: Array.isArray(raw.contextReviewed) ? raw.contextReviewed.filter((item): item is Record<string, unknown> => isRecord(item)).map(item => ({ source: typeof item.source === 'string' ? item.source : '' })) : [],
+      toolsUsed: Array.isArray(raw.toolsUsed) ? raw.toolsUsed.filter((item): item is string => typeof item === 'string') : [],
+      commands: Array.isArray(raw.commands) ? raw.commands.filter((item): item is string => typeof item === 'string') : [],
+      findings: Array.isArray(raw.findings) ? raw.findings : [],
+    });
+    if (incomplete) throw laneEvidenceFailure(path, `the lane result is incomplete (model-route-incomplete-result): ${incomplete.detail}; the lane is not passed.`);
   }
   const recommendation = readRecommendation(raw.recommendation ?? raw.status);
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {

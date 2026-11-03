@@ -19,6 +19,8 @@ export function reviewRouteReasonMessage(code: string): string {
   if (code === 'model-route-model-unsupported') return 'The selected model is unavailable through the active Review transport.';
   if (code === 'model-route-probe-blocked') return 'The selected Review route failed its readiness probe.';
   if (code === 'model-route-policy-blocked') return 'The selected host rejected a required read-only inspection command.';
+  if (code === 'model-route-max-turns') return 'The selected host reached its configured turn limit before finishing the lane.';
+  if (code === 'model-route-incomplete-result') return 'The selected host returned an incomplete result that is not a finished review.';
   if (code === 'model-route-authentication') return 'The selected Review route is not authenticated.';
   if (code === 'model-route-timeout') return 'The selected Review route exceeded its execution time limit.';
   if (code === 'model-route-network') return 'The selected Review host could not reach its network service.';
@@ -33,6 +35,8 @@ const REVIEW_ROUTE_REASON_CODES = new Set([
   'model-route-checkout-mismatch',
   'model-route-contract-mismatch',
   'model-route-malformed-json',
+  'model-route-incomplete-result',
+  'model-route-max-turns',
   'model-route-model-unavailable',
   'model-route-model-unsupported',
   'model-route-multiple-terminal',

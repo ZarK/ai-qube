@@ -2161,6 +2161,161 @@ describe('finding locations at the reviewed head', () => {
   });
 });
 
+describe('incomplete results and the turn limit', () => {
+  function grokResult(body) {
+    return runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-incomplete-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'incomplete-check' }) }),
+    });
+  }
+
+  it('stores no passed lane for a placeholder final result and names the incomplete result', async () => {
+    const body = laneResult();
+    body.summary = 'placeholder';
+    body.completeness = 'placeholder';
+    const result = await grokResult(body);
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-incomplete-result');
+    assert.match(result.error, /incomplete-result/);
+    assert.match(result.error, /field: summary/);
+  });
+
+  it('rejects progress wording, a pending context source, and findings with no tools or commands', async () => {
+    const progress = laneResult();
+    progress.summary = 'Delta inspection still in progress.';
+    progress.completeness = 'Delta inspection still in progress.';
+    const progressResult = await grokResult(progress);
+    assert.equal(progressResult.evidence, null);
+    assert.equal(progressResult.reasonCode, 'model-route-incomplete-result');
+
+    const pending = laneResult();
+    pending.contextReviewed = [{ kind: 'diff', source: 'pending', trust: 'local-evidence', freshness: 'current' }];
+    const pendingResult = await grokResult(pending);
+    assert.equal(pendingResult.evidence, null);
+    assert.equal(pendingResult.reasonCode, 'model-route-incomplete-result');
+    assert.match(pendingResult.error, /field: contextReviewed/);
+
+    const noTools = laneResult();
+    noTools.toolsUsed = [];
+    noTools.commands = [];
+    noTools.findings = [{ severity: 'advisory', message: 'Advisory without inspection evidence.', suggestion: null, location: null }];
+    noTools.coverage = [{ area: 'code-quality', status: 'finding' }];
+    const noToolsResult = await grokResult(noTools);
+    assert.equal(noToolsResult.evidence, null);
+    assert.equal(noToolsResult.reasonCode, 'model-route-incomplete-result');
+    assert.match(noToolsResult.error, /field: toolsUsed/);
+  });
+
+  it('names the incomplete result, not a contract mismatch, for an unfinished transient result', async () => {
+    const unfinished = laneResult();
+    unfinished.summary = 'Inspection is not yet complete because the diff is large.';
+    unfinished.completeness = 'Inspection is not yet complete because the diff is large.';
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-transient-incomplete-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(unfinished)}\n${JSON.stringify(laneResult())}`, sessionId: 'transient-incomplete' }) }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-incomplete-result');
+  });
+
+  it('names the max-turns code, not a contract mismatch, when transient messages reach the turn limit', async () => {
+    const lines = [JSON.stringify({ type: 'thread.started', thread_id: 'max-turns' })];
+    for (let index = 0; index < 8; index += 1) {
+      lines.push(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: `still working ${index}` } }));
+    }
+    lines.push(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }));
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-max-turns-')), 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: lines.join('\n') }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-max-turns');
+    assert.match(result.error, /model-route-max-turns/);
+  });
+
+  it('names the max-turns code when the host process stops on max turns', async () => {
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-max-turns-exit-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 1, stderr: 'Error: max turns reached', stdout: '', timedOut: false, stdinDelivered: true }),
+    });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-max-turns');
+    assert.notEqual(result.reasonCode, 'model-route-process-failed');
+  });
+
+  it('rejects a passed result that calls itself unfinished even with a because clause', async () => {
+    const body = laneResult();
+    body.summary = 'Inspection is not yet complete because the diff is large.';
+    body.completeness = 'Inspection is not yet complete because the diff is large.';
+    const result = await grokResult(body);
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-incomplete-result');
+    assert.match(result.error, /field: summary/);
+  });
+
+  it('rejects a passed result whose text is only a bare progress status', async () => {
+    for (const statusText of ['Not yet inspected.', 'Not yet been inspected.', 'Still inspecting.', 'Inspecting.', 'Pending.', 'Incomplete.', 'Inspecting the diff.', 'Inspection continues.']) {
+      const body = laneResult();
+      body.summary = statusText;
+      body.completeness = statusText;
+      const result = await grokResult(body);
+      assert.equal(result.evidence, null, statusText);
+      assert.equal(result.reasonCode, 'model-route-incomplete-result', statusText);
+    }
+    const subjectStatus = laneResult();
+    subjectStatus.summary = 'The inspection is incomplete.';
+    subjectStatus.completeness = 'The inspection is incomplete.';
+    const subjectResult = await grokResult(subjectStatus);
+    assert.equal(subjectResult.evidence, null);
+    assert.equal(subjectResult.reasonCode, 'model-route-incomplete-result');
+
+    for (const leadingStatus of ['Pending. No blocking defects found.', 'placeholder. No blocking defects found.', 'Not yet inspected. The runner was read.', 'Pending; no defects found.']) {
+      const body = laneResult();
+      body.summary = leadingStatus;
+      body.completeness = leadingStatus;
+      const result = await grokResult(body);
+      assert.equal(result.evidence, null, leadingStatus);
+      assert.equal(result.reasonCode, 'model-route-incomplete-result', leadingStatus);
+    }
+  });
+
+  it('accepts a finished result that uses incomplete for the inspected code', async () => {
+    const body = laneResult();
+    body.summary = 'Reviewed the incomplete retry handling and confirmed the fallback is sound.';
+    body.completeness = 'Inspected the runner and its tests; coverage is complete.';
+    const result = await grokResult(body);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+
+    const laterSentences = laneResult();
+    laterSentences.summary = 'No blockers remain. The review of the incomplete retry path is sound. The review found no pending work.';
+    const laterResult = await grokResult(laterSentences);
+    assert.equal(laterResult.error, null);
+    assert.equal(laterResult.evidence.status, 'passed');
+
+    const statusWordsAsCode = laneResult();
+    statusWordsAsCode.summary = 'Not completed lanes are rejected before publish, which I verified in the gate test. In progress events are ignored and only the final JSON is stored.';
+    const statusWordsResult = await grokResult(statusWordsAsCode);
+    assert.equal(statusWordsResult.error, null);
+    assert.equal(statusWordsResult.evidence.status, 'passed');
+  });
+
+  it('still accepts a complete final result with real findings and tools', async () => {
+    const body = laneResult();
+    body.findings = [{ severity: 'advisory', message: 'Residual advisory with inspected basis.', suggestion: null, location: null }];
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
+    const result = await grokResult(body);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.equal(result.evidence.findings.length, 1);
+    assert.deepEqual(result.evidence.toolsUsed, ['git']);
+  });
+});
+
 describe('head line counter', () => {
   it('reads line counts from git objects at the head, not from the checkout', () => {
     const repoRoot = cloneGitRepo('committed', 'aie-head-counter-');

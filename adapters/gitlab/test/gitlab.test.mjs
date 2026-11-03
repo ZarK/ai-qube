@@ -1945,10 +1945,11 @@ describe("GitLab round summary publish", () => {
   it("tombstones a prior-head summary and revokes approval on request-changes", async () => {
     const notes = [{
       id: 3,
-      body: "<!-- qube-pr-review-summary:{\"version\":1,\"head\":\"old-sha\",\"round\":\"round-0\",\"prNumber\":12,\"findingDigest\":\"old\"} -->\nOld",
+      body: "<!-- qube-pr-review-summary:{\"version\":1,\"head\":\"old-sha\",\"round\":\"round-0\",\"prNumber\":12,\"findingDigest\":\"old\"} -->\nRound one blocker: the changed check accepts empty input.",
       author: { username: "executor" },
       web_url: "https://gitlab.example.com/note/3",
     }];
+    const updates = [];
     const unapprovals = [];
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
@@ -1966,6 +1967,7 @@ describe("GitLab round summary publish", () => {
           return { id: 8, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/8" };
         },
         async updateMergeRequestNote({ noteId, body }) {
+          updates.push({ noteId, body });
           return { id: Number(noteId), body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${noteId}` };
         },
         async unapproveMergeRequest() {
@@ -1982,6 +1984,9 @@ describe("GitLab round summary publish", () => {
     assert.equal(result.status, "published");
     assert.equal(result.supersededPriorSummaries, 1);
     assert.deepEqual(unapprovals, ["unapprove"]);
+    const tombstone = updates.find((entry) => entry.noteId === "3");
+    assert.match(tombstone.body, /Superseded round findings \(preserved\)/);
+    assert.match(tombstone.body, /Round one blocker: the changed check accepts empty input\./);
   });
 
   it("creates a positioned discussion for a new-line finding", async () => {

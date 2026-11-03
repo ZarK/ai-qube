@@ -241,9 +241,19 @@ export function resolveDistinctFailoverReviewPlan(config: Config, primary: Model
   return fallback && !sameReviewRouteIdentity(primary, fallback) ? fallback : null;
 }
 
+// Host faults that rerun on the configured backup route in the same gate
+// run instead of waiting for the persisted fault threshold.
+const SAME_RUN_FAILOVER_REASONS = new Set(['model-route-policy-blocked', 'model-route-max-turns', 'model-route-incomplete-result']);
+
 export function hostFailoverSubstitution(primaryHost: string, reasonCode: string | undefined): string {
   if (reasonCode === 'model-route-policy-blocked') {
     return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
+  }
+  if (reasonCode === 'model-route-max-turns') {
+    return `The isolated ${primaryHost} host reached its configured turn limit (model-route-max-turns); the lane uses the configured second host.`;
+  }
+  if (reasonCode === 'model-route-incomplete-result') {
+    return `The isolated ${primaryHost} host returned an incomplete result (model-route-incomplete-result); the lane uses the configured second host.`;
   }
   if (reasonCode === 'model-route-probe-blocked') {
     return `The configured ${primaryHost} route failed its readiness probe; the lane uses the configured second host.`;
@@ -1096,7 +1106,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const job = runnableJobs[jobIndex];
       if (
         (!routed || !routed.evidence)
-        && routed?.reasonCode === 'model-route-policy-blocked'
+        && routed?.reasonCode !== null && routed?.reasonCode !== undefined
+        && SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)
         && job.routeSource === 'configured'
         && config.reviewFailover
       ) {
@@ -1104,14 +1115,15 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         if (fallbackPlan) {
           const fallbackCheck = probeFor(fallbackPlan);
           if (fallbackCheck?.status === 'ready') {
+            const failoverReason = routed.reasonCode;
             const primaryHost = job.primaryRoute?.host ?? job.route.host;
-            job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, 'model-route-policy-blocked');
+            job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, failoverReason);
             job.routeSource = 'fallback';
             job.host = fallbackPlan.host;
             job.probedExecutable = fallbackCheck.resolved ?? null;
             job.probedModel = fallbackCheck.resolvedModel;
             job.transport = fallbackCheck.transport ?? null;
-            job.fallbackReason = 'model-route-policy-blocked';
+            job.fallbackReason = failoverReason;
             routed = await job.run();
           }
         }
@@ -1138,6 +1150,39 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           // Faults tally against the lane's configured primary route identity,
           // so fallback-run faults keep the failover engaged until a verdict.
           recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode, reviewRouteKey(job.primaryRoute ?? job.route));
+        }
+        if (existsSync(job.path)) {
+          // This fresh run superseded the prior record at this head and did
+          // not produce a verdict, so the prior verdict must not be read
+          // back as a pass. Replace it with an inconclusive record that
+          // names the failure instead of leaving the old evidence in place.
+          try {
+            const invalidatedPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, {
+              id: job.lane,
+              status: 'inconclusive',
+              severity: 'none',
+              recommendation: 'inconclusive',
+              summary,
+              blockers: [],
+              findings: [],
+              artifacts: [],
+              commands: [],
+              surfaces: [],
+              contextReviewed: [],
+              promptStack: [],
+              toolsUsed: [],
+              completeness: `No finished review was recorded in the latest run at this head (${reasonCode}); the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.`,
+              preconditions: [],
+              runnerProvenance: null,
+              modelTier: job.route.tier,
+              reviewScope: job.reviewScope.scope,
+              baseHeadSha: job.reviewScope.baseHeadSha,
+            }, 'local-host');
+            written.push(invalidatedPath);
+          } catch {
+            // The lane already reports failed above; a failed invalidation
+            // write must not mask that primary failure with a new error.
+          }
         }
         lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
         continue;

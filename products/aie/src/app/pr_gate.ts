@@ -1268,6 +1268,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   if (status !== 'complete') shipReadyReasons.push(`PR gate status is ${status}, not complete.`);
   if (hasIncompleteChecks(finalSnapshot.item)) shipReadyReasons.push('One or more required checks are incomplete at the current head.');
   if ((localRequired || localShadow) && localReview.status !== 'passed') shipReadyReasons.push(`Local review gate is ${localReview.status}, not passed, at the current head.`);
+  const rerunLanes = [...new Set(localReviewRunner.lanes.filter(lane => lane.status === 'failed' || lane.status === 'unavailable').map(lane => lane.lane))];
+  for (const laneId of rerunLanes) {
+    const run = localReviewRunner.lanes.find(lane => lane.lane === laneId);
+    shipReadyReasons.push(`Lane ${laneId} did not complete a valid review at the current head${run?.blocker ? ` (${run.blocker})` : ''}; run \`aie pr lane rerun ${options.prNumber} ${laneId}\`.`);
+  }
   for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
   if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);
   if (localReviewPublish.status === 'failed' || localReviewPublish.status === 'pending') shipReadyReasons.push(`Local review publishing is ${localReviewPublish.status}; provider-visible lane state is incomplete.`);
@@ -1292,6 +1297,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     twoRoundMergeMet: false,
     hostRequestRecorded,
     inconclusiveLanes,
+    rerunLanes,
     notInspectedFiles: localReview.status === 'inconclusive' ? notInspectedFiles(localReview.evidence) : [],
     prNumber: options.prNumber,
     fallback: fallbackNextAction,

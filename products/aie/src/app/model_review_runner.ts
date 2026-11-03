@@ -17,6 +17,7 @@ import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_del
 import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 import { computeReviewDiff, reviewInputPromptLines, unreadReviewInputFiles, writeReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
 import { countTextLines, missingAtHeadReason } from '../finding_location.js';
+import { incompleteReviewResult, isProgressOnlyReviewText } from '../review_incomplete.js';
 
 export type { ReviewInputFile } from './review_input.js';
 
@@ -607,6 +608,17 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       || typeof item.trust !== 'string' || !CONTEXT_TRUST_VALUES.has(item.trust)
       || typeof item.freshness !== 'string' || !CONTEXT_FRESHNESS_VALUES.has(item.freshness)) return rejectedLane('context-shape', `contextReviewed[${index}]`);
   }
+  // An inconclusive result claims no finished review, so the completeness
+  // check only judges results that present a verdict on the change.
+  const incomplete = value.status === 'inconclusive' ? null : incompleteReviewResult({
+    summary: value.summary as string,
+    completeness: value.completeness as string,
+    contextReviewed: value.contextReviewed as Array<{ source: string }>,
+    toolsUsed: value.toolsUsed as string[],
+    commands: value.commands as string[],
+    findings,
+  });
+  if (incomplete) return rejectedLane('incomplete-result', incomplete.field, `Incomplete result: ${incomplete.detail}.`);
   // Findings attested as clear cannot widen what the lane approves, so this
   // slip keeps the findings instead of discarding the complete result: a
   // passed lane is downgraded below and every other status already does
@@ -955,7 +967,12 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
   return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
+const MAX_TURNS_ERROR = 'Model review route reached its configured turn limit (model-route-max-turns) before finishing the lane; the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.';
+
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
+  if (maxTurnsReached(result)) {
+    return { reasonCode: 'model-route-max-turns', error: MAX_TURNS_ERROR };
+  }
   if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)\b|could not resolve (?:host|proxy)|proxy (?:connection|authentication) failed|failed to (?:connect|fetch)/i.test(result.stderr)) {
     return { reasonCode: 'model-route-network', error: 'The isolated review host could not reach its network service. Check the host connection and proxy settings, then rerun the gate.' };
   }
@@ -983,16 +1000,12 @@ export async function resolveModelReviewHead(repoRoot: string): Promise<string> 
   return result.stdout.trim();
 }
 
-function isProgressOnlyReviewText(text: string): boolean {
-  const progressOnly = [
-    /\b(?:in progress|pending|incomplete|not (?:yet )?complet(?:e|ed)|not yet (?:been )?inspected|inspecting)\b/i,
-    /\b(?:review|inspection) continues\b/i,
-    /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)[.!]?$/i,
-    /^(?:review )?not started[.!]?$/i,
-    /^not inspected[.!]?$/i,
-  ];
-  const substantiveReason = /\b(?:because|blocked|unavailable|unable|failed|error|cannot|can't|could not|missing)\b/i;
-  return !substantiveReason.test(text) && progressOnly.some(pattern => pattern.test(text.trim()));
+export function maxTurnsReached(result: Pick<ModelRouteProcessResult, 'stdout' | 'stderr'>): boolean {
+  const text = `${result.stdout}\n${result.stderr}`;
+  return /\berror_max_turns\b|\bmax_turns_exceeded\b/i.test(text)
+    || /\bturn limit\s+(?:reached|exceeded|exhausted)\b/i.test(text)
+    || /\bmax(?:imum)?[_\s-]+turns?\b[^.\n]{0,60}\b(?:reached|exceeded|exhausted|limit)\b/i.test(text)
+    || /\b(?:reached|exceeded|exhausted)\b[^.\n]{0,60}\bmax(?:imum)?[_\s-]+turns?\b/i.test(text);
 }
 
 function isExplicitlyIncompleteResult(value: unknown, input: ModelReviewRunInput): boolean {
@@ -1228,12 +1241,16 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     }
     if (!result.stdinDelivered) return captureRawOutput(store, input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
     const parsedHostOutput = adapter.parseEnvelope(result.stdout);
-    if (!parsedHostOutput) return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
+    if (!parsedHostOutput) {
+      if (maxTurnsReached(result)) return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
+      return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
+    }
     if ('failureReasonCode' in parsedHostOutput) {
       return captureRawOutput(store, input, result, parsedHostOutput.failureReasonCode, parsedHostOutput.failureDiagnostic);
     }
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {
+      if (maxTurnsReached(result)) return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
       return captureRawOutput(store, input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
     }
     const provenance: LocalReviewRunnerProvenance = {
@@ -1267,7 +1284,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
       }
       if (transientTexts.length >= input.plan.maxTurns) {
-        return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review route returned more transient host messages than the configured turn bound.');
+        return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
       }
       for (const priorText of transientTexts) {
         let priorResult: unknown;
@@ -1277,6 +1294,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         const priorResultStrict = strictRoutedLane(normalizedPriorResult, input, provenance);
         if (priorResultStrict.evidence) {
           return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
+        }
+        if (priorResultStrict.rejection.rule === 'incomplete-result') {
+          return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
         }
         return captureRawOutput(store, input, result, 'model-route-contract-mismatch', `Model review route returned an invalid transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)}`);
       }
@@ -1300,6 +1320,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       }
       if (rejection.rule === 'artifact-digest-invalid') {
         return captureRawOutput(store, input, result, 'model-route-artifact-digest', routedLaneRejectionMessage(rejection));
+      }
+      if (rejection.rule === 'incomplete-result') {
+        return captureRawOutput(store, input, result, 'model-route-incomplete-result', `${routedLaneRejectionMessage(rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
       }
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }
