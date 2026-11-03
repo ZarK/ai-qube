@@ -408,6 +408,29 @@ describe('model review runner', () => {
     }
   });
 
+  it('names evidence-normalize-failed when a result cannot become lane evidence', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-normalize-'));
+    reviewInput(repoRoot, 'grok-build');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'unknown-lane');
+    const candidate = laneResult();
+    candidate.lane = 'unknown-lane';
+    candidate.coverage = [{ area: 'unknown-lane', status: 'clear' }];
+    const rejected = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      lane: 'unknown-lane',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(candidate), sessionId: 'normalize-session' }),
+      }),
+      resolveExecutable: async () => 'grok.exe',
+    });
+    assert.equal(rejected.evidence, null);
+    assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+    assert.match(rejected.error, /contract rule evidence-normalize-failed failed \(field: result\)/);
+    const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+    assert.match(raw.diagnostic, /evidence-normalize-failed/);
+  });
+
   it('keeps findings when coverage is attested clear and does not pass the lane', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-coverage-clear-'));
     reviewInput(repoRoot, 'grok-build');
