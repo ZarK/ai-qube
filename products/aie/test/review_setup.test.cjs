@@ -520,6 +520,49 @@ describe('review publisher doctor', () => {
     assert.match(sameAuthor.nextAction, /different from the pull request author/);
   });
 
+  it('reports ready for an App publisher with a user work credential when the permissions prove issue and label writes', async () => {
+    const config = getDefaults();
+    config.providers.work.kind = 'github';
+    config.providers.review.kind = 'github';
+    config.providers.review.publisher = {
+      mode: 'github-app',
+      githubApp: { appId: '99', installationId: '1001', privateKeyEnv: 'QUBE_DOCTOR_READY_APP_KEY' },
+    };
+    const env = { QUBE_DOCTOR_READY_APP_KEY: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) };
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      const text = args.join(' ');
+      if (text === '--version') return { args, exitCode: 0, stdout: 'gh version 2.99.0 (test)', stderr: '' };
+      if (args[0] === 'auth') return { args, exitCode: 0, stdout: JSON.stringify({ hosts: { 'github.com': [{ state: 'success', active: true, login: 'owner', tokenSource: 'keyring', scopes: 'repo' }] } }), stderr: '' };
+      if (args.includes('repos/owner/repository')) return { args, exitCode: 0, stdout: JSON.stringify({ full_name: 'owner/repository', has_issues: true, permissions: { pull: true, push: true } }), stderr: '' };
+      throw new Error(`Unexpected gh call: ${text}`);
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async url => {
+      if (String(url).endsWith('/access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_doctor_fixture_installation_token', permissions: { pull_requests: 'write', contents: 'write', issues: 'write' } }), { status: 201 });
+      }
+      return new Response(JSON.stringify({ slug: 'qube-reviewer' }), { status: 200 });
+    };
+    try {
+      const { evaluateConfiguredGitHubReadiness } = require('../dist/github_readiness.js');
+      const githubReadiness = await evaluateConfiguredGitHubReadiness(config, { repository: 'owner/repository', env, exec });
+      assert.equal(githubReadiness.status, 'ready');
+      assert.equal(calls.every(args => args[0] !== 'api' || !args.some(arg => /^(-X|--method|-f|-F|--field|--raw-field|--input)$/.test(arg))), true);
+      const result = await runReviewDoctor({
+        config,
+        githubReadiness,
+        resolvePublisher: readyResolver,
+        probeRepositoryAccess: successfulRepositoryProbe,
+        mintProbe: true,
+      });
+      assert.equal(result.readiness, 'ready');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('does not resolve or probe a publisher after shared GitHub readiness fails', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {

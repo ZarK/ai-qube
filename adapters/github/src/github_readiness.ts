@@ -228,6 +228,7 @@ export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOp
   let publisherSource: GitHubCredentialSource | null = null;
   let appReviewReady = false;
   let appThreadsReady = false;
+  let appIssuesPermission: InstallationIssuesPermission = 'not-run';
   if (publisherMode === 'token') {
     const variable = normalized(options.publisher?.token?.env);
     publisherSource = { kind: 'named-token', name: variable };
@@ -259,6 +260,7 @@ export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOp
       publisherToken = resolved.accessToken;
       appReviewReady = resolved.identity.permissionStatus === 'ok' && resolved.identity.formalEventCapability;
       appThreadsReady = resolved.identity.contentsPermission === 'write';
+      appIssuesPermission = resolved.identity.issuesPermission ?? 'not-run';
       if (!publisherToken) {
         const reasonCode = /installation/i.test(resolved.identity.fallbackReason ?? '') ? 'app-not-installed' : 'credential-invalid';
         return failedReadiness({
@@ -339,7 +341,12 @@ export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOp
         ? capabilityReadiness(capability, 'ready', 'ready', 'The App installation reports the additional Contents write permission.', 'Contents write')
         : capabilityReadiness(capability, 'needs-action', 'insufficient-permission', 'The App installation does not report the additional Contents write permission.', 'Contents write');
     }
-    return capabilityReadiness(capability, 'unverified', 'unverified', 'A read-only probe cannot prove this write capability; no mutation was attempted.', permissionName(capability));
+    if (capability === 'issues-write' || capability === 'labels-write') {
+      return issueWriteReadiness(capability, !needsUserCredential && publisherMode === 'github-app'
+        ? { installationIssues: appIssuesPermission }
+        : { repositoryBody });
+    }
+    return capabilityReadiness(capability, 'unverified', 'unverified', 'The response carried no permission data for this write capability; no mutation was attempted.', permissionName(capability));
   });
   const status = aggregate(rows);
   const first = rows.find(row => row.status === 'needs-action') ?? rows.find(row => row.status === 'unverified');
@@ -349,12 +356,12 @@ export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOp
     summary: status === 'ready'
       ? `GitHub CLI, ${target.host}, ${target.repository}, and every selected capability are ready.`
       : status === 'unverified'
-        ? `GitHub authentication and repository access are ready; one or more write capabilities remain unverified without mutation.`
+        ? `GitHub authentication and repository access are ready; the responses carried no permission data for one or more write capabilities.`
         : first?.summary ?? 'GitHub readiness needs action.',
     nextAction: status === 'ready'
       ? null
       : status === 'unverified'
-        ? 'Confirm the named least-privilege write permissions, then rerun doctor or the explicitly requested provider command.'
+        ? 'Confirm the named least-privilege write permissions on the credential, then rerun doctor or the explicitly requested provider command.'
         : recoveryFor(first?.reasonCode ?? 'insufficient-permission', target.host, account?.login ?? null),
     cliVersion,
     target,
@@ -363,6 +370,36 @@ export async function evaluateGitHubReadiness(options: EvaluateGitHubReadinessOp
     roles,
     capabilities: rows,
   });
+}
+
+type InstallationIssuesPermission = 'write' | 'read' | 'missing' | 'unknown' | 'not-run';
+
+/**
+ * Decides an issue or label write capability from permission data a read already returned:
+ * the installation token response for an App credential, otherwise the repository `permissions`.
+ */
+function issueWriteReadiness(
+  capability: 'issues-write' | 'labels-write',
+  source: { readonly installationIssues: InstallationIssuesPermission } | { readonly repositoryBody: Record<string, unknown> },
+): GitHubCapabilityReadiness {
+  const permission = permissionName(capability);
+  if ('installationIssues' in source) {
+    const issues = source.installationIssues;
+    if (issues === 'write') return capabilityReadiness(capability, 'ready', 'ready', 'The App installation reports Issues write permission.', permission);
+    if (issues === 'unknown' || issues === 'not-run') {
+      return capabilityReadiness(capability, 'unverified', 'unverified', 'The App installation token response carried no permission data, so Issues write could not be checked.', permission);
+    }
+    return capabilityReadiness(capability, 'needs-action', 'insufficient-permission', `The App installation does not report Issues write permission (Issues: ${issues === 'read' ? 'read' : 'absent'}).`, permission);
+  }
+  const { repositoryBody } = source;
+  const permissions = isRecord(repositoryBody.permissions) ? repositoryBody.permissions : null;
+  if (!permissions) {
+    return capabilityReadiness(capability, 'unverified', 'unverified', 'The repository response carried no permission data, so Issues write could not be checked.', permission);
+  }
+  if (['admin', 'maintain', 'push', 'triage'].some(level => permissions[level] === true)) {
+    return capabilityReadiness(capability, 'ready', 'ready', 'The repository permissions include triage or higher, which allows Issues write.', permission);
+  }
+  return capabilityReadiness(capability, 'needs-action', 'insufficient-permission', 'The repository permissions grant pull only; Issues write requires triage, push, maintain or admin.', permission);
 }
 
 async function probeRepository(target: RepositoryTarget, options: {
