@@ -151,6 +151,26 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.match(JSON.stringify(result.localReview), /recorded blocking structured findings/);
   });
 
+  it('does not pass a lane whose stored passed evidence is a placeholder', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, summary: 'placeholder', completeness: 'placeholder', toolsUsed: [], contextReviewed: [{ kind: 'diff', source: 'pending', trust: 'local-evidence', freshness: 'current' }] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.equal(result.shipReady.ready, false);
+    const lane = result.localReview.evidence[0].lanes.find(entry => entry.id === 'code-quality');
+    assert.notEqual(lane.status, 'passed');
+    assert.equal(lane.status, 'inconclusive');
+    assert.match(`${lane.summary} ${lane.completeness}`, /model-route-incomplete-result/);
+  });
+
   it('rejects lane evidence publishing without a completeness self-check', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

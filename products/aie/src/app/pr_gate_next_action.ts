@@ -3,6 +3,8 @@ export interface PrGateNextActionState {
   twoRoundMergeMet: boolean;
   hostRequestRecorded: boolean;
   inconclusiveLanes: readonly string[];
+  /** Lanes whose runner failed before a verdict (for example on max turns), when any. */
+  rerunLanes?: readonly string[];
   /** Changed files a lane reported as not inspected, when any. */
   notInspectedFiles?: readonly string[];
   prNumber: number;
@@ -17,6 +19,10 @@ export function computePrGateNextAction(state: PrGateNextActionState): string {
   if (state.inconclusiveLanes.length > 0) {
     const lane = state.inconclusiveLanes[0];
     return `Run \`aie pr lane rerun ${state.prNumber} ${lane}\` once, then rerun \`aie pr gate ${state.prNumber}\`.`;
+  }
+  if (state.rerunLanes && state.rerunLanes.length > 0) {
+    const lane = state.rerunLanes[0];
+    return `Run \`aie pr lane rerun ${state.prNumber} ${lane}\` once, then rerun \`aie pr gate ${state.prNumber}\`. If the lane stops again, make the change smaller or split the pull request.`;
   }
   if (state.hostRequestRecorded && /^Post the configured /.test(state.fallback)) {
     return `Reviewer request is already recorded for this head. Inspect lane results, then rerun \`aie pr gate ${state.prNumber}\`.`;

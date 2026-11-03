@@ -481,6 +481,18 @@ interface RoundSummaryMarkerRecord {
   readonly superseded: boolean;
   readonly url: string | null;
   readonly publishedAt: string | null;
+  readonly body: string;
+}
+
+/** A superseded round keeps its finding text readable in a collapsed section; machine markers are stripped so the preserved copy can never seed live reuse. */
+function supersededRoundSummaryBody(record: RoundSummaryMarkerRecord, note: string): string {
+  const preserved = (record.body ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+  return [
+    `<!-- ${ROUND_SUMMARY_MARKER_PREFIX}:${JSON.stringify({ version: 1, head: record.head, round: record.round, prNumber: record.prNumber, findingDigest: record.findingDigest, superseded: true })} -->`,
+    '',
+    note,
+    ...(preserved === '' ? [] : ['', '<details>', '<summary>Superseded round findings (preserved)</summary>', '', preserved, '', '</details>']),
+  ].join('\n');
 }
 
 function parseRoundSummaryMarkerRecord(body: string | undefined): Pick<RoundSummaryMarkerRecord, 'head' | 'round' | 'prNumber' | 'findingDigest' | 'superseded'> | null {
@@ -506,13 +518,13 @@ function roundSummaryRecords(comments: RawComment[], reviews: RawReview[], trust
     if (!authorIsTrusted(comment.author?.login, trustedAuthor)) continue;
     const parsed = parseRoundSummaryMarkerRecord(comment.body);
     const id = issueCommentIdFromUrl(comment.url);
-    if (parsed && id) records.push({ ...parsed, id, kind: 'comment', url: comment.url ? redact(comment.url) : null, publishedAt: comment.createdAt ?? null });
+    if (parsed && id) records.push({ ...parsed, id, kind: 'comment', url: comment.url ? redact(comment.url) : null, publishedAt: comment.createdAt ?? null, body: comment.body ?? '' });
   }
   for (const review of reviews) {
     if (!authorIsTrusted(reviewAuthor(review), trustedAuthor)) continue;
     const parsed = parseRoundSummaryMarkerRecord(review.body);
     if (parsed && review.id !== undefined && review.id !== null) {
-      records.push({ ...parsed, id: String(review.id), kind: 'review', url: review.url ? redact(String(review.url)) : null, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
+      records.push({ ...parsed, id: String(review.id), kind: 'review', url: review.url ? redact(String(review.url)) : null, publishedAt: review.submittedAt ?? review.submitted_at ?? null, body: review.body ?? '' });
     }
   }
   return records;
@@ -2980,11 +2992,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     // publish, it just leaves that one prior marker live for one more round.
     let supersededPriorSummaries = 0;
     for (const record of priorHeadRecords) {
-      const tombstoneBody = [
-        `<!-- ${ROUND_SUMMARY_MARKER_PREFIX}:${JSON.stringify({ version: 1, head: record.head, round: record.round, prNumber: record.prNumber, findingDigest: record.findingDigest, superseded: true })} -->`,
-        '',
-        'This round summary was superseded by a review of a later head; see the latest QUBE round summary for this pull request.',
-      ].join('\n');
+      const tombstoneBody = supersededRoundSummaryBody(record, 'This round summary was superseded by a review of a later head; see the latest QUBE round summary for this pull request.');
       const payloadPath = reviewPayloadPath({ body: tombstoneBody });
       try {
         await assertHeadUnchanged();
@@ -3011,11 +3019,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       const expectedState = input.verdict === 'approve' ? 'APPROVED' : input.verdict === 'request-changes' ? 'CHANGES_REQUESTED' : 'COMMENTED';
       const submittedState = submitted?.state;
       if ((submittedState === 'APPROVED' || submittedState === 'CHANGES_REQUESTED') && submittedState !== expectedState) {
-        const tombstoneBody = [
-          `<!-- ${ROUND_SUMMARY_MARKER_PREFIX}:${JSON.stringify({ version: 1, head: staleRecord.head, round: staleRecord.round, prNumber: staleRecord.prNumber, findingDigest: staleRecord.findingDigest, superseded: true })} -->`,
-          '',
-          'This round summary was superseded within its review round by an updated verdict; see the latest QUBE round summary for this pull request.',
-        ].join('\n');
+        const tombstoneBody = supersededRoundSummaryBody(staleRecord, 'This round summary was superseded within its review round by an updated verdict; see the latest QUBE round summary for this pull request.');
         const tombstonePath = reviewPayloadPath({ body: tombstoneBody });
         try {
           await assertHeadUnchanged();

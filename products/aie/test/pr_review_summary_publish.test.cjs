@@ -266,6 +266,33 @@ describe('GitHub round summary publish', () => {
     assert.ok(tombstonePut, 'expected the prior-head review to be tombstoned via PUT');
   });
 
+  it('keeps round 1 blocking findings readable after round 2 approves', async () => {
+    const priorRender = renderRoundSummaryBody(roundInput({
+      headSha: 'prior111',
+      round: 'round-prior',
+      lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Blocking defect found.', findings: [{ id: 'b1', severity: 'blocking', message: 'Round one blocker: the changed check accepts empty input.', location: { path: 'src/review.ts', line: 3, side: 'destination' } }], preconditions: [], evidenceHeadSha: 'prior111', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }],
+    }), { diffIndex: null });
+    assert.equal(priorRender.verdict, 'request-changes');
+    assert.match(priorRender.body, /Round one blocker/);
+    const priorReview = { id: 777, author: { login: 'executor' }, body: priorRender.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-777', commit: { oid: 'prior111' } };
+    const fixture = makePrExec({ prViews: [basePr({ headRefOid: 'new222', reviews: [priorReview], latestReviews: [priorReview] })], pullReviews: [priorReview] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const newRender = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+    assert.equal(newRender.verdict, 'approve');
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(newRender, { headSha: 'new222', round: 'round-new' }));
+
+    assert.equal(result.status, 'published');
+    const tombstone = fixture.reviewPayloads.find(payload => payload.update === 'repos/example/repo/pulls/12/reviews/777');
+    assert.ok(tombstone, 'expected the prior-head review to be tombstoned');
+    assert.match(String(tombstone.body), /"superseded":true/);
+    assert.match(String(tombstone.body), /<details>/);
+    assert.match(String(tombstone.body), /Superseded round findings \(preserved\)/);
+    assert.match(String(tombstone.body), /Round one blocker: the changed check accepts empty input\./);
+    const preservedMarkers = String(tombstone.body).match(/qube-pr-review:/g) ?? [];
+    assert.equal(preservedMarkers.length, 0, 'preserved text must not carry live lane markers that could seed reuse');
+  });
+
   it('degrades to an issue comment when the publisher identity is the pull request author', async () => {
     const input = roundInput();
     const render = renderRoundSummaryBody(input, { diffIndex: null, transport: 'review-api' });

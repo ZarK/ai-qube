@@ -1035,10 +1035,15 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       let supersededPriorSummaries = 0;
       if (this.client.updateMergeRequestNote) {
         for (const record of live.filter((entry) => entry.parsed.head !== input.headSha)) {
+          // Keep the superseded round's finding text readable in a collapsed
+          // section; machine markers are stripped so the preserved copy can
+          // never seed live reuse.
+          const preserved = (record.note.body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
           const tombstone = [
             `<!-- qube-pr-review-summary:${JSON.stringify({ version: 1, head: record.parsed.head, round: record.parsed.round, prNumber: record.parsed.prNumber, findingDigest: record.parsed.findingDigest, superseded: true })} -->`,
             "",
             "This round summary was superseded by a review of a later head; see the latest QUBE round summary for this merge request.",
+            ...(preserved === "" ? [] : ["", "<details>", "<summary>Superseded round findings (preserved)</summary>", "", preserved, "", "</details>"]),
           ].join("\n");
           try {
             await assertHeadUnchanged();
