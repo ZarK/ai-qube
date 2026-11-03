@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aie",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "Executor - autonomous GitHub issue execution for agentic development.",
   "keywords": [
     "cli",

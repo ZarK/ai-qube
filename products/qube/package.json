@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "description": "QUBE CLI for Quality, Umpire, Bootstrap, and Executor.",
   "keywords": [
     "cli",
@@ -47,12 +47,12 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/aib": "0.2.15",
-    "@tjalve/aie": "0.2.15",
+    "@tjalve/aib": "0.2.16",
+    "@tjalve/aie": "0.2.16",
     "@tjalve/aiq": "0.2.8",
     "@tjalve/aiu": "0.0.16",
     "@tjalve/qube-adapter-codex": "0.1.13",
-    "@tjalve/qube-adapter-github": "0.1.11",
+    "@tjalve/qube-adapter-github": "0.1.12",
     "@tjalve/qube-cli": "0.2.4",
     "@tjalve/qube-core": "0.2.12"
   },
