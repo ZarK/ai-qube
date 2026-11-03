@@ -1656,6 +1656,19 @@ describe('model review runner', () => {
     assert.notEqual(after, before);
   });
 
+  it('ignores review input diff files that parallel lanes write and remove', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-review-input-'));
+    execFileSync('git', ['init', '--quiet', repoRoot]);
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'committed\n');
+    const before = await resolveModelReviewCheckoutState(repoRoot);
+    const folder = join(repoRoot, '.qube', 'aie', 'review-input', 'other-lane');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, '0000.diff'), 'diff\n');
+    assert.equal(await resolveModelReviewCheckoutState(repoRoot), before);
+    writeFileSync(join(repoRoot, 'other.txt'), 'changed during review\n');
+    assert.notEqual(await resolveModelReviewCheckoutState(repoRoot), before);
+  });
+
   it('detects a tracked file that is modified and restored during review', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-checkout-restored-'));
     execFileSync('git', ['init', '--quiet', repoRoot]);
