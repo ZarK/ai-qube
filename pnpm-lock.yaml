@@ -436,10 +436,10 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.15
+        specifier: 0.2.16
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.15
+        specifier: 0.2.16
         version: link:../aie
       '@tjalve/aiq':
         specifier: 0.2.8
@@ -451,7 +451,7 @@ importers:
         specifier: 0.1.13
         version: link:../../adapters/codex
       '@tjalve/qube-adapter-github':
-        specifier: 0.1.11
+        specifier: 0.1.12
         version: link:../../adapters/github
       '@tjalve/qube-cli':
         specifier: 0.2.4

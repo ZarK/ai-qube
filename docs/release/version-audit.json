@@ -7,7 +7,7 @@
       "name": "@tjalve/qube-core",
       "packageJson": "packages/qube-core/package.json",
       "published": true,
-      "latestPublished": "0.2.11",
+      "latestPublished": "0.2.12",
       "publishedVersions": [
         "0.2.0",
         "0.2.1",
@@ -17,7 +17,8 @@
         "0.2.5",
         "0.2.6",
         "0.2.10",
-        "0.2.11"
+        "0.2.11",
+        "0.2.12"
       ],
       "selectedVersion": "0.2.12"
     },
@@ -42,7 +43,7 @@
       "name": "@tjalve/qube-adapter-github",
       "packageJson": "adapters/github/package.json",
       "published": true,
-      "latestPublished": "0.1.10",
+      "latestPublished": "0.1.11",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -54,15 +55,16 @@
         "0.1.7",
         "0.1.8",
         "0.1.9",
-        "0.1.10"
+        "0.1.10",
+        "0.1.11"
       ],
-      "selectedVersion": "0.1.11"
+      "selectedVersion": "0.1.12"
     },
     {
       "name": "@tjalve/qube-adapter-codex",
       "packageJson": "adapters/codex/package.json",
       "published": true,
-      "latestPublished": "0.1.12",
+      "latestPublished": "0.1.13",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -74,13 +76,73 @@
         "0.1.7",
         "0.1.8",
         "0.1.11",
-        "0.1.12"
+        "0.1.12",
+        "0.1.13"
       ],
       "selectedVersion": "0.1.13"
     },
     {
       "name": "@tjalve/qube-adapter-opencode",
       "packageJson": "adapters/opencode/package.json",
+      "published": true,
+      "latestPublished": "0.1.10",
+      "publishedVersions": [
+        "0.1.0",
+        "0.1.1",
+        "0.1.2",
+        "0.1.3",
+        "0.1.4",
+        "0.1.5",
+        "0.1.6",
+        "0.1.8",
+        "0.1.9",
+        "0.1.10"
+      ],
+      "selectedVersion": "0.1.10"
+    },
+    {
+      "name": "@tjalve/qube-adapter-claude-code",
+      "packageJson": "adapters/claude-code/package.json",
+      "published": true,
+      "latestPublished": "0.1.11",
+      "publishedVersions": [
+        "0.1.0",
+        "0.1.1",
+        "0.1.2",
+        "0.1.3",
+        "0.1.4",
+        "0.1.5",
+        "0.1.6",
+        "0.1.9",
+        "0.1.10",
+        "0.1.11"
+      ],
+      "selectedVersion": "0.1.11"
+    },
+    {
+      "name": "@tjalve/qube-adapter-gitlab",
+      "packageJson": "adapters/gitlab/package.json",
+      "published": true,
+      "latestPublished": "0.1.11",
+      "publishedVersions": [
+        "0.1.0",
+        "0.1.1",
+        "0.1.2",
+        "0.1.3",
+        "0.1.4",
+        "0.1.5",
+        "0.1.6",
+        "0.1.7",
+        "0.1.8",
+        "0.1.9",
+        "0.1.10",
+        "0.1.11"
+      ],
+      "selectedVersion": "0.1.11"
+    },
+    {
+      "name": "@tjalve/qube-adapter-linear",
+      "packageJson": "adapters/linear/package.json",
       "published": true,
       "latestPublished": "0.1.9",
       "publishedVersions": [
@@ -91,64 +153,9 @@
         "0.1.4",
         "0.1.5",
         "0.1.6",
+        "0.1.7",
         "0.1.8",
         "0.1.9"
-      ],
-      "selectedVersion": "0.1.10"
-    },
-    {
-      "name": "@tjalve/qube-adapter-claude-code",
-      "packageJson": "adapters/claude-code/package.json",
-      "published": true,
-      "latestPublished": "0.1.10",
-      "publishedVersions": [
-        "0.1.0",
-        "0.1.1",
-        "0.1.2",
-        "0.1.3",
-        "0.1.4",
-        "0.1.5",
-        "0.1.6",
-        "0.1.9",
-        "0.1.10"
-      ],
-      "selectedVersion": "0.1.11"
-    },
-    {
-      "name": "@tjalve/qube-adapter-gitlab",
-      "packageJson": "adapters/gitlab/package.json",
-      "published": true,
-      "latestPublished": "0.1.10",
-      "publishedVersions": [
-        "0.1.0",
-        "0.1.1",
-        "0.1.2",
-        "0.1.3",
-        "0.1.4",
-        "0.1.5",
-        "0.1.6",
-        "0.1.7",
-        "0.1.8",
-        "0.1.9",
-        "0.1.10"
-      ],
-      "selectedVersion": "0.1.11"
-    },
-    {
-      "name": "@tjalve/qube-adapter-linear",
-      "packageJson": "adapters/linear/package.json",
-      "published": true,
-      "latestPublished": "0.1.8",
-      "publishedVersions": [
-        "0.1.0",
-        "0.1.1",
-        "0.1.2",
-        "0.1.3",
-        "0.1.4",
-        "0.1.5",
-        "0.1.6",
-        "0.1.7",
-        "0.1.8"
       ],
       "selectedVersion": "0.1.9"
     },
@@ -156,6 +163,25 @@
       "name": "@tjalve/qube-adapter-jira",
       "packageJson": "adapters/jira/package.json",
       "published": true,
+      "latestPublished": "0.1.9",
+      "publishedVersions": [
+        "0.1.0",
+        "0.1.1",
+        "0.1.2",
+        "0.1.3",
+        "0.1.4",
+        "0.1.5",
+        "0.1.6",
+        "0.1.7",
+        "0.1.8",
+        "0.1.9"
+      ],
+      "selectedVersion": "0.1.9"
+    },
+    {
+      "name": "@tjalve/qube-adapter-jenkins",
+      "packageJson": "adapters/jenkins/package.json",
+      "published": true,
       "latestPublished": "0.1.8",
       "publishedVersions": [
         "0.1.0",
@@ -168,30 +194,13 @@
         "0.1.7",
         "0.1.8"
       ],
-      "selectedVersion": "0.1.9"
-    },
-    {
-      "name": "@tjalve/qube-adapter-jenkins",
-      "packageJson": "adapters/jenkins/package.json",
-      "published": true,
-      "latestPublished": "0.1.7",
-      "publishedVersions": [
-        "0.1.0",
-        "0.1.1",
-        "0.1.2",
-        "0.1.3",
-        "0.1.4",
-        "0.1.5",
-        "0.1.6",
-        "0.1.7"
-      ],
       "selectedVersion": "0.1.8"
     },
     {
       "name": "@tjalve/qube-adapter-grok-build",
       "packageJson": "adapters/grok-build/package.json",
       "published": true,
-      "latestPublished": "0.1.12",
+      "latestPublished": "0.1.13",
       "publishedVersions": [
         "0.1.4",
         "0.1.5",
@@ -199,7 +208,8 @@
         "0.1.7",
         "0.1.8",
         "0.1.11",
-        "0.1.12"
+        "0.1.12",
+        "0.1.13"
       ],
       "selectedVersion": "0.1.13"
     },
@@ -207,14 +217,15 @@
       "name": "@tjalve/qube-adapter-cursor",
       "packageJson": "adapters/cursor/package.json",
       "published": true,
-      "latestPublished": "0.1.4",
+      "latestPublished": "0.1.5",
       "publishedVersions": [
         "0.0.1",
         "0.1.0",
         "0.1.1",
         "0.1.2",
         "0.1.3",
-        "0.1.4"
+        "0.1.4",
+        "0.1.5"
       ],
       "selectedVersion": "0.1.5"
     },
@@ -222,7 +233,7 @@
       "name": "@tjalve/aie",
       "packageJson": "products/aie/package.json",
       "published": true,
-      "latestPublished": "0.2.14",
+      "latestPublished": "0.2.15",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -240,15 +251,16 @@
         "0.2.8",
         "0.2.9",
         "0.2.13",
-        "0.2.14"
+        "0.2.14",
+        "0.2.15"
       ],
-      "selectedVersion": "0.2.15"
+      "selectedVersion": "0.2.16"
     },
     {
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
       "published": true,
-      "latestPublished": "0.2.14",
+      "latestPublished": "0.2.15",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -263,15 +275,16 @@
         "0.2.8",
         "0.2.9",
         "0.2.13",
-        "0.2.14"
+        "0.2.14",
+        "0.2.15"
       ],
-      "selectedVersion": "0.2.15"
+      "selectedVersion": "0.2.16"
     },
     {
       "name": "@tjalve/aiu",
       "packageJson": "products/aiu/package.json",
       "published": true,
-      "latestPublished": "0.0.15",
+      "latestPublished": "0.0.16",
       "publishedVersions": [
         "0.0.0",
         "0.0.1",
@@ -285,7 +298,8 @@
         "0.0.9",
         "0.0.10",
         "0.0.14",
-        "0.0.15"
+        "0.0.15",
+        "0.0.16"
       ],
       "selectedVersion": "0.0.16"
     },
@@ -313,7 +327,7 @@
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
       "published": true,
-      "latestPublished": "0.2.18",
+      "latestPublished": "0.2.19",
       "publishedVersions": [
         "0.1.0",
         "0.1.1",
@@ -330,9 +344,10 @@
         "0.2.11",
         "0.2.12",
         "0.2.17",
-        "0.2.18"
+        "0.2.18",
+        "0.2.19"
       ],
-      "selectedVersion": "0.2.19"
+      "selectedVersion": "0.2.20"
     }
   ]
 }
