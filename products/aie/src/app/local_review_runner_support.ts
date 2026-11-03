@@ -7,7 +7,7 @@ import { resolveTrustedLocalStore, type TrustedLocalStore, type TrustedStoreCont
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact, redactKnownSecrets } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, laneArtifactViolation, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import { readHostUsage, type LaneUsage } from '../review_usage.js';
 import { parseReviewRouteProvenance, type RepoAffectedResult, type RepoPathSignal, type ReviewFinding } from '@tjalve/qube-core';
@@ -375,58 +375,9 @@ export function expectedLaneFragmentDigest(host: ReviewModelHostId, lane: LocalR
   return builtinFragmentDigest(promptStack(host, lane, [`Run local review lane ${lane}.`], [], repoRoot, configuredFragments, changedPaths).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
 
-async function gitNameOnly(repoRoot: string, range: string): Promise<string[] | null> {
-  try {
-    const result = await execFileAsync('git', ['-C', repoRoot, 'diff', '--name-only', range], { maxBuffer: 16 * 1024 * 1024 });
-    return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
-  } catch {
-    return null;
-  }
-}
-
-async function gitParents(repoRoot: string, commit: string): Promise<string[] | null> {
-  try {
-    const result = await execFileAsync('git', ['-C', repoRoot, 'rev-list', '--parents', '-n', '1', commit], { maxBuffer: 1024 * 1024 });
-    return result.stdout.trim().split(/\s+/).filter(part => part !== '').slice(1);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Paths the pull request itself changed between two heads, following the
- * first-parent chain. A merge contributes only paths whose merged result
- * differs from every parent, so files a base merge brought in are excluded
- * while a conflict resolution in a pull request file is included.
- */
-async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
-  let commits: string[];
-  try {
-    const result = await execFileAsync('git', ['-C', repoRoot, 'rev-list', '--first-parent', '--reverse', `${fromHeadSha}..${toHeadSha}`], { maxBuffer: 16 * 1024 * 1024 });
-    commits = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
-  } catch {
-    return null;
-  }
-  const paths = new Set<string>();
-  for (const commit of commits) {
-    const parents = await gitParents(repoRoot, commit);
-    if (parents === null) return null;
-    if (parents.length === 0) {
-      const own = await gitNameOnly(repoRoot, `4b825dc642cb6eb9a060e54bf8d69288fbee4904..${commit}`);
-      if (own === null) return null;
-      for (const path of own) paths.add(path);
-      continue;
-    }
-    let own: string[] | null = null;
-    for (const parent of parents) {
-      const diff = await gitNameOnly(repoRoot, `${parent}..${commit}`);
-      if (diff === null) return null;
-      own = own === null ? diff : own.filter(path => diff.includes(path));
-    }
-    for (const path of own ?? []) paths.add(path);
-  }
-  return [...paths];
-}
+// The delta walk lives in local_review_evidence (`gitDeltaPathsSync`); the
+// carry-forward scan is synchronous git work either way, so both call sites
+// share that one implementation instead of drifting copies.
 
 export async function evaluateCarryForwardDecision(input: {
   repoRoot: string;
@@ -472,7 +423,7 @@ export async function evaluateCarryForwardDecision(input: {
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       priorApproved = true;
-      const deltaPaths = await gitDeltaPaths(input.repoRoot, priorHeadSha, input.headSha);
+      const deltaPaths = gitDeltaPathsSync(input.repoRoot, priorHeadSha, input.headSha);
       if (deltaPaths === null) sawUnknownDelta = true;
       const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '';
       if (!latest || recordedAt >= latest.recordedAt) latest = { recordedAt, deltaPaths };
@@ -548,7 +499,7 @@ export async function findCarryForwardSource(input: {
   }
   candidates.sort((first, second) => second.recordedAt.localeCompare(first.recordedAt));
   for (const candidate of candidates.slice(0, 5)) {
-    const deltaPaths = await gitDeltaPaths(input.repoRoot, candidate.fromHeadSha, input.headSha);
+    const deltaPaths = gitDeltaPathsSync(input.repoRoot, candidate.fromHeadSha, input.headSha);
     if (deltaPaths === null) continue;
     if (carryForwardDeltaTouched(deltaPaths, input.matchPatterns, input.contextPatterns, input.contextMode ?? defaultCarryForwardContext(input.lane))) continue;
     const deltaSummary = deltaPaths.length === 0

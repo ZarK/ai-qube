@@ -877,14 +877,28 @@ function gitParentsSync(repoRoot: string, commit: string): string[] | null {
   }
 }
 
+function gitMergeBaseSync(repoRoot: string, commits: readonly string[]): string | null {
+  try {
+    const output = execFileSync('git', ['-C', repoRoot, 'merge-base', ...commits], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    const base = output.trim();
+    return base === '' ? null : base;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Paths a pull request itself changed between two of its heads, following the
  * first-parent chain. A plain commit contributes its own diff. A merge
- * contributes only paths whose merged result differs from every parent, so
- * files a base merge brought in (identical to the merged-in parent) are
- * excluded, while a conflict resolution in a pull request file is included.
- * A clean base merge therefore yields an empty delta. Returns null when any
- * git observation fails, so callers fail closed.
+ * contributes a path when its merged result differs from the first parent and
+ * either differs from a merged-in parent (a conflict resolution or combined
+ * change) or the first parent had already changed that path against the
+ * parents' merge-base (the merge replaced the pull request version, for
+ * example by keeping the base version). Files a base merge brought in
+ * untouched are identical to the merged-in parent and match the merge-base
+ * on the first-parent side, so they are excluded, and a clean base merge
+ * yields an empty delta. Returns null when any git observation fails, so
+ * callers fail closed.
  */
 export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
   let commits: string[];
@@ -904,13 +918,27 @@ export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadS
       for (const path of own) paths.add(path);
       continue;
     }
-    let own: string[] | null = null;
-    for (const parent of parents) {
+    if (parents.length === 1) {
+      const own = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
+      if (own === null) return null;
+      for (const path of own) paths.add(path);
+      continue;
+    }
+    const mergeBase = gitMergeBaseSync(repoRoot, parents);
+    if (mergeBase === null) return null;
+    const firstParentDiff = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
+    const firstParentTouched = gitNameOnlySync(repoRoot, `${mergeBase}..${parents[0]}`);
+    if (firstParentDiff === null || firstParentTouched === null) return null;
+    const mergedInDiffs: string[][] = [];
+    for (const parent of parents.slice(1)) {
       const diff = gitNameOnlySync(repoRoot, `${parent}..${commit}`);
       if (diff === null) return null;
-      own = own === null ? diff : own.filter(path => diff.includes(path));
+      mergedInDiffs.push(diff);
     }
-    for (const path of own ?? []) paths.add(path);
+    const touched = new Set(firstParentTouched);
+    for (const path of firstParentDiff) {
+      if (touched.has(path) || mergedInDiffs.some(diff => diff.includes(path))) paths.add(path);
+    }
   }
   return [...paths];
 }

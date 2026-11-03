@@ -138,6 +138,9 @@ export async function runPrLaneRerunService(config: Config, options: {
   });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const changedPaths = gitChangedPathsSync(options.repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
+  if (changedPaths === null) {
+    throw new Error(`pr lane rerun failed. Likely cause: the changed paths for this head could not be observed with git, so lane activation cannot be decided truthfully. Next action: fetch the configured base branch (${config.baseRemote}/${config.baseBranch}), then rerun the lane rerun.`);
+  }
   return runPrLaneRerun({
     config,
     repoRoot: options.repoRoot,
@@ -147,7 +150,7 @@ export async function runPrLaneRerunService(config: Config, options: {
     issueNumbers: snapshot.closingIssueNumbers,
     dryRun: options.dryRun,
     exec: options.exec,
-    changedPaths: changedPaths ?? undefined,
+    changedPaths,
   });
 }
 

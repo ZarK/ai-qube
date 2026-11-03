@@ -105,6 +105,24 @@ describe('merge-base review deltas and changed paths', () => {
     assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), ['shared.txt']);
   });
 
+  it('includes a pull request file whose merge resolves a conflict by keeping the base version', () => {
+    const repo = makeRepo();
+    git(repo, ['checkout', '-b', 'feature']);
+    const priorHead = commitFile(repo, 'shared.txt', 'one\ntwo pull request\nthree\n', 'pull request shared change');
+    git(repo, ['checkout', 'main']);
+    commitFile(repo, 'shared.txt', 'one\ntwo base\nthree\n', 'base shared change');
+    git(repo, ['checkout', 'feature']);
+    assert.throws(() => git(repo, ['merge', '--no-edit', 'main']));
+    // Resolve by keeping the base text exactly: the pull request version is
+    // replaced, so the file changed for the pull request between the heads.
+    writeFileSync(join(repo, 'shared.txt'), 'one\ntwo base\nthree\n');
+    git(repo, ['add', 'shared.txt']);
+    git(repo, ['commit', '--no-edit']);
+    const head = git(repo, ['rev-parse', 'HEAD']);
+
+    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), ['shared.txt']);
+  });
+
   it('keeps the plain-commit delta identical to the direct head diff', () => {
     const repo = makeRepo();
     const priorHead = startFeature(repo);
