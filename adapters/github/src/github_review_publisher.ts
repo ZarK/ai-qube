@@ -73,6 +73,8 @@ export interface GitHubReviewPublisherIdentity {
   readonly credentialVerified: boolean;
   /** Contents permission observed from a minted github-app installation token. */
   readonly contentsPermission?: 'write' | 'read' | 'missing' | 'unknown' | 'not-run';
+  /** Issues permission observed from a minted github-app installation token. */
+  readonly issuesPermission?: 'write' | 'read' | 'missing' | 'unknown' | 'not-run';
 }
 
 export interface ResolvedGitHubReviewPublisher {
@@ -630,6 +632,7 @@ function finalizeIdentity(input: {
   authSource: GitHubReviewPublisherIdentity['authSource'];
   credentialVerified?: boolean;
   contentsPermission?: GitHubReviewPublisherIdentity['contentsPermission'];
+  issuesPermission?: GitHubReviewPublisherIdentity['issuesPermission'];
   prAuthorLogin?: string | null;
 }): GitHubReviewPublisherIdentity {
   let permissionStatus = input.permissionStatus;
@@ -659,6 +662,7 @@ function finalizeIdentity(input: {
     authSource: input.authSource,
     credentialVerified: input.credentialVerified === true,
     contentsPermission: input.contentsPermission ?? 'not-run',
+    issuesPermission: input.issuesPermission ?? 'not-run',
   };
 }
 
@@ -667,6 +671,15 @@ function installationContentsPermission(permissions: Record<string, string> | un
   const contents = permissions.contents;
   if (contents === 'write' || contents === 'admin') return 'write';
   if (contents === 'read') return 'read';
+  return 'missing';
+}
+
+/** Installation-token responses only list granted permissions; no permission data at all is unknown. */
+function installationIssuesPermission(permissions: Record<string, string> | undefined): 'write' | 'read' | 'missing' | 'unknown' {
+  if (!permissions) return 'unknown';
+  const issues = permissions.issues;
+  if (issues === 'write' || issues === 'admin') return 'write';
+  if (issues === 'read') return 'read';
   return 'missing';
 }
 
@@ -810,6 +823,7 @@ export async function resolveGitHubReviewPublisher(
             publishTransport: 'issue-comment',
             authSource: 'github-app-installation',
             contentsPermission: installationContentsPermission(minted.permissions),
+            issuesPermission: installationIssuesPermission(minted.permissions),
             prAuthorLogin: options.prAuthorLogin,
           }),
         };
@@ -831,6 +845,7 @@ export async function resolveGitHubReviewPublisher(
           publishTransport: hasPermission ? 'pull-request-review' : 'issue-comment',
           authSource: 'github-app-installation',
           contentsPermission: installationContentsPermission(minted.permissions),
+          issuesPermission: installationIssuesPermission(minted.permissions),
           prAuthorLogin: options.prAuthorLogin,
         }),
       };

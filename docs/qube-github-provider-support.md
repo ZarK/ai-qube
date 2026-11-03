@@ -81,9 +81,14 @@ See the official [`gh auth status`](https://cli.github.com/manual/gh_auth_status
 
 QUBE uses bounded, read-only probes. It does not create, edit, label, comment,
 review, merge, rerun, resolve, or delete provider data to test a permission.
-When GitHub does not expose a trustworthy read-only permission signal, the write
-capability is `unverified`; it is never promoted to `ready` from a scope name or
-successful read alone.
+Issues write and label capabilities are decided from permission data that the
+read responses already carry: the repository `permissions` of the work
+credential (triage, push, maintain or admin allow the write; pull only does
+not), or the `issues` permission in the installation token response when a
+GitHub App credential does the write (`write` allows it; `read` or absent does
+not). When a response has no permission data, the capability is `unverified`; a
+capability is never promoted to `ready` from a scope name or successful read
+alone.
 
 | Role or command class | Required capability |
 | --- | --- |
@@ -164,7 +169,7 @@ Git credential helpers.
 | `credential-invalid` | Replace or refresh the selected credential source. |
 | `network` | Check network, proxy, TLS, and GitHub service availability. |
 | `timeout` | Restore connectivity and rerun the bounded probe. |
-| `unverified` | Run online or confirm a write permission that cannot be proven read-only. |
+| `unverified` | Run online, or confirm the write permission when the response carried no permission data. |
 | `ready` | No recovery is needed for the listed capability. |
 
 After repair, rerun `qube init` to resume pending provider actions and

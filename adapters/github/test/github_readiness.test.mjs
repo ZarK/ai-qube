@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 
 import {
@@ -61,7 +62,7 @@ test('non-GitHub selection is not required and does not spawn gh', async () => {
   assert.deepEqual(probe.calls, []);
 });
 
-test('work readiness reports official environment precedence and unproven writes', async () => {
+test('work readiness reports official environment precedence and proven writes', async () => {
   const probe = fixture([version, auth('octocat', 'success', 'GH_TOKEN'), repository]);
   const result = await evaluateGitHubReadiness({
     repository: 'acme/widgets',
@@ -69,15 +70,158 @@ test('work readiness reports official environment precedence and unproven writes
     env: { GH_TOKEN: 'secret-first', GITHUB_TOKEN: 'secret-second' },
     exec: probe.exec,
   });
-  assert.equal(result.status, 'unverified');
+  assert.equal(result.status, 'ready');
   assert.equal(result.cliVersion, '2.99.0');
   assert.equal(result.host, 'github.com');
   assert.equal(result.repository, 'acme/widgets');
   assert.equal(result.accountLogin, 'octocat');
   assert.deepEqual(result.credentialSource, { kind: 'environment', name: 'GH_TOKEN' });
   assert.equal(result.capabilities.find(row => row.capability === 'issues-read').status, 'ready');
-  assert.equal(result.capabilities.find(row => row.capability === 'issues-write').status, 'unverified');
+  assert.equal(result.capabilities.find(row => row.capability === 'issues-write').status, 'ready');
+  assert.equal(result.capabilities.find(row => row.capability === 'labels-write').status, 'ready');
   assert.doesNotMatch(JSON.stringify(result), /secret-first|secret-second/);
+});
+
+function repositoryWith(permissions) {
+  return {
+    match: args => args.includes('repos/acme/widgets'),
+    stdout: JSON.stringify({ full_name: 'acme/widgets', has_issues: true, ...(permissions ? { permissions } : {}) }),
+  };
+}
+
+async function workWrites(permissions) {
+  const probe = fixture([version, auth(), repositoryWith(permissions)]);
+  const result = await evaluateGitHubReadiness({ repository: 'acme/widgets', roles: ['work'], exec: probe.exec });
+  return {
+    result,
+    issues: result.capabilities.find(row => row.capability === 'issues-write'),
+    labels: result.capabilities.find(row => row.capability === 'labels-write'),
+  };
+}
+
+test('repository permissions of triage or higher prove issue and label writes', async () => {
+  for (const level of ['triage', 'push', 'maintain', 'admin']) {
+    const { result, issues, labels } = await workWrites({ pull: true, [level]: true });
+    assert.equal(issues.status, 'ready', level);
+    assert.equal(labels.status, 'ready', level);
+    assert.equal(result.status, 'ready', level);
+  }
+});
+
+test('repository permissions with only pull name the missing permission', async () => {
+  const { result, issues, labels } = await workWrites({ pull: true, triage: false, push: false, maintain: false, admin: false });
+  for (const row of [issues, labels]) {
+    assert.equal(row.status, 'needs-action');
+    assert.equal(row.reasonCode, 'insufficient-permission');
+    assert.match(row.summary, /pull only/);
+    assert.match(row.summary, /Issues write/);
+    assert.match(row.summary, /triage/);
+  }
+  assert.equal(result.status, 'needs-action');
+});
+
+test('a repository response without permission data leaves writes unverified and says so', async () => {
+  const { result, issues } = await workWrites(undefined);
+  assert.equal(issues.status, 'unverified');
+  assert.match(issues.summary, /no permission data/);
+  assert.doesNotMatch(JSON.stringify(result), /read-only probe cannot prove/);
+  assert.equal(result.status, 'unverified');
+});
+
+const { privateKey: appPrivateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+});
+
+const appPublisher = {
+  mode: 'github-app',
+  githubApp: { appId: '99', installationId: '1001', privateKeyEnv: 'QUBE_TEST_READINESS_APP_KEY' },
+};
+
+const appEnv = { QUBE_TEST_READINESS_APP_KEY: appPrivateKey };
+
+async function withInstallationPermissions(installationPermissions, run) {
+  const realFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push({ url: String(url), method: init.method ?? 'GET' });
+    if (String(url).endsWith('/access_tokens')) {
+      return new Response(JSON.stringify({
+        token: 'ghs_readiness_fixture_installation_token',
+        ...(installationPermissions ? { permissions: installationPermissions } : {}),
+      }), { status: 201 });
+    }
+    if (String(url) === 'https://api.github.com/app') return new Response(JSON.stringify({ slug: 'qube-reviewer' }), { status: 200 });
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  try {
+    return await run(requests);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+test('an App publisher with a user work credential reports ready and makes only read requests', async () => {
+  await withInstallationPermissions({ pull_requests: 'write', contents: 'write', issues: 'write' }, async requests => {
+    const probe = fixture([version, auth(), repositoryWith({ pull: true, push: true })]);
+    const result = await evaluateGitHubReadiness({
+      repository: 'acme/widgets',
+      roles: ['work', 'review'],
+      capabilities: ['repository-read', 'issues-read', 'issues-write', 'labels-write', 'pull-requests-read', 'pull-request-reviews-write', 'review-threads-write'],
+      publisher: appPublisher,
+      env: appEnv,
+      exec: probe.exec,
+    });
+    assert.equal(result.status, 'ready', JSON.stringify(result.capabilities));
+    assert.equal(result.capabilities.every(row => row.status === 'ready'), true);
+    const apiCalls = probe.calls.filter(entry => entry.args[0] === 'api');
+    assert.equal(apiCalls.length > 0, true);
+    for (const call of apiCalls) {
+      assert.equal(call.args.some(arg => /^(-X|--method|-f|-F|--field|--raw-field|--input)$/.test(arg)), false, call.args.join(' '));
+    }
+    assert.equal(requests.every(request => request.method === 'GET' || request.url.endsWith('/access_tokens')), true);
+  });
+});
+
+async function appIssueWrites(installationPermissions) {
+  return withInstallationPermissions(installationPermissions, async () => {
+    const probe = fixture([version, repositoryWith({ pull: true })]);
+    const result = await evaluateGitHubReadiness({
+      repository: 'acme/widgets',
+      roles: ['review'],
+      capabilities: ['repository-read', 'issues-write', 'labels-write'],
+      publisher: appPublisher,
+      env: appEnv,
+      exec: probe.exec,
+    });
+    return {
+      result,
+      issues: result.capabilities.find(row => row.capability === 'issues-write'),
+      labels: result.capabilities.find(row => row.capability === 'labels-write'),
+    };
+  });
+}
+
+test('an App credential doing issue writes uses the installation issues permission', async () => {
+  const write = await appIssueWrites({ pull_requests: 'write', issues: 'write' });
+  assert.equal(write.issues.status, 'ready');
+  assert.equal(write.labels.status, 'ready');
+  assert.equal(write.result.status, 'ready');
+
+  const read = await appIssueWrites({ pull_requests: 'write', issues: 'read' });
+  assert.equal(read.issues.status, 'needs-action');
+  assert.match(read.issues.summary, /Issues write/);
+  assert.match(read.labels.summary, /read/);
+
+  const absent = await appIssueWrites({ pull_requests: 'write' });
+  assert.equal(absent.issues.status, 'needs-action');
+  assert.equal(absent.labels.status, 'needs-action');
+  assert.equal(absent.result.status, 'needs-action');
+
+  const noData = await appIssueWrites(undefined);
+  assert.equal(noData.issues.status, 'unverified');
+  assert.match(noData.issues.summary, /no permission data/);
 });
 
 test('structured auth state overrides the zero exit code', async () => {
