@@ -2183,11 +2183,8 @@ describe('incomplete results and the turn limit', () => {
 
   it('rejects progress wording, a pending context source, and findings with no tools or commands', async () => {
     const progress = laneResult();
-    progress.status = 'inconclusive';
-    progress.recommendation = 'inconclusive';
     progress.summary = 'Delta inspection still in progress.';
     progress.completeness = 'Delta inspection still in progress.';
-    progress.coverage = [{ area: 'code-quality', status: 'not-inspected' }];
     const progressResult = await grokResult(progress);
     assert.equal(progressResult.evidence, null);
     assert.equal(progressResult.reasonCode, 'model-route-incomplete-result');
@@ -2235,6 +2232,25 @@ describe('incomplete results and the turn limit', () => {
     assert.equal(result.evidence, null);
     assert.equal(result.reasonCode, 'model-route-max-turns');
     assert.notEqual(result.reasonCode, 'model-route-process-failed');
+  });
+
+  it('rejects a passed result that calls itself unfinished even with a because clause', async () => {
+    const body = laneResult();
+    body.summary = 'Inspection is not yet complete because the diff is large.';
+    body.completeness = 'Inspection is not yet complete because the diff is large.';
+    const result = await grokResult(body);
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-incomplete-result');
+    assert.match(result.error, /field: summary/);
+  });
+
+  it('accepts a finished result that uses incomplete for the inspected code', async () => {
+    const body = laneResult();
+    body.summary = 'Reviewed the incomplete retry handling and confirmed the fallback is sound.';
+    body.completeness = 'Inspected the runner and its tests; coverage is complete.';
+    const result = await grokResult(body);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
   });
 
   it('still accepts a complete final result with real findings and tools', async () => {

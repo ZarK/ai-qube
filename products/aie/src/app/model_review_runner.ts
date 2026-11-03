@@ -608,7 +608,9 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       || typeof item.trust !== 'string' || !CONTEXT_TRUST_VALUES.has(item.trust)
       || typeof item.freshness !== 'string' || !CONTEXT_FRESHNESS_VALUES.has(item.freshness)) return rejectedLane('context-shape', `contextReviewed[${index}]`);
   }
-  const incomplete = incompleteReviewResult({
+  // An inconclusive result claims no finished review, so the completeness
+  // check only judges results that present a verdict on the change.
+  const incomplete = value.status === 'inconclusive' ? null : incompleteReviewResult({
     summary: value.summary as string,
     completeness: value.completeness as string,
     contextReviewed: value.contextReviewed as Array<{ source: string }>,

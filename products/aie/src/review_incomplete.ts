@@ -20,6 +20,23 @@ export function isPlaceholderOrProgressReviewText(text: string): boolean {
   return isPlaceholderReviewText(text) || isProgressOnlyReviewText(text);
 }
 
+/**
+ * Progress wording in a result that claims to be finished. Unlike interim
+ * snapshot detection, a "because" clause does not excuse a first sentence
+ * that says the review itself is unfinished; a finished result may still
+ * use words like "incomplete" for the code it inspected.
+ */
+export function isUnfinishedReviewText(text: string): boolean {
+  if (isPlaceholderReviewText(text)) return true;
+  const firstSentence = text.trim().split(/[.!?]/, 1)[0] ?? '';
+  const unfinished = [
+    /^(?:the\s+)?(?:[\w-]+\s+){0,3}?(?:review|inspection|completeness)\b[^.!?]*\b(?:in progress|not (?:yet )?complet(?:e|ed)|incomplete|pending|continues)\b/i,
+    /^(?:review|inspection)?\s*(?:is\s+)?(?:still\s+)?(?:in progress|not (?:yet )?complet(?:e|ed))\b/i,
+    /^(?:starting|beginning|not inspected|not started|review not started)\b/i,
+  ];
+  return unfinished.some(pattern => pattern.test(firstSentence));
+}
+
 export interface IncompleteReviewResult {
   field: 'summary' | 'completeness' | 'contextReviewed' | 'toolsUsed';
   detail: string;
@@ -41,10 +58,10 @@ export interface ReviewResultCompletenessShape {
  * for a result that carries its own inspection evidence.
  */
 export function incompleteReviewResult(result: ReviewResultCompletenessShape): IncompleteReviewResult | null {
-  if (isPlaceholderOrProgressReviewText(result.summary)) {
+  if (isUnfinishedReviewText(result.summary)) {
     return { field: 'summary', detail: 'summary is placeholder or progress text, not a finished review' };
   }
-  if (isPlaceholderOrProgressReviewText(result.completeness)) {
+  if (isUnfinishedReviewText(result.completeness)) {
     return { field: 'completeness', detail: 'completeness is placeholder or progress text, not a finished review' };
   }
   if (result.contextReviewed.some(entry => entry.source.trim().toLowerCase() === 'pending')) {
