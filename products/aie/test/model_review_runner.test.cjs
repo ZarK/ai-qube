@@ -2245,7 +2245,7 @@ describe('incomplete results and the turn limit', () => {
   });
 
   it('rejects a passed result whose text is only a bare progress status', async () => {
-    for (const statusText of ['Not yet inspected.', 'Not yet been inspected.', 'Still inspecting.', 'Inspecting.', 'Pending.']) {
+    for (const statusText of ['Not yet inspected.', 'Not yet been inspected.', 'Still inspecting.', 'Inspecting.', 'Pending.', 'Incomplete.', 'Inspecting the diff.', 'Inspection continues.']) {
       const body = laneResult();
       body.summary = statusText;
       body.completeness = statusText;
@@ -2253,11 +2253,12 @@ describe('incomplete results and the turn limit', () => {
       assert.equal(result.evidence, null, statusText);
       assert.equal(result.reasonCode, 'model-route-incomplete-result', statusText);
     }
-    const secondSentence = laneResult();
-    secondSentence.summary = 'No blocking defects found. Inspection continues.';
-    const secondResult = await grokResult(secondSentence);
-    assert.equal(secondResult.evidence, null);
-    assert.equal(secondResult.reasonCode, 'model-route-incomplete-result');
+    const subjectStatus = laneResult();
+    subjectStatus.summary = 'The inspection is incomplete.';
+    subjectStatus.completeness = 'The inspection is incomplete.';
+    const subjectResult = await grokResult(subjectStatus);
+    assert.equal(subjectResult.evidence, null);
+    assert.equal(subjectResult.reasonCode, 'model-route-incomplete-result');
   });
 
   it('accepts a finished result that uses incomplete for the inspected code', async () => {
@@ -2267,6 +2268,18 @@ describe('incomplete results and the turn limit', () => {
     const result = await grokResult(body);
     assert.equal(result.error, null);
     assert.equal(result.evidence.status, 'passed');
+
+    const laterSentences = laneResult();
+    laterSentences.summary = 'No blockers remain. The review of the incomplete retry path is sound. The review found no pending work.';
+    const laterResult = await grokResult(laterSentences);
+    assert.equal(laterResult.error, null);
+    assert.equal(laterResult.evidence.status, 'passed');
+
+    const statusWordsAsCode = laneResult();
+    statusWordsAsCode.summary = 'Not completed lanes are rejected before publish, which I verified in the gate test. In progress events are ignored and only the final JSON is stored.';
+    const statusWordsResult = await grokResult(statusWordsAsCode);
+    assert.equal(statusWordsResult.error, null);
+    assert.equal(statusWordsResult.evidence.status, 'passed');
   });
 
   it('still accepts a complete final result with real findings and tools', async () => {

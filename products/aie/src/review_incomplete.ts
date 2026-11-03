@@ -16,23 +16,37 @@ export function isProgressOnlyReviewText(text: string): boolean {
   return !substantiveReason.test(text) && progressOnly.some(pattern => pattern.test(text.trim()));
 }
 
+const UNFINISHED_STATUS = String.raw`placeholder|pending|inspecting|in progress|incomplete|unfinished|not (?:yet )?complet(?:e|ed)|not (?:yet )?(?:been )?inspected|not inspected|not started|still inspecting|still in progress`;
+
 /**
- * Progress wording in a result that claims to be finished. Unlike interim
- * snapshot detection, a "because" clause does not excuse a sentence that
- * says the review itself is unfinished; a finished result may still use
- * words like "incomplete" for the code it inspected.
+ * Progress wording in a result that claims to be finished. The text counts
+ * as unfinished when it is only a status, or when its first sentence makes
+ * the review itself the subject of an unfinished predicate. Unlike interim
+ * snapshot detection, a "because" clause does not excuse that claim; later
+ * sentences and status words that describe the inspected code do not turn
+ * a finished result into a progress report.
  */
 export function isUnfinishedReviewText(text: string): boolean {
   if (isPlaceholderReviewText(text)) return true;
-  const statusForm = /^(?:not yet (?:been )?inspected|still inspecting|inspecting|pending|not inspected|not started|review not started)$/i;
-  const sentenceStart = [
-    /^(?:the\s+)?(?:[\w-]+\s+){0,3}?(?:review|inspection|completeness)\b[^.!?]*\b(?:in progress|not (?:yet )?complet(?:e|ed)|incomplete|pending|continues)\b/i,
-    /^(?:review|inspection)?\s*(?:is\s+)?(?:still\s+)?(?:in progress|not (?:yet )?complet(?:e|ed))\b/i,
+  const wholeText = text.trim().replace(/[.!?]+$/, '');
+  const wholeStatus = [
+    new RegExp(String.raw`^(?:the\s+)?(?:delta\s+)?(?:review|inspection|completeness)\s+(?:is\s+)?(?:still\s+)?(?:${UNFINISHED_STATUS})$`, 'i'),
+    new RegExp(String.raw`^(?:i am\s+)?(?:${UNFINISHED_STATUS})$`, 'i'),
+    new RegExp(String.raw`^(?:${UNFINISHED_STATUS})\s+(?:review|inspection|completeness)$`, 'i'),
+    /^(?:still\s+)?inspecting\s+(?:the\s+)?[\w-]+(?:\s+[\w-]+){0,2}$/i,
+    /^(?:the\s+)?(?:review|inspection) continues$/i,
+  ];
+  if (wholeStatus.some(pattern => pattern.test(wholeText))) return true;
+  const firstSentence = wholeText.split(/[.!?]/, 1)[0] ?? '';
+  const firstSentencePatterns = [
+    /(?:review|inspection|completeness)\s+(?:is|was|remains)\s+(?:still\s+)?(?:in progress|not (?:yet )?complet(?:e|ed)|incomplete|pending|unfinished)\b/i,
+    /(?:review|inspection|completeness)\s+(?:still\s+)?(?:in progress|inspecting)\b/i,
+    /(?:review|inspection)\s+not\s+(?:yet\s+)?(?:complet(?:e|ed)|started)\b/i,
+    /(?:review|inspection) continues\b/i,
     /^still inspecting\b/i,
     /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)\b/i,
   ];
-  const sentences = text.split(/[.!?]+/).map(sentence => sentence.trim()).filter(sentence => sentence !== '');
-  return sentences.some(sentence => statusForm.test(sentence) || sentenceStart.some(pattern => pattern.test(sentence)));
+  return firstSentencePatterns.some(pattern => pattern.test(firstSentence));
 }
 
 export interface IncompleteReviewResult {
