@@ -24,7 +24,7 @@ const {
 const { writeReviewInputFiles, parseDiffByFile } = require('../dist/app/review_input.js');
 const { createHeadLineCounter } = require('../dist/finding_location.js');
 const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
-const { notInspectedFiles } = require('../dist/local_review_evidence.js');
+const { notInspectedFiles, laneArtifactViolation } = require('../dist/local_review_evidence.js');
 const { writeTrustedRoutedProvenance } = require('../dist/app/local_review_runner_support.js');
 const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.js');
 const { resolveTrustedLocalStore } = require('../dist/trusted_local_store.js');
@@ -2026,6 +2026,65 @@ describe('review input for routes without shell', () => {
     assert.equal(result.evidence.status, 'passed');
     assert.doesNotMatch(promptText, /Prefer Git and Node\.js/);
     assert.match(diffContent, /2 \+added review line/);
+  });
+
+  function committedReviewInputRepo() {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-evidence-');
+    writeFileSync(join(repoRoot, 'README.md'), 'fixture\nadded review line\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'change'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    return { repoRoot, headSha };
+  }
+
+  function runCitingArtifacts(repoRoot, headSha, artifactsFor) {
+    return runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles: undefined,
+      headSha,
+      baseRef: 'origin/main',
+      resolveHead: async () => headSha,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async invocation => {
+        const match = /-> (\.qube\/aie\/review-input\/\S+\.diff)/.exec(readFileSync(invocation.promptPath, 'utf8'));
+        assert.ok(match, 'prompt lists a diff file');
+        const lane = { ...laneResult(), headSha, surfaces: [match[1]], toolsUsed: ['Read'], commands: [], artifacts: artifactsFor(match[1]) };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(lane), sessionId: 'grok-session' }) };
+      },
+    });
+  }
+
+  it('records a cited review input diff file as the changed repository file so evidence stays valid after the folder is removed', async () => {
+    const { repoRoot, headSha } = committedReviewInputRepo();
+    const result = await runCitingArtifacts(repoRoot, headSha, diffPath => [{ kind: 'diff', path: diffPath, sha256: null }]);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.deepEqual(result.evidence.artifacts, [{ kind: 'diff', path: 'README.md', sha256: null }]);
+    assert.equal(existsSync(join(repoRoot, '.qube', 'aie', 'review-input')) && readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')).length > 0, false);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', result.evidence.artifacts, repoRoot), null);
+  });
+
+  it('still rejects a lane that cites a repository path missing at the head', async () => {
+    const { repoRoot, headSha } = committedReviewInputRepo();
+    const result = await runCitingArtifacts(repoRoot, headSha, diffPath => [
+      { kind: 'diff', path: diffPath, sha256: null },
+      { kind: 'file', path: 'src/missing.ts', sha256: null },
+    ]);
+    assert.equal(result.evidence, null);
+    assert.match(result.error, /artifact-path-unsafe/);
+  });
+
+  it('rejects a lane that cites a review input path QUBE did not write in that invocation', async () => {
+    const { repoRoot, headSha } = committedReviewInputRepo();
+    const foreign = join(repoRoot, '.qube', 'aie', 'review-input', 'other-invocation');
+    mkdirSync(foreign, { recursive: true });
+    writeFileSync(join(foreign, '0000.diff'), 'diff\n');
+    const result = await runCitingArtifacts(repoRoot, headSha, diffPath => [
+      { kind: 'diff', path: diffPath, sha256: null },
+      { kind: 'diff', path: '.qube/aie/review-input/other-invocation/0000.diff', sha256: null },
+    ]);
+    assert.equal(result.evidence, null);
+    assert.match(result.error, /artifact-review-input-unknown/);
   });
 });
 
