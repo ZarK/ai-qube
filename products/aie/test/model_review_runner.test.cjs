@@ -2244,6 +2244,22 @@ describe('incomplete results and the turn limit', () => {
     assert.match(result.error, /field: summary/);
   });
 
+  it('rejects a passed result whose text is only a bare progress status', async () => {
+    for (const statusText of ['Not yet inspected.', 'Not yet been inspected.', 'Still inspecting.', 'Inspecting.', 'Pending.']) {
+      const body = laneResult();
+      body.summary = statusText;
+      body.completeness = statusText;
+      const result = await grokResult(body);
+      assert.equal(result.evidence, null, statusText);
+      assert.equal(result.reasonCode, 'model-route-incomplete-result', statusText);
+    }
+    const secondSentence = laneResult();
+    secondSentence.summary = 'No blocking defects found. Inspection continues.';
+    const secondResult = await grokResult(secondSentence);
+    assert.equal(secondResult.evidence, null);
+    assert.equal(secondResult.reasonCode, 'model-route-incomplete-result');
+  });
+
   it('accepts a finished result that uses incomplete for the inspected code', async () => {
     const body = laneResult();
     body.summary = 'Reviewed the incomplete retry handling and confirmed the fallback is sound.';

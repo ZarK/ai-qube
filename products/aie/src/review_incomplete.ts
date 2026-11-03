@@ -16,25 +16,23 @@ export function isProgressOnlyReviewText(text: string): boolean {
   return !substantiveReason.test(text) && progressOnly.some(pattern => pattern.test(text.trim()));
 }
 
-export function isPlaceholderOrProgressReviewText(text: string): boolean {
-  return isPlaceholderReviewText(text) || isProgressOnlyReviewText(text);
-}
-
 /**
  * Progress wording in a result that claims to be finished. Unlike interim
- * snapshot detection, a "because" clause does not excuse a first sentence
- * that says the review itself is unfinished; a finished result may still
- * use words like "incomplete" for the code it inspected.
+ * snapshot detection, a "because" clause does not excuse a sentence that
+ * says the review itself is unfinished; a finished result may still use
+ * words like "incomplete" for the code it inspected.
  */
 export function isUnfinishedReviewText(text: string): boolean {
   if (isPlaceholderReviewText(text)) return true;
-  const firstSentence = text.trim().split(/[.!?]/, 1)[0] ?? '';
-  const unfinished = [
+  const statusForm = /^(?:not yet (?:been )?inspected|still inspecting|inspecting|pending|not inspected|not started|review not started)$/i;
+  const sentenceStart = [
     /^(?:the\s+)?(?:[\w-]+\s+){0,3}?(?:review|inspection|completeness)\b[^.!?]*\b(?:in progress|not (?:yet )?complet(?:e|ed)|incomplete|pending|continues)\b/i,
     /^(?:review|inspection)?\s*(?:is\s+)?(?:still\s+)?(?:in progress|not (?:yet )?complet(?:e|ed))\b/i,
-    /^(?:starting|beginning|not inspected|not started|review not started)\b/i,
+    /^still inspecting\b/i,
+    /^(?:starting|beginning) (?:the )?(?:read-only )?(?:review|inspection)\b/i,
   ];
-  return unfinished.some(pattern => pattern.test(firstSentence));
+  const sentences = text.split(/[.!?]+/).map(sentence => sentence.trim()).filter(sentence => sentence !== '');
+  return sentences.some(sentence => statusForm.test(sentence) || sentenceStart.some(pattern => pattern.test(sentence)));
 }
 
 export interface IncompleteReviewResult {
