@@ -1005,6 +1005,70 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.ok(publishRecord.roundSummary);
   });
 
+  it('publishes a ship-ready round when routed lanes without shell cite review input diff files that are removed before validation', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
+    const citedDiffFiles = [];
+    // The provider derives the review decision from the formal review; the
+    // fixture mirrors that once an approving review was published.
+    const exec = async args => {
+      const response = await fixture.exec(args);
+      if (args[0] === 'pr' && args[1] === 'view' && fixture.reviewPayloads.some(payload => payload.event === 'APPROVE')) {
+        return { ...response, stdout: JSON.stringify({ ...JSON.parse(response.stdout), reviewDecision: 'APPROVED' }) };
+      }
+      return response;
+    };
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const diffFiles = [...prompt.matchAll(/-> (\.qube\/aie\/review-input\/\S+\.diff)/g)].map(match => match[1]);
+      assert.ok(diffFiles.length > 0, 'a route without shell receives review input diff files');
+      for (const diffFile of diffFiles) assert.equal(existsSync(join(repo, diffFile)), true);
+      citedDiffFiles.push(...diffFiles);
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha,
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: diffFiles.map(path => ({ kind: 'diff', path, sha256: null })),
+        commands: [],
+        surfaces: diffFiles,
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['Read'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => headSha });
+
+    assert.ok(citedDiffFiles.length > 0);
+    assert.ok(citedDiffFiles.every(path => !existsSync(join(repo, path))), 'the review input files are removed when the lane ends');
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.equal(result.roundSummary?.status, 'published');
+    assert.deepEqual(result.localReview.evidence[0].lanes.flatMap(lane => lane.artifactsRaw.map(artifact => artifact.path)).filter(path => path.startsWith('.qube/aie/review-input')), []);
+    assert.equal(result.status, 'complete');
+    assert.equal(result.shipReady.ready, true);
+  });
+
   it('keeps the gate pending when the bounded post-publication reload cannot see the review', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

@@ -517,6 +517,15 @@ function routedLaneRejectionMessage(rejection: RoutedLaneRejection): string {
   return `Model review result did not match the requested issue, pull request, head, lane, or evidence contract: contract rule ${rejection.rule} failed (field: ${rejection.field}).${detail}`;
 }
 
+function normalizeReviewPath(path: string): string {
+  return path.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
+}
+
+function isReviewInputPath(path: string): boolean {
+  const normalized = normalizeReviewPath(path);
+  return normalized === REVIEW_INPUT_DIRECTORY || normalized.startsWith(`${REVIEW_INPUT_DIRECTORY}/`);
+}
+
 function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): StrictRoutedLaneResult {
   const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'];
   if (!isRecord(value) || !hasExactKeys(value, required)) return rejectedLane('result-shape', 'result');
@@ -589,15 +598,37 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   if (requestsChanges && value.severity !== 'high' && value.severity !== 'critical') return rejectedLane('blocking-verdict-inconsistent', 'severity');
   if (!Array.isArray(value.artifacts)) return rejectedLane('artifact-shape', 'artifacts');
   if (value.status !== 'inconclusive' && value.artifacts.length === 0) return rejectedLane('artifact-missing', 'artifacts');
+  // Review-input diff files are inputs QUBE wrote for this invocation and
+  // removes when the lane ends. They are never repository files, so a cited
+  // diff file is recorded as the changed repository file it describes, and a
+  // review-input path this invocation did not write is rejected.
+  const writtenDiffs = new Map((input.reviewInputFiles ?? []).map(file => [file.diffPath, file]));
+  const recordedArtifacts: Array<{ kind: string; path: string; sha256: unknown }> = [];
+  const recordedKeys = new Set<string>();
+  const recordArtifact = (artifact: { kind: string; path: string; sha256: unknown }): void => {
+    const key = JSON.stringify([artifact.kind, artifact.path]);
+    if (recordedKeys.has(key)) return;
+    recordedKeys.add(key);
+    recordedArtifacts.push(artifact);
+  };
   for (let index = 0; index < value.artifacts.length; index += 1) {
     const item = value.artifacts[index];
     if (!isRecord(item)
       || !hasExactKeys(item, ['kind', 'path', 'sha256'])
       || typeof item.kind !== 'string' || item.kind.trim() === ''
       || typeof item.path !== 'string') return rejectedLane('artifact-shape', `artifacts[${index}]`);
+    if (isReviewInputPath(item.path)) {
+      const written = writtenDiffs.get(normalizeReviewPath(item.path));
+      if (!written) return rejectedLane('artifact-review-input-unknown', `artifacts[${index}].path`, `Artifact path "${sanitizedDiagnostic(item.path)}" is under the review input folder but QUBE did not write it for this lane run.`);
+      if (!safeArtifactPath(input.repoRoot, item.kind, item.path)) return rejectedLane('artifact-path-unsafe', `artifacts[${index}].path`, `Artifact path "${sanitizedDiagnostic(item.path)}" is not an existing review input diff file.`);
+      if (safeArtifactPath(input.repoRoot, item.kind, written.path)) recordArtifact({ kind: item.kind, path: written.path, sha256: null });
+      continue;
+    }
     if (!safeArtifactPath(input.repoRoot, item.kind, item.path)) return rejectedLane('artifact-path-unsafe', `artifacts[${index}].path`, `Artifact path "${sanitizedDiagnostic(item.path)}" is not an existing repository-relative file path without traversal.`);
     if (!validArtifactDigest(input.repoRoot, item.path, item.sha256)) return rejectedLane('artifact-digest-invalid', `artifacts[${index}].sha256`, `Model review artifact "${sanitizedDiagnostic(item.path)}" reported an invalid digest; routed reviewers must set sha256 to null.`);
+    recordArtifact({ kind: item.kind, path: item.path, sha256: item.sha256 });
   }
+  if (value.status !== 'inconclusive' && recordedArtifacts.length === 0) return rejectedLane('artifact-missing', 'artifacts', 'Every cited artifact was a review input diff file whose changed file no longer exists at the head; cite at least one repository file or command.');
   if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0) return rejectedLane('context-shape', 'contextReviewed');
   for (let index = 0; index < value.contextReviewed.length; index += 1) {
     const item = value.contextReviewed[index];
@@ -624,7 +655,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   // passed lane is downgraded below and every other status already does
   // not pass on the strength of that attestation.
   const coverageFindingsInconsistent = findings.length > 0 && allClear;
-  const candidate: Record<string, unknown> = { ...value, findings, promptStack: input.promptStack, runnerProvenance: provenance };
+  const candidate: Record<string, unknown> = { ...value, findings, artifacts: recordedArtifacts, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;
   if (coverageFindingsInconsistent) {
     const note = 'Coverage attestation failed contract rule coverage-findings-inconsistent (field: coverage): findings were reported while coverage was attested clear, so the findings are kept and the lane does not pass on that attestation.';
@@ -1040,7 +1071,9 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
     timeout: 30_000,
     windowsHide: true,
   });
-  const status = result.stdout.split('\0').filter(record => !record.startsWith('? ') || !isHostScratchPath(record.slice(2))).join('\0');
+  // Review input diff files are written and removed by QUBE for each lane run,
+  // and parallel lanes write and remove their own folders while the others run.
+  const status = result.stdout.split('\0').filter(record => !record.startsWith('? ') || (!isHostScratchPath(record.slice(2)) && !isReviewInputPath(record.slice(2)))).join('\0');
   const hash = createHash('sha256');
   hash.update('status\0').update(status);
   const paths = checkoutStatusPaths(status);
