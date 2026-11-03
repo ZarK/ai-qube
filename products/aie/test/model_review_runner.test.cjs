@@ -358,6 +358,177 @@ describe('model review runner', () => {
     })();
   });
 
+  it('names the failed contract rule for every routed rejection path', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-rule-'));
+    reviewInput(repoRoot, 'grok-build');
+    writeFileSync(join(repoRoot, 'README.md'), 'routed rule fixture\n');
+    const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    const grokRun = result => runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(result), sessionId: 'rule-session' }),
+      }),
+    });
+    // [name, mutate, rule, field, reasonCode]
+    const cases = [
+      ['result shape', result => { result.unexpectedField = true; }, 'result-shape', 'result', 'model-route-contract-mismatch'],
+      ['issue mismatch', result => { result.issueNumber = 999; }, 'issue-mismatch', 'issueNumber', 'model-route-contract-mismatch'],
+      ['pr mismatch', result => { result.prNumber = 999; }, 'pr-mismatch', 'prNumber', 'model-route-contract-mismatch'],
+      ['head mismatch', result => { result.headSha = 'stale-head'; }, 'head-mismatch', 'headSha', 'model-route-contract-mismatch'],
+      ['lane mismatch', result => { result.lane = 'security'; }, 'lane-mismatch', 'lane', 'model-route-contract-mismatch'],
+      ['coverage shape', result => { result.coverage = [{ area: 'code-quality', status: 'bogus' }]; }, 'coverage-shape', 'coverage[0]', 'model-route-contract-mismatch'],
+      ['coverage areas', result => { result.coverage = []; }, 'coverage-areas-mismatch', 'coverage', 'model-route-contract-mismatch'],
+      ['status value', result => { result.status = 'pending'; result.recommendation = 'pending'; }, 'status-value', 'status', 'model-route-nonterminal-result'],
+      ['severity value', result => { result.severity = 'surprising'; }, 'severity-value', 'severity', 'model-route-contract-mismatch'],
+      ['recommendation value', result => { result.recommendation = 'bogus'; }, 'recommendation-value', 'recommendation', 'model-route-contract-mismatch'],
+      ['recommendation status', result => { result.recommendation = 'request-changes'; }, 'recommendation-status-mismatch', 'recommendation', 'model-route-contract-mismatch'],
+      ['required text', result => { result.summary = '   '; }, 'required-text-empty', 'summary', 'model-route-contract-mismatch'],
+      ['string array', result => { result.blockers = 'blocked'; }, 'string-array-shape', 'blockers', 'model-route-contract-mismatch'],
+      ['finding shape', result => { result.findings = [{ severity: 'advisory', message: '' }]; }, 'finding-shape', 'findings[0]', 'model-route-contract-mismatch'],
+      ['blocking verdict', result => { result.findings = [{ severity: 'blocking', message: 'Blocking defect in the reviewed change.' }]; }, 'blocking-verdict-inconsistent', 'status', 'model-route-contract-mismatch'],
+      ['artifact shape', result => { result.artifacts = [{ kind: 'source', path: 'README.md' }]; }, 'artifact-shape', 'artifacts[0]', 'model-route-contract-mismatch'],
+      ['artifact missing', result => { result.artifacts = []; }, 'artifact-missing', 'artifacts', 'model-route-contract-mismatch'],
+      ['artifact path', result => { result.artifacts = [{ kind: 'source', path: 'missing.txt', sha256: null }]; }, 'artifact-path-unsafe', 'artifacts[0].path', 'model-route-contract-mismatch'],
+      ['artifact digest', result => { result.artifacts = [{ kind: 'source', path: 'README.md', sha256: digest.toUpperCase() }]; }, 'artifact-digest-invalid', 'artifacts[0].sha256', 'model-route-artifact-digest'],
+      ['context shape', result => { result.contextReviewed = []; }, 'context-shape', 'contextReviewed', 'model-route-contract-mismatch'],
+    ];
+    for (const [name, mutate, rule, field, reasonCode] of cases) {
+      const candidate = laneResult();
+      mutate(candidate);
+      const rejected = await grokRun(candidate);
+      assert.equal(rejected.evidence, null, `${name}: evidence must be rejected`);
+      assert.equal(rejected.reasonCode, reasonCode, `${name}: reasonCode`);
+      assert.match(rejected.error, new RegExp(`contract rule ${rule} failed \\(field: ${field.replace('[', '\\[').replace(']', '\\]')}\\)`), `${name}: error names rule and field`);
+      const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+      assert.equal(raw.reasonCode, reasonCode, `${name}: raw reasonCode`);
+      assert.match(raw.diagnostic, new RegExp(rule), `${name}: raw diagnostic names rule`);
+    }
+  });
+
+  it('names evidence-normalize-failed when a result cannot become lane evidence', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-normalize-'));
+    reviewInput(repoRoot, 'grok-build');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'unknown-lane');
+    const candidate = laneResult();
+    candidate.lane = 'unknown-lane';
+    candidate.coverage = [{ area: 'unknown-lane', status: 'clear' }];
+    const rejected = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      lane: 'unknown-lane',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(candidate), sessionId: 'normalize-session' }),
+      }),
+      resolveExecutable: async () => 'grok.exe',
+    });
+    assert.equal(rejected.evidence, null);
+    assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+    assert.match(rejected.error, /contract rule evidence-normalize-failed failed \(field: result\)/);
+    const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+    assert.match(raw.diagnostic, /evidence-normalize-failed/);
+  });
+
+  it('keeps findings when coverage is attested clear and does not pass the lane', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-coverage-clear-'));
+    reviewInput(repoRoot, 'grok-build');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    const grokRun = result => runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(result), sessionId: 'coverage-clear-session' }),
+      }),
+    });
+
+    const advisory = laneResult();
+    advisory.findings = [{ severity: 'advisory', message: 'Advisory defect kept despite clear coverage.' }];
+    const downgraded = await grokRun(advisory);
+    assert.notEqual(downgraded.evidence, null);
+    assert.equal(downgraded.evidence.status, 'inconclusive');
+    assert.equal(downgraded.evidence.recommendation, 'inconclusive');
+    assert.equal(downgraded.evidence.findings.length, 1);
+    assert.match(downgraded.evidence.findings[0].message, /Advisory defect kept/);
+    assert.match(downgraded.evidence.summary, /coverage-findings-inconsistent/);
+    assert.equal(downgraded.reasonCode, 'model-route-coverage-findings-inconsistent');
+    const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+    assert.equal(raw.reasonCode, 'model-route-coverage-findings-inconsistent');
+
+    const blocking = laneResult();
+    blocking.status = 'needs-work';
+    blocking.severity = 'high';
+    blocking.recommendation = 'request-changes';
+    blocking.blockers = ['Blocking defect in the reviewed change.'];
+    blocking.findings = [{ severity: 'blocking', message: 'Blocking defect kept despite clear coverage.' }];
+    const kept = await grokRun(blocking);
+    assert.notEqual(kept.evidence, null);
+    assert.equal(kept.evidence.status, 'needs-work');
+    assert.equal(kept.evidence.recommendation, 'request-changes');
+    assert.equal(kept.evidence.findings.length, 1);
+    assert.match(kept.evidence.findings[0].message, /Blocking defect kept/);
+    assert.match(kept.evidence.summary, /coverage-findings-inconsistent/);
+  });
+
+  it('names artifact-path-unsafe for a junction artifact and keeps findings in raw output', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-junction-'));
+    reviewInput(repoRoot, 'grok-build');
+    const outside = mkdtempSync(join(tmpdir(), 'aie-routed-junction-outside-'));
+    writeFileSync(join(outside, 'outside.txt'), 'outside the review root\n');
+    symlinkSync(outside, join(repoRoot, 'linked'), 'junction');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    const candidate = laneResult();
+    candidate.coverage = [{ area: 'code-quality', status: 'finding' }];
+    candidate.findings = [{ severity: 'advisory', message: 'Junction artifact finding kept in raw output.' }];
+    candidate.artifacts = [{ kind: 'source', path: 'linked/outside.txt', sha256: null }];
+    const rejected = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(candidate), sessionId: 'junction-session' }),
+      }),
+    });
+    assert.equal(rejected.evidence, null);
+    assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+    assert.match(rejected.error, /contract rule artifact-path-unsafe failed \(field: artifacts\[0\]\.path\)/);
+    const raw = JSON.parse(readFileSync(rawPath, 'utf8'));
+    assert.match(raw.diagnostic, /artifact-path-unsafe/);
+    assert.match(raw.stdout, /Junction artifact finding kept in raw output/);
+  });
+
+  it('rejects head and lane mismatches so their findings never reach the gate', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-identity-'));
+    reviewInput(repoRoot, 'grok-build');
+    const grokRun = result => runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(result), sessionId: 'identity-session' }),
+      }),
+    });
+    for (const [mutate, rule] of [
+      [result => { result.headSha = 'stale-head'; }, 'head-mismatch'],
+      [result => { result.lane = 'security'; }, 'lane-mismatch'],
+    ]) {
+      const candidate = laneResult();
+      candidate.status = 'needs-work';
+      candidate.severity = 'high';
+      candidate.recommendation = 'request-changes';
+      candidate.blockers = ['Untrusted blocking claim.'];
+      candidate.coverage = [{ area: 'code-quality', status: 'finding' }];
+      candidate.findings = [{ severity: 'blocking', message: 'Untrusted finding must not reach the gate.' }];
+      mutate(candidate);
+      const rejected = await grokRun(candidate);
+      assert.equal(rejected.evidence, null, `${rule}: no lane evidence reaches the gate`);
+      assert.equal(rejected.reasonCode, 'model-route-contract-mismatch');
+      assert.match(rejected.error, new RegExp(`contract rule ${rule} failed`));
+    }
+  });
+
   it('routes Codex through a private strict schema file and removes it after execution', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-schema-'));
     const input = reviewInput(repoRoot, 'codex');
@@ -1682,13 +1853,16 @@ describe('coverage attestation contract', () => {
     assert.notEqual(result.evidence.status, 'passed');
   });
 
-  it('rejects findings reported against an all-clear attestation', async () => {
+  it('keeps findings reported against an all-clear attestation without passing', async () => {
     const body = laneResult();
     body.findings = [{ severity: 'advisory', message: 'Residual advisory.', suggestion: null, location: null }];
     body.coverage = [{ area: 'code-quality', status: 'clear' }];
     const result = await grokRun(body);
-    assert.notEqual(result.error, null);
-    assert.equal(result.evidence, null);
+    assert.equal(result.error, null);
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.equal(result.evidence.findings.length, 1);
+    assert.match(result.evidence.summary, /coverage-findings-inconsistent/);
   });
 
   it('accepts a complete attestation alongside several findings', async () => {

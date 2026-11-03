@@ -497,76 +497,132 @@ function promptFragmentFinding(value: unknown): boolean {
   );
 }
 
-function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
+interface RoutedLaneRejection {
+  rule: string;
+  field: string;
+  detail: string | null;
+}
+
+type StrictRoutedLaneResult =
+  | { evidence: LaneEvidence; rejection: null; downgradeRule: string | null }
+  | { evidence: null; rejection: RoutedLaneRejection; downgradeRule: null };
+
+function rejectedLane(rule: string, field: string, detail: string | null = null): StrictRoutedLaneResult {
+  return { evidence: null, rejection: { rule, field, detail }, downgradeRule: null };
+}
+
+function routedLaneRejectionMessage(rejection: RoutedLaneRejection): string {
+  const detail = rejection.detail ? ` ${rejection.detail}` : '';
+  return `Model review result did not match the requested issue, pull request, head, lane, or evidence contract: contract rule ${rejection.rule} failed (field: ${rejection.field}).${detail}`;
+}
+
+function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): StrictRoutedLaneResult {
   const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'];
-  if (!isRecord(value) || !hasExactKeys(value, required)) return null;
-  if (value.issueNumber !== input.issueNumber || value.prNumber !== input.prNumber || value.headSha !== input.headSha || value.lane !== input.lane) return null;
+  if (!isRecord(value) || !hasExactKeys(value, required)) return rejectedLane('result-shape', 'result');
+  if (value.issueNumber !== input.issueNumber) return rejectedLane('issue-mismatch', 'issueNumber');
+  if (value.prNumber !== input.prNumber) return rejectedLane('pr-mismatch', 'prNumber');
+  if (value.headSha !== input.headSha) return rejectedLane('head-mismatch', 'headSha');
+  if (value.lane !== input.lane) return rejectedLane('lane-mismatch', 'lane');
   // Coverage attestation: exactly one entry per expected inspection area, and the
   // attested states must be consistent with the reported findings.
   const areas = expectedCoverageAreas(input);
   let anyNotInspected = false;
   let allClear = false;
-  if (!Array.isArray(value.coverage)) return null;
+  if (!Array.isArray(value.coverage)) return rejectedLane('coverage-shape', 'coverage');
   const coverage = value.coverage;
-  if (!coverage.every(entry => isRecord(entry)
-    && hasExactKeys(entry, ['area', 'status'])
-    && typeof entry.area === 'string' && areas.includes(entry.area)
-    && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
+  for (let index = 0; index < coverage.length; index += 1) {
+    const entry = coverage[index];
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ['area', 'status'])
+      || typeof entry.area !== 'string' || !areas.includes(entry.area)
+      || (entry.status !== 'clear' && entry.status !== 'finding' && entry.status !== 'not-inspected')) return rejectedLane('coverage-shape', `coverage[${index}]`);
+  }
   const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
-  if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
+  if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return rejectedLane('coverage-areas-mismatch', 'coverage');
   anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
   allClear = coverage.length > 0 && coverage.every(entry => (entry as { status: string }).status === 'clear');
-  if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status) || typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity) || typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return null;
+  if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status)) return rejectedLane('status-value', 'status');
+  if (typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity)) return rejectedLane('severity-value', 'severity');
+  if (typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return rejectedLane('recommendation-value', 'recommendation');
   const expectedRecommendation = value.status === 'passed'
     ? 'approve'
     : value.status === 'failed' || value.status === 'needs-work'
       ? 'request-changes'
       : 'inconclusive';
-  if (value.recommendation !== expectedRecommendation) return null;
-  if (typeof value.summary !== 'string' || value.summary.trim() === '' || typeof value.completeness !== 'string' || value.completeness.trim() === '') return null;
-  if (!isStringArray(value.blockers) || !isStringArray(value.commands) || !isStringArray(value.surfaces) || !isStringArray(value.toolsUsed) || !isStringArray(value.preconditions)) return null;
+  if (value.recommendation !== expectedRecommendation) return rejectedLane('recommendation-status-mismatch', 'recommendation');
+  if (typeof value.summary !== 'string' || value.summary.trim() === '') return rejectedLane('required-text-empty', 'summary');
+  if (typeof value.completeness !== 'string' || value.completeness.trim() === '') return rejectedLane('required-text-empty', 'completeness');
+  for (const field of ['blockers', 'commands', 'surfaces', 'toolsUsed', 'preconditions'] as const) {
+    if (!isStringArray(value[field])) return rejectedLane('string-array-shape', field);
+  }
   const findings = Array.isArray(value.findings) ? value.findings.filter(item => !promptFragmentFinding(item)) : value.findings;
-  if (!Array.isArray(findings) || !findings.every(item => isRecord(item)
-    && hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location', 'confidence'])
-    && typeof item.severity === 'string' && FINDING_SEVERITY_VALUES.has(item.severity)
-    && typeof item.message === 'string' && item.message.trim() !== ''
-    && (item.id === undefined || typeof item.id === 'string')
-    && (item.suggestion === undefined || typeof item.suggestion === 'string')
-    && (item.confidence === undefined || (typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1))
-    && (item.location === undefined || (isRecord(item.location)
-      && hasExactKeys(item.location, ['path'], ['line', 'endLine', 'side'])
-      && typeof item.location.path === 'string' && item.location.path.trim() !== ''
-      && (item.location.line === undefined || (Number.isSafeInteger(item.location.line) && Number(item.location.line) > 0))
-      && (item.location.endLine === undefined || (Number.isSafeInteger(item.location.endLine) && Number(item.location.endLine) > 0))
-      && (item.location.side === undefined || item.location.side === 'source' || item.location.side === 'destination'))))) return null;
+  if (!Array.isArray(findings)) return rejectedLane('finding-shape', 'findings');
+  for (let index = 0; index < findings.length; index += 1) {
+    const item = findings[index];
+    if (!isRecord(item)
+      || !hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location', 'confidence'])
+      || typeof item.severity !== 'string' || !FINDING_SEVERITY_VALUES.has(item.severity)
+      || typeof item.message !== 'string' || item.message.trim() === ''
+      || (item.id !== undefined && typeof item.id !== 'string')
+      || (item.suggestion !== undefined && typeof item.suggestion !== 'string')
+      || (item.confidence !== undefined && !(typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1))
+      || (item.location !== undefined && !(isRecord(item.location)
+        && hasExactKeys(item.location, ['path'], ['line', 'endLine', 'side'])
+        && typeof item.location.path === 'string' && item.location.path.trim() !== ''
+        && (item.location.line === undefined || (Number.isSafeInteger(item.location.line) && Number(item.location.line) > 0))
+        && (item.location.endLine === undefined || (Number.isSafeInteger(item.location.endLine) && Number(item.location.endLine) > 0))
+        && (item.location.side === undefined || item.location.side === 'source' || item.location.side === 'destination')))) return rejectedLane('finding-shape', `findings[${index}]`);
+  }
   const hasBlockingFinding = findings.some(item => isRecord(item) && item.severity === 'blocking');
   const requestsChanges = value.status === 'failed' || value.status === 'needs-work';
+  const blockers = value.blockers as string[];
   const hasBlockingVerdict = hasBlockingFinding
-    || value.blockers.length > 0
+    || blockers.length > 0
     || value.severity === 'high'
     || value.severity === 'critical';
-  if (hasBlockingVerdict && (!requestsChanges
-    || value.recommendation !== 'request-changes'
-    || value.severity !== 'high' && value.severity !== 'critical'
-    || value.blockers.length === 0)) return null;
-  if (requestsChanges && (value.blockers.length === 0
-    || value.severity !== 'high' && value.severity !== 'critical')) return null;
-  if (!Array.isArray(value.artifacts)
-    || value.status !== 'inconclusive' && value.artifacts.length === 0
-    || !value.artifacts.every(item => isRecord(item)
-      && hasExactKeys(item, ['kind', 'path', 'sha256'])
-      && typeof item.kind === 'string' && item.kind.trim() !== ''
-      && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
-      && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
-  if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
-      && hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
-      && typeof item.kind === 'string' && CONTEXT_KIND_VALUES.has(item.kind)
-      && typeof item.source === 'string' && item.source.trim() !== ''
-      && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
-      && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
-  if (findings.length > 0 && allClear) return null;
+  if (hasBlockingVerdict && !requestsChanges) return rejectedLane('blocking-verdict-inconsistent', 'status');
+  if (hasBlockingVerdict && value.recommendation !== 'request-changes') return rejectedLane('blocking-verdict-inconsistent', 'recommendation');
+  if (hasBlockingVerdict && value.severity !== 'high' && value.severity !== 'critical') return rejectedLane('blocking-verdict-inconsistent', 'severity');
+  if (hasBlockingVerdict && blockers.length === 0) return rejectedLane('blocking-verdict-inconsistent', 'blockers');
+  if (requestsChanges && blockers.length === 0) return rejectedLane('blocking-verdict-inconsistent', 'blockers');
+  if (requestsChanges && value.severity !== 'high' && value.severity !== 'critical') return rejectedLane('blocking-verdict-inconsistent', 'severity');
+  if (!Array.isArray(value.artifacts)) return rejectedLane('artifact-shape', 'artifacts');
+  if (value.status !== 'inconclusive' && value.artifacts.length === 0) return rejectedLane('artifact-missing', 'artifacts');
+  for (let index = 0; index < value.artifacts.length; index += 1) {
+    const item = value.artifacts[index];
+    if (!isRecord(item)
+      || !hasExactKeys(item, ['kind', 'path', 'sha256'])
+      || typeof item.kind !== 'string' || item.kind.trim() === ''
+      || typeof item.path !== 'string') return rejectedLane('artifact-shape', `artifacts[${index}]`);
+    if (!safeArtifactPath(input.repoRoot, item.kind, item.path)) return rejectedLane('artifact-path-unsafe', `artifacts[${index}].path`, `Artifact path "${sanitizedDiagnostic(item.path)}" is not an existing repository-relative file path without traversal.`);
+    if (!validArtifactDigest(input.repoRoot, item.path, item.sha256)) return rejectedLane('artifact-digest-invalid', `artifacts[${index}].sha256`, `Model review artifact "${sanitizedDiagnostic(item.path)}" reported an invalid digest; routed reviewers must set sha256 to null.`);
+  }
+  if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0) return rejectedLane('context-shape', 'contextReviewed');
+  for (let index = 0; index < value.contextReviewed.length; index += 1) {
+    const item = value.contextReviewed[index];
+    if (!isRecord(item)
+      || !hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
+      || typeof item.kind !== 'string' || !CONTEXT_KIND_VALUES.has(item.kind)
+      || typeof item.source !== 'string' || item.source.trim() === ''
+      || typeof item.trust !== 'string' || !CONTEXT_TRUST_VALUES.has(item.trust)
+      || typeof item.freshness !== 'string' || !CONTEXT_FRESHNESS_VALUES.has(item.freshness)) return rejectedLane('context-shape', `contextReviewed[${index}]`);
+  }
+  // Findings attested as clear cannot widen what the lane approves, so this
+  // slip keeps the findings instead of discarding the complete result: a
+  // passed lane is downgraded below and every other status already does
+  // not pass on the strength of that attestation.
+  const coverageFindingsInconsistent = findings.length > 0 && allClear;
   const candidate: Record<string, unknown> = { ...value, findings, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;
+  if (coverageFindingsInconsistent) {
+    const note = 'Coverage attestation failed contract rule coverage-findings-inconsistent (field: coverage): findings were reported while coverage was attested clear, so the findings are kept and the lane does not pass on that attestation.';
+    if (typeof candidate.summary === 'string' && !candidate.summary.includes('coverage-findings-inconsistent')) candidate.summary = `${candidate.summary} ${note}`;
+    if (typeof candidate.completeness === 'string' && !candidate.completeness.includes('coverage-findings-inconsistent')) candidate.completeness = `${candidate.completeness} ${note}`;
+    if (candidate.status === 'passed') {
+      candidate.status = 'inconclusive';
+      candidate.recommendation = 'inconclusive';
+    }
+  }
   if (anyNotInspected && candidate.status === 'passed') {
     // An unfinished inspection can never approve; fail closed to inconclusive so
     // the gate reruns the lane instead of accepting a partial pass.
@@ -588,7 +644,9 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       }
     }
   }
-  return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
+  const evidence = normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
+  if (!evidence) return rejectedLane('evidence-normalize-failed', 'result');
+  return { evidence, rejection: null, downgradeRule: coverageFindingsInconsistent ? 'coverage-findings-inconsistent' : null };
 }
 
 function normalizeSchemaOptionals(value: unknown): unknown {
@@ -651,21 +709,6 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     progressLabel: `${input.lane} via ${input.plan.host}`,
     onProgress: input.onProgress,
   };
-}
-
-function artifactDigestViolation(value: unknown, repoRoot: string): string | null {
-  if (!isRecord(value) || !Array.isArray(value.artifacts)) return null;
-  for (const artifact of value.artifacts) {
-    if (!isRecord(artifact)
-      || typeof artifact.kind !== 'string'
-      || typeof artifact.path !== 'string'
-      || typeof artifact.sha256 !== 'string'
-      || !safeArtifactPath(repoRoot, artifact.kind, artifact.path)) continue;
-    if (!validArtifactDigest(repoRoot, artifact.path, artifact.sha256)) {
-      return `Model review artifact "${sanitizedDiagnostic(artifact.path)}" reported an invalid digest; routed reviewers must set sha256 to null.`;
-    }
-  }
-  return null;
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {
@@ -1231,11 +1274,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         try { priorResult = JSON.parse(priorText); } catch { continue; }
         const normalizedPriorResult = normalizeSchemaOptionals(priorResult);
         if (isExplicitlyIncompleteResult(normalizedPriorResult, input)) continue;
-        const priorEvidence = strictRoutedLane(normalizedPriorResult, input, provenance);
-        if (priorEvidence) {
+        const priorResultStrict = strictRoutedLane(normalizedPriorResult, input, provenance);
+        if (priorResultStrict.evidence) {
           return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
-        return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review route returned an invalid transient Review object.');
+        return captureRawOutput(store, input, result, 'model-route-contract-mismatch', `Model review route returned an invalid transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)}`);
       }
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', 'Local checkout HEAD changed during isolated review execution.');
@@ -1249,18 +1292,21 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if (watchedChange) return captureRawOutput(store, input, result, 'model-route-checkout-mismatch', `Local checkout changed during isolated review execution: ${sanitizedDiagnostic(watchedChange)}.`);
     // strictRoutedLane already rejects empty completeness, contextReviewed,
     // and artifacts for every status, so no post-validation gap check exists.
-    const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
-    if (!evidence) {
-      if (isRecord(modelResult) && typeof modelResult.status === 'string' && !STATUS_VALUES.has(modelResult.status)) {
-        return captureRawOutput(store, input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive.`);
+    const strictResult = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
+    if (!strictResult.evidence) {
+      const rejection = strictResult.rejection;
+      if (rejection.rule === 'status-value' && isRecord(modelResult) && typeof modelResult.status === 'string') {
+        return captureRawOutput(store, input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive. contract rule ${rejection.rule} failed (field: ${rejection.field}).`);
       }
-      const digestViolation = artifactDigestViolation(modelResult, input.repoRoot);
-      if (digestViolation) return captureRawOutput(store, input, result, 'model-route-artifact-digest', digestViolation);
-      return captureRawOutput(store, input, result, 'model-route-contract-mismatch', 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.');
+      if (rejection.rule === 'artifact-digest-invalid') {
+        return captureRawOutput(store, input, result, 'model-route-artifact-digest', routedLaneRejectionMessage(rejection));
+      }
+      return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }
+    const evidence = strictResult.evidence;
     const headChecked = checkFindingsAtHead(evidence, input.repoRoot);
     let finalEvidence = appendReviewNotes(headChecked.evidence, headChecked.withheld);
-    let outcomeReasonCode: string | null = null;
+    let outcomeReasonCode: string | null = strictResult.downgradeRule ? `model-route-${strictResult.downgradeRule}` : null;
     if (headChecked.withheldBlocking && !finalEvidence.findings.some(finding => finding.severity === 'blocking')) {
       // The lane's blocking obligation rested on code that is not at the
       // head, so it can neither fail nor pass on that finding.
