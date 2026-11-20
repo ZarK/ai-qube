@@ -21,7 +21,7 @@ const {
   watchModelReviewCheckout,
   isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
-const { writeReviewInputFiles, parseDiffByFile } = require('../dist/app/review_input.js');
+const { writeReviewInputFiles, parseDiffByFile, createGateReviewInput } = require('../dist/app/review_input.js');
 const { createHeadLineCounter } = require('../dist/finding_location.js');
 const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
 const { notInspectedFiles, laneArtifactViolation } = require('../dist/local_review_evidence.js');
@@ -2019,11 +2019,11 @@ describe('review input for routes without shell', () => {
     const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
     let promptText = '';
     let diffContent = '';
+    const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
-      reviewInputFiles: undefined,
+      reviewInputFiles: await gateInput.files(),
       headSha,
-      baseRef: 'origin/main',
       resolveHead: async () => headSha,
       resolveExecutable: async () => 'grok.exe',
       runProcess: async invocation => {
@@ -2039,6 +2039,8 @@ describe('review input for routes without shell', () => {
     assert.equal(result.evidence.status, 'passed');
     assert.doesNotMatch(promptText, /Prefer Git and Node\.js/);
     assert.match(diffContent, /2 \+added review line/);
+    gateInput.remove();
+    assert.equal(existsSync(join(repoRoot, '.qube', 'aie', 'review-input')) && readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')).length > 0, false);
   });
 
   function committedReviewInputRepo() {
@@ -2050,21 +2052,25 @@ describe('review input for routes without shell', () => {
     return { repoRoot, headSha };
   }
 
-  function runCitingArtifacts(repoRoot, headSha, artifactsFor) {
-    return runModelReview({
-      ...reviewInput(repoRoot, 'grok-build'),
-      reviewInputFiles: undefined,
-      headSha,
-      baseRef: 'origin/main',
-      resolveHead: async () => headSha,
-      resolveExecutable: async () => 'grok.exe',
-      runProcess: async invocation => {
-        const match = /-> (\.qube\/aie\/review-input\/\S+\.diff)/.exec(readFileSync(invocation.promptPath, 'utf8'));
-        assert.ok(match, 'prompt lists a diff file');
-        const lane = { ...laneResult(), headSha, surfaces: [match[1]], toolsUsed: ['Read'], commands: [], artifacts: artifactsFor(match[1]) };
-        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(lane), sessionId: 'grok-session' }) };
-      },
-    });
+  async function runCitingArtifacts(repoRoot, headSha, artifactsFor) {
+    const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
+    try {
+      return await runModelReview({
+        ...reviewInput(repoRoot, 'grok-build'),
+        reviewInputFiles: await gateInput.files(),
+        headSha,
+        resolveHead: async () => headSha,
+        resolveExecutable: async () => 'grok.exe',
+        runProcess: async invocation => {
+          const match = /-> (\.qube\/aie\/review-input\/\S+\.diff)/.exec(readFileSync(invocation.promptPath, 'utf8'));
+          assert.ok(match, 'prompt lists a diff file');
+          const lane = { ...laneResult(), headSha, surfaces: [match[1]], toolsUsed: ['Read'], commands: [], artifacts: artifactsFor(match[1]) };
+          return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(lane), sessionId: 'grok-session' }) };
+        },
+      });
+    } finally {
+      gateInput.remove();
+    }
   }
 
   it('records a cited review input diff file as the changed repository file so evidence stays valid after the folder is removed', async () => {
@@ -2469,14 +2475,39 @@ describe('review input diff parsing', () => {
     assert.match(files[0].diff, /3  const b = 2;/);
   });
 
+  it('prepares the gate review input once for concurrent callers and only when the checkout is at the head', async () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-gate-');
+    writeFileSync(join(repoRoot, 'README.md'), 'fixture\nadded review line\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'change'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
+    const first = gateInput.files();
+    const second = gateInput.files();
+    assert.equal(first, second, 'concurrent callers share one preparation');
+    const files = await first;
+    assert.equal(files, await gateInput.files());
+    assert.deepEqual(files.map(file => file.path), ['README.md']);
+    assert.equal(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')).length, 1);
+    gateInput.remove();
+    assert.deepEqual(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')), []);
+    gateInput.remove();
+
+    const offHead = createGateReviewInput(repoRoot, 'origin/main', 'f'.repeat(40));
+    assert.deepEqual(await offHead.files(), [], 'a checkout off the requested head prepares nothing');
+    assert.deepEqual(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')), []);
+  });
+
   it('fails closed when a no-shell route has no prepared diff and git cannot compute one', async () => {
     const repoRoot = cloneGitRepo('committed', 'aie-review-input-missing-');
     const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const gateInput = createGateReviewInput(repoRoot, 'refs/heads/missing-base', headSha);
+    assert.equal(await gateInput.files(), null);
+    assert.equal(existsSync(join(repoRoot, '.qube', 'aie', 'review-input')), false);
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
       reviewInputFiles: undefined,
       headSha,
-      baseRef: 'refs/heads/missing-base',
       resolveHead: async () => headSha,
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => { throw new Error('must not run'); },

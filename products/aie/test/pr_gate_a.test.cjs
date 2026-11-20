@@ -1059,7 +1059,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => headSha });
 
     assert.ok(citedDiffFiles.length > 0);
-    assert.ok(citedDiffFiles.every(path => !existsSync(join(repo, path))), 'the review input files are removed when the lane ends');
+    assert.ok(citedDiffFiles.every(path => !existsSync(join(repo, path))), 'the review input files are removed when the gate ends');
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
