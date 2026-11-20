@@ -243,7 +243,7 @@ export function resolveDistinctFailoverReviewPlan(config: Config, primary: Model
 
 // Host faults that rerun on the configured backup route in the same gate
 // run instead of waiting for the persisted fault threshold.
-const SAME_RUN_FAILOVER_REASONS = new Set(['model-route-policy-blocked', 'model-route-max-turns', 'model-route-incomplete-result']);
+const SAME_RUN_FAILOVER_REASONS = new Set(['model-route-policy-blocked', 'model-route-max-turns', 'model-route-incomplete-result', 'model-route-no-inspection']);
 
 export function hostFailoverSubstitution(primaryHost: string, reasonCode: string | undefined): string {
   if (reasonCode === 'model-route-policy-blocked') {
@@ -254,6 +254,9 @@ export function hostFailoverSubstitution(primaryHost: string, reasonCode: string
   }
   if (reasonCode === 'model-route-incomplete-result') {
     return `The isolated ${primaryHost} host returned an incomplete result (model-route-incomplete-result); the lane uses the configured second host.`;
+  }
+  if (reasonCode === 'model-route-no-inspection') {
+    return `The isolated ${primaryHost} host returned a verdict with no tool and no command behind it (model-route-no-inspection); the lane uses the configured second host.`;
   }
   if (reasonCode === 'model-route-probe-blocked') {
     return `The configured ${primaryHost} route failed its readiness probe; the lane uses the configured second host.`;

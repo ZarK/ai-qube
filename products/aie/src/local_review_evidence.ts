@@ -1059,7 +1059,7 @@ function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, 
     const incomplete = status === 'passed'
       ? incompleteReviewResult({ summary, completeness, contextReviewed, toolsUsed, commands, findings })
       : null;
-    const incompleteNote = incomplete ? ` Incomplete result (model-route-incomplete-result): ${incomplete.detail}; the lane is not passed.` : '';
+    const incompleteNote = incomplete ? ` Incomplete result (${incomplete.reasonCode}): ${incomplete.detail}; the lane is not passed.` : '';
     const effectiveStatus: LocalReviewStatus = incomplete ? 'inconclusive' : status;
     const severity = readSeverity(parsed.severity);
     return {

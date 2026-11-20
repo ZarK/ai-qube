@@ -370,6 +370,8 @@ export interface ReviewRoundSummaryPublishInput {
   readonly round: string;
   readonly issueNumber: number;
   readonly expectedLanes: readonly string[];
+  /** Current-head lane results of this round; the persistent status replaces any earlier lane list for the head with these. */
+  readonly lanes: readonly ReviewRoundStatusLane[];
   readonly verdict: "approve" | "request-changes" | "pending" | "inconclusive";
   /** Fully rendered markdown body, including the embedded marker, ready to publish verbatim. */
   readonly body: string;

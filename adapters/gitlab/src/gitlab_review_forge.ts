@@ -1254,7 +1254,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       readonly headSha: string;
       readonly verdict: string;
       readonly complete: boolean;
-      readonly lanes?: ReviewRoundStatusPublishInput["lanes"];
+      readonly lanes: ReviewRoundStatusPublishInput["lanes"];
     },
     notes: readonly GitLabNote[],
     publisher: string,
@@ -1270,7 +1270,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       head: input.headSha,
       verdict: input.verdict,
       ...(input.complete ? { complete: true } : { complete: false }),
-      ...(input.lanes ? { lanes: [...input.lanes] } : {}),
+      lanes: [...input.lanes],
     };
     const next = [...prior.filter((round) => round.head !== input.headSha), current];
     const body = renderStatusNote(next, input.prNumber);

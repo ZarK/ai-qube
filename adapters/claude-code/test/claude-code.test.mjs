@@ -74,6 +74,7 @@ describe("claude-code adapter", () => {
       "--json-schema", "{\"type\":\"object\"}",
       "--permission-mode", "plan",
       "--no-session-persistence",
+      "--max-turns", "8",
       "--model", "claude-test",
       "--effort", "high",
     ]);
@@ -103,6 +104,16 @@ describe("claude-code adapter", () => {
     assert.equal(parseClaudeOutput(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "failed" })), null);
     assert.equal(parseClaudeOutput("not json"), null);
     assert.equal(parseClaudeOutput(JSON.stringify({ type: "other", result: "{}" })), null);
+  });
+
+  it("reports the host turn limit as a structured failure, never from result text", () => {
+    assert.deepEqual(
+      parseClaudeOutput(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 8, session_id: "session-2" })),
+      { failureReasonCode: "model-route-max-turns", failureDiagnostic: "claude-code-error-max-turns" },
+    );
+    const quoted = parseClaudeOutput(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "{\"summary\":\"max turns limit reached in error_max_turns handling\"}" }));
+    assert.equal(quoted.text, "{\"summary\":\"max turns limit reached in error_max_turns handling\"}");
+    assert.equal("failureReasonCode" in quoted, false);
   });
 
   it("probes capability flags before reporting the route ready", () => {

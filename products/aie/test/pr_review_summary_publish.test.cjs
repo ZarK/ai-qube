@@ -66,6 +66,7 @@ function publishInputFromRender(render, overrides = {}) {
     round: overrides.round ?? 'round-1',
     issueNumber: 93,
     expectedLanes: ['code-quality'],
+    lanes: [{ laneId: 'code-quality', status: 'passed', blockingFindingCount: 0, advisoryFindingCount: 0, reason: null }],
     verdict: render.verdict,
     body: render.body,
     marker: render.marker,
@@ -429,6 +430,28 @@ describe('GitHub round summary publish', () => {
     assert.ok(statusBodies.some(body => body.includes('Round history') && body.includes('abc123')));
     const lastStatus = statusBodies.at(-1) ?? '';
     assert.match(lastStatus, /"rounds":\[\{"head":"abc123","verdict":"/);
+  });
+
+  it('replaces earlier partial lane lines for the head with the complete round lanes', async () => {
+    const partial = {
+      author: { login: 'executor' },
+      body: '<!-- qube-pr-status:{"version":1,"prNumber":12,"rounds":[{"head":"abc123","verdict":"inconclusive","complete":false,"lanes":[{"laneId":"issue-compliance","status":"invalid","blockingFindingCount":0,"advisoryFindingCount":0,"reason":"Lane evidence is inconclusive."},{"laneId":"code-quality","status":"passed","blockingFindingCount":0,"advisoryFindingCount":0,"reason":null}]}]} -->\nReview status: inconclusive.\n',
+      url: 'https://github.com/example/repo/pull/12#issuecomment-91',
+    };
+    const fixture = makePrExec({ prViews: [basePr({ comments: [partial] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const lanes = [
+      { laneId: 'issue-compliance', status: 'passed', blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+      { laneId: 'code-quality', status: 'passed', blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+    ];
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render, { expectedLanes: ['issue-compliance', 'code-quality'], lanes }));
+    assert.equal(result.status, 'published');
+    const lastStatus = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status')).at(-1) ?? '';
+    assert.match(lastStatus, /Validated lanes: 2\/2\./);
+    assert.match(lastStatus, /- issue-compliance: passed/);
+    assert.doesNotMatch(lastStatus, /invalid/, 'no lane line from the earlier partial round may remain for this head');
+    assert.match(lastStatus, /abc123: approve \(complete\)/);
   });
 
   it('parses nested status-comment rounds instead of truncating at the first brace', async () => {

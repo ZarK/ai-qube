@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
+import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput, type ReviewRoundStatusLane } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitChangedPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
@@ -10,7 +10,7 @@ import type { ReviewForgeProvider, ReviewForgeRoundSummaryPublishResult } from '
 import { createHeadLineCounter } from '../finding_location.js';
 import { planFindingPublication, threadDispositionsFromPlans, type SynthesisLaneInput } from '../review_synthesis.js';
 import { renderInlineCommentBody, renderRoundSummaryBody, type RoundSummaryLaneInput } from '../review_round_summary.js';
-import { loadValidatedRoundLanes } from './pr_review_publish.js';
+import { loadValidatedRoundLanes, type ValidatedRoundLane } from './pr_review_publish.js';
 import type { PrGateExec } from './pr_gate.js';
 
 const DEFAULT_REVIEW_NIT_CAP = 10;
@@ -140,6 +140,19 @@ export interface PrReviewSummaryPublishResult {
   command: 'pr review publish-summary';
   prNumber: number;
   publish: ReviewForgeRoundSummaryPublishResult;
+}
+
+function roundStatusLane(lane: ValidatedRoundLane): ReviewRoundStatusLane {
+  if (lane.status !== 'passed' && lane.status !== 'needs-work' && lane.status !== 'failed') {
+    return { laneId: lane.laneId, status: 'invalid', blockingFindingCount: 0, advisoryFindingCount: 0, reason: `Lane evidence is ${lane.status}.` };
+  }
+  return {
+    laneId: lane.laneId,
+    status: lane.status,
+    blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
+    advisoryFindingCount: lane.findings.filter(finding => finding.severity === 'advisory').length,
+    reason: null,
+  };
 }
 
 export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewSummaryPublishOptions): Promise<PrReviewSummaryPublishResult> {
@@ -286,6 +299,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     round,
     issueNumber,
     expectedLanes: expectedLaneIds,
+    lanes: validatedLanes.map(lane => roundStatusLane(lane)),
     verdict: render.verdict,
     body: consolidatedBody,
     issueCommentBody,
