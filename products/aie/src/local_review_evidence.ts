@@ -102,6 +102,8 @@ export interface LocalReviewCarriedForward {
 }
 
 export interface CarryForwardScope {
+  /** Base branch ref whose own changes the carry-forward delta leaves out. */
+  baseRef: string;
   laneMatchPatterns: Readonly<Record<string, readonly string[]>>;
   contextPatterns: readonly string[];
   laneContextModes?: Readonly<Record<string, CarryForwardContextMode>>;
@@ -869,18 +871,9 @@ export function gitChangedPathsSync(repoRoot: string, baseRef: string, headSha: 
   return gitNameOnlySync(repoRoot, `${baseRef}...${headSha}`);
 }
 
-function gitParentsSync(repoRoot: string, commit: string): string[] | null {
+function gitMergeBaseSync(repoRoot: string, first: string, second: string): string | null {
   try {
-    const output = execFileSync('git', ['-C', repoRoot, 'rev-list', '--parents', '-n', '1', commit], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
-    return output.trim().split(/\s+/).filter(part => part !== '').slice(1);
-  } catch {
-    return null;
-  }
-}
-
-function gitMergeBaseSync(repoRoot: string, commits: readonly string[]): string | null {
-  try {
-    const output = execFileSync('git', ['-C', repoRoot, 'merge-base', ...commits], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    const output = execFileSync('git', ['-C', repoRoot, 'merge-base', first, second], { encoding: 'utf8', maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     const base = output.trim();
     return base === '' ? null : base;
   } catch {
@@ -889,59 +882,50 @@ function gitMergeBaseSync(repoRoot: string, commits: readonly string[]): string 
 }
 
 /**
- * Paths a pull request itself changed between two of its heads, following the
- * first-parent chain. A plain commit contributes its own diff. A merge
- * contributes a path when its merged result differs from the first parent and
- * either differs from a merged-in parent (a conflict resolution or combined
- * change) or the first parent had already changed that path against the
- * parents' merge-base (the merge replaced the pull request version, for
- * example by keeping the base version). Files a base merge brought in
- * untouched are identical to the merged-in parent and match the merge-base
- * on the first-parent side, so they are excluded, and a clean base merge
- * yields an empty delta. Returns null when any git observation fails, so
- * callers fail closed.
+ * Paths whose content differs between two commits, compared tree to tree
+ * without rename detection so a rename reports both the old and the new path.
+ * Returns null when git cannot compare the commits.
  */
-export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
-  let commits: string[];
+export function gitTreeChangedPathsSync(repoRoot: string, fromSha: string, toSha: string): string[] | null {
+  if (fromSha.startsWith('-') || toSha.startsWith('-')) return null;
   try {
-    const output = execFileSync('git', ['-C', repoRoot, 'rev-list', '--first-parent', '--reverse', `${fromHeadSha}..${toHeadSha}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-    commits = output.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+    const output = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', '--no-renames', '-z', fromSha, toSha], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    return output.split('\0').filter(path => path !== '');
   } catch {
     return null;
   }
-  const paths = new Set<string>();
-  for (const commit of commits) {
-    const parents = gitParentsSync(repoRoot, commit);
-    if (parents === null) return null;
-    if (parents.length === 0) {
-      const own = gitNameOnlySync(repoRoot, `4b825dc642cb6eb9a060e54bf8d69288fbee4904..${commit}`);
-      if (own === null) return null;
-      for (const path of own) paths.add(path);
-      continue;
-    }
-    if (parents.length === 1) {
-      const own = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
-      if (own === null) return null;
-      for (const path of own) paths.add(path);
-      continue;
-    }
-    const mergeBase = gitMergeBaseSync(repoRoot, parents);
-    if (mergeBase === null) return null;
-    const firstParentDiff = gitNameOnlySync(repoRoot, `${parents[0]}..${commit}`);
-    const firstParentTouched = gitNameOnlySync(repoRoot, `${mergeBase}..${parents[0]}`);
-    if (firstParentDiff === null || firstParentTouched === null) return null;
-    const mergedInDiffs: string[][] = [];
-    for (const parent of parents.slice(1)) {
-      const diff = gitNameOnlySync(repoRoot, `${parent}..${commit}`);
-      if (diff === null) return null;
-      mergedInDiffs.push(diff);
-    }
-    const touched = new Set(firstParentTouched);
-    for (const path of firstParentDiff) {
-      if (touched.has(path) || mergedInDiffs.some(diff => diff.includes(path))) paths.add(path);
-    }
-  }
-  return [...paths];
+}
+
+/**
+ * Paths a pull request itself changed between two of its heads. The pull
+ * request's own paths at a head are the paths that head changes against its
+ * merge-base with `baseRef`. A path is in the delta when it is an own path at
+ * either head and the pull request's change to it moved: it is an own path at
+ * only one head (the pull request started changing it, or stopped, for example
+ * when a merge kept the base version), its content differs between the heads,
+ * or its base-side content differs between the two merge-bases. Commits that
+ * reach the pull request through any merge other than a base merge (a
+ * collaborator push, a stacked branch) change own paths, so they stay in the
+ * delta. Paths that only the base branch changed are never own paths, so a
+ * clean base merge or a rebase onto a newer base adds nothing. Returns null
+ * when any git observation fails, so callers fail closed.
+ */
+export function gitDeltaPathsSync(repoRoot: string, baseRef: string, fromHeadSha: string, toHeadSha: string): string[] | null {
+  if ([baseRef, fromHeadSha, toHeadSha].some(ref => ref.trim() === '' || ref.startsWith('-'))) return null;
+  const fromBase = gitMergeBaseSync(repoRoot, baseRef, fromHeadSha);
+  const toBase = gitMergeBaseSync(repoRoot, baseRef, toHeadSha);
+  if (fromBase === null || toBase === null) return null;
+  const priorOwn = gitTreeChangedPathsSync(repoRoot, fromBase, fromHeadSha);
+  const currentOwn = gitTreeChangedPathsSync(repoRoot, toBase, toHeadSha);
+  const headChanged = gitTreeChangedPathsSync(repoRoot, fromHeadSha, toHeadSha);
+  const baseChanged = fromBase === toBase ? [] : gitTreeChangedPathsSync(repoRoot, fromBase, toBase);
+  if (priorOwn === null || currentOwn === null || headChanged === null || baseChanged === null) return null;
+  const prior = new Set(priorOwn);
+  const current = new Set(currentOwn);
+  const moved = new Set([...headChanged, ...baseChanged]);
+  const delta = [...new Set([...priorOwn, ...currentOwn])]
+    .filter(path => prior.has(path) !== current.has(path) || moved.has(path));
+  return delta.sort();
 }
 
 function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile), carryForwardScope?: CarryForwardScope): string[] {
@@ -978,7 +962,7 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
       } else {
         blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha: lane.carriedForward.fromHeadSha, laneId, provenance, evidenceSha256: prior.evidenceSha256 }));
       }
-      const deltaPaths = gitDeltaPathsSync(repoRoot, lane.carriedForward.fromHeadSha, headSha);
+      const deltaPaths = carryForwardScope ? gitDeltaPathsSync(repoRoot, carryForwardScope.baseRef, lane.carriedForward.fromHeadSha, headSha) : null;
       if (deltaPaths === null) {
         blockers.push(`${laneId} carried-forward delta from ${lane.carriedForward.fromHeadSha} could not be verified with git.`);
       } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [], carryForwardScope?.laneContextModes?.[laneId] ?? defaultCarryForwardContext(laneId))) {

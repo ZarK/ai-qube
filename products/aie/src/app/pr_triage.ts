@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/index.js';
 import { readCurrentHeadLaneEvidence, readLocalReviewGate, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { resolveReviewSources } from '../review_source.js';
@@ -187,6 +187,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
     activeFocuses: requiredLaneIds,
+    carryForwardScope: carryForwardScopeFromConfig(config),
   });
   const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0 && localReview.status === 'passed' && blockingProviderSources.length === 0;
   if (!approvedHead) {

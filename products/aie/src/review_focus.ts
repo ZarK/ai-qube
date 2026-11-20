@@ -78,6 +78,7 @@ export function defaultCarryForwardContext(laneId: string): CarryForwardContextM
 
 export function carryForwardScopeFromConfig(config: Config): CarryForwardScope {
   return {
+    baseRef: `${config.baseRemote}/${config.baseBranch}`,
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
     contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
     laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),

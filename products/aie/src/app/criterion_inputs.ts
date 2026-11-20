@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256 } from '../local_review_evidence.js';
+import { gitTreeChangedPathsSync, laneArtifactViolation, localReviewEvidenceSha256 } from '../local_review_evidence.js';
 
 export interface CriterionInput { kind: string; path: string; sha256: string }
 export interface CriterionSnapshot { headSha: string; sha256: string }
@@ -82,7 +82,9 @@ export function validateCriterionRevision(value: unknown, repoRoot: string, curr
   try {
     git(repoRoot, ['merge-base', '--is-ancestor', value.headSha, currentHead]);
   } catch { return [`Proof head ${value.headSha} is not a verifiable ancestor of current HEAD ${currentHead}.`]; }
-  const delta = value.headSha === currentHead ? [] : gitDeltaPathsSync(repoRoot, value.headSha, currentHead);
+  // Compare content, not authorship: a required input that a base merge
+  // changed is as stale for the proof as one the pull request changed.
+  const delta = value.headSha === currentHead ? [] : gitTreeChangedPathsSync(repoRoot, value.headSha, currentHead);
   if (delta === null) return ['The revision delta is unavailable; prior proof cannot be carried forward.'];
   const errors: string[] = [];
   if (value.kind === 'work-snapshot') {

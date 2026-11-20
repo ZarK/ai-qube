@@ -4,6 +4,7 @@ import type { CriterionIdentity } from '../checklist.js';
 import type { Config } from '../config/index.js';
 import { localReviewEvidenceSha256, readLocalReviewGate } from '../local_review_evidence.js';
 import { buildGateStatus } from '../gates/index.js';
+import { carryForwardScopeFromConfig } from '../review_focus.js';
 import { readCriterionProof, type CriterionProofEntry } from './criterion_proof.js';
 import { buildCriterionSnapshot, evidenceFilePath, hashFile, isRecord, readCriterionInputs, validTimestamp, validateCriterionRevision, type CriterionInput, type CriterionSnapshot } from './criterion_inputs.js';
 
@@ -145,12 +146,12 @@ function verifyGateResult(prepared: PreparedCriterionEvidence, context: Criterio
   return { errors, trust: gate.trust };
 }
 
-function verifyPromptedReview(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext): string[] {
+function verifyPromptedReview(prepared: PreparedCriterionEvidence, context: CriterionEvidenceContext, config: Config | null): string[] {
   const proof = prepared.record?.proof;
   if (!isRecord(proof) || !context.pr || !isRecord(proof.review) || proof.review.lane !== 'issue-compliance') return ['Prompted criterion proof requires an existing current-PR issue-compliance review.'];
   const stack = proof.promptStack;
   if (!Array.isArray(stack) || stack.length === 0 || !stack.every(fragment => isRecord(fragment) && typeof fragment.id === 'string' && typeof fragment.sha256 === 'string' && /^[a-f0-9]{64}$/.test(fragment.sha256))) return ['Prompted proof requires the exact reviewed prompt stack IDs and SHA-256 digests.'];
-  const gate = readLocalReviewGate({ repoRoot: context.repoRoot, issueNumbers: [context.criterion.issueNumber], prNumber: context.pr.number, headSha: context.pr.headSha, reviewers: [], required: true, profile: 'local-focused', activeFocuses: ['issue-compliance'] });
+  const gate = readLocalReviewGate({ repoRoot: context.repoRoot, issueNumbers: [context.criterion.issueNumber], prNumber: context.pr.number, headSha: context.pr.headSha, reviewers: [], required: true, profile: 'local-focused', activeFocuses: ['issue-compliance'], carryForwardScope: config ? carryForwardScopeFromConfig(config) : undefined });
   if (gate.status !== 'passed') return [`Referenced issue-compliance review is not trusted and current: ${gate.summary}`];
   const lane = gate.evidence.flatMap(evidence => evidence.lanes).find(candidate => candidate.id === 'issue-compliance');
   if (!lane || lane.runnerProvenance?.runnerKind !== 'local-host' || !lane.runnerProvenance.freshContext || lane.runnerProvenance.promptOnly) return ['Prompted proof requires an executed trusted issue-compliance review.'];
@@ -174,7 +175,7 @@ export function verifyPreparedCriterion(prepared: PreparedCriterionEvidence, con
       result.errors.push(...gate.errors);
       trust = gate.trust;
     }
-  } else if (proof.kind === 'prompted-review') result.errors.push(...verifyPromptedReview(prepared, context));
+  } else if (proof.kind === 'prompted-review') result.errors.push(...verifyPromptedReview(prepared, context, config));
   if (result.errors.length) {
     result.status = 'inconclusive';
     result.summary = 'The supplied proof does not establish this criterion; no checkbox was changed.';

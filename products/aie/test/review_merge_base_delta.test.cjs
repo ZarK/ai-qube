@@ -47,7 +47,7 @@ describe('merge-base review deltas and changed paths', () => {
     git(repo, ['merge', '--no-edit', 'main']);
     const head = git(repo, ['rev-parse', 'HEAD']);
 
-    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), []);
+    assert.deepEqual(gitDeltaPathsSync(repo, 'main', priorHead, head), []);
     assert.deepEqual(gitChangedPathsSync(repo, 'main', head), ['a.txt']);
 
     // The production carry-forward decision sees the same empty delta.
@@ -63,6 +63,7 @@ describe('merge-base review deltas and changed paths', () => {
     }));
     const decision = await evaluateCarryForwardDecision({
       repoRoot: repo,
+      baseRef: 'main',
       issueNumber: 7,
       prNumber: 9,
       headSha: head,
@@ -102,7 +103,7 @@ describe('merge-base review deltas and changed paths', () => {
     git(repo, ['commit', '--no-edit']);
     const head = git(repo, ['rev-parse', 'HEAD']);
 
-    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), ['shared.txt']);
+    assert.deepEqual(gitDeltaPathsSync(repo, 'main', priorHead, head), ['shared.txt']);
   });
 
   it('includes a pull request file whose merge resolves a conflict by keeping the base version', () => {
@@ -120,7 +121,7 @@ describe('merge-base review deltas and changed paths', () => {
     git(repo, ['commit', '--no-edit']);
     const head = git(repo, ['rev-parse', 'HEAD']);
 
-    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), ['shared.txt']);
+    assert.deepEqual(gitDeltaPathsSync(repo, 'main', priorHead, head), ['shared.txt']);
   });
 
   it('keeps the plain-commit delta identical to the direct head diff', () => {
@@ -130,8 +131,8 @@ describe('merge-base review deltas and changed paths', () => {
     const head = commitFile(repo, 'c.txt', 'new pull request file\n', 'pull request new file');
 
     const direct = git(repo, ['diff', '--name-only', `${priorHead}..${head}`]).split('\n').filter(Boolean);
-    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), direct);
-    assert.deepEqual(gitDeltaPathsSync(repo, priorHead, head), ['a.txt', 'c.txt']);
+    assert.deepEqual(gitDeltaPathsSync(repo, 'main', priorHead, head), direct);
+    assert.deepEqual(gitDeltaPathsSync(repo, 'main', priorHead, head), ['a.txt', 'c.txt']);
   });
 
   it('fails closed when a head or the base ref cannot be observed', () => {
@@ -139,7 +140,10 @@ describe('merge-base review deltas and changed paths', () => {
     const priorHead = startFeature(repo);
     const head = commitFile(repo, 'a.txt', 'a pull request v2\n', 'pull request update');
 
-    assert.equal(gitDeltaPathsSync(repo, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', head), null);
+    assert.equal(gitDeltaPathsSync(repo, 'main', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', head), null);
+    assert.equal(gitDeltaPathsSync(repo, 'main', priorHead, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'), null);
+    assert.equal(gitDeltaPathsSync(repo, 'origin/no-such-branch', priorHead, head), null);
+    assert.equal(gitDeltaPathsSync(repo, '--output=x', priorHead, head), null);
     assert.equal(gitChangedPathsSync(repo, 'no-such-ref', head), null);
   });
 });

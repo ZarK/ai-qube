@@ -381,6 +381,7 @@ export function expectedLaneFragmentDigest(host: ReviewModelHostId, lane: LocalR
 
 export async function evaluateCarryForwardDecision(input: {
   repoRoot: string;
+  baseRef: string;
   issueNumber: number;
   prNumber: number;
   headSha: string;
@@ -423,7 +424,7 @@ export async function evaluateCarryForwardDecision(input: {
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       priorApproved = true;
-      const deltaPaths = gitDeltaPathsSync(input.repoRoot, priorHeadSha, input.headSha);
+      const deltaPaths = gitDeltaPathsSync(input.repoRoot, input.baseRef, priorHeadSha, input.headSha);
       if (deltaPaths === null) sawUnknownDelta = true;
       const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '';
       if (!latest || recordedAt >= latest.recordedAt) latest = { recordedAt, deltaPaths };
@@ -441,6 +442,7 @@ export async function evaluateCarryForwardDecision(input: {
 
 export async function findCarryForwardSource(input: {
   repoRoot: string;
+  baseRef: string;
   issueNumber: number;
   prNumber: number;
   headSha: string;
@@ -499,7 +501,7 @@ export async function findCarryForwardSource(input: {
   }
   candidates.sort((first, second) => second.recordedAt.localeCompare(first.recordedAt));
   for (const candidate of candidates.slice(0, 5)) {
-    const deltaPaths = gitDeltaPathsSync(input.repoRoot, candidate.fromHeadSha, input.headSha);
+    const deltaPaths = gitDeltaPathsSync(input.repoRoot, input.baseRef, candidate.fromHeadSha, input.headSha);
     if (deltaPaths === null) continue;
     if (carryForwardDeltaTouched(deltaPaths, input.matchPatterns, input.contextPatterns, input.contextMode ?? defaultCarryForwardContext(input.lane))) continue;
     const deltaSummary = deltaPaths.length === 0
