@@ -51,6 +51,12 @@ export function isUnfinishedReviewText(text: string): boolean {
 }
 
 export interface IncompleteReviewResult {
+  /**
+   * `model-route-no-inspection` when no tool and no command stands behind
+   * the verdict; `model-route-incomplete-result` for unfinished wording or
+   * pending context.
+   */
+  reasonCode: 'model-route-incomplete-result' | 'model-route-no-inspection';
   field: 'summary' | 'completeness' | 'contextReviewed' | 'toolsUsed';
   detail: string;
 }
@@ -67,21 +73,28 @@ export interface ReviewResultCompletenessShape {
 /**
  * Names why a result that claims a finished review is in fact incomplete:
  * placeholder or progress wording, a context source that is still pending,
- * or findings reported with no tool or command behind them. Returns null
- * for a result that carries its own inspection evidence.
+ * or a verdict with no tool and no command behind it, with or without
+ * findings. Returns null for a result that carries its own inspection
+ * evidence.
  */
 export function incompleteReviewResult(result: ReviewResultCompletenessShape): IncompleteReviewResult | null {
   if (isUnfinishedReviewText(result.summary)) {
-    return { field: 'summary', detail: 'summary is placeholder or progress text, not a finished review' };
+    return { reasonCode: 'model-route-incomplete-result', field: 'summary', detail: 'summary is placeholder or progress text, not a finished review' };
   }
   if (isUnfinishedReviewText(result.completeness)) {
-    return { field: 'completeness', detail: 'completeness is placeholder or progress text, not a finished review' };
+    return { reasonCode: 'model-route-incomplete-result', field: 'completeness', detail: 'completeness is placeholder or progress text, not a finished review' };
   }
   if (result.contextReviewed.some(entry => entry.source.trim().toLowerCase() === 'pending')) {
-    return { field: 'contextReviewed', detail: 'a contextReviewed source is still pending' };
+    return { reasonCode: 'model-route-incomplete-result', field: 'contextReviewed', detail: 'a contextReviewed source is still pending' };
   }
-  if (result.toolsUsed.length === 0 && result.commands.length === 0 && result.findings.length > 0) {
-    return { field: 'toolsUsed', detail: 'findings are reported with no tools and no commands behind them' };
+  if (result.toolsUsed.length === 0 && result.commands.length === 0) {
+    return {
+      reasonCode: 'model-route-no-inspection',
+      field: 'toolsUsed',
+      detail: result.findings.length > 0
+        ? 'findings are reported with no tools and no commands behind them'
+        : 'the result reports no tools and no commands, so no inspection is behind it',
+    };
   }
   return null;
 }

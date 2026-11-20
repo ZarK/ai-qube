@@ -1817,6 +1817,7 @@ describe("GitLab round summary publish", () => {
       round: "round-1",
       issueNumber: 185,
       expectedLanes: ["code-quality"],
+      lanes: [{ laneId: "code-quality", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null }],
       verdict: "approve",
       body: "<!-- qube-pr-review-summary:{\"version\":1,\"head\":\"head-sha\",\"round\":\"round-1\",\"prNumber\":12,\"findingDigest\":\"abc\"} -->\nNote",
       marker: "<!-- qube-pr-review-summary -->",
@@ -2204,6 +2205,61 @@ describe("GitLab round summary publish", () => {
     assert.equal(result.status, "failed");
     assert.match(String(result.failure), /second status note/);
     assert.equal(created.some((body) => body.includes("qube-pr-status")), false);
+  });
+
+  it("replaces partial lane lines for the head when the complete round summary publishes", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest();
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const existing = notes.find((note) => String(note.id) === String(noteId));
+        if (existing) existing.body = body;
+        return { id: Number(noteId), body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${noteId}` };
+      },
+      async approveMergeRequest() {},
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    await provider.publishRoundReviewStatus({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      expectedLanes: ["issue-compliance", "code-quality"],
+      verdict: "inconclusive",
+      lanes: [
+        { laneId: "issue-compliance", status: "invalid", blockingFindingCount: 0, advisoryFindingCount: 0, reason: "Lane evidence is inconclusive." },
+        { laneId: "code-quality", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+      ],
+    });
+    assert.match(notes.find((note) => note.body.includes("qube-pr-status")).body, /issue-compliance: invalid/);
+    const result = await provider.publishRoundReviewSummary(summaryInput({
+      expectedLanes: ["issue-compliance", "code-quality"],
+      lanes: [
+        { laneId: "issue-compliance", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+        { laneId: "code-quality", status: "passed", blockingFindingCount: 0, advisoryFindingCount: 0, reason: null },
+      ],
+    }));
+    assert.equal(result.status, "published");
+    const status = notes.filter((note) => note.body.includes("qube-pr-status"));
+    assert.equal(status.length, 1);
+    assert.match(status[0].body, /Validated lanes: 2\/2\./);
+    assert.match(status[0].body, /issue-compliance: passed/);
+    assert.doesNotMatch(status[0].body, /invalid/);
   });
 
   it("creates a status note once and edits it in place", async () => {

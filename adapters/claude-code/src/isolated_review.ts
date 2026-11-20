@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type {
   IsolatedReviewHostAdapter,
   IsolatedReviewHostBuiltInvocation,
+  IsolatedReviewHostEnvelopeResult,
   IsolatedReviewHostInvocationContext,
-  IsolatedReviewHostParsedEnvelope,
   IsolatedReviewHostProbeContext,
   IsolatedReviewHostProbeResult,
 } from "@tjalve/qube-core";
@@ -33,7 +33,7 @@ function readClaudeUsage(value: unknown): Record<string, unknown> | undefined {
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
-export function parseClaudeOutput(stdout: string): IsolatedReviewHostParsedEnvelope | null {
+export function parseClaudeOutput(stdout: string): IsolatedReviewHostEnvelopeResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout.trim());
@@ -41,6 +41,9 @@ export function parseClaudeOutput(stdout: string): IsolatedReviewHostParsedEnvel
     return null;
   }
   if (!isRecord(parsed) || parsed.type !== "result") return null;
+  if (parsed.subtype === "error_max_turns") {
+    return { failureReasonCode: "model-route-max-turns", failureDiagnostic: "claude-code-error-max-turns" };
+  }
   if (parsed.is_error === true || parsed.subtype !== "success") return null;
   let text: string | null = null;
   if (isRecord(parsed.structured_output)) {
@@ -83,6 +86,7 @@ export const isolatedReviewHostAdapter: IsolatedReviewHostAdapter = Object.freez
       // cannot change the checkout while it inspects it.
       "--permission-mode", "plan",
       "--no-session-persistence",
+      "--max-turns", String(context.maxTurns),
     ];
     if (context.model) args.push("--model", context.model);
     if (context.effort) args.push("--effort", context.effort);

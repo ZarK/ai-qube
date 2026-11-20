@@ -12,7 +12,7 @@ import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '.
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
 import { laneEvidencePath, mkdirTrustedStoreSync, normalizeExternalLane, writeReviewFileGuarded, type LaneEvidence } from './local_review_runner_support.js';
-import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
+import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostAdapter, type ReviewHostEnvelopeFailure, type ReviewHostInvocationContext } from './review_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 import { computeReviewDiff, reviewInputPromptLines, unreadReviewInputFiles, writeReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
@@ -649,7 +649,11 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     commands: value.commands as string[],
     findings,
   });
-  if (incomplete) return rejectedLane('incomplete-result', incomplete.field, `Incomplete result: ${incomplete.detail}.`);
+  if (incomplete) {
+    return incomplete.reasonCode === 'model-route-no-inspection'
+      ? rejectedLane('no-inspection', incomplete.field, `No inspection: ${incomplete.detail}.`)
+      : rejectedLane('incomplete-result', incomplete.field, `Incomplete result: ${incomplete.detail}.`);
+  }
   // Findings attested as clear cannot widen what the lane approves, so this
   // slip keeps the findings instead of discarding the complete result: a
   // passed lane is downgraded below and every other status already does
@@ -998,16 +1002,23 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
   return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
+const NO_INSPECTION_NEXT_STEP = 'The lane is not passed (model-route-no-inspection): the result names no tool and no command that inspected the change. Rerun the lane so the reviewer reads the changed files with its tools.';
+
 const MAX_TURNS_ERROR = 'Model review route reached its configured turn limit (model-route-max-turns) before finishing the lane; the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.';
 
-function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
-  if (maxTurnsReached(result)) {
-    return { reasonCode: 'model-route-max-turns', error: MAX_TURNS_ERROR };
-  }
+function hostEnvelopeFailure(failure: ReviewHostEnvelopeFailure): { reasonCode: string; error: string } {
+  return failure.failureReasonCode === 'model-route-max-turns'
+    ? { reasonCode: failure.failureReasonCode, error: MAX_TURNS_ERROR }
+    : { reasonCode: failure.failureReasonCode, error: failure.failureDiagnostic };
+}
+
+function failureReason(result: ModelRouteProcessResult, adapter: ReviewHostAdapter): { reasonCode: string; error: string } {
   if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)\b|could not resolve (?:host|proxy)|proxy (?:connection|authentication) failed|failed to (?:connect|fetch)/i.test(result.stderr)) {
     return { reasonCode: 'model-route-network', error: 'The isolated review host could not reach its network service. Check the host connection and proxy settings, then rerun the gate.' };
   }
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
+  const envelope = adapter.parseEnvelope(result.stdout);
+  if (envelope && 'failureReasonCode' in envelope) return hostEnvelopeFailure(envelope);
   if (inspectionPolicyBlocked(result)) {
     return {
       reasonCode: 'model-route-policy-blocked',
@@ -1029,14 +1040,6 @@ function failureReason(result: ModelRouteProcessResult): { reasonCode: string; e
 export async function resolveModelReviewHead(repoRoot: string): Promise<string> {
   const result = await execFileAsync('git', ['-C', repoRoot, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
   return result.stdout.trim();
-}
-
-export function maxTurnsReached(result: Pick<ModelRouteProcessResult, 'stdout' | 'stderr'>): boolean {
-  const text = `${result.stdout}\n${result.stderr}`;
-  return /\berror_max_turns\b|\bmax_turns_exceeded\b/i.test(text)
-    || /\bturn limit\s+(?:reached|exceeded|exhausted)\b/i.test(text)
-    || /\bmax(?:imum)?[_\s-]+turns?\b[^.\n]{0,60}\b(?:reached|exceeded|exhausted|limit)\b/i.test(text)
-    || /\b(?:reached|exceeded|exhausted)\b[^.\n]{0,60}\bmax(?:imum)?[_\s-]+turns?\b/i.test(text);
 }
 
 function isExplicitlyIncompleteResult(value: unknown, input: ModelReviewRunInput): boolean {
@@ -1269,21 +1272,20 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       );
     }
     if (result.exitCode !== 0 || result.timedOut) {
-      const failure = failureReason(result);
+      const failure = failureReason(result, adapter);
       return captureRawOutput(store, input, result, failure.reasonCode, failure.error);
     }
     if (!result.stdinDelivered) return captureRawOutput(store, input, result, 'model-route-prompt-delivery', 'Model review route did not confirm complete prompt delivery.');
     const parsedHostOutput = adapter.parseEnvelope(result.stdout);
     if (!parsedHostOutput) {
-      if (maxTurnsReached(result)) return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
       return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned no supported final-response envelope.');
     }
     if ('failureReasonCode' in parsedHostOutput) {
-      return captureRawOutput(store, input, result, parsedHostOutput.failureReasonCode, parsedHostOutput.failureDiagnostic);
+      const failure = hostEnvelopeFailure(parsedHostOutput);
+      return captureRawOutput(store, input, result, failure.reasonCode, failure.error);
     }
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {
-      if (maxTurnsReached(result)) return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
       return captureRawOutput(store, input, result, 'model-route-malformed-json', 'Model review route final response was not exactly one JSON object.');
     }
     const provenance: LocalReviewRunnerProvenance = {
@@ -1331,6 +1333,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         if (priorResultStrict.rejection.rule === 'incomplete-result') {
           return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
         }
+        if (priorResultStrict.rejection.rule === 'no-inspection') {
+          return captureRawOutput(store, input, result, 'model-route-no-inspection', `Model review route returned a transient Review object with no inspection behind it: ${routedLaneRejectionMessage(priorResultStrict.rejection)} ${NO_INSPECTION_NEXT_STEP}`);
+        }
         return captureRawOutput(store, input, result, 'model-route-contract-mismatch', `Model review route returned an invalid transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)}`);
       }
     }
@@ -1357,6 +1362,9 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       if (rejection.rule === 'incomplete-result') {
         return captureRawOutput(store, input, result, 'model-route-incomplete-result', `${routedLaneRejectionMessage(rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
       }
+      if (rejection.rule === 'no-inspection') {
+        return captureRawOutput(store, input, result, 'model-route-no-inspection', `${routedLaneRejectionMessage(rejection)} ${NO_INSPECTION_NEXT_STEP}`);
+      }
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }
     const evidence = strictResult.evidence;
@@ -1369,19 +1377,19 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       finalEvidence = asInconclusive(finalEvidence, []);
       outcomeReasonCode = 'model-route-finding-missing-at-head';
     }
-    const reportedToolCalls = parsedHostOutput.successfulToolCalls;
-    if (typeof reportedToolCalls === 'number' && reportedToolCalls === 0
-      && (finalEvidence.commands.length > 0 || finalEvidence.toolsUsed.length > 0 || finalEvidence.findings.length > 0)) {
-      // The host's own record shows no successful tool call, so claimed
-      // commands, tools, and findings have no inspected basis.
+    if (parsedHostOutput.successfulToolCalls === 0) {
+      // The host's own record shows no successful tool call, so no verdict
+      // has an inspected basis: a passed lane does not pass, and claimed
+      // commands, tools, and findings are withheld.
       const claimed = [
         finalEvidence.commands.length > 0 ? `${finalEvidence.commands.length} command(s)` : null,
         finalEvidence.toolsUsed.length > 0 ? `${finalEvidence.toolsUsed.length} tool(s)` : null,
         finalEvidence.findings.length > 0 ? `${finalEvidence.findings.length} finding(s)` : null,
-      ].filter((entry): entry is string => entry !== null).join(', ');
+      ].filter((entry): entry is string => entry !== null);
+      const claimedText = claimed.length > 0 ? `the result claimed ${claimed.join(', ')}` : `the result claimed a ${finalEvidence.status} verdict`;
       finalEvidence = asInconclusive(
         { ...finalEvidence, findings: [] },
-        [`Host reported 0 successful tool calls while the result claimed ${claimed}; the claimed findings are withheld and the lane is inconclusive (model-route-no-successful-tool-calls).`],
+        [`Host reported 0 successful tool calls while ${claimedText}; any claimed findings are withheld and the lane is inconclusive (model-route-no-successful-tool-calls).`],
       );
       outcomeReasonCode = 'model-route-no-successful-tool-calls';
     }

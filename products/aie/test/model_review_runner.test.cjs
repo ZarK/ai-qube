@@ -2203,33 +2203,45 @@ describe('finding locations at the reviewed head', () => {
     assert.equal(result.reasonCode, 'model-route-no-successful-tool-calls');
   });
 
-  it('keeps a passed lane that claims no tools, commands, or findings when the host reports 0 tool calls', async () => {
+  it('does not pass a lane with no tools, no commands, and no findings, and names the missing inspection', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-no-claims-'));
     writeFileSync(join(repoRoot, 'README.md'), 'fixture\n');
     const body = {
       ...laneResult(),
+      summary: 'Inspected the complete scope at the current head.',
+      completeness: 'Inspected the complete scope at the current head.',
       commands: [],
       toolsUsed: [],
       artifacts: [{ kind: 'source', path: 'README.md', sha256: null }],
     };
-    const result = await runModelReview({
-      ...reviewInput(repoRoot, 'codex'),
-      resolveExecutable: async () => 'codex.exe',
-      runProcess: async () => ({
-        exitCode: 0,
-        stderr: '',
-        timedOut: false,
-        stdinDelivered: true,
-        stdout: [
-          JSON.stringify({ type: 'thread.started', thread_id: 'codex-no-claims' }),
-          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(body) } }),
-        ].join('\n'),
-      }),
-    });
+    const result = await grokRun(repoRoot, body);
+
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-no-inspection');
+    assert.match(result.error, /no tools and no commands/);
+    assert.match(result.error, /field: toolsUsed/);
+    assert.match(result.error, /Rerun the lane so the reviewer reads the changed files/);
+    assert.doesNotMatch(result.error, /split the pull request/, 'a missing inspection is not repaired by splitting the change');
+  });
+
+  it('does not pass a lane with real tools and no findings when the host reports 0 successful tool calls', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-zero-count-'));
+    const result = await grokRun(repoRoot, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, { toolCalls: 0 });
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.equal(result.reasonCode, 'model-route-no-successful-tool-calls');
+    assert.match(result.evidence.summary, /Host reported 0 successful tool calls while the result claimed 1 tool\(s\)/);
+  });
+
+  it('accepts a passed lane with no findings, real tools, and a host tool-call count above 0', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-counted-tools-'));
+    const result = await grokRun(repoRoot, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, { toolCalls: 3 });
 
     assert.equal(result.error, null);
     assert.equal(result.reasonCode, null);
     assert.equal(result.evidence.status, 'passed');
+    assert.deepEqual(result.evidence.findings, []);
   });
 });
 
@@ -2275,7 +2287,7 @@ describe('incomplete results and the turn limit', () => {
     noTools.coverage = [{ area: 'code-quality', status: 'finding' }];
     const noToolsResult = await grokResult(noTools);
     assert.equal(noToolsResult.evidence, null);
-    assert.equal(noToolsResult.reasonCode, 'model-route-incomplete-result');
+    assert.equal(noToolsResult.reasonCode, 'model-route-no-inspection');
     assert.match(noToolsResult.error, /field: toolsUsed/);
   });
 
@@ -2308,15 +2320,47 @@ describe('incomplete results and the turn limit', () => {
     assert.match(result.error, /model-route-max-turns/);
   });
 
-  it('names the max-turns code when the host process stops on max turns', async () => {
-    const result = await runModelReview({
-      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-max-turns-exit-')), 'grok-build'),
-      resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 1, stderr: 'Error: max turns reached', stdout: '', timedOut: false, stdinDelivered: true }),
+  function claudeRun(processResult) {
+    return runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-max-turns-claude-')), 'claude-code'),
+      resolveExecutable: async () => 'claude.exe',
+      runProcess: async () => ({ stderr: '', timedOut: false, stdinDelivered: true, ...processResult }),
     });
-    assert.equal(result.evidence, null);
-    assert.equal(result.reasonCode, 'model-route-max-turns');
-    assert.notEqual(result.reasonCode, 'model-route-process-failed');
+  }
+  const claudeMaxTurns = JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 8, session_id: 'claude-max-turns' });
+
+  it('names the max-turns code when the host reports max turns in its structured output', async () => {
+    for (const exitCode of [1, 0]) {
+      const result = await claudeRun({ exitCode, stdout: claudeMaxTurns });
+      assert.equal(result.evidence, null);
+      assert.equal(result.reasonCode, 'model-route-max-turns', `exit code ${exitCode}`);
+      assert.match(result.error, /model-route-max-turns/);
+    }
+  });
+
+  it('never reads max turns from host or model text', async () => {
+    const phrase = 'Error: max turns limit reached (error_max_turns)';
+    const grokExit = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-max-turns-text-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 1, stderr: phrase, stdout: phrase, timedOut: false, stdinDelivered: true }),
+    });
+    assert.equal(grokExit.reasonCode, 'model-route-process-failed');
+
+    const malformed = await claudeRun({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: `The review found that max turns limit reached is handled. ${phrase}` }) });
+    assert.equal(malformed.evidence, null);
+    assert.equal(malformed.reasonCode, 'model-route-malformed-json');
+
+    const noEnvelope = await claudeRun({ exitCode: 0, stdout: `max turns limit reached\n${phrase}`, stderr: phrase });
+    assert.equal(noEnvelope.evidence, null);
+    assert.equal(noEnvelope.reasonCode, 'model-route-output-envelope');
+  });
+
+  it('reports a timed-out run as a timeout even when its output names max turns', async () => {
+    const quoted = await claudeRun({ exitCode: 1, timedOut: true, stdout: 'max turns limit reached', stderr: 'max turns limit reached' });
+    assert.equal(quoted.reasonCode, 'model-route-timeout');
+    const structured = await claudeRun({ exitCode: 1, timedOut: true, stdout: claudeMaxTurns });
+    assert.equal(structured.reasonCode, 'model-route-timeout');
   });
 
   it('rejects a passed result that calls itself unfinished even with a because clause', async () => {

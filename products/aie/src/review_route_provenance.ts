@@ -21,6 +21,7 @@ export function reviewRouteReasonMessage(code: string): string {
   if (code === 'model-route-policy-blocked') return 'The selected host rejected a required read-only inspection command.';
   if (code === 'model-route-max-turns') return 'The selected host reached its configured turn limit before finishing the lane.';
   if (code === 'model-route-incomplete-result') return 'The selected host returned an incomplete result that is not a finished review.';
+  if (code === 'model-route-no-inspection') return 'The selected host returned a verdict with no tool and no command behind it.';
   if (code === 'model-route-authentication') return 'The selected Review route is not authenticated.';
   if (code === 'model-route-timeout') return 'The selected Review route exceeded its execution time limit.';
   if (code === 'model-route-network') return 'The selected Review host could not reach its network service.';
@@ -41,6 +42,7 @@ const REVIEW_ROUTE_REASON_CODES = new Set([
   'model-route-model-unsupported',
   'model-route-multiple-terminal',
   'model-route-network',
+  'model-route-no-inspection',
   'model-route-nonterminal-result',
   'model-route-output-envelope',
   'model-route-policy-blocked',

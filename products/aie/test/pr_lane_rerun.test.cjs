@@ -152,8 +152,8 @@ describe('pr lane rerun', () => {
     config.reviewMode = 'isolated';
     config.reviewAdapter = 'local';
     config.reviewProfile = 'local-focused';
-    config.reviewRoute = { host: 'grok-build', tier: 'review', timeoutSeconds: 60, maxTurns: 4 };
-    config.reviewModels.review['grok-build'] = { model: 'grok-4.5', effort: null };
+    config.reviewRoute = { host: 'claude-code', tier: 'review', timeoutSeconds: 60, maxTurns: 4 };
+    config.reviewModels.review['claude-code'] = { model: 'claude-test', effort: null };
     config.reviewLanes = [defaultFreshSetupLanes().find(lane => lane.id === 'code-quality')];
     let mode = 'incomplete';
     let executions = 0;
@@ -166,13 +166,13 @@ describe('pr lane rerun', () => {
       shadow: false,
       dryRun: false,
       changedPaths: ['src/index.ts'],
-      resolveModelHost: async () => 'grok.exe',
+      resolveModelHost: async () => 'claude.exe',
       resolveModelHead: async () => headSha,
-      routeProbe: () => ({ host: 'grok-build', model: 'grok-4.5', status: 'ready', executable: 'grok.exe', version: 'test', modelListed: true, diagnostic: null, resolved: 'grok.exe' }),
+      routeProbe: () => ({ host: 'claude-code', model: 'claude-test', status: 'ready', executable: 'claude.exe', version: 'test', modelListed: null, diagnostic: null, resolved: 'claude.exe' }),
       modelRouteProcess: async invocation => {
         executions += 1;
-        if (mode === 'max-turns') return { exitCode: 1, stderr: 'Error: max turns reached', stdout: '', timedOut: false, stdinDelivered: true };
-        const prompt = readFileSync(invocation.promptPath, 'utf8');
+        if (mode === 'max-turns') return { exitCode: 1, stderr: '', stdout: JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 4 }), timedOut: false, stdinDelivered: true };
+        const prompt = invocation.stdin ?? '';
         const areas = ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || 'code-quality').split(', ');
         const body = {
           issueNumber: 551, prNumber: 12, headSha, lane: 'code-quality',
@@ -187,7 +187,7 @@ describe('pr lane rerun', () => {
           coverage: areas.map(area => ({ area, status: 'not-inspected' })),
           preconditions: [],
         };
-        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'incomplete-session' }) };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(body), session_id: 'incomplete-session' }) };
       },
     };
 

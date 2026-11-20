@@ -436,6 +436,8 @@ export interface GitHubRoundSummaryPublishInput {
   round: string;
   issueNumber: number;
   expectedLanes: readonly string[];
+  /** Current-head lane results of this round; they replace any earlier lane list for the head in the status comment. */
+  lanes: readonly ReviewRoundStatusLane[];
   verdict: GitHubLocalReviewRecommendation;
   /** Fully rendered markdown body, including the embedded qube-pr-review-summary marker, ready to publish verbatim. */
   body: string;
@@ -2954,6 +2956,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         headSha: input.headSha,
         verdict: input.verdict,
         complete: true,
+        lanes: input.lanes,
         trustedMarkerAuthor,
         ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
       });
@@ -3588,7 +3591,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     headSha: string;
     verdict: string;
     complete: boolean;
-    lanes?: readonly ReviewRoundStatusLane[];
+    lanes: readonly ReviewRoundStatusLane[];
     trustedMarkerAuthor: string;
     ghOptions: { cwd?: string; exec?: GitHubReviewProviderOptions['exec']; token?: string };
   }): Promise<{ body: string; url: string | null }> {
@@ -3605,7 +3608,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       head: input.headSha,
       verdict: input.verdict,
       ...(input.complete ? { complete: true } : { complete: false }),
-      ...(input.lanes ? { lanes: [...input.lanes] } : {}),
+      lanes: [...input.lanes],
     };
     const rounds = [
       ...prior.rounds.filter(round => round.head !== input.headSha),

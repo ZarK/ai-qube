@@ -375,7 +375,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
       commands: Array.isArray(raw.commands) ? raw.commands.filter((item): item is string => typeof item === 'string') : [],
       findings: Array.isArray(raw.findings) ? raw.findings : [],
     });
-    if (incomplete) throw laneEvidenceFailure(path, `the lane result is incomplete (model-route-incomplete-result): ${incomplete.detail}; the lane is not passed.`);
+    if (incomplete) throw laneEvidenceFailure(path, `the lane result is incomplete (${incomplete.reasonCode}): ${incomplete.detail}; the lane is not passed.`);
   }
   const recommendation = readRecommendation(raw.recommendation ?? raw.status);
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
