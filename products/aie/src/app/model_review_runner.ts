@@ -1075,8 +1075,8 @@ export async function resolveModelReviewCheckoutState(repoRoot: string): Promise
     timeout: 30_000,
     windowsHide: true,
   });
-  // Review input diff files are written and removed by QUBE for each lane run,
-  // and parallel lanes write and remove their own folders while the others run.
+  // The gate writes one review input folder for all lanes without shell and
+  // removes it after the routed batch, so it is not a checkout change.
   const status = result.stdout.split('\0').filter(record => !record.startsWith('? ') || (!isHostScratchPath(record.slice(2)) && !isReviewInputPath(record.slice(2)))).join('\0');
   const hash = createHash('sha256');
   hash.update('status\0').update(status);
