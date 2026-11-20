@@ -470,7 +470,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
         publish: { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: `Carried-forward lane publishing is disabled by policy; local carried evidence for ${options.lane} satisfies the gate.` },
       };
     }
-    const deltaPaths = gitDeltaPathsSync(repoRoot, carriedForward, headSha);
+    const deltaPaths = options.carryForwardScope ? gitDeltaPathsSync(repoRoot, options.carryForwardScope.baseRef, carriedForward, headSha) : null;
     if (deltaPaths === null) {
       throw new Error(`publish lane review failed. Likely cause: the carried-forward delta from ${carriedForward} could not be verified with git. Next action: rerun the lane review for the current head instead of carrying it forward.`);
     }

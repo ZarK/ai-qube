@@ -1,6 +1,7 @@
 'use strict';
 
 const { describe, it } = require('node:test');
+const { appendFileSync } = require('node:fs');
 const {
   createHash,
   cloneGitRepo,
@@ -994,6 +995,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
     const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    appendFileSync(join(repo, '.git', 'info', 'exclude'), '.qube/aie/reviews/\n');
     const evidence = localEvidence({ headSha: priorHead });
     evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
       ...lane,
@@ -1338,6 +1341,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
     const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    appendFileSync(join(repo, '.git', 'info', 'exclude'), '.qube/aie/reviews/\n');
     const evidence = localEvidence({ headSha: priorHead });
     const base = evidence.lanes.find(lane => lane.id === 'code-quality');
     const laneFor = id => ({
@@ -1387,6 +1392,22 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
     const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    appendFileSync(join(repo, '.git', 'info', 'exclude'), '.qube/aie/reviews/\n');
+    // The configuration file in the head delta activates risk cards; the prior
+    // review recorded the same command-supplied fragments, so only the
+    // context mode decides which lanes carry forward.
+    const { formatRiskCardReviewerFragment, selectRiskCards } = require('../dist/risk_cards/index.js');
+    const configFragments = selectRiskCards({ paths: ['.qube/aie/config.json'] }).map(card => formatRiskCardReviewerFragment(card));
+    assert.ok(configFragments.length > 0, 'fixture must activate risk cards');
+    const stackFor = id => promptStack('codex', id, [`Run local review lane ${id}.`], configFragments).promptStack.map(fragment => ({
+      id: fragment.id,
+      source: fragment.source,
+      sourceCategory: fragment.sourceCategory,
+      path: fragment.path,
+      sha256: fragment.sha256,
+      trust: fragment.trust,
+    }));
     const evidence = localEvidence({ headSha: priorHead });
     const base = evidence.lanes.find(lane => lane.id === 'code-quality');
     const laneFor = id => ({
@@ -1394,8 +1415,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
       id,
       summary: `${id} reviewed`,
       artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/${id}.json`, sha256: null }],
-      promptStack: promptStackForLane(id),
-      runnerProvenance: { ...base.runnerProvenance, promptStackHash: promptStackHash(promptStackForLane(id)) },
+      promptStack: stackFor(id),
+      runnerProvenance: { ...base.runnerProvenance, promptStackHash: promptStackHash(stackFor(id)) },
       contextReviewed: [
         { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
         { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
@@ -1435,6 +1456,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
     const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    appendFileSync(join(repo, '.git', 'info', 'exclude'), '.qube/aie/reviews/\n');
     const evidence = localEvidence({ headSha: priorHead });
     const base = evidence.lanes.find(lane => lane.id === 'code-quality');
     evidence.lanes = [{
@@ -1481,6 +1504,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
     const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    appendFileSync(join(repo, '.git', 'info', 'exclude'), '.qube/aie/reviews/\n');
 
     const issueBody = 'status success failed provider capability fixture test oracle';
     const prTitle = 'Review me';

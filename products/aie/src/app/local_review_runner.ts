@@ -409,6 +409,7 @@ async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInp
   });
   const decision = await evaluateCarryForwardDecision({
     repoRoot: input.repoRoot,
+    baseRef: `${config.baseRemote}/${config.baseBranch}`,
     issueNumber,
     prNumber: input.prNumber,
     headSha: input.headSha,
@@ -554,6 +555,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
   // evidence recorded the same command-supplied risk-card fragment identity as the current head.
   const decision = await evaluateCarryForwardDecision({
     repoRoot: input.repoRoot,
+    baseRef: `${config.baseRemote}/${config.baseBranch}`,
     issueNumber,
     prNumber: input.prNumber,
     headSha: input.headSha,
