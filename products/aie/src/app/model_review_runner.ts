@@ -1002,6 +1002,8 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
   return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
+const NO_INSPECTION_NEXT_STEP = 'The lane is not passed (model-route-no-inspection): the result names no tool and no command that inspected the change. Rerun the lane so the reviewer reads the changed files with its tools.';
+
 const MAX_TURNS_ERROR = 'Model review route reached its configured turn limit (model-route-max-turns) before finishing the lane; the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.';
 
 function hostEnvelopeFailure(failure: ReviewHostEnvelopeFailure): { reasonCode: string; error: string } {
@@ -1328,9 +1330,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         if (priorResultStrict.evidence) {
           return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
-        if (priorResultStrict.rejection.rule === 'incomplete-result' || priorResultStrict.rejection.rule === 'no-inspection') {
-          const reasonCode = `model-route-${priorResultStrict.rejection.rule}`;
-          return captureRawOutput(store, input, result, reasonCode, `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (${reasonCode}). Rerun the lane, make the change smaller, or split the pull request.`);
+        if (priorResultStrict.rejection.rule === 'incomplete-result') {
+          return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
+        }
+        if (priorResultStrict.rejection.rule === 'no-inspection') {
+          return captureRawOutput(store, input, result, 'model-route-no-inspection', `Model review route returned a transient Review object with no inspection behind it: ${routedLaneRejectionMessage(priorResultStrict.rejection)} ${NO_INSPECTION_NEXT_STEP}`);
         }
         return captureRawOutput(store, input, result, 'model-route-contract-mismatch', `Model review route returned an invalid transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)}`);
       }
@@ -1355,9 +1359,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       if (rejection.rule === 'artifact-digest-invalid') {
         return captureRawOutput(store, input, result, 'model-route-artifact-digest', routedLaneRejectionMessage(rejection));
       }
-      if (rejection.rule === 'incomplete-result' || rejection.rule === 'no-inspection') {
-        const reasonCode = `model-route-${rejection.rule}`;
-        return captureRawOutput(store, input, result, reasonCode, `${routedLaneRejectionMessage(rejection)} The lane is not passed (${reasonCode}). Rerun the lane, make the change smaller, or split the pull request.`);
+      if (rejection.rule === 'incomplete-result') {
+        return captureRawOutput(store, input, result, 'model-route-incomplete-result', `${routedLaneRejectionMessage(rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
+      }
+      if (rejection.rule === 'no-inspection') {
+        return captureRawOutput(store, input, result, 'model-route-no-inspection', `${routedLaneRejectionMessage(rejection)} ${NO_INSPECTION_NEXT_STEP}`);
       }
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }

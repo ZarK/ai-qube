@@ -2220,6 +2220,8 @@ describe('finding locations at the reviewed head', () => {
     assert.equal(result.reasonCode, 'model-route-no-inspection');
     assert.match(result.error, /no tools and no commands/);
     assert.match(result.error, /field: toolsUsed/);
+    assert.match(result.error, /Rerun the lane so the reviewer reads the changed files/);
+    assert.doesNotMatch(result.error, /split the pull request/, 'a missing inspection is not repaired by splitting the change');
   });
 
   it('does not pass a lane with real tools and no findings when the host reports 0 successful tool calls', async () => {
