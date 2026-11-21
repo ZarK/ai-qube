@@ -12,8 +12,10 @@ import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
 import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
-import { createGateReviewInput } from './review_input.js';
-import { resolveModelHostExecutable, routeHasShell, runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
+import { createGateReviewInput, type ReviewInputFile, type ReviewInputScope } from './review_input.js';
+import { calculateReviewBudget, measureReviewInput, type ReviewBudget, type ReviewInputSize } from './review_budget.js';
+import { mergeLaneContinuation } from './lane_continuation.js';
+import { expectedCoverageAreas, resolveModelHostExecutable, routeHasShell, runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { reviewModeOf } from '../review_mode.js';
@@ -50,6 +52,8 @@ export interface LocalReviewLaneRun {
   spawnContract: LocalReviewSpawnContract | null;
   reviewScope: ReviewScopeSelection | null;
   route: ModelReviewRoutePlan | null;
+  /** Turn budget and timeout calculated from this lane's review input; null for lanes without a model route. */
+  budget: ReviewBudget | null;
   routeProbe?: {
     status: 'ready' | 'blocked';
     reasonCode: string | null;
@@ -244,14 +248,17 @@ export function resolveDistinctFailoverReviewPlan(config: Config, primary: Model
 
 // Host faults that rerun on the configured backup route in the same gate
 // run instead of waiting for the persisted fault threshold.
-const SAME_RUN_FAILOVER_REASONS = new Set(['model-route-policy-blocked', 'model-route-max-turns', 'model-route-incomplete-result', 'model-route-no-inspection']);
+const SAME_RUN_FAILOVER_REASONS = new Set(['model-route-policy-blocked', 'model-route-max-turns', 'model-route-incomplete-result', 'model-route-no-inspection', 'model-route-capacity-stop']);
 
 export function hostFailoverSubstitution(primaryHost: string, reasonCode: string | undefined): string {
   if (reasonCode === 'model-route-policy-blocked') {
     return `The isolated ${primaryHost} host rejected a required read-only inspection command; the lane uses the configured second host.`;
   }
   if (reasonCode === 'model-route-max-turns') {
-    return `The isolated ${primaryHost} host reached its configured turn limit (model-route-max-turns); the lane uses the configured second host.`;
+    return `The isolated ${primaryHost} host used its calculated turn budget (model-route-max-turns); the lane uses the configured second host.`;
+  }
+  if (reasonCode === 'model-route-capacity-stop') {
+    return `The isolated ${primaryHost} host returned inconclusive for capacity without inspecting the change (model-route-capacity-stop); the lane uses the configured second host.`;
   }
   if (reasonCode === 'model-route-incomplete-result') {
     return `The isolated ${primaryHost} host returned an incomplete result (model-route-incomplete-result); the lane uses the configured second host.`;
@@ -381,7 +388,14 @@ interface RoutedLaneJob {
   path: string;
   runner: ReviewLanePolicy['runner'];
   reviewScope: ReviewScopeSelection;
-  run: () => Promise<RoutedOutcome>;
+  /** Runs the lane over its full scope, or as a continuation over only the given files. */
+  run: (continuation?: LaneContinuationPart) => Promise<RoutedOutcome>;
+}
+
+interface LaneContinuationPart {
+  part: number;
+  files: readonly ReviewInputFile[];
+  earlierInspectedFiles: number;
 }
 
 // The identity covers every configured route parameter that changes execution
@@ -465,6 +479,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
       spawnContract: null,
       reviewScope: reviewScope ?? null,
       route,
+      budget: null,
       ...(routeProbeSummary ? { routeProbe: routeProbeSummary } : {}),
       resolvedExecutable,
       modelTier: plannedTier,
@@ -509,6 +524,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     spawnContract,
     reviewScope: reviewScope ?? null,
     route,
+    budget: null,
     ...(routeProbeSummary ? { routeProbe: routeProbeSummary } : {}),
     resolvedExecutable,
     summary,
@@ -755,6 +771,19 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   // Lanes without shell share one review input per gate. It is prepared on
   // first use and removed after every routed lane, including failover reruns.
   const gateReviewInput = createGateReviewInput(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`, input.headSha);
+  // Each routed lane's budget follows its own review input: the full diff,
+  // or on a delta round only the delta files since the approved head.
+  const reviewInputSizes = new Map<string, Promise<ReviewInputSize>>();
+  const laneInputSize = (scope: ReviewInputScope, lane: LocalReviewLaneId): Promise<ReviewInputSize> => {
+    const coverageAreas = expectedCoverageAreas({ lane }).length;
+    const key = JSON.stringify([scope.scope, scope.baseHeadSha, [...new Set(scope.deltaPaths)].sort(), coverageAreas]);
+    let size = reviewInputSizes.get(key);
+    if (!size) {
+      size = measureReviewInput({ repoRoot: input.repoRoot, baseRef: `${config.baseRemote}/${config.baseBranch}`, headSha: input.headSha, scope, changedPaths: input.changedPaths ?? [], coverageAreas });
+      reviewInputSizes.set(key, size);
+    }
+    return size;
+  };
   const dryRunExecutables = new Map<RoutedReviewHostId, ModelHostExecutable | null>();
   const dryRunProbeChecks = new Map<string, RouteProbeCheck>();
   const dryRunProbeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck => {
@@ -885,7 +914,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const plannedSummary = dryRunProbeFailure ?? (route
         ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ` The preferred route failed with ${fallbackReason}; this lane would use the configured second host.` : ''}`
         : runner === 'local-host' ? `${reviewerDisplayName(reviewHost)} local-host lane would return candidate JSON for main-session validation, evidence writing, and publishing.` : 'Local-command lane would run and write current-head evidence.');
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, dryRunProbeFailure ? 'unavailable' : 'planned', path, plannedSummary, dryRunProbeReason, cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope, resolvedExecutable, dryRunRouteProbe ?? undefined);
+      const plannedBudget = route ? calculateReviewBudget(route, await laneInputSize(plannedScope, lane)) : null;
+      const plannedRun: LocalReviewLaneRun = { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, dryRunProbeFailure ? 'unavailable' : 'planned', path, plannedSummary, dryRunProbeReason, cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope, resolvedExecutable, dryRunRouteProbe ?? undefined), budget: plannedBudget };
       if (!input.dryRun && command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';
@@ -945,37 +975,48 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             path,
             runner,
             reviewScope: plannedScope,
-            run: async () => runModelReview({
-              plan: job.route,
-              selectedPlan: job.primaryRoute ?? job.route,
-              transportModel: job.probedModel,
-              transport: job.transport,
-              routeReasonCode: job.fallbackReason,
-              implementationHost: configuredImplementationHost(config),
-              repoRoot: input.repoRoot,
-              lane: jobLane,
-              issueNumber: jobIssueNumber,
-              prNumber: input.prNumber,
-              headSha: input.headSha,
-              profile,
-              promptStackHash: jobPromptStackHash,
-              promptText: rendered.text,
-              promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
+            run: async continuation => {
               // The route can change through probe fallback or failover, so
-              // shell capability is read at execution time. Lanes without
-              // shell share the one diff the gate prepares for their range:
-              // the full diff, or the delta since the lane's approved head.
-              ...(routeHasShell({ plan: job.route }) ? {} : { reviewInputFiles: await gateReviewInput.files(plannedScope) ?? undefined }),
-              reviewScope: plannedScope,
-              routeSource: job.routeSource,
-              // The probed resolution is reused at spawn time so the executed
-              // CLI is exactly the one the probe verified; an injected resolver
-              // never overrides a probe-bound executable.
-              resolveExecutable: job.probedExecutable !== null ? async () => job.probedExecutable! : input.resolveModelHost,
-              resolveHead: input.resolveModelHead,
-              runProcess: input.modelRouteProcess,
-              onProgress: input.onReviewProgress,
-            }),
+              // shell capability and the budget minimums are read at
+              // execution time. Lanes without shell share the one diff the
+              // gate prepares for their range: the full diff, or the delta
+              // since the lane's approved head. A continuation run gets only
+              // the files the earlier runs did not read.
+              const hasShell = routeHasShell({ plan: job.route });
+              const reviewInputFiles = hasShell ? undefined : (continuation ? continuation.files : await gateReviewInput.files(plannedScope) ?? undefined);
+              const size: ReviewInputSize = continuation
+                ? { files: continuation.files.length, changedLines: continuation.files.reduce((sum, file) => sum + file.added + file.removed, 0), coverageAreas: expectedCoverageAreas({ lane: jobLane }).length }
+                : await laneInputSize(plannedScope, jobLane);
+              return runModelReview({
+                plan: job.route,
+                selectedPlan: job.primaryRoute ?? job.route,
+                transportModel: job.probedModel,
+                transport: job.transport,
+                routeReasonCode: job.fallbackReason,
+                implementationHost: configuredImplementationHost(config),
+                repoRoot: input.repoRoot,
+                lane: jobLane,
+                issueNumber: jobIssueNumber,
+                prNumber: input.prNumber,
+                headSha: input.headSha,
+                profile,
+                promptStackHash: jobPromptStackHash,
+                promptText: rendered.text,
+                promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
+                budget: calculateReviewBudget(job.route, size),
+                ...(continuation ? { continuation: { part: continuation.part, earlierInspectedFiles: continuation.earlierInspectedFiles } } : {}),
+                ...(reviewInputFiles ? { reviewInputFiles } : {}),
+                reviewScope: plannedScope,
+                routeSource: job.routeSource,
+                // The probed resolution is reused at spawn time so the executed
+                // CLI is exactly the one the probe verified; an injected resolver
+                // never overrides a probe-bound executable.
+                resolveExecutable: job.probedExecutable !== null ? async () => job.probedExecutable! : input.resolveModelHost,
+                resolveHead: input.resolveModelHead,
+                runProcess: input.modelRouteProcess,
+                onProgress: input.onReviewProgress,
+              });
+            },
           };
           routedJobs.push(job);
           lanes.push(plannedRun);
@@ -1032,6 +1073,37 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     }
   }
 
+  // A run that left changed files unread is continued over only those
+  // files, on the same route and in the same gate run, while each run reads
+  // more files. A continuation is not a route fault: it records nothing in
+  // the fault ledger and the merged verdict covers every file a run read.
+  // Only a clean result continues; a result QUBE already downgraded for
+  // another reason keeps that reason.
+  const continueLane = async (job: RoutedLaneJob, first: ModelReviewRunResult): Promise<ModelReviewRunResult> => {
+    let merged = first;
+    if (!merged.evidence || merged.evidence.notInspected.length === 0) return merged;
+    const scopeFiles = await gateReviewInput.files(job.reviewScope) ?? [];
+    let part = 0;
+    while (merged.evidence && merged.reasonCode === null && merged.evidence.notInspected.length > 0) {
+      const unread = new Set(merged.evidence.notInspected);
+      const remaining = scopeFiles.filter(file => unread.has(file.path));
+      if (remaining.length === 0 || remaining.length >= scopeFiles.length) break;
+      part += 1;
+      const continuation = { part, files: remaining, earlierInspectedFiles: scopeFiles.length - remaining.length };
+      let continued = await job.run(continuation);
+      // A host fault on a continuation run fails over like the first run.
+      if (failOverJob(job, continued)) continued = await job.run(continuation);
+      // A continuation that still produces no evidence is the lane outcome:
+      // its fault is recorded, and a checkout change invalidates the batch,
+      // instead of the earlier partial review standing as the lane result.
+      if (!continued.evidence) return continued;
+      const evidence = mergeLaneContinuation(merged.evidence, continued.evidence, remaining.length, scopeFiles.length);
+      merged = { evidence, error: null, reasonCode: continued.reasonCode };
+      if (continued.evidence.notInspected.length >= remaining.length) break;
+    }
+    return merged;
+  };
+
   let runnableJobs = routedJobs;
   const probe = input.routeProbe ?? probeModelRoute;
   const probeChecks = new Map<string, RouteProbeCheck>();
@@ -1046,6 +1118,25 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
     }
     return probeChecks.get(key);
+  };
+  // A host fault in the same-run failover set moves the job to the
+  // configured second host when that host's probe is ready. The first run
+  // and every continuation run use this one rule.
+  const failOverJob = (job: RoutedLaneJob, routed: ModelReviewRunResult | null): boolean => {
+    if (routed?.evidence || !routed?.reasonCode || !SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)) return false;
+    if (job.routeSource !== 'configured' || !config.reviewFailover) return false;
+    const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
+    const fallbackCheck = fallbackPlan ? probeFor(fallbackPlan) : undefined;
+    if (!fallbackPlan || fallbackCheck?.status !== 'ready') return false;
+    const primaryHost = job.primaryRoute?.host ?? job.route.host;
+    job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, routed.reasonCode);
+    job.routeSource = 'fallback';
+    job.host = fallbackPlan.host;
+    job.probedExecutable = fallbackCheck.resolved ?? null;
+    job.probedModel = fallbackCheck.resolvedModel;
+    job.transport = fallbackCheck.transport ?? null;
+    job.fallbackReason = routed.reasonCode;
+    return true;
   };
   if (routedJobs.length > 0 && !input.dryRun) {
     // Every distinct route passes a cheap read-only host probe before any model
@@ -1118,30 +1209,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     try {
       await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
         const job = runnableJobs[jobIndex];
-        if (
-          (!routed || !routed.evidence)
-          && routed?.reasonCode !== null && routed?.reasonCode !== undefined
-          && SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)
-          && job.routeSource === 'configured'
-          && config.reviewFailover
-        ) {
-          const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
-          if (fallbackPlan) {
-            const fallbackCheck = probeFor(fallbackPlan);
-            if (fallbackCheck?.status === 'ready') {
-              const failoverReason = routed.reasonCode;
-              const primaryHost = job.primaryRoute?.host ?? job.route.host;
-              job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, failoverReason);
-              job.routeSource = 'fallback';
-              job.host = fallbackPlan.host;
-              job.probedExecutable = fallbackCheck.resolved ?? null;
-              job.probedModel = fallbackCheck.resolvedModel;
-              job.transport = fallbackCheck.transport ?? null;
-              job.fallbackReason = failoverReason;
-              routed = await job.run();
-            }
-          }
-        }
+        if (failOverJob(job, routed)) routed = await job.run();
+        if (routed?.evidence) routed = await continueLane(job, routed);
         routedOutcomes[jobIndex] = routed;
       });
     } finally {
@@ -1193,7 +1262,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               contextReviewed: [],
               promptStack: [],
               toolsUsed: [],
-              completeness: `No finished review was recorded in the latest run at this head (${reasonCode}); the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.`,
+              completeness: `No finished review was recorded in the latest run at this head (${reasonCode}); the lane is not passed. Rerun the lane.`,
               preconditions: [],
               notInspected: [],
               runnerProvenance: null,
@@ -1218,7 +1287,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       // before clearing the fault tally. A successful fallback must retain its
       // reason after the counter that selected it is reset.
       clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
-      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane));
+      lanes[job.laneSlot] = { ...laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, input.changedPaths ?? [], includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route), laneConfiguredFragments(config, job.lane)), budget: routed.evidence.runnerProvenance?.budget ?? null };
     }
   }
 

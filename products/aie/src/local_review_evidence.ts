@@ -10,7 +10,8 @@ import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evi
 import { redact } from './redact.js';
 import type { ReviewModelTierId } from './core/policy.js';
 import { readHostUsage, type LaneUsage } from './review_usage.js';
-import { splitPullRequestNextAction } from './app/pr_gate_next_action.js';
+import { notInspectedNextAction } from './app/pr_gate_next_action.js';
+import { readReviewBudget, type ReviewBudget } from './app/review_budget.js';
 import { validateDeltaLaneEvidence } from './app/review_delta_scope.js';
 import { incompleteReviewResult } from './review_incomplete.js';
 
@@ -69,6 +70,8 @@ export interface LocalReviewRunnerProvenance {
   isolation: 'read-only' | null;
   invocationId: string | null;
   resultDecodeDiagnostic?: string | null;
+  /** Turn budget and timeout the routed run used, calculated from its review input. */
+  budget?: ReviewBudget | null;
 }
 
 export interface LocalReviewLane {
@@ -167,6 +170,7 @@ interface TrustedLocalHostProvenance {
   route: ReviewRouteProvenance;
   isolation: 'read-only' | null;
   invocationId: string | null;
+  budget: ReviewBudget | null;
 }
 
 interface LocalReviewPublishEvidence {
@@ -474,6 +478,7 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     resultDecodeDiagnostic: value.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
       ? 'cursor-bounded-preface-normalized'
       : null,
+    budget: readReviewBudget(value.budget),
   };
 }
 
@@ -824,6 +829,7 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
       route,
       isolation: parsed.isolation === 'read-only' ? 'read-only' : null,
       invocationId: readNullableString(parsed.invocationId),
+      budget: readReviewBudget(parsed.budget),
     };
   } catch {
     return null;
@@ -853,6 +859,7 @@ function trustedLocalHostBlockers(input: {
     || reviewRouteFingerprint(trusted.route) !== reviewRouteFingerprint(input.provenance.route)
     || trusted.isolation !== input.provenance.isolation
     || trusted.invocationId !== input.provenance.invocationId
+    || JSON.stringify(trusted.budget) !== JSON.stringify(input.provenance.budget ?? null)
   ) blockers.push(`${input.laneId} routed model provenance does not match the trusted host record.`);
   if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
   return blockers;
@@ -1344,7 +1351,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFir
   }
   if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
   if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun the PR gate for one re-review round.';
-  if (status === 'inconclusive' && notInspected.length > 0) return splitPullRequestNextAction(prNumber, notInspected);
+  if (status === 'inconclusive' && notInspected.length > 0) return notInspectedNextAction(prNumber, notInspected);
   if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
   return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;

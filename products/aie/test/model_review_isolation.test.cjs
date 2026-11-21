@@ -66,6 +66,7 @@ it('reports a network reason for resolver failure even when the host then times 
     const result = await runModelReview({
       plan, selectedPlan: plan, repoRoot: root, lane: 'code-quality', issueNumber: 309, prNumber: 310,
       headSha: 'abc123', profile: 'local-focused', promptStackHash: 'hash123', promptText: 'Inspect the diff.', promptStack: [],
+      budget: { maxTurns: 8, timeoutSeconds: 60, files: 2, changedLines: 10, coverageAreas: 1, minimumTurns: 8, minimumTimeoutSeconds: 60 },
       reviewInputFiles: [],
       resolveHead: async () => 'abc123', resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({ exitCode: 1, stdout: '', stderr: 'getaddrinfo ENOTFOUND api.example.invalid', timedOut, stdinDelivered: true }),

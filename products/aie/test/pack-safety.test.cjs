@@ -117,6 +117,7 @@ describe('package publish surface safety', () => {
       promptStackHash: 'packed-prompt-hash',
       promptText: 'Inspect the packed route.',
       promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+      budget: { maxTurns: 8, timeoutSeconds: 60, files: 1, changedLines: 4, coverageAreas: 1, minimumTurns: 8, minimumTimeoutSeconds: 60 },
       reviewInputFiles: [],
       resolveHead: async () => 'packed-head',
       resolveExecutable: async () => 'cursor-agent.exe',

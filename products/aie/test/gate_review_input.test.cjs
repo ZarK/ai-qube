@@ -18,7 +18,7 @@ const {
   requiredTaskContext,
   runPrGate,
 } = require('./support/pr_gate_fixture.cjs');
-const { splitPullRequestNextAction } = require('../dist/app/pr_gate_next_action.js');
+const { notInspectedNextAction } = require('../dist/app/pr_gate_next_action.js');
 
 const DIFF_PATH_PATTERN = /-> (\.qube\/aie\/review-input\/\S+\.diff)/g;
 
@@ -272,7 +272,7 @@ describe('gate review input for routes without shell', () => {
       assert.equal(evidence.reviewScope, 'delta');
       assert.deepEqual(evidence.notInspected, []);
     }
-    assert.doesNotMatch(JSON.stringify(result), /Split the pull request/);
+    assert.doesNotMatch(JSON.stringify(result), /split the pull request/i);
     assert.deepEqual(reviewInputFolders(repo), []);
   });
 
@@ -302,11 +302,12 @@ describe('gate review input for routes without shell', () => {
       assert.equal(evidence.status, 'inconclusive');
       assert.deepEqual(evidence.notInspected, ['src/first.ts']);
     }
-    const splitText = splitPullRequestNextAction(12, ['src/first.ts']);
-    assert.equal(splitText, 'Split the pull request into smaller pull requests so every changed file can be inspected. Files not inspected: src/first.ts. Then rerun `aie pr gate 12`.');
+    const rerunText = notInspectedNextAction(12, ['src/first.ts']);
+    assert.equal(rerunText, 'Rerun `aie pr gate 12`: the gate runs the lane again and continues it over every changed file a run does not read. Files not inspected: src/first.ts.');
     assert.equal(result.localReview.status, 'inconclusive');
-    assert.equal(result.localReview.nextAction, splitText, 'the local review gate uses the shared builder');
-    assert.equal(result.shipReady.nextAction, splitText, 'aie pr gate uses the same shared builder');
+    assert.equal(result.localReview.nextAction, rerunText, 'the local review gate uses the shared builder');
+    assert.equal(result.shipReady.nextAction, rerunText, 'aie pr gate uses the same shared builder');
+    assert.equal(runs, routed.length, 'a run that read none of its files is not continued');
   });
 
   it('never reads Not inspected prose from lane text as files in either gate path', async () => {

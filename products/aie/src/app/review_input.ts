@@ -289,7 +289,7 @@ export function reviewInputPromptLines(files: readonly ReviewInputFile[], deltaB
       ? `Review input diff files for the delta since approved head ${deltaBaseSha} (one per changed file; each line is prefixed with its destination line number):`
       : 'Review input diff files (one per changed file; each line is prefixed with its destination line number):',
     ...files.map(file => `- ${file.path} (+${file.added} -${file.removed}) -> ${file.diffPath}`),
-    'Read each diff file you need with Read before judging it. Record every diff file you read in surfaces using its exact diff path. Any changed file whose diff file is not recorded in surfaces is treated as not inspected: QUBE records those files as not inspected, the lane becomes inconclusive, and the gate will say to split the pull request. If you cannot read every diff file within your turn limit, return status inconclusive instead of guessing.',
+    'Read every diff file listed above with Read before judging it, and record each diff file you read in surfaces using its exact diff path. A changed file whose diff file is not recorded in surfaces is not inspected: QUBE records it and continues this lane over those files in another run, so judge only the files you read and never guess about the others.',
   ];
 }
 

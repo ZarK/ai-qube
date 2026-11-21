@@ -59,6 +59,7 @@ function reviewInput(repoRoot, host = 'grok-build') {
     promptStackHash: 'hash123',
     promptText: 'INSPECT EXACT LANE PROMPT',
     promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+    budget: { maxTurns: 8, timeoutSeconds: 60, files: 2, changedLines: 10, coverageAreas: 1, minimumTurns: 8, minimumTimeoutSeconds: 60 },
     // Most fake-host tests do not exercise review-input preparation; an
     // explicit empty list marks that preparation as already done.
     reviewInputFiles: [],
@@ -262,8 +263,8 @@ describe('model review runner', () => {
     assert.equal(invocation.executable, 'node.exe');
     assert.equal(invocation.args[0], codexScript);
     assert.equal(invocation.stdin, prompt);
-    assert.match(prompt, /at most 8 turns/);
-    assert.match(prompt, /reserve the final turn/);
+    assert.match(prompt, /Your budget for this review input is 8 turns and 60 seconds, calculated from 2 changed files and 10 changed lines in scope/);
+    assert.match(prompt, /keep the final turn for the required JSON result/);
     assert.match(prompt, /If a PowerShell built-in module fails to load/);
     // The prompt must state the exact verdict-consistency and progress-snapshot
     // rules the strict validator enforces, or hosts fail on rules they never saw.
@@ -2070,8 +2071,9 @@ describe('review input for routes without shell', () => {
       prNumber: 310,
       fallback: 'rerun',
     });
-    assert.match(nextAction, /Split the pull request/);
+    assert.match(nextAction, /^Rerun `aie pr gate 310`: the gate runs the lane again and continues it/);
     assert.match(nextAction, /src\/unread\.ts/);
+    assert.doesNotMatch(nextAction, /split|smaller/i);
   });
 
   it('keeps a full-review lane that reads every diff file passed with no not-inspected files', async () => {

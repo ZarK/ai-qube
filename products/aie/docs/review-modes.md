@@ -72,7 +72,7 @@ Plain `aie init . --yes` writes these values. `--defaults --yes` writes the same
 - `policy.reviews.agents` is empty. Isolated review does not request an external review service.
 - `policy.reviews.localAgents` is empty. Isolated review uses `route` and `models`. Host mode writes the installed review hosts here.
 - `policy.reviews.waitMinutes` is `0`. Isolated review does not wait for an external reviewer.
-- `policy.reviews.route` points at the first installed host, tier `review`, `timeoutSeconds` `900`, `maxTurns` `16`.
+- `policy.reviews.route` points at the first installed host, tier `review`, `timeoutSeconds` `900`, `maxTurns` `16`. Both values are minimums, not caps. Each lane run calculates its turn budget and timeout from its review input: the changed files in scope (only the delta files on a delta round), their changed lines, and the coverage areas. A large pull request gets a larger budget. `maxTurns` accepts any integer from 4 and `timeoutSeconds` any integer from 30, with no upper limit. When a run on a route without shell does not read every changed file, the gate continues the lane over the unread files in the same gate run.
 - `policy.reviews.models.review` records the first live catalog model for each installed host that can list models. Setup does not embed model identifiers that can become obsolete.
 - Setup leaves effort unset because the model catalog does not report effort support. You can select another listed model or an effort after init.
 - `policy.reviews.failover` is written only when a second installed host also has a live model.

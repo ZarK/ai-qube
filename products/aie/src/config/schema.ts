@@ -107,6 +107,15 @@ function readBoundedInteger(input: Record<string, unknown>, field: string, defau
   return defaultValue;
 }
 
+function readMinimumInteger(input: Record<string, unknown>, field: string, defaultValue: number, min: number, path: string, errors: ValidationError[]): number {
+  if (!(field in input)) return defaultValue;
+  const value = input[field];
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= min) return value;
+  const errorPath = pathJoin(path, field);
+  errors.push({ kind: 'invalid', path: errorPath, message: `${errorPath} must be an integer of at least ${min}` });
+  return defaultValue;
+}
+
 function readPlainObject(input: Record<string, unknown>, field: string, path: string, errors: ValidationError[]): Record<string, unknown> | undefined {
   if (!(field in input)) return undefined;
   const value = input[field];
@@ -409,10 +418,12 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
   }
   const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
   if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
-  const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
+  // Both values are minimums. Each lane run calculates its own turn budget
+  // and timeout from its review input and never goes below these values.
+  const timeoutSeconds = readMinimumInteger(value, 'timeoutSeconds', 600, 30, path, errors);
   // Fewer than four turns cannot satisfy the routed prompt contract of batched
   // multi-area inspection with the final turn reserved for the JSON result.
-  const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 4, 20, path, errors);
+  const maxTurns = readMinimumInteger(value, 'maxTurns', 8, 4, path, errors);
   return host && tier ? { host, tier, timeoutSeconds, maxTurns } : null;
 }
 
