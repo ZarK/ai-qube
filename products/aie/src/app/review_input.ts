@@ -223,7 +223,9 @@ export async function computeReviewDiff(repoRoot: string, baseRef: string, headS
   try {
     if (deltaBaseSha !== null) {
       if (deltaBaseSha.trim() === '' || deltaBaseSha.startsWith('-')) return { kind: 'unavailable' };
-      return { kind: 'diff', diff: await gitText(repoRoot, ['diff', deltaBaseSha, headSha]) };
+      // Rename detection is off so every delta path, including a path
+      // renamed away, gets its own diff file, as in the delta path list.
+      return { kind: 'diff', diff: await gitText(repoRoot, ['diff', '--no-renames', deltaBaseSha, headSha]) };
     }
     const mergeBase = (await gitText(repoRoot, ['merge-base', baseRef, headSha])).trim();
     if (mergeBase === '') return { kind: 'unavailable' };

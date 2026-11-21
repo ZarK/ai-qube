@@ -21,7 +21,7 @@ const {
   watchModelReviewCheckout,
   isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
-const { writeReviewInputFiles, parseDiffByFile, createGateReviewInput } = require('../dist/app/review_input.js');
+const { writeReviewInputFiles, parseDiffByFile, createGateReviewInput, unreadReviewInputFiles } = require('../dist/app/review_input.js');
 const { createHeadLineCounter } = require('../dist/finding_location.js');
 const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
 const { notInspectedFiles, laneArtifactViolation } = require('../dist/local_review_evidence.js');
@@ -2602,6 +2602,26 @@ describe('review input diff parsing', () => {
     assert.equal(await gateInput.files({ ...deltaScope, baseHeadSha: 'f'.repeat(40) }), null, 'an unknown approved head fails closed');
     gateInput.remove();
     assert.deepEqual(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')), []);
+  });
+
+  it('gives a path renamed away in a delta its own diff file', async () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-rename-');
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'old.ts'), 'export const value = 1;\nexport const other = 2;\n');
+    execFileSync('git', ['add', 'src'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'add old'], { cwd: repoRoot });
+    const approvedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    execFileSync('git', ['mv', 'src/old.ts', 'src/new.ts'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'rename'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
+    try {
+      const files = await gateInput.files({ scope: 'delta', baseHeadSha: approvedHead, deltaPaths: ['src/new.ts', 'src/old.ts'] });
+      assert.deepEqual(files.map(file => file.path).sort(), ['src/new.ts', 'src/old.ts']);
+      assert.deepEqual(unreadReviewInputFiles(files, [files.find(file => file.path === 'src/new.ts').diffPath]), ['src/old.ts']);
+    } finally {
+      gateInput.remove();
+    }
   });
 
   it('fails closed when a no-shell route has no prepared diff and git cannot compute one', async () => {
