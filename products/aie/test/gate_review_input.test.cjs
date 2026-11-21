@@ -1,7 +1,7 @@
 'use strict';
 
 const { describe, it } = require('node:test');
-const { readdirSync, statSync } = require('node:fs');
+const { mkdirSync, readdirSync, statSync } = require('node:fs');
 const {
   assert,
   execFileSync,
@@ -18,6 +18,7 @@ const {
   requiredTaskContext,
   runPrGate,
 } = require('./support/pr_gate_fixture.cjs');
+const { splitPullRequestNextAction } = require('../dist/app/pr_gate_next_action.js');
 
 const DIFF_PATH_PATTERN = /-> (\.qube\/aie\/review-input\/\S+\.diff)/g;
 
@@ -200,6 +201,144 @@ describe('gate review input for routes without shell', () => {
     assert.equal(hostStarts, 0);
     assert.ok(routed.every(lane => lane.status === 'failed' && lane.blocker === 'model-route-review-input-unavailable'), JSON.stringify(routed.map(lane => ({ lane: lane.lane, status: lane.status, blocker: lane.blocker }))));
     assert.deepEqual(reviewInputFolders(repo), []);
+  });
+
+  function commitFiles(repo, files, message) {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(repo, ...path.split('/').slice(0, -1)), { recursive: true });
+      writeFileSync(join(repo, ...path.split('/')), content);
+      execFileSync('git', ['add', path], { cwd: repo, stdio: 'ignore' });
+    }
+    execFileSync('git', ['commit', '-m', message], { cwd: repo, stdio: 'ignore' });
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  }
+
+  /** Approve every lane at a first head, then change one of two files for a delta round. */
+  async function approvedThenDelta(config) {
+    const { repo } = routedRepo();
+    const approvedHead = commitFiles(repo, {
+      'src/first.ts': 'export const first = 1;\n',
+      'src/second.ts': 'export const second = 2;\n',
+    }, 'add two files');
+    const firstGate = makePrExec({ prViews: [cleanLocalPr({ headRefOid: approvedHead })] });
+    const fullPrompts = [];
+    await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: firstGate.exec, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async invocation => {
+        const prompt = readFileSync(invocation.promptPath, 'utf8');
+        fullPrompts.push(prompt);
+        return passingLane(prompt, approvedHead);
+      },
+    });
+    const headSha = commitFiles(repo, { 'src/first.ts': 'export const first = 1;\nexport const fixed = true;\n' }, 'fix first file');
+    return { repo, approvedHead, headSha, fullPrompts };
+  }
+
+  it('gives a delta round only the files changed since the approved head and keeps a lane that reads them passed', async () => {
+    const config = noShellConfig();
+    const { repo, approvedHead, headSha, fullPrompts } = await approvedThenDelta(config);
+    assert.ok(fullPrompts.length >= 1);
+    assert.ok(fullPrompts.every(prompt => /src\/second\.ts/.test(prompt) && /src\/first\.ts/.test(prompt)), 'the full round lists every changed file');
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
+    const deltaPrompts = [];
+    const diffContents = [];
+    const result = await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: fixture.exec, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async invocation => {
+        const prompt = readFileSync(invocation.promptPath, 'utf8');
+        deltaPrompts.push(prompt);
+        for (const match of prompt.matchAll(DIFF_PATH_PATTERN)) diffContents.push(readFileSync(join(repo, match[1]), 'utf8'));
+        return passingLane(prompt, headSha);
+      },
+    });
+
+    assert.ok(deltaPrompts.length >= 1, 'a lane ran a delta round');
+    for (const prompt of deltaPrompts) {
+      assert.match(prompt, new RegExp(`Delta re-review since approved head ${approvedHead}`));
+      assert.match(prompt, new RegExp(`Review input diff files for the delta since approved head ${approvedHead}`));
+      const listed = [...prompt.matchAll(/^- (\S+) \(\+\d+ -\d+\) -> /gm)].map(match => match[1]);
+      assert.deepEqual(listed, ['src/first.ts'], 'the delta input holds only the file changed since the approved head');
+    }
+    for (const content of diffContents) {
+      assert.match(content, /^2 \+export const fixed = true;$/m, 'the diff shows the change since the approved head');
+      assert.match(content, /^1 {2}export const first = 1;$/m, 'the approved line is context, not an added line');
+      assert.doesNotMatch(content, /second/);
+    }
+    const routed = result.localReviewRunner.lanes.filter(lane => lane.route !== null && lane.status === 'completed');
+    assert.equal(routed.length, deltaPrompts.length);
+    for (const lane of routed) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', headSha, `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.status, 'passed');
+      assert.equal(evidence.reviewScope, 'delta');
+      assert.deepEqual(evidence.notInspected, []);
+    }
+    assert.doesNotMatch(JSON.stringify(result), /Split the pull request/);
+    assert.deepEqual(reviewInputFolders(repo), []);
+  });
+
+  it('makes a delta lane that skips the delta diff file inconclusive and names only that file', async () => {
+    const config = noShellConfig();
+    const { repo, headSha } = await approvedThenDelta(config);
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
+    let runs = 0;
+    const result = await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: fixture.exec, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async invocation => {
+        runs += 1;
+        const prompt = readFileSync(invocation.promptPath, 'utf8');
+        const lane = passingLane(prompt, headSha);
+        const body = JSON.parse(JSON.parse(lane.stdout).text);
+        body.surfaces = ['src/second.ts'];
+        body.artifacts = [{ kind: 'file', path: 'src/second.ts', sha256: null }];
+        return { ...lane, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${body.lane}` }) };
+      },
+    });
+
+    assert.ok(runs >= 1);
+    const routed = result.localReviewRunner.lanes.filter(lane => lane.route !== null && lane.status === 'completed');
+    assert.equal(routed.length, runs);
+    for (const lane of routed) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', headSha, `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.status, 'inconclusive');
+      assert.deepEqual(evidence.notInspected, ['src/first.ts']);
+    }
+    const splitText = splitPullRequestNextAction(12, ['src/first.ts']);
+    assert.equal(splitText, 'Split the pull request into smaller pull requests so every changed file can be inspected. Files not inspected: src/first.ts. Then rerun `aie pr gate 12`.');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.equal(result.localReview.nextAction, splitText, 'the local review gate uses the shared builder');
+    assert.equal(result.shipReady.nextAction, splitText, 'aie pr gate uses the same shared builder');
+  });
+
+  it('never reads Not inspected prose from lane text as files in either gate path', async () => {
+    const { repo, headSha } = routedRepo();
+    const config = noShellConfig();
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] });
+    const ownNote = 'Not inspected: remaining files due to the turn limit.';
+    const result = await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: fixture.exec, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async invocation => {
+        const prompt = readFileSync(invocation.promptPath, 'utf8');
+        const lane = passingLane(prompt, headSha);
+        const body = JSON.parse(JSON.parse(lane.stdout).text);
+        Object.assign(body, {
+          status: 'inconclusive',
+          recommendation: 'inconclusive',
+          summary: `Stopped early. ${ownNote}`,
+          completeness: ownNote,
+          coverage: body.coverage.map(entry => ({ ...entry, status: 'not-inspected' })),
+        });
+        return { ...lane, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${body.lane}` }) };
+      },
+    });
+
+    assert.equal(result.localReview.status, 'inconclusive');
+    const lanes = result.localReview.evidence.flatMap(evidence => evidence.lanes);
+    assert.ok(lanes.some(lane => lane.summary.includes(ownNote)), 'the lane text keeps its own wording');
+    assert.ok(lanes.every(lane => lane.notInspected.length === 0));
+    for (const nextAction of [result.localReview.nextAction, result.shipReady.nextAction]) {
+      assert.doesNotMatch(nextAction, /Split the pull request/);
+      assert.doesNotMatch(nextAction, /remaining files/);
+    }
   });
 
   it('gives shell routes no review input and shares the gate input with a lane that fails over to a route without shell', async () => {

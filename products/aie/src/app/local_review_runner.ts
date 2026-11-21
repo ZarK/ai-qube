@@ -962,9 +962,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
               // The route can change through probe fallback or failover, so
-              // shell capability is read at execution time. Every lane without
-              // shell shares the one diff the gate prepares.
-              ...(routeHasShell({ plan: job.route }) ? {} : { reviewInputFiles: await gateReviewInput.files() ?? undefined }),
+              // shell capability is read at execution time. Lanes without
+              // shell share the one diff the gate prepares for their range:
+              // the full diff, or the delta since the lane's approved head.
+              ...(routeHasShell({ plan: job.route }) ? {} : { reviewInputFiles: await gateReviewInput.files(plannedScope) ?? undefined }),
               reviewScope: plannedScope,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed
@@ -1194,6 +1195,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               toolsUsed: [],
               completeness: `No finished review was recorded in the latest run at this head (${reasonCode}); the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.`,
               preconditions: [],
+              notInspected: [],
               runnerProvenance: null,
               modelTier: job.route.tier,
               reviewScope: job.reviewScope.scope,

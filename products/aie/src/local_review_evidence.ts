@@ -10,6 +10,7 @@ import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evi
 import { redact } from './redact.js';
 import type { ReviewModelTierId } from './core/policy.js';
 import { readHostUsage, type LaneUsage } from './review_usage.js';
+import { splitPullRequestNextAction } from './app/pr_gate_next_action.js';
 import { validateDeltaLaneEvidence } from './app/review_delta_scope.js';
 import { incompleteReviewResult } from './review_incomplete.js';
 
@@ -88,6 +89,8 @@ export interface LocalReviewLane {
   toolsUsed: string[];
   completeness: string;
   preconditions: string[] | null;
+  /** Changed files the runner recorded as not inspected; the gate never reads them from summary or completeness text. */
+  notInspected: string[];
   carriedForward: LocalReviewCarriedForward | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
   origin?: 'local' | 'trusted-provider';
@@ -1066,6 +1069,7 @@ function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, 
         toolsUsed,
         completeness: `${completeness}${incompleteNote}`,
         preconditions: Array.isArray(parsed.preconditions) ? stringArray(parsed.preconditions) : null,
+        notInspected: stringArray(parsed.notInspected),
         carriedForward: readCarriedForward(parsed.carriedForward),
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
         ...readOptionalLaneObservability(parsed),
@@ -1157,6 +1161,7 @@ function providerReuseLane(record: TrustedProviderLane): LocalReviewLane {
     toolsUsed: [],
     completeness: 'Reused the trusted provider-visible lane review for the exact current head; full findings, severities, prompt stack, and runner provenance remain provider-side.',
     preconditions: null,
+    notInspected: [],
     carriedForward: null,
     runnerProvenance: null,
     origin: 'trusted-provider',
@@ -1318,19 +1323,12 @@ function gateStatus(evidence: readonly LocalReviewEvidence[]): LocalReviewStatus
   return evidence.reduce<LocalReviewStatus>((current, item) => statusPriority(item.status) > statusPriority(current) ? item.status : current, 'passed');
 }
 
-/** Files a lane named as not inspected (`Not inspected: ...` in its summary or completeness). */
+/** Changed files the runner recorded as not inspected in each lane's structured `notInspected` field. */
 export function notInspectedFiles(evidence: readonly LocalReviewEvidence[]): string[] {
   const files = new Set<string>();
   for (const item of evidence) {
     for (const lane of item.lanes) {
-      for (const text of [lane.summary, lane.completeness]) {
-        const match = /Not inspected:\s*(.+?)\.(?:\s|$)/.exec(text);
-        if (!match) continue;
-        for (const file of match[1].split(',')) {
-          const trimmed = file.trim();
-          if (trimmed !== '') files.add(trimmed);
-        }
-      }
+      for (const file of lane.notInspected) files.add(file);
     }
   }
   return [...files];
@@ -1346,7 +1344,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFir
   }
   if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
   if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun the PR gate for one re-review round.';
-  if (status === 'inconclusive' && notInspected.length > 0) return `Split the pull request into smaller pull requests so every changed file can be inspected. Files not inspected: ${notInspected.join(', ')}. Then rerun ${rerunCommand}.`;
+  if (status === 'inconclusive' && notInspected.length > 0) return splitPullRequestNextAction(prNumber, notInspected);
   if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
   return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;

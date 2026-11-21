@@ -37,6 +37,8 @@ export interface LaneEvidence {
   toolsUsed: string[];
   completeness: string;
   preconditions: string[];
+  /** Changed files QUBE found the lane did not read; filled by the runner, never by lane output. */
+  notInspected: string[];
   runnerProvenance: LocalReviewRunnerProvenance | null;
   modelTier?: ReviewModelTierId;
   usage?: LaneUsage;
@@ -1209,6 +1211,9 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     toolsUsed: readStringArray(value.toolsUsed),
     completeness: typeof value.completeness === 'string' ? redact(value.completeness.trim()) : '',
     preconditions: readStringArray(value.preconditions),
+    // Lane output never names its own not-inspected files; the runner that
+    // checks the prepared review input fills this field.
+    notInspected: [],
     // Provenance strings are untrusted model output: free-text fields are
     // redacted before persistence and digest-shaped fields must be well-formed.
     runnerProvenance: {
