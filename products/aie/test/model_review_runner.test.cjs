@@ -30,6 +30,8 @@ const { readCurrentHeadLaneEvidence } = require('../dist/local_review_evidence.j
 const { resolveTrustedLocalStore } = require('../dist/trusted_local_store.js');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
+const FULL_SCOPE = { scope: 'full', baseHeadSha: null, deltaPaths: [] };
+
 function reviewInput(repoRoot, host = 'grok-build') {
   if (existsSync(repoRoot) && !existsSync(join(repoRoot, '.git'))) {
     execFileSync('git', ['init', '--quiet', repoRoot]);
@@ -1995,8 +1997,8 @@ describe('review input for routes without shell', () => {
     });
     assert.equal(result.error, null);
     assert.equal(result.evidence.status, 'inconclusive');
-    assert.match(result.evidence.summary, /Not inspected: src\/unread\.ts/);
-    assert.match(result.evidence.completeness, /Not inspected: src\/unread\.ts/);
+    assert.deepEqual(result.evidence.notInspected, ['src/unread.ts']);
+    assert.match(result.evidence.summary, /did not read: src\/unread\.ts/);
     assert.deepEqual(notInspectedFiles([{ lanes: [result.evidence] }]), ['src/unread.ts']);
     const nextAction = computePrGateNextAction({
       shipReady: false,
@@ -2011,6 +2013,80 @@ describe('review input for routes without shell', () => {
     assert.match(nextAction, /src\/unread\.ts/);
   });
 
+  it('keeps a full-review lane that reads every diff file passed with no not-inspected files', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-read-all-'));
+    const reviewInputFiles = [
+      { path: 'src/read.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0000.diff' },
+      { path: 'src/other.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0001.diff' },
+    ];
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify({ ...laneResult(), surfaces: reviewInputFiles.map(file => file.diffPath) }), sessionId: 'grok-session' }) }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.deepEqual(result.evidence.notInspected, []);
+  });
+
+  it('records the runner list in notInspected when the lane summary already says Not inspected', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-own-note-'));
+    const reviewInputFiles = [
+      { path: 'src/read.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0000.diff' },
+      { path: 'src/unread.ts', added: 1, removed: 0, diffPath: '.qube/aie/review-input/test-run/0001.diff' },
+    ];
+    const ownNote = 'Not inspected: remaining files due to the turn limit.';
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      reviewInputFiles,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify({ ...laneResult(), summary: `Partial review. ${ownNote}`, completeness: `Read one file. ${ownNote}`, surfaces: [reviewInputFiles[0].diffPath] }), sessionId: 'grok-session' }),
+      }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.deepEqual(result.evidence.notInspected, ['src/unread.ts']);
+    assert.deepEqual(notInspectedFiles([{ lanes: [result.evidence] }]), ['src/unread.ts']);
+  });
+
+  it('ignores Not inspected prose in lane text and never turns it into a split action or a file name', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-review-input-prose-'));
+    const ownNote = 'Not inspected: remaining files due to the turn limit.';
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify({ ...laneResult(), status: 'inconclusive', recommendation: 'inconclusive', summary: `Ran out of turns. ${ownNote}`, completeness: ownNote, coverage: [{ area: 'code-quality', status: 'not-inspected' }] }), sessionId: 'grok-session' }),
+      }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.deepEqual(result.evidence.notInspected, []);
+    const files = notInspectedFiles([{ lanes: [{ ...result.evidence, notInspected: result.evidence.notInspected }] }]);
+    assert.deepEqual(files, []);
+    const nextAction = computePrGateNextAction({
+      shipReady: false,
+      twoRoundMergeMet: false,
+      hostRequestRecorded: false,
+      inconclusiveLanes: ['code-quality'],
+      notInspectedFiles: files,
+      prNumber: 310,
+      fallback: 'rerun',
+    });
+    assert.doesNotMatch(nextAction, /Split the pull request/);
+    assert.doesNotMatch(nextAction, /remaining files/);
+  });
+
   it('prepares line-numbered diff files from git and lets a no-shell lane cite them without git', async () => {
     const repoRoot = cloneGitRepo('committed', 'aie-review-input-git-');
     writeFileSync(join(repoRoot, 'README.md'), 'fixture\nadded review line\n');
@@ -2022,7 +2098,7 @@ describe('review input for routes without shell', () => {
     const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),
-      reviewInputFiles: await gateInput.files(),
+      reviewInputFiles: await gateInput.files(FULL_SCOPE),
       headSha,
       resolveHead: async () => headSha,
       resolveExecutable: async () => 'grok.exe',
@@ -2057,7 +2133,7 @@ describe('review input for routes without shell', () => {
     try {
       return await runModelReview({
         ...reviewInput(repoRoot, 'grok-build'),
-        reviewInputFiles: await gateInput.files(),
+        reviewInputFiles: await gateInput.files(FULL_SCOPE),
         headSha,
         resolveHead: async () => headSha,
         resolveExecutable: async () => 'grok.exe',
@@ -2482,11 +2558,11 @@ describe('review input diff parsing', () => {
     execFileSync('git', ['commit', '-m', 'change'], { cwd: repoRoot });
     const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
     const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
-    const first = gateInput.files();
-    const second = gateInput.files();
+    const first = gateInput.files(FULL_SCOPE);
+    const second = gateInput.files(FULL_SCOPE);
     assert.equal(first, second, 'concurrent callers share one preparation');
     const files = await first;
-    assert.equal(files, await gateInput.files());
+    assert.equal(files, await gateInput.files(FULL_SCOPE));
     assert.deepEqual(files.map(file => file.path), ['README.md']);
     assert.equal(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')).length, 1);
     gateInput.remove();
@@ -2494,7 +2570,37 @@ describe('review input diff parsing', () => {
     gateInput.remove();
 
     const offHead = createGateReviewInput(repoRoot, 'origin/main', 'f'.repeat(40));
-    assert.deepEqual(await offHead.files(), [], 'a checkout off the requested head prepares nothing');
+    assert.deepEqual(await offHead.files(FULL_SCOPE), [], 'a checkout off the requested head prepares nothing');
+    assert.deepEqual(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')), []);
+  });
+
+  it('prepares a delta review input with only the delta files, diffed from the approved head', async () => {
+    const repoRoot = cloneGitRepo('committed', 'aie-review-input-delta-');
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src', 'first.ts'), 'export const first = 1;\n');
+    writeFileSync(join(repoRoot, 'src', 'second.ts'), 'export const second = 2;\n');
+    execFileSync('git', ['add', 'src'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'two files'], { cwd: repoRoot });
+    const approvedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    writeFileSync(join(repoRoot, 'src', 'first.ts'), 'export const first = 1;\nexport const fixed = true;\n');
+    execFileSync('git', ['add', 'src'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-m', 'fix'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const gateInput = createGateReviewInput(repoRoot, 'origin/main', headSha);
+    const deltaScope = { scope: 'delta', baseHeadSha: approvedHead, deltaPaths: ['src/first.ts'] };
+
+    const full = await gateInput.files(FULL_SCOPE);
+    assert.deepEqual(full.map(file => file.path), ['src/first.ts', 'src/second.ts'], 'a full review keeps the whole diff');
+    const delta = await gateInput.files(deltaScope);
+    assert.equal(delta, await gateInput.files({ ...deltaScope, deltaPaths: ['src/first.ts', 'src/first.ts'] }), 'the same range is prepared once');
+    assert.deepEqual(delta.map(file => file.path), ['src/first.ts']);
+    assert.notEqual(delta[0].diffPath, full[0].diffPath, 'delta files have their own folder');
+    const content = readFileSync(join(repoRoot, delta[0].diffPath), 'utf8');
+    assert.match(content, /^2 \+export const fixed = true;$/m);
+    assert.match(content, /^1 {2}export const first = 1;$/m, 'the approved line is context in the delta');
+    assert.deepEqual(await gateInput.files({ ...deltaScope, deltaPaths: [] }), [], 'a delta with no changed paths prepares nothing');
+    assert.equal(await gateInput.files({ ...deltaScope, baseHeadSha: 'f'.repeat(40) }), null, 'an unknown approved head fails closed');
+    gateInput.remove();
     assert.deepEqual(readdirSync(join(repoRoot, '.qube', 'aie', 'review-input')), []);
   });
 
@@ -2502,7 +2608,7 @@ describe('review input diff parsing', () => {
     const repoRoot = cloneGitRepo('committed', 'aie-review-input-missing-');
     const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
     const gateInput = createGateReviewInput(repoRoot, 'refs/heads/missing-base', headSha);
-    assert.equal(await gateInput.files(), null);
+    assert.equal(await gateInput.files(FULL_SCOPE), null);
     assert.equal(existsSync(join(repoRoot, '.qube', 'aie', 'review-input')), false);
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok-build'),

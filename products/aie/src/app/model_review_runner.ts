@@ -313,7 +313,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
     'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section.',
     reviewResultContract(input),
     input.reviewScope ? buildDeltaPromptSection(input.reviewScope) : 'Inspect the full current-head diff for this lane.',
-    ...(hasShell ? [] : reviewInputPromptLines(input.reviewInputFiles ?? [])),
+    ...(hasShell ? [] : reviewInputPromptLines(input.reviewInputFiles ?? [], input.reviewScope?.scope === 'delta' ? input.reviewScope.baseHeadSha : null)),
     '',
     '--- EXACT QUBE LANE PROMPT START ---',
     input.promptText,
@@ -677,23 +677,25 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     candidate.status = 'inconclusive';
     candidate.recommendation = 'inconclusive';
   }
-  const reviewInputFiles = input.reviewInputFiles ?? [];
-  if (reviewInputFiles.length > 0) {
-    const unread = unreadReviewInputFiles(reviewInputFiles, isStringArray(value.surfaces) ? value.surfaces : []);
-    if (unread.length > 0) {
-      // A changed file the lane never read is not inspected. Name it and fail
-      // closed to inconclusive so the gate can say to split the pull request.
-      const note = `Not inspected: ${unread.join(', ')}.`;
-      if (typeof candidate.summary === 'string' && !candidate.summary.includes('Not inspected:')) candidate.summary = `${candidate.summary} ${note}`;
-      if (typeof candidate.completeness === 'string' && !candidate.completeness.includes('Not inspected:')) candidate.completeness = `${candidate.completeness} ${note}`;
-      if (candidate.status === 'passed') {
-        candidate.status = 'inconclusive';
-        candidate.recommendation = 'inconclusive';
-      }
+  // The prepared files are the lane's reviewed range: the full diff, or on a
+  // delta re-review only the delta files, so the check never asks a delta
+  // lane for files it was told not to re-review.
+  const unread = unreadReviewInputFiles(input.reviewInputFiles ?? [], isStringArray(value.surfaces) ? value.surfaces : []);
+  if (unread.length > 0) {
+    // A changed file the lane never read is not inspected. QUBE records its
+    // own list in the structured field and fails closed to inconclusive so
+    // the gate can say to split the pull request.
+    const note = `QUBE found changed files this lane did not read: ${unread.join(', ')}.`;
+    if (typeof candidate.summary === 'string') candidate.summary = `${candidate.summary} ${note}`;
+    if (typeof candidate.completeness === 'string') candidate.completeness = `${candidate.completeness} ${note}`;
+    if (candidate.status === 'passed') {
+      candidate.status = 'inconclusive';
+      candidate.recommendation = 'inconclusive';
     }
   }
-  const evidence = normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
-  if (!evidence) return rejectedLane('evidence-normalize-failed', 'result');
+  const normalized = normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
+  if (!normalized) return rejectedLane('evidence-normalize-failed', 'result');
+  const evidence: LaneEvidence = { ...normalized, notInspected: unread };
   return { evidence, rejection: null, downgradeRule: coverageFindingsInconsistent ? 'coverage-findings-inconsistent' : null };
 }
 

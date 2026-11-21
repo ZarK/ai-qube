@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { ReviewScopeSelection } from './review_delta_scope.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -171,10 +172,11 @@ function diffFileName(index: number): string {
  * is readable by every isolated route: it is not under `.git/**` and not
  * under `.qube/aie/reviews/**`, which routes deny.
  */
-export function writeReviewInputFiles(repoRoot: string, invocationId: string, diff: string): ReviewInputFile[] {
-  const parsed = parseDiffByFile(diff);
+export function writeReviewInputFiles(repoRoot: string, invocationId: string, diff: string, onlyPaths?: readonly string[]): ReviewInputFile[] {
+  const kept = onlyPaths ? new Set(onlyPaths) : null;
+  const parsed = parseDiffByFile(diff).filter(file => !kept || kept.has(file.path));
   if (parsed.length === 0) return [];
-  const directory = join(repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), invocationId);
+  const directory = join(repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), ...invocationId.split('/'));
   mkdirSync(directory, { recursive: true });
   return parsed.map((file, index) => {
     const name = diffFileName(index);
@@ -201,15 +203,16 @@ async function gitText(repoRoot: string, args: readonly string[]): Promise<strin
 }
 
 /**
- * Compute `git diff <merge-base>...<head>` for the reviewed range. The
- * preparation only applies when the checkout is at the requested head —
- * the same condition the runner verifies before spawning a lane. When the
- * checkout is elsewhere, preparation is skipped and the existing
- * checkout-mismatch check reports the problem. When the checkout is at
- * the head but the range cannot be resolved, the diff is unavailable and
- * a route without shell must not approve without it.
+ * Compute the diff for the reviewed range: `git diff <merge-base>...<head>`
+ * for a full review, or `git diff <approved head> <head>` for a delta
+ * re-review. The preparation only applies when the checkout is at the
+ * requested head — the same condition the runner verifies before spawning
+ * a lane. When the checkout is elsewhere, preparation is skipped and the
+ * existing checkout-mismatch check reports the problem. When the checkout
+ * is at the head but the range cannot be resolved, the diff is unavailable
+ * and a route without shell must not approve without it.
  */
-export async function computeReviewDiff(repoRoot: string, baseRef: string, headSha: string): Promise<PreparedReviewDiff> {
+export async function computeReviewDiff(repoRoot: string, baseRef: string, headSha: string, deltaBaseSha: string | null = null): Promise<PreparedReviewDiff> {
   let head: string;
   try {
     head = (await gitText(repoRoot, ['rev-parse', '--verify', 'HEAD'])).trim();
@@ -218,6 +221,10 @@ export async function computeReviewDiff(repoRoot: string, baseRef: string, headS
   }
   if (head !== headSha) return { kind: 'skip' };
   try {
+    if (deltaBaseSha !== null) {
+      if (deltaBaseSha.trim() === '' || deltaBaseSha.startsWith('-')) return { kind: 'unavailable' };
+      return { kind: 'diff', diff: await gitText(repoRoot, ['diff', deltaBaseSha, headSha]) };
+    }
     const mergeBase = (await gitText(repoRoot, ['merge-base', baseRef, headSha])).trim();
     if (mergeBase === '') return { kind: 'unavailable' };
     return { kind: 'diff', diff: await gitText(repoRoot, ['diff', `${mergeBase}...${headSha}`]) };
@@ -226,16 +233,21 @@ export async function computeReviewDiff(repoRoot: string, baseRef: string, headS
   }
 }
 
-/** Review input that one gate prepares once and shares with every lane without shell. */
+/** The part of a lane's review scope that selects its diff range. */
+export type ReviewInputScope = Pick<ReviewScopeSelection, 'scope' | 'baseHeadSha' | 'deltaPaths'>;
+
+/** Review input that one gate prepares once per diff range and shares with every lane without shell. */
 export interface GateReviewInput {
   /**
-   * Shared diff files for the reviewed range. The first call computes the
-   * diff and writes the files; later and concurrent calls get the same
-   * result. `[]` means there is nothing to prepare (empty range, or the
-   * checkout is not at the head, which the lane HEAD check reports).
-   * `null` means the range could not be resolved.
+   * Shared diff files for the lane's reviewed range: the full diff, or for
+   * a delta re-review only the delta paths, diffed from the approved head.
+   * The first call for a range computes the diff and writes the files;
+   * later and concurrent calls for the same range get the same result.
+   * `[]` means there is nothing to prepare (empty range, or the checkout
+   * is not at the head, which the lane HEAD check reports). `null` means
+   * the range could not be resolved.
    */
-  files(): Promise<readonly ReviewInputFile[] | null>;
+  files(scope: ReviewInputScope): Promise<readonly ReviewInputFile[] | null>;
   /** Remove the gate folder. Safe to call when nothing was written. */
   remove(): void;
 }
@@ -243,15 +255,23 @@ export interface GateReviewInput {
 export function createGateReviewInput(repoRoot: string, baseRef: string, headSha: string): GateReviewInput {
   const gateId = randomUUID();
   const directory = join(repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), gateId);
-  let prepared: Promise<readonly ReviewInputFile[] | null> | null = null;
+  const prepared = new Map<string, Promise<readonly ReviewInputFile[] | null>>();
   return {
-    files() {
-      prepared ??= computeReviewDiff(repoRoot, baseRef, headSha).then(diff => {
-        if (diff.kind === 'unavailable') return null;
-        if (diff.kind === 'skip') return [];
-        return writeReviewInputFiles(repoRoot, gateId, diff.diff);
-      });
-      return prepared;
+    files(scope) {
+      const delta = scope.scope === 'delta' && scope.baseHeadSha !== null;
+      const deltaPaths = [...new Set(scope.deltaPaths)].sort();
+      const key = delta ? JSON.stringify([scope.baseHeadSha, deltaPaths]) : 'full';
+      let files = prepared.get(key);
+      if (!files) {
+        const folder = delta ? `${gateId}/delta-${prepared.size}` : `${gateId}/full`;
+        files = computeReviewDiff(repoRoot, baseRef, headSha, delta ? scope.baseHeadSha : null).then(diff => {
+          if (diff.kind === 'unavailable') return null;
+          if (diff.kind === 'skip') return [];
+          return writeReviewInputFiles(repoRoot, folder, diff.diff, delta ? deltaPaths : undefined);
+        });
+        prepared.set(key, files);
+      }
+      return files;
     },
     remove() {
       rmSync(directory, { recursive: true, force: true });
@@ -260,12 +280,14 @@ export function createGateReviewInput(repoRoot: string, baseRef: string, headSha
 }
 
 /** Render the bounded prompt section listing review-input files. */
-export function reviewInputPromptLines(files: readonly ReviewInputFile[]): string[] {
+export function reviewInputPromptLines(files: readonly ReviewInputFile[], deltaBaseSha: string | null = null): string[] {
   if (files.length === 0) return [];
   return [
-    'Review input diff files (one per changed file; each line is prefixed with its destination line number):',
+    deltaBaseSha
+      ? `Review input diff files for the delta since approved head ${deltaBaseSha} (one per changed file; each line is prefixed with its destination line number):`
+      : 'Review input diff files (one per changed file; each line is prefixed with its destination line number):',
     ...files.map(file => `- ${file.path} (+${file.added} -${file.removed}) -> ${file.diffPath}`),
-    'Read each diff file you need with Read before judging it. Record every diff file you read in surfaces using its exact diff path. Any changed file whose diff file is not recorded in surfaces is treated as not inspected: the lane becomes inconclusive, names those files as not inspected, and the gate will say to split the pull request. If you cannot read every diff file within your turn limit, return status inconclusive and name the unread files in summary and completeness instead of guessing.',
+    'Read each diff file you need with Read before judging it. Record every diff file you read in surfaces using its exact diff path. Any changed file whose diff file is not recorded in surfaces is treated as not inspected: QUBE records those files as not inspected, the lane becomes inconclusive, and the gate will say to split the pull request. If you cannot read every diff file within your turn limit, return status inconclusive instead of guessing.',
   ];
 }
 
