@@ -368,6 +368,54 @@ describe('capacity stops continue the lane or fail over', () => {
     }
   });
 
+  it('fails a continuation run that stops for capacity over to the second host in the same gate run', async () => {
+    const { repo, headSha } = repoWithFiles(4);
+    const config = noShellConfig();
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'medium' };
+    config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', ...MINIMUM } };
+    const grokRuns = new Map();
+    const codexRuns = [];
+    const result = await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] }).exec, routeProbe: readyRouteProbe, resolveModelHost: async host => (host === 'codex' ? 'codex.exe' : 'grok.exe'),
+      modelRouteProcess: async invocation => {
+        const prompt = promptOf(invocation);
+        const lane = laneOf(prompt);
+        if (invocation.schemaPath) {
+          codexRuns.push({ lane, prompt });
+          return codexOutput(laneBody(prompt, headSha, { artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }], commands: ['git diff --check'], toolsUsed: ['git'] }), 1);
+        }
+        grokRuns.set(lane, (grokRuns.get(lane) ?? 0) + 1);
+        const diffFiles = [...prompt.matchAll(DIFF_PATH_PATTERN)].map(match => match[1]);
+        if (grokRuns.get(lane) === 1) {
+          const read = diffFiles.slice(0, 2);
+          return grokOutput(laneBody(prompt, headSha, {
+            status: 'inconclusive', recommendation: 'inconclusive', surfaces: read,
+            artifacts: read.map(path => ({ kind: 'diff', path, sha256: null })),
+            coverage: coverageOf(prompt, 'not-inspected'),
+          }));
+        }
+        return grokOutput(laneBody(prompt, headSha, {
+          status: 'inconclusive', recommendation: 'inconclusive',
+          summary: 'The remaining files cannot be read within the turn budget.', completeness: 'Not inspected for capacity.',
+          artifacts: [], surfaces: [], toolsUsed: [], coverage: coverageOf(prompt, 'not-inspected'),
+        }));
+      },
+    });
+    const lanes = routedLanes(result);
+    assert.ok(lanes.length >= 2);
+    assert.equal(codexRuns.length, lanes.length, 'each capacity-stopped continuation reruns once on the second host');
+    for (const { prompt } of codexRuns) assert.match(prompt, /Continuation run: an earlier run of this lane at this head read 2 other changed file\(s\)/);
+    for (const lane of lanes) {
+      assert.equal(grokRuns.get(lane.lane), 2, `${lane.lane}: first run and one continuation on the configured host`);
+      assert.equal(lane.status, 'completed', lane.summary);
+      assert.equal(lane.route.host, 'codex');
+      assert.match(String(lane.route.substitution), /model-route-capacity-stop/);
+      const evidence = evidenceOf(repo, headSha, lane.lane);
+      assert.equal(evidence.status, 'passed', evidence.summary);
+      assert.deepEqual(evidence.notInspected, []);
+    }
+  });
+
   it('fails the lane as a host fault when a route without shell reads no file for capacity and no second host is configured', async () => {
     const { repo, headSha } = repoWithFiles(4);
     const config = noShellConfig();

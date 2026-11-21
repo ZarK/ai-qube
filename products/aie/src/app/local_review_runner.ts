@@ -1089,7 +1089,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const remaining = scopeFiles.filter(file => unread.has(file.path));
       if (remaining.length === 0 || remaining.length >= scopeFiles.length) break;
       part += 1;
-      const continued = await job.run({ part, files: remaining, earlierInspectedFiles: scopeFiles.length - remaining.length });
+      const continuation = { part, files: remaining, earlierInspectedFiles: scopeFiles.length - remaining.length };
+      let continued = await job.run(continuation);
+      // A host fault on a continuation run fails over like the first run.
+      if (failOverJob(job, continued)) continued = await job.run(continuation);
       if (!continued.evidence) break;
       const evidence = mergeLaneContinuation(merged.evidence, continued.evidence, remaining.length, scopeFiles.length);
       merged = { evidence, error: null, reasonCode: continued.reasonCode };
@@ -1112,6 +1115,25 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
     }
     return probeChecks.get(key);
+  };
+  // A host fault in the same-run failover set moves the job to the
+  // configured second host when that host's probe is ready. The first run
+  // and every continuation run use this one rule.
+  const failOverJob = (job: RoutedLaneJob, routed: ModelReviewRunResult | null): boolean => {
+    if (routed?.evidence || !routed?.reasonCode || !SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)) return false;
+    if (job.routeSource !== 'configured' || !config.reviewFailover) return false;
+    const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
+    const fallbackCheck = fallbackPlan ? probeFor(fallbackPlan) : undefined;
+    if (!fallbackPlan || fallbackCheck?.status !== 'ready') return false;
+    const primaryHost = job.primaryRoute?.host ?? job.route.host;
+    job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, routed.reasonCode);
+    job.routeSource = 'fallback';
+    job.host = fallbackPlan.host;
+    job.probedExecutable = fallbackCheck.resolved ?? null;
+    job.probedModel = fallbackCheck.resolvedModel;
+    job.transport = fallbackCheck.transport ?? null;
+    job.fallbackReason = routed.reasonCode;
+    return true;
   };
   if (routedJobs.length > 0 && !input.dryRun) {
     // Every distinct route passes a cheap read-only host probe before any model
@@ -1184,30 +1206,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     try {
       await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
         const job = runnableJobs[jobIndex];
-        if (
-          (!routed || !routed.evidence)
-          && routed?.reasonCode !== null && routed?.reasonCode !== undefined
-          && SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)
-          && job.routeSource === 'configured'
-          && config.reviewFailover
-        ) {
-          const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
-          if (fallbackPlan) {
-            const fallbackCheck = probeFor(fallbackPlan);
-            if (fallbackCheck?.status === 'ready') {
-              const failoverReason = routed.reasonCode;
-              const primaryHost = job.primaryRoute?.host ?? job.route.host;
-              job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, failoverReason);
-              job.routeSource = 'fallback';
-              job.host = fallbackPlan.host;
-              job.probedExecutable = fallbackCheck.resolved ?? null;
-              job.probedModel = fallbackCheck.resolvedModel;
-              job.transport = fallbackCheck.transport ?? null;
-              job.fallbackReason = failoverReason;
-              routed = await job.run();
-            }
-          }
-        }
+        if (failOverJob(job, routed)) routed = await job.run();
         if (routed?.evidence) routed = await continueLane(job, routed);
         routedOutcomes[jobIndex] = routed;
       });
