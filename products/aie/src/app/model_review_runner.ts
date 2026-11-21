@@ -1331,8 +1331,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     const strictResult = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!strictResult.evidence) {
       const rejection = strictResult.rejection;
-      if (rejection.rule === 'status-value' && isRecord(modelResult) && typeof modelResult.status === 'string') {
-        return captureRawOutput(store, input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive. contract rule ${rejection.rule} failed (field: ${rejection.field}).`);
+      // A string status outside the terminal values means the lane stopped
+      // before a final result, whichever contract rule failed first.
+      if (isRecord(modelResult) && typeof modelResult.status === 'string' && !STATUS_VALUES.has(modelResult.status)) {
+        const detail = rejection.detail ? ` ${rejection.detail}` : '';
+        return captureRawOutput(store, input, result, 'model-route-nonterminal-result', `Model review route ended with nonterminal status "${sanitizedDiagnostic(modelResult.status)}"; expected passed, failed, needs-work, or inconclusive. contract rule ${rejection.rule} failed (field: ${rejection.field}).${detail}`);
       }
       if (rejection.rule === 'artifact-digest-invalid') {
         return captureRawOutput(store, input, result, 'model-route-artifact-digest', routedLaneRejectionMessage(rejection));
