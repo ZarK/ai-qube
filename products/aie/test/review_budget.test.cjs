@@ -138,6 +138,9 @@ describe('review turn budget follows the review input', () => {
     assert.ok(large.maxTurns > small.maxTurns, JSON.stringify({ large, small }));
     assert.ok(large.timeoutSeconds > small.timeoutSeconds, JSON.stringify({ large, small }));
     assert.ok(large.maxTurns > 20, 'there is no fixed upper cap of 20 turns');
+    // 8 + 2 per area + 1 per 2 files + 1 per 400 lines; 120 s + 25 s per file + 1 s per 25 lines.
+    assert.equal(large.maxTurns, 8 + 2 + 31 + 10);
+    assert.equal(large.timeoutSeconds, 120 + 25 * 62 + 160);
     assert.ok(large.timeoutSeconds > 1200);
     assert.deepEqual(small, { maxTurns: 16, timeoutSeconds: 900, files: 2, changedLines: 40, coverageAreas: 1, minimumTurns: 16, minimumTimeoutSeconds: 900 });
     const moreAreas = calculateReviewBudget({ maxTurns: 4, timeoutSeconds: 30 }, { files: 2, changedLines: 40, coverageAreas: 3 });
@@ -286,7 +289,8 @@ describe('capacity stops continue the lane or fail over', () => {
       assert.deepEqual(evidence.findings.map(finding => finding.id).sort(), [`${lane.lane}-first`, `${lane.lane}-second`].sort(), 'findings of both runs are kept');
       assert.equal(evidence.surfaces.length, 6, 'the verdict covers every file');
       assert.match(evidence.summary, /covers the 6 of 6 changed files in scope/);
-      assert.equal(evidence.runnerProvenance.budget.files, 6, 'the lane provenance keeps the full-scope budget');
+      assert.equal(evidence.runnerProvenance.budget.files, 3, 'the provenance is the run that completed the verdict, with its own budget');
+      assert.equal(lane.budget.files, 3);
       const store = resolveTrustedLocalStore(repo);
       assert.ok(existsSync(isolatedRawOutputPath(store, 93, 12, headSha, lane.lane)), 'the first run keeps its raw output');
       assert.ok(existsSync(isolatedRawOutputPath(store, 93, 12, headSha, lane.lane, 1)), 'the continuation keeps its own raw output');
@@ -413,7 +417,12 @@ describe('capacity stops continue the lane or fail over', () => {
       const evidence = evidenceOf(repo, headSha, lane.lane);
       assert.equal(evidence.status, 'passed', evidence.summary);
       assert.deepEqual(evidence.notInspected, []);
+      assert.equal(evidence.runnerProvenance.route.executed.host, 'codex', 'the record binds the host that completed the lane');
+      assert.equal(evidence.runnerProvenance.route.reason.code, 'model-route-capacity-stop');
+      const trustedPath = trustedLocalHostProvenancePath(resolveTrustedLocalStore(repo), 93, 12, headSha, lane.lane);
+      assert.equal(JSON.parse(readFileSync(trustedPath, 'utf8')).route.executed.host, 'codex');
     }
+    assert.equal(result.localReview.status, 'passed', result.localReview.summary);
   });
 
   it('fails the lane with the continuation fault when a continuation produces no evidence and no second host is configured', async () => {

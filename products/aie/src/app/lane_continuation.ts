@@ -21,8 +21,9 @@ function unique<T>(values: readonly T[], key: (value: T) => string = value => JS
  * continuation reviewed only those files. A blocking verdict from any run
  * wins. Otherwise the continuation's verdict stands, because the earlier
  * runs were inconclusive only for the files they did not read. Findings and
- * inspection records are kept from every run, and the earlier provenance,
- * which records the full-scope budget, stays the lane's provenance.
+ * inspection records are kept from every run. The provenance is the
+ * continuation's: it names the route that completed the verdict, which can
+ * be the configured second host after a failover, and that run's budget.
  */
 export function mergeLaneContinuation(earlier: LaneEvidence, continuation: LaneEvidence, continuedFiles: number, scopeFiles: number): LaneEvidence {
   const blocking = [earlier, continuation]
@@ -51,5 +52,6 @@ export function mergeLaneContinuation(earlier: LaneEvidence, continuation: LaneE
     completeness: `${earlier.completeness} Continuation: ${continuation.completeness} ${note}`,
     preconditions: unique([...earlier.preconditions, ...continuation.preconditions], value => value),
     notInspected: [...continuation.notInspected],
+    runnerProvenance: continuation.runnerProvenance,
   };
 }
