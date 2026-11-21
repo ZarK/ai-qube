@@ -1898,6 +1898,66 @@ describe('coverage attestation contract', () => {
   });
 });
 
+describe('nonterminal final results', () => {
+  function grokFinal(body) {
+    return runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-nonterminal-')), 'grok-build'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'nonterminal-check' }) }),
+    });
+  }
+
+  it('reports a pending progress object with missing keys as nonterminal and names the result-shape rule', async () => {
+    const result = await grokFinal({ status: 'pending', summary: 'Still working' });
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-nonterminal-result');
+    assert.match(result.error, /nonterminal status "pending"/);
+    assert.match(result.error, /contract rule result-shape failed \(field: result\)/);
+  });
+
+  it('reports a pending result with mismatched coverage areas as nonterminal and names the coverage-areas-mismatch rule', async () => {
+    const body = { ...laneResult(), status: 'pending', recommendation: 'pending', coverage: [] };
+    const result = await grokFinal(body);
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-nonterminal-result');
+    assert.match(result.error, /nonterminal status "pending"/);
+    assert.match(result.error, /contract rule coverage-areas-mismatch failed \(field: coverage\)/);
+  });
+
+  it('reports a fully shaped pending result as nonterminal and names the status-value rule', async () => {
+    const body = { ...laneResult(), status: 'pending', recommendation: 'pending' };
+    const result = await grokFinal(body);
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-nonterminal-result');
+    assert.match(result.error, /contract rule status-value failed \(field: status\)/);
+  });
+
+  it('keeps a terminal result with missing keys a contract mismatch', async () => {
+    const body = Object.fromEntries(Object.entries(laneResult()).filter(([key]) => key !== 'artifacts' && key !== 'coverage'));
+    const result = await grokFinal(body);
+    assert.equal(body.status, 'passed');
+    assert.equal(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-contract-mismatch');
+    assert.notEqual(result.reasonCode, 'model-route-nonterminal-result');
+    assert.match(result.error, /contract rule result-shape failed \(field: result\)/);
+    assert.doesNotMatch(result.error, /nonterminal/);
+  });
+
+  it('keeps a result whose status is not a string a contract mismatch', async () => {
+    const shaped = await grokFinal({ ...laneResult(), status: 42 });
+    assert.equal(shaped.evidence, null);
+    assert.equal(shaped.reasonCode, 'model-route-contract-mismatch');
+    assert.match(shaped.error, /contract rule status-value failed \(field: status\)/);
+    assert.doesNotMatch(shaped.error, /nonterminal/);
+
+    const unshaped = await grokFinal({ status: 42, summary: 'Still working' });
+    assert.equal(unshaped.evidence, null);
+    assert.equal(unshaped.reasonCode, 'model-route-contract-mismatch');
+    assert.match(unshaped.error, /contract rule result-shape failed \(field: result\)/);
+    assert.doesNotMatch(unshaped.error, /nonterminal/);
+  });
+});
+
 describe('transient host message isolation', () => {
   it('ignores a transient pending object without coverage before an attested final result', async () => {
     const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
