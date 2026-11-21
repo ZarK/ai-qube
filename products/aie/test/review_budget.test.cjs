@@ -416,6 +416,39 @@ describe('capacity stops continue the lane or fail over', () => {
     }
   });
 
+  it('fails the lane with the continuation fault when a continuation produces no evidence and no second host is configured', async () => {
+    const { repo, headSha } = repoWithFiles(4);
+    const config = noShellConfig();
+    const runs = new Map();
+    const result = await runPrGate(config, {
+      prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: headSha })] }).exec, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async invocation => {
+        const prompt = promptOf(invocation);
+        const lane = laneOf(prompt);
+        runs.set(lane, (runs.get(lane) ?? 0) + 1);
+        const diffFiles = [...prompt.matchAll(DIFF_PATH_PATTERN)].map(match => match[1]);
+        if (runs.get(lane) === 1) {
+          const read = diffFiles.slice(0, 2);
+          return grokOutput(laneBody(prompt, headSha, { surfaces: read, artifacts: read.map(path => ({ kind: 'diff', path, sha256: null })) }));
+        }
+        return grokOutput(laneBody(prompt, headSha, {
+          status: 'inconclusive', recommendation: 'inconclusive',
+          summary: 'The remaining files cannot be read within the turn budget.', completeness: 'Not inspected for capacity.',
+          artifacts: [], surfaces: [], toolsUsed: [], coverage: coverageOf(prompt, 'not-inspected'),
+        }));
+      },
+    });
+    const lanes = routedLanes(result);
+    assert.ok(lanes.length >= 2);
+    for (const lane of lanes) {
+      assert.equal(runs.get(lane.lane), 2);
+      assert.equal(lane.status, 'failed', 'the earlier partial review does not stand as the lane result');
+      assert.equal(lane.blocker, 'model-route-capacity-stop');
+    }
+    assert.equal(readRouteFaults(repo, 93, 12).lanes['code-quality'].lastReasonCode, 'model-route-capacity-stop', 'the continuation fault is recorded');
+    assert.notEqual(result.localReview.status, 'passed');
+  });
+
   it('fails the lane as a host fault when a route without shell reads no file for capacity and no second host is configured', async () => {
     const { repo, headSha } = repoWithFiles(4);
     const config = noShellConfig();

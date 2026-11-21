@@ -1093,7 +1093,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       let continued = await job.run(continuation);
       // A host fault on a continuation run fails over like the first run.
       if (failOverJob(job, continued)) continued = await job.run(continuation);
-      if (!continued.evidence) break;
+      // A continuation that still produces no evidence is the lane outcome:
+      // its fault is recorded, and a checkout change invalidates the batch,
+      // instead of the earlier partial review standing as the lane result.
+      if (!continued.evidence) return continued;
       const evidence = mergeLaneContinuation(merged.evidence, continued.evidence, remaining.length, scopeFiles.length);
       merged = { evidence, error: null, reasonCode: continued.reasonCode };
       if (continued.evidence.notInspected.length >= remaining.length) break;
