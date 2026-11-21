@@ -21,6 +21,7 @@ const {
   watchModelReviewCheckout,
   isInternalReviewPath,
 } = require('../dist/app/model_review_runner.js');
+const { getReviewHostAdapter } = require('../dist/app/review_host_adapters.js');
 const { writeReviewInputFiles, parseDiffByFile, createGateReviewInput, unreadReviewInputFiles } = require('../dist/app/review_input.js');
 const { createHeadLineCounter } = require('../dist/finding_location.js');
 const { computePrGateNextAction } = require('../dist/app/pr_gate_next_action.js');
@@ -2195,17 +2196,48 @@ describe('finding locations at the reviewed head', () => {
     return body;
   }
 
-  function grokRun(repoRoot, body, extra = {}) {
+  // A repository whose head commit holds the given files.
+  function headRepo(files = {}) {
+    const repoRoot = cloneGitRepo('committed', 'aie-head-check-');
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+      writeFileSync(join(repoRoot, path), content);
+      execFileSync('git', ['add', path], { cwd: repoRoot });
+    }
+    if (Object.keys(files).length > 0) execFileSync('git', ['commit', '-m', 'head files'], { cwd: repoRoot });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    return { repoRoot, headSha };
+  }
+
+  function hostRun(repoRoot, headSha, host, executable, stdout) {
     return runModelReview({
-      ...reviewInput(repoRoot, 'grok-build'),
-      resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'head-check', ...extra }) }),
+      ...reviewInput(repoRoot, host),
+      headSha,
+      resolveHead: async () => headSha,
+      resolveExecutable: async () => executable,
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout }),
     });
   }
 
+  function grokRun(repoRoot, headSha, body) {
+    return hostRun(repoRoot, headSha, 'grok-build', 'grok.exe', JSON.stringify({ text: JSON.stringify({ ...body, headSha }), sessionId: 'head-check' }));
+  }
+
+  // Codex enumerates its tool items, so its envelope carries a real count.
+  function codexRun(repoRoot, headSha, body, successfulCommands) {
+    const commands = Array.from({ length: successfulCommands }, (_, index) => JSON.stringify({ type: 'item.completed', item: { id: `cmd-${index}`, type: 'command_execution', command: 'git diff', exit_code: 0, status: 'completed' } }));
+    return hostRun(repoRoot, headSha, 'codex', 'codex.exe', [
+      JSON.stringify({ type: 'thread.started', thread_id: 'codex-head-check' }),
+      ...commands,
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ ...body, headSha }) } }),
+    ].join('\n'));
+  }
+
+  const thirtyLines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n');
+
   it('withholds a blocking finding that cites a file missing at the head and leaves the lane inconclusive', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-missing-file-'));
-    const result = await grokRun(repoRoot, blockingBody({ path: 'src/missing.ts', line: 500 }));
+    const { repoRoot, headSha } = headRepo();
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/missing.ts', line: 500 }));
 
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'inconclusive');
@@ -2215,16 +2247,14 @@ describe('finding locations at the reviewed head', () => {
     assert.deepEqual(result.evidence.blockers, []);
     assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
     assert.match(result.evidence.summary, /Withheld finding citing code missing at the reviewed head: src\/missing\.ts:500 does not exist at the reviewed head/);
-    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, headSha, 'code-quality');
     assert.equal(existsSync(rawPath), true);
     assert.match(JSON.parse(readFileSync(rawPath, 'utf8')).stdout, /src\/missing\.ts/);
   });
 
   it('withholds a blocking finding that cites a line past the end of the file at the head', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-past-eof-'));
-    mkdirSync(join(repoRoot, 'src'), { recursive: true });
-    writeFileSync(join(repoRoot, 'src', 'short.ts'), 'one\ntwo\nthree\n');
-    const result = await grokRun(repoRoot, blockingBody({ path: 'src/short.ts', line: 240, endLine: 248 }));
+    const { repoRoot, headSha } = headRepo({ 'src/short.ts': 'one\ntwo\nthree\n' });
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/short.ts', line: 240, endLine: 248 }));
 
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'inconclusive');
@@ -2233,11 +2263,56 @@ describe('finding locations at the reviewed head', () => {
     assert.match(result.evidence.summary, /src\/short\.ts:240 is past the end of src\/short\.ts, which has 3 line\(s\) at the reviewed head/);
   });
 
-  it('still publishes a blocking finding with a valid path and line range at the head', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-valid-'));
+  it('withholds a blocking finding that cites an untracked file that is not at the head', async () => {
+    const { repoRoot, headSha } = headRepo();
     mkdirSync(join(repoRoot, 'src'), { recursive: true });
-    writeFileSync(join(repoRoot, 'src', 'real.ts'), Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n'));
-    const result = await grokRun(repoRoot, blockingBody({ path: 'src/real.ts', line: 12, endLine: 15 }));
+    writeFileSync(join(repoRoot, 'src', 'untracked.ts'), thirtyLines);
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/untracked.ts', line: 4 }));
+
+    assert.notEqual(result.evidence, null);
+    assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.deepEqual(result.evidence.findings, []);
+    assert.match(result.evidence.summary, /src\/untracked\.ts:4 does not exist at the reviewed head/);
+  });
+
+  it('withholds a blocking finding that cites a line only the modified working-tree file has', async () => {
+    const { repoRoot, headSha } = headRepo({ 'src/short.ts': 'one\ntwo\nthree\n' });
+    writeFileSync(join(repoRoot, 'src', 'short.ts'), thirtyLines);
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/short.ts', line: 20 }));
+
+    assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
+    assert.match(result.evidence.summary, /src\/short\.ts:20 is past the end of src\/short\.ts, which has 3 line\(s\) at the reviewed head/);
+  });
+
+  it('withholds the same citation the publication line counter rejects on the same head', async () => {
+    const { repoRoot, headSha } = headRepo({ 'src/short.ts': 'one\ntwo\nthree\n' });
+    writeFileSync(join(repoRoot, 'src', 'untracked.ts'), thirtyLines);
+    const counter = createHeadLineCounter(repoRoot, headSha);
+    assert.equal(counter('src/untracked.ts'), null);
+    assert.equal(counter('src/short.ts'), 3);
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/untracked.ts', line: 1 }));
+    assert.equal(result.reasonCode, 'model-route-finding-missing-at-head');
+  });
+
+  it('keeps a finding that cites a file present at the head when an unrelated untracked file exists', async () => {
+    const { repoRoot, headSha } = headRepo({ 'src/real.ts': thirtyLines });
+    writeFileSync(join(repoRoot, 'notes.txt'), 'unrelated local file\n');
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/real.ts', line: 12, endLine: 15 }));
+
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.equal(result.evidence.status, 'needs-work');
+    assert.equal(result.evidence.recommendation, 'request-changes');
+    assert.equal(result.evidence.findings.length, 1);
+    assert.equal(result.evidence.findings[0].severity, 'blocking');
+    assert.deepEqual(result.evidence.findings[0].location, { path: 'src/real.ts', line: 12, endLine: 15 });
+    assert.doesNotMatch(result.evidence.summary, /Withheld finding/);
+  });
+
+  it('still publishes a blocking finding with a valid path and line range at the head', async () => {
+    const { repoRoot, headSha } = headRepo({ 'src/real.ts': thirtyLines });
+    const result = await grokRun(repoRoot, headSha, blockingBody({ path: 'src/real.ts', line: 12, endLine: 15 }));
 
     assert.equal(result.error, null);
     assert.equal(result.reasonCode, null);
@@ -2245,29 +2320,14 @@ describe('finding locations at the reviewed head', () => {
     assert.equal(result.evidence.findings.length, 1);
     assert.equal(result.evidence.findings[0].severity, 'blocking');
     assert.deepEqual(result.evidence.findings[0].location, { path: 'src/real.ts', line: 12, endLine: 15 });
-    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, 'abc123', 'code-quality');
+    const rawPath = isolatedRawOutputPath(resolveTrustedLocalStore(repoRoot), 309, 310, headSha, 'code-quality');
     assert.equal(existsSync(rawPath), true, 'raw model output is kept for a published finding, not only on failure');
     assert.equal(JSON.parse(readFileSync(rawPath, 'utf8')).reasonCode, 'model-route-completed');
   });
 
   it('makes a lane inconclusive when the host reports 0 successful tool calls but the result claims tools and findings', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-no-tools-'));
-    mkdirSync(join(repoRoot, 'src'), { recursive: true });
-    writeFileSync(join(repoRoot, 'src', 'real.ts'), Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n'));
-    const result = await runModelReview({
-      ...reviewInput(repoRoot, 'codex'),
-      resolveExecutable: async () => 'codex.exe',
-      runProcess: async () => ({
-        exitCode: 0,
-        stderr: '',
-        timedOut: false,
-        stdinDelivered: true,
-        stdout: [
-          JSON.stringify({ type: 'thread.started', thread_id: 'codex-no-tools' }),
-          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(blockingBody({ path: 'src/real.ts', line: 4 })) } }),
-        ].join('\n'),
-      }),
-    });
+    const { repoRoot, headSha } = headRepo({ 'src/real.ts': thirtyLines });
+    const result = await codexRun(repoRoot, headSha, blockingBody({ path: 'src/real.ts', line: 4 }), 0);
 
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'inconclusive');
@@ -2276,18 +2336,39 @@ describe('finding locations at the reviewed head', () => {
     assert.match(result.evidence.summary, /Host reported 0 successful tool calls while the result claimed/);
   });
 
-  it('makes a lane inconclusive when the host explicitly reports 0 tool calls and the result claims tools', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-reported-no-tools-'));
-    const result = await grokRun(repoRoot, laneResult(), { toolCalls: 0 });
+  it('reports no tool call count for recorded Grok Build output and says the zero-tool-call check did not run', async () => {
+    const { repoRoot, headSha } = headRepo({ 'src/real.ts': thirtyLines });
+    const recorded = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'grok-build', 'review-output.json'), 'utf8'));
+    const body = { ...blockingBody({ path: 'src/real.ts', line: 4 }), headSha, commands: ['git diff --check'], toolsUsed: ['Read', 'Grep'] };
+    const stdout = JSON.stringify({ ...recorded, text: JSON.stringify(body), structuredOutput: body });
+    const parsed = getReviewHostAdapter('grok-build').parseEnvelope(stdout);
+    assert.equal('successfulToolCalls' in parsed, false, 'Grok Build output holds no successful tool call count');
 
-    assert.notEqual(result.evidence, null);
-    assert.equal(result.evidence.status, 'inconclusive');
-    assert.equal(result.reasonCode, 'model-route-no-successful-tool-calls');
+    const result = await hostRun(repoRoot, headSha, 'grok-build', 'grok.exe', stdout);
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.equal(result.evidence.status, 'needs-work');
+    assert.equal(result.evidence.findings.length, 1);
+    assert.match(result.evidence.completeness, /The host reported no successful tool call count, so the zero-tool-call check did not run\./);
+  });
+
+  it('does not read a count of 0 from a Grok Build record with an empty tool_calls array after records with tool calls', async () => {
+    const { repoRoot, headSha } = headRepo();
+    const body = { ...laneResult(), headSha, commands: [], toolsUsed: ['Read'] };
+    const stdout = [
+      JSON.stringify({ type: 'tool_call', tool_calls: [{ name: 'read_file' }, { name: 'grep' }], toolCalls: 2 }),
+      JSON.stringify({ text: JSON.stringify(body), sessionId: 'grok-tool-calls', tool_calls: [] }),
+    ].join('\n');
+    const result = await hostRun(repoRoot, headSha, 'grok-build', 'grok.exe', stdout);
+
+    assert.equal(result.error, null);
+    assert.equal(result.reasonCode, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.doesNotMatch(result.evidence.summary, /Host reported 0 successful tool calls/);
   });
 
   it('does not pass a lane with no tools, no commands, and no findings, and names the missing inspection', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-no-claims-'));
-    writeFileSync(join(repoRoot, 'README.md'), 'fixture\n');
+    const { repoRoot, headSha } = headRepo();
     const body = {
       ...laneResult(),
       summary: 'Inspected the complete scope at the current head.',
@@ -2296,7 +2377,7 @@ describe('finding locations at the reviewed head', () => {
       toolsUsed: [],
       artifacts: [{ kind: 'source', path: 'README.md', sha256: null }],
     };
-    const result = await grokRun(repoRoot, body);
+    const result = await grokRun(repoRoot, headSha, body);
 
     assert.equal(result.evidence, null);
     assert.equal(result.reasonCode, 'model-route-no-inspection');
@@ -2307,8 +2388,8 @@ describe('finding locations at the reviewed head', () => {
   });
 
   it('does not pass a lane with real tools and no findings when the host reports 0 successful tool calls', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-zero-count-'));
-    const result = await grokRun(repoRoot, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, { toolCalls: 0 });
+    const { repoRoot, headSha } = headRepo();
+    const result = await codexRun(repoRoot, headSha, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, 0);
 
     assert.notEqual(result.evidence, null);
     assert.equal(result.evidence.status, 'inconclusive');
@@ -2317,13 +2398,14 @@ describe('finding locations at the reviewed head', () => {
   });
 
   it('accepts a passed lane with no findings, real tools, and a host tool-call count above 0', async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-head-counted-tools-'));
-    const result = await grokRun(repoRoot, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, { toolCalls: 3 });
+    const { repoRoot, headSha } = headRepo();
+    const result = await codexRun(repoRoot, headSha, { ...laneResult(), commands: [], toolsUsed: ['Read'] }, 3);
 
     assert.equal(result.error, null);
     assert.equal(result.reasonCode, null);
     assert.equal(result.evidence.status, 'passed');
     assert.deepEqual(result.evidence.findings, []);
+    assert.doesNotMatch(result.evidence.completeness, /no successful tool call count/);
   });
 });
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, it } from "node:test";
 
@@ -107,13 +108,28 @@ describe("grok-build adapter", () => {
     assert.equal(parsed.successfulToolCalls, undefined);
   });
 
-  it("keeps a host-reported tool-call count from the envelope", () => {
-    const final = JSON.stringify({ status: "passed" });
-    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope(
-      JSON.stringify({ text: final, sessionId: "grok-session", toolCalls: 0 }),
-    );
+  it("reports no successful tool call count for recorded Grok Build output", () => {
+    const recorded = readFileSync(new URL("./fixtures/review-output.json", import.meta.url), "utf8");
+    const record = JSON.parse(recorded);
+    assert.equal(record.num_turns, 2, "the recorded run made tool calls across model turns");
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope(recorded);
 
-    assert.equal(parsed.successfulToolCalls, 0);
+    assert.equal(parsed.text, JSON.stringify(record.structuredOutput));
+    assert.equal(parsed.sessionId, record.sessionId);
+    assert.equal(parsed.usage.inputTokens, record.usage.input_tokens);
+    assert.equal("successfulToolCalls" in parsed, false);
+  });
+
+  it("does not read a count of 0 from an empty tool_calls array after records with tool calls", () => {
+    const final = JSON.stringify({ status: "passed" });
+    const parsed = adapter.isolatedReviewHostAdapter.parseEnvelope([
+      JSON.stringify({ type: "tool_call", tool_calls: [{ name: "read_file" }, { name: "grep" }], toolCalls: 2 }),
+      JSON.stringify({ text: final, sessionId: "grok-session", tool_calls: [] }),
+    ].join("\n"));
+
+    assert.equal(parsed.text, final);
+    assert.notEqual(parsed.successfulToolCalls, 0);
+    assert.equal("successfulToolCalls" in parsed, false);
   });
 
   it("prefers structured output over provisional text objects", () => {

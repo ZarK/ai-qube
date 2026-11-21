@@ -51,7 +51,7 @@ function lane(overrides = {}) {
     carriedForwardFromHeadSha: overrides.carriedForwardFromHeadSha ?? null,
     origin: overrides.origin ?? "local",
     notRunReason: overrides.notRunReason ?? null,
-    withheld: overrides.withheld ?? { duplicates: 0, offDiff: 0, byCap: 0 },
+    withheld: overrides.withheld ?? { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
     host: overrides.host,
     model: overrides.model,
     effort: overrides.effort,
@@ -123,6 +123,23 @@ describe("renderRoundReviewBody", () => {
     assert.doesNotMatch(render.body, /# QUBE review round summary/);
     assert.doesNotMatch(render.body, /Preconditions observed:/);
     assert.doesNotMatch(render.body, /finding digest:/);
+  });
+
+  it("names findings withheld as missing at head in the lane notes", () => {
+    const render = renderRoundReviewBody({
+      marker: marker(),
+      verdict: "inconclusive",
+      headSha: "85019345d5044f9f85b43abddb1d447ea24ec295",
+      expectedLanes: ["code-quality", "issue-compliance"],
+      lanes: [
+        lane({ status: "inconclusive", recommendation: "inconclusive", summary: "Blocking defect found.", withheld: { duplicates: 0, missingAtHead: 2, offDiff: 1, byCap: 0 } }),
+        lane({ laneId: "issue-compliance", summary: "Criteria met." }),
+      ],
+      findings: [],
+      transport: "review-api",
+    });
+    assert.match(render.body, /- code-quality: Blocking defect found\. Synthesis withheld 3 finding\(s\): 0 duplicate, 2 missing at head, 1 off-diff, 0 beyond cap\./);
+    assert.match(render.body, /- issue-compliance: Criteria met\.\n/);
   });
 
   it("strips finding claims out of a lane summary before collapsed notes", () => {

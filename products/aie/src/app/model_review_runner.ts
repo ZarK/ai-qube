@@ -16,7 +16,7 @@ import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostAdapter,
 import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 import { reviewInputPromptLines, unreadReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
-import { countTextLines, missingAtHeadReason } from '../finding_location.js';
+import { createHeadLineCounter, missingAtHeadReason } from '../finding_location.js';
 import { incompleteReviewResult, isProgressOnlyReviewText } from '../review_incomplete.js';
 
 export type { ReviewInputFile } from './review_input.js';
@@ -899,22 +899,6 @@ function captureRawOutput(
   return { evidence: null, reasonCode, error: `${error} Raw output: ${relativePath}.` };
 }
 
-function workspaceLineCount(repoRoot: string, path: string): number | null {
-  const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (normalized === '' || normalized.includes('\0') || normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) return null;
-  if (normalized.split('/').includes('..')) return null;
-  try {
-    const resolvedRoot = realpathSync(repoRoot);
-    const resolvedPath = realpathSync(resolve(repoRoot, normalized));
-    const relativePath = relative(resolvedRoot, resolvedPath);
-    if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return null;
-    if (!statSync(resolvedPath).isFile()) return null;
-    return countTextLines(readFileSync(resolvedPath, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
 interface FindingHeadCheck {
   evidence: LaneEvidence;
   withheld: string[];
@@ -923,10 +907,12 @@ interface FindingHeadCheck {
 
 /**
  * Withhold every located finding whose file or line range is missing at
- * the reviewed head. The runner has already verified the checkout sits
- * at `headSha` with unchanged contents, so workspace files are the head.
+ * the reviewed head. Files are read from the git objects at `headSha`,
+ * the same counter publication uses, so untracked, ignored, or modified
+ * working-tree files never count as the head.
  */
-function checkFindingsAtHead(evidence: LaneEvidence, repoRoot: string): FindingHeadCheck {
+function checkFindingsAtHead(evidence: LaneEvidence, repoRoot: string, headSha: string): FindingHeadCheck {
+  const headLineCount = createHeadLineCounter(repoRoot, headSha);
   const kept: LaneEvidence['findings'] = [];
   const withheld: string[] = [];
   let withheldBlocking = false;
@@ -935,7 +921,7 @@ function checkFindingsAtHead(evidence: LaneEvidence, repoRoot: string): FindingH
       kept.push(finding);
       continue;
     }
-    const reason = missingAtHeadReason(workspaceLineCount(repoRoot, finding.location.path), finding.location);
+    const reason = missingAtHeadReason(headLineCount(finding.location.path), finding.location);
     if (reason === null) {
       kept.push(finding);
       continue;
@@ -1005,7 +991,8 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
   return /^\s*(?:rejected:\s*)?blocked by policy\b/im.test(inspectionPolicyHaystack(result));
 }
 
-const NO_INSPECTION_NEXT_STEP = 'The lane is not passed (model-route-no-inspection): the result names no tool and no command that inspected the change. Rerun the lane so the reviewer reads the changed files with its tools.';
+const UNREPORTED_TOOL_CALLS_NOTE = 'The host reported no successful tool call count, so the zero-tool-call check did not run.';
+const NO_INSPECTION_NEXT_STEP ='The lane is not passed (model-route-no-inspection): the result names no tool and no command that inspected the change. Rerun the lane so the reviewer reads the changed files with its tools.';
 
 const MAX_TURNS_ERROR = 'Model review route reached its configured turn limit (model-route-max-turns) before finishing the lane; the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.';
 
@@ -1359,7 +1346,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }
     const evidence = strictResult.evidence;
-    const headChecked = checkFindingsAtHead(evidence, input.repoRoot);
+    const headChecked = checkFindingsAtHead(evidence, input.repoRoot, input.headSha);
     let finalEvidence = appendReviewNotes(headChecked.evidence, headChecked.withheld);
     let outcomeReasonCode: string | null = strictResult.downgradeRule ? `model-route-${strictResult.downgradeRule}` : null;
     if (headChecked.withheldBlocking && !finalEvidence.findings.some(finding => finding.severity === 'blocking')) {
@@ -1368,7 +1355,11 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       finalEvidence = asInconclusive(finalEvidence, []);
       outcomeReasonCode = 'model-route-finding-missing-at-head';
     }
-    if (parsedHostOutput.successfulToolCalls === 0) {
+    if (parsedHostOutput.successfulToolCalls === undefined) {
+      // An unreported count is not a count of zero: the verdict stands, and
+      // the evidence states that the zero-tool-call check could not run.
+      finalEvidence = { ...finalEvidence, completeness: `${finalEvidence.completeness} ${UNREPORTED_TOOL_CALLS_NOTE}` };
+    } else if (parsedHostOutput.successfulToolCalls === 0) {
       // The host's own record shows no successful tool call, so no verdict
       // has an inspected basis: a passed lane does not pass, and claimed
       // commands, tools, and findings are withheld.

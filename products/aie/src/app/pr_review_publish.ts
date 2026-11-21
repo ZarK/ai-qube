@@ -535,7 +535,13 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   // so the guard fails closed on the union-visibility signal, not on which
   // withhold bucket was hit.
   if (synthesisPlan.published.length === 0 && evidence.recommendation === 'request-changes' && !synthesisPlan.hasVisibleObligation) {
-    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis left no provider-visible obligation for the request-changes lane ${options.lane} (${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap), and no other lane published the withheld identities. Next action: rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.`);
+    const counts = `${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldMissingAtHead} missing at head, ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap`;
+    const nextAction = synthesisPlan.blockingMissingAtHead
+      ? `rerun the lane review for this head so its blocking findings cite code that exists at the head; ${synthesisPlan.withheldMissingAtHead} finding(s) cite code missing at the reviewed head.`
+      : synthesisPlan.withheldByCap > 0
+        ? 'rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.'
+        : 'rerun the lane review with anchored findings for this head.';
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis left no provider-visible obligation for the request-changes lane ${options.lane} (${counts}), and no other lane published the withheld identities. Next action: ${nextAction}`);
   }
   const publishInput = {
     dryRun: options.dryRun ?? false,
@@ -554,7 +560,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     findings: synthesisPlan.published,
     completeness: evidence.completeness,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
-    withheld: { duplicates: synthesisPlan.withheldDuplicates, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
+    withheld: { duplicates: synthesisPlan.withheldDuplicates, missingAtHead: synthesisPlan.withheldMissingAtHead, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
   };
   const publish = await provider.publishLaneReviewFeedback(publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };

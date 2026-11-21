@@ -1,0 +1,33 @@
+{
+  "text": "{\"name\":\"read_file\",\"matches\":0}\n\n{\"name\":\"@tjalve/qube-adapter-grok-build\",\"matches\":6}",
+  "stopReason": "end_turn",
+  "sessionId": "01a1ffda-9ef6-77a2-b3a2-c2057159719c",
+  "requestId": "f1fb65d8-dd1f-4337-ac11-ba44772c2cb9",
+  "cwd": "/repo",
+  "thought": "I need to read a file and grep another for \"export\", then return a JSON object with the package name and the count of matching lines.\n\nThe user wants JSON output containing the package name and the number of grep matching lines.",
+  "usage": {
+    "input_tokens": 26041,
+    "cache_read_input_tokens": 28160,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 393,
+    "reasoning_tokens": 293,
+    "total_tokens": 54594
+  },
+  "num_turns": 2,
+  "total_cost_usd": 0.0232968,
+  "total_cost_usd_ticks": 232968000,
+  "modelUsage": {
+    "grok-4.7-build": {
+      "inputTokens": 26041,
+      "outputTokens": 393,
+      "cacheReadInputTokens": 28160,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 2,
+      "costUSD": 0.0232968
+    }
+  },
+  "structuredOutput": {
+    "name": "@tjalve/qube-adapter-grok-build",
+    "matches": 6
+  }
+}

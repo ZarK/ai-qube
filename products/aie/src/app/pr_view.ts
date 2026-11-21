@@ -380,7 +380,7 @@ export function formatPrView(result: PrViewResult): string {
         findings: [],
         evidenceHeadSha: result.pr.headSha,
         carriedForwardFromHeadSha: null,
-        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
         route: item.route,
       });
       const fallback = item.route.reason ? `; fallback=${item.route.reason.code}: ${item.route.reason.message}` : '';

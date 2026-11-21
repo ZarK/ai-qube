@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput, type ReviewRoundStatusLane } from '@tjalve/qube-core';
+import { normalizeReviewFinding, reviewFindingKey, type ReviewFinding, type ReviewRepositoryRef, type ReviewRoundDeltaInput, type ReviewRoundStatusLane } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitChangedPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
@@ -8,7 +8,7 @@ import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgeRoundSummaryPublishResult } from '../providers/review_forge_provider.js';
 import { createHeadLineCounter } from '../finding_location.js';
-import { planFindingPublication, threadDispositionsFromPlans, type SynthesisLaneInput } from '../review_synthesis.js';
+import { planFindingPublication, threadDispositionsFromPlans, type LanePublicationPlan, type SynthesisLaneInput } from '../review_synthesis.js';
 import { renderInlineCommentBody, renderRoundSummaryBody, type RoundSummaryLaneInput } from '../review_round_summary.js';
 import { loadValidatedRoundLanes, type ValidatedRoundLane } from './pr_review_publish.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -142,17 +142,45 @@ export interface PrReviewSummaryPublishResult {
   publish: ReviewForgeRoundSummaryPublishResult;
 }
 
-function roundStatusLane(lane: ValidatedRoundLane): ReviewRoundStatusLane {
-  if (lane.status !== 'passed' && lane.status !== 'needs-work' && lane.status !== 'failed') {
-    return { laneId: lane.laneId, status: 'invalid', blockingFindingCount: 0, advisoryFindingCount: 0, reason: `Lane evidence is ${lane.status}.` };
-  }
+/**
+ * A lane as publication sees it: its published findings, and its verdict
+ * after the head check. A request-changes lane whose every blocking finding
+ * cites code missing at the reviewed head has no blocking basis there, so
+ * it is shown as inconclusive instead of requesting changes.
+ */
+interface PublishedRoundLane {
+  readonly lane: ValidatedRoundLane;
+  readonly plan: LanePublicationPlan | undefined;
+  readonly status: string;
+  readonly recommendation: ValidatedRoundLane['recommendation'];
+  readonly findings: readonly ReviewFinding[];
+  readonly blockingMissingAtHead: boolean;
+}
+
+function publishedRoundLane(lane: ValidatedRoundLane, plan: LanePublicationPlan | undefined): PublishedRoundLane {
+  const findings = plan?.published ?? [];
+  const blockingMissingAtHead = lane.recommendation === 'request-changes' && plan?.blockingMissingAtHead === true;
   return {
-    laneId: lane.laneId,
-    status: lane.status,
-    blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
-    advisoryFindingCount: lane.findings.filter(finding => finding.severity === 'advisory').length,
-    reason: null,
+    lane,
+    plan,
+    status: blockingMissingAtHead ? 'inconclusive' : lane.status,
+    recommendation: blockingMissingAtHead ? 'inconclusive' : lane.recommendation,
+    findings,
+    blockingMissingAtHead,
   };
+}
+
+function roundStatusLane(published: PublishedRoundLane): ReviewRoundStatusLane {
+  const blockingFindingCount = published.findings.filter(finding => finding.severity === 'blocking').length;
+  const advisoryFindingCount = published.findings.filter(finding => finding.severity === 'advisory').length;
+  if (published.blockingMissingAtHead) {
+    return { laneId: published.lane.laneId, status: 'invalid', blockingFindingCount, advisoryFindingCount, reason: `Every blocking finding cites code missing at the reviewed head (${published.plan?.withheldMissingAtHead ?? 0} withheld).` };
+  }
+  const status = published.status;
+  if (status !== 'passed' && status !== 'needs-work' && status !== 'failed') {
+    return { laneId: published.lane.laneId, status: 'invalid', blockingFindingCount: 0, advisoryFindingCount: 0, reason: `Lane evidence is ${status}.` };
+  }
+  return { laneId: published.lane.laneId, status, blockingFindingCount, advisoryFindingCount, reason: null };
 }
 
 export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewSummaryPublishOptions): Promise<PrReviewSummaryPublishResult> {
@@ -225,20 +253,20 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   const synthesisLanes: SynthesisLaneInput[] = validatedLanes.map(lane => ({ laneId: lane.laneId, findings: lane.findings }));
   const plans = planFindingPublication(synthesisLanes, { changedPaths, headLineCount: createHeadLineCounter(repoRoot, headSha), nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP, laneSuppress: options.laneSuppress, laneAdvisoryCaps: options.laneAdvisoryCaps });
   const planByLane = new Map(plans.map(plan => [plan.laneId, plan] as const));
+  const publishedLanes = validatedLanes.map(lane => publishedRoundLane(lane, planByLane.get(lane.laneId)));
 
-  const roundSummaryLanes: RoundSummaryLaneInput[] = validatedLanes.map(lane => {
-    const plan = planByLane.get(lane.laneId);
+  const roundSummaryLanes: RoundSummaryLaneInput[] = publishedLanes.map(({ lane, plan, status, recommendation, findings }) => {
     return {
       laneId: lane.laneId,
-      status: lane.status,
-      recommendation: lane.recommendation,
+      status,
+      recommendation,
       summary: lane.summary,
-      findings: plan?.published ?? [],
+      findings,
       preconditions: lane.preconditions,
       evidenceHeadSha: lane.evidenceHeadSha,
       carriedForwardFromHeadSha: lane.carriedForwardFromHeadSha,
       origin: lane.origin,
-      withheld: { duplicates: plan?.withheldDuplicates ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
+      withheld: { duplicates: plan?.withheldDuplicates ?? 0, missingAtHead: plan?.withheldMissingAtHead ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
       host: lane.host,
       model: lane.route.executed.reportedModel ?? lane.route.executed.transportModel ?? lane.route.executed.requestedModel,
       effort: lane.route.executed.effort,
@@ -270,7 +298,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     ? render
     : renderRoundSummaryBody(renderInput, { diffIndex, transport: 'issue-comment', profile: 'degraded' });
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor, { repository, headSha, profile: renderProfile }) }));
-  const laneMarkers = validatedLanes.map(lane => `<!-- qube-pr-review:${JSON.stringify({
+  const laneMarkers = publishedLanes.map(({ lane, status, recommendation, findings }) => `<!-- qube-pr-review:${JSON.stringify({
     version: 1,
     head: headSha,
     lane: lane.laneId,
@@ -282,12 +310,12 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     prNumber: options.prNumber,
     host: lane.route.executed.host,
     route: lane.route,
-    recommendation: lane.recommendation,
-    status: lane.status,
-    summary: lane.summary || `${lane.laneId} ${lane.status}`,
+    recommendation,
+    status,
+    summary: lane.summary || `${lane.laneId} ${status}`,
     inline: 'review-api',
-    bodyFindingCount: lane.findings.length,
-    blockingFindingCount: lane.findings.filter(finding => finding.severity === 'blocking').length,
+    bodyFindingCount: findings.length,
+    blockingFindingCount: findings.filter(finding => finding.severity === 'blocking').length,
   })} -->`).join('\n');
   const consolidatedBody = `${laneMarkers}\n${render.body}`;
   const issueCommentBody = `${laneMarkers}\n${issueCommentRender.body}`;
@@ -299,7 +327,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     round,
     issueNumber,
     expectedLanes: expectedLaneIds,
-    lanes: validatedLanes.map(lane => roundStatusLane(lane)),
+    lanes: publishedLanes.map(roundStatusLane),
     verdict: render.verdict,
     body: consolidatedBody,
     issueCommentBody,

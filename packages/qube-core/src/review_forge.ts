@@ -317,7 +317,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly completeness: string | null;
   readonly evidencePath: string | null;
   /** Cross-lane synthesis withheld counts for this lane; rendered in provider bodies and included in idempotency digests so stale accounting republishes. */
-  readonly withheld?: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
+  readonly withheld?: { readonly duplicates: number; readonly missingAtHead: number; readonly offDiff: number; readonly byCap: number };
 }
 
 export interface ReviewLaneReviewPublishResult {

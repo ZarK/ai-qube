@@ -37,7 +37,7 @@ export function missingAtHeadReason(lineCount: number | null | undefined, locati
 
 function safeHeadPath(path: string): string | null {
   const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (normalized === '' || normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) return null;
+  if (normalized === '' || normalized.includes('\0') || normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) return null;
   if (normalized.split('/').includes('..')) return null;
   return normalized;
 }
@@ -67,7 +67,7 @@ export function createHeadLineCounter(repoRoot: string, headSha: string): (path:
     if (cached !== undefined) return cached;
     let count: number | null;
     try {
-      const content = execFileSync('git', ['-C', repoRoot, 'show', `${headSha}:${normalized}`], { encoding: 'utf8', timeout: 30_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+      const content = execFileSync('git', ['-C', repoRoot, 'show', `${headSha}:${normalized}`], { encoding: 'utf8', timeout: 30_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
       count = countTextLines(content);
     } catch {
       count = null;

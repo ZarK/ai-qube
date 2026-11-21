@@ -587,10 +587,10 @@ describe("GitLab review forge adapter", () => {
       evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
     };
 
-    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, withheld: { duplicates: 2, offDiff: 1, byCap: 3 } });
-    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, lane: "security", withheld: { duplicates: 0, offDiff: 0, byCap: 0 } });
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, withheld: { duplicates: 2, missingAtHead: 0, offDiff: 1, byCap: 3 } });
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, lane: "security", withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } });
 
-    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 duplicate, 1 off-diff, 3 beyond cap/);
+    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 duplicate, 0 missing at head, 1 off-diff, 3 beyond cap/);
     assert.doesNotMatch(notes[1].body, /Synthesis withheld/);
   });
 
