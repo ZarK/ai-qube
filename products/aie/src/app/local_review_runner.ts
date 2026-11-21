@@ -12,7 +12,8 @@ import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
 import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, configuredReviewModelHost, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneConfiguredFragments, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
-import { resolveModelHostExecutable, runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
+import { createGateReviewInput } from './review_input.js';
+import { resolveModelHostExecutable, routeHasShell, runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelReviewRunResult, type ModelRouteProcess, type ModelRouteProcessProgress } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { reviewModeOf } from '../review_mode.js';
@@ -751,6 +752,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const deltaTriage: DeltaTriageLaneResult[] = [];
   const unavailable: string[] = [];
   const routedJobs: RoutedLaneJob[] = [];
+  // Lanes without shell share one review input per gate. It is prepared on
+  // first use and removed after every routed lane, including failover reruns.
+  const gateReviewInput = createGateReviewInput(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`, input.headSha);
   const dryRunExecutables = new Map<RoutedReviewHostId, ModelHostExecutable | null>();
   const dryRunProbeChecks = new Map<string, RouteProbeCheck>();
   const dryRunProbeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck => {
@@ -941,7 +945,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             path,
             runner,
             reviewScope: plannedScope,
-            run: () => runModelReview({
+            run: async () => runModelReview({
               plan: job.route,
               selectedPlan: job.primaryRoute ?? job.route,
               transportModel: job.probedModel,
@@ -957,7 +961,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptStackHash: jobPromptStackHash,
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
-              baseRef: `${config.baseRemote}/${config.baseBranch}`,
+              // The route can change through probe fallback or failover, so
+              // shell capability is read at execution time. Every lane without
+              // shell shares the one diff the gate prepares.
+              ...(routeHasShell({ plan: job.route }) ? {} : { reviewInputFiles: await gateReviewInput.files() ?? undefined }),
               reviewScope: plannedScope,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed
@@ -1107,34 +1114,43 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     // bookkeeping as a host mutation. A real checkout mutation invalidates the
     // complete routed batch, while other lane failures preserve valid siblings.
     const routedOutcomes: Array<ModelReviewRunResult | null | undefined> = [];
-    await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
-      const job = runnableJobs[jobIndex];
-      if (
-        (!routed || !routed.evidence)
-        && routed?.reasonCode !== null && routed?.reasonCode !== undefined
-        && SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)
-        && job.routeSource === 'configured'
-        && config.reviewFailover
-      ) {
-        const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
-        if (fallbackPlan) {
-          const fallbackCheck = probeFor(fallbackPlan);
-          if (fallbackCheck?.status === 'ready') {
-            const failoverReason = routed.reasonCode;
-            const primaryHost = job.primaryRoute?.host ?? job.route.host;
-            job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, failoverReason);
-            job.routeSource = 'fallback';
-            job.host = fallbackPlan.host;
-            job.probedExecutable = fallbackCheck.resolved ?? null;
-            job.probedModel = fallbackCheck.resolvedModel;
-            job.transport = fallbackCheck.transport ?? null;
-            job.fallbackReason = failoverReason;
-            routed = await job.run();
+    try {
+      await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
+        const job = runnableJobs[jobIndex];
+        if (
+          (!routed || !routed.evidence)
+          && routed?.reasonCode !== null && routed?.reasonCode !== undefined
+          && SAME_RUN_FAILOVER_REASONS.has(routed.reasonCode)
+          && job.routeSource === 'configured'
+          && config.reviewFailover
+        ) {
+          const fallbackPlan = resolveDistinctFailoverReviewPlan(config, job.primaryRoute ?? job.route);
+          if (fallbackPlan) {
+            const fallbackCheck = probeFor(fallbackPlan);
+            if (fallbackCheck?.status === 'ready') {
+              const failoverReason = routed.reasonCode;
+              const primaryHost = job.primaryRoute?.host ?? job.route.host;
+              job.route = withHostFailoverSubstitution(fallbackPlan, primaryHost, failoverReason);
+              job.routeSource = 'fallback';
+              job.host = fallbackPlan.host;
+              job.probedExecutable = fallbackCheck.resolved ?? null;
+              job.probedModel = fallbackCheck.resolvedModel;
+              job.transport = fallbackCheck.transport ?? null;
+              job.fallbackReason = failoverReason;
+              routed = await job.run();
+            }
           }
         }
+        routedOutcomes[jobIndex] = routed;
+      });
+    } finally {
+      try {
+        gateReviewInput.remove();
+      } catch {
+        // A locked file must not mask lane results; the checkout state
+        // check already ignores review input left behind.
       }
-      routedOutcomes[jobIndex] = routed;
-    });
+    }
     const checkoutMutation = routedOutcomes.find(outcome => outcome?.reasonCode === 'model-route-checkout-mismatch');
     for (let jobIndex = 0; jobIndex < runnableJobs.length; jobIndex += 1) {
       const job = runnableJobs[jobIndex];

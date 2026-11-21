@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -223,6 +224,39 @@ export async function computeReviewDiff(repoRoot: string, baseRef: string, headS
   } catch {
     return { kind: 'unavailable' };
   }
+}
+
+/** Review input that one gate prepares once and shares with every lane without shell. */
+export interface GateReviewInput {
+  /**
+   * Shared diff files for the reviewed range. The first call computes the
+   * diff and writes the files; later and concurrent calls get the same
+   * result. `[]` means there is nothing to prepare (empty range, or the
+   * checkout is not at the head, which the lane HEAD check reports).
+   * `null` means the range could not be resolved.
+   */
+  files(): Promise<readonly ReviewInputFile[] | null>;
+  /** Remove the gate folder. Safe to call when nothing was written. */
+  remove(): void;
+}
+
+export function createGateReviewInput(repoRoot: string, baseRef: string, headSha: string): GateReviewInput {
+  const gateId = randomUUID();
+  const directory = join(repoRoot, ...REVIEW_INPUT_DIRECTORY.split('/'), gateId);
+  let prepared: Promise<readonly ReviewInputFile[] | null> | null = null;
+  return {
+    files() {
+      prepared ??= computeReviewDiff(repoRoot, baseRef, headSha).then(diff => {
+        if (diff.kind === 'unavailable') return null;
+        if (diff.kind === 'skip') return [];
+        return writeReviewInputFiles(repoRoot, gateId, diff.diff);
+      });
+      return prepared;
+    },
+    remove() {
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
 }
 
 /** Render the bounded prompt section listing review-input files. */
