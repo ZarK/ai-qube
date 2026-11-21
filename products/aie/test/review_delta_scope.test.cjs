@@ -243,6 +243,7 @@ describe('review delta scope', () => {
       promptStackHash: 'abc',
       promptText: 'Lane body',
       promptStack: [],
+      budget: { maxTurns: 8, timeoutSeconds: 60, files: 2, changedLines: 10, coverageAreas: 1, minimumTurns: 8, minimumTimeoutSeconds: 60 },
       reviewScope: selection,
     });
     assert.match(prompt, /Delta re-review since approved head aaa111/);

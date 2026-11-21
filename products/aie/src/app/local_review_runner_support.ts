@@ -18,6 +18,7 @@ import { loadReviewLearningsFragment } from '../review_learnings.js';
 import { sameReviewRouteIdentity, type ReviewRoutePlanIdentity } from '../review_route_provenance.js';
 import { reviewerDisplayName } from '../agent_host_adapters.js';
 import { buildDeltaPromptSection, type ReviewScopeKind, type ReviewScopeSelection } from './review_delta_scope.js';
+import { readReviewBudget } from './review_budget.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1233,6 +1234,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       resultDecodeDiagnostic: value.runnerProvenance.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
         ? 'cursor-bounded-preface-normalized'
         : null,
+      budget: readReviewBudget(value.runnerProvenance.budget),
     },
     ...(value.modelTier === 'review' || value.modelTier === 'economy' || value.modelTier === 'synthesis' ? { modelTier: value.modelTier } : {}),
     ...(usage ? { usage } : {}),
@@ -1430,6 +1432,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     resultDecodeDiagnostic: provenance.resultDecodeDiagnostic === 'cursor-bounded-preface-normalized'
       ? 'cursor-bounded-preface-normalized'
       : null,
+    budget: provenance.budget ?? null,
     recordedAt: new Date().toISOString(),
   }, null, 2)}\n`, store);
   return path;

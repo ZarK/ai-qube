@@ -328,17 +328,43 @@ describe('config validation', () => {
 
   it('rejects turn budgets below the routed inspection floor', () => {
     const input = defaultFile();
-    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };
+    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 600, maxTurns: 3 };
 
     const result = validateConfig(input);
 
     assert.equal(result.ok, false);
+    const turnsError = result.errors.find(error => error.path === 'policy.reviews.route.maxTurns');
+    assert.ok(turnsError);
+    assert.equal(turnsError.message, 'policy.reviews.route.maxTurns must be an integer of at least 4');
+  });
+
+  it('accepts route turn and timeout minimums with no upper limit', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 7200, maxTurns: 40 };
+    input.policy.reviews.failover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 3601, maxTurns: 400 } };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.reviewRoute.maxTurns, 40);
+    assert.equal(result.config.reviewRoute.timeoutSeconds, 7200);
+    assert.equal(result.config.reviewFailover.route.maxTurns, 400);
+  });
+
+  it('rejects a route timeout below 30 seconds and a fractional turn minimum', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'grok-build', tier: 'review', timeoutSeconds: 29, maxTurns: 40.5 };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.timeoutSeconds' && /at least 30/.test(error.message)));
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.maxTurns'));
   });
 
   it('rejects unsupported review route hosts and unsafe execution bounds', () => {
     const input = defaultFile();
-    input.policy.reviews.route = { host: 'shell', tier: 'review', timeoutSeconds: 5, maxTurns: 50 };
+    input.policy.reviews.route = { host: 'shell', tier: 'review', timeoutSeconds: 5, maxTurns: 2 };
 
     const result = validateConfig(input);
 

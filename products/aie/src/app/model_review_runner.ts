@@ -18,6 +18,7 @@ import { buildReviewRouteProvenance } from '../review_route_provenance.js';
 import { reviewInputPromptLines, unreadReviewInputFiles, REVIEW_INPUT_DIRECTORY, type ReviewInputFile } from './review_input.js';
 import { createHeadLineCounter, missingAtHeadReason } from '../finding_location.js';
 import { incompleteReviewResult, isProgressOnlyReviewText } from '../review_incomplete.js';
+import { reviewBudgetPromptLine, type ReviewBudget } from './review_budget.js';
 
 export type { ReviewInputFile } from './review_input.js';
 
@@ -166,6 +167,14 @@ export interface ModelReviewRunInput {
   promptStackHash: string;
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
+  /** Turn budget and timeout calculated from the review input of this run. */
+  budget: ReviewBudget;
+  /**
+   * Set on a continuation run: its position after the first run (1, 2, ...)
+   * and the number of changed files in scope that earlier runs of this lane
+   * at this head already read.
+   */
+  continuation?: { part: number; earlierInspectedFiles: number };
   coverageAreas?: readonly string[];
   /**
    * Per-file diffs the gate prepared once for routes without shell. A route
@@ -278,7 +287,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
   return [
     'Return exactly one JSON object and no Markdown or commentary.',
     `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, coverage, and preconditions.`,
-    `Attest coverage for exactly these areas: ${areas.join(', ')}. Each coverage entry is {"area":"...","status":"clear"|"finding"|"not-inspected"} with one entry per area. Use "finding" for every area where you report findings, "clear" only after genuinely inspecting the area's complete scope at this head, and "not-inspected" whenever you ran out of capacity — a "not-inspected" attestation makes the lane inconclusive instead of approved, and a false "clear" is a contract violation. Establish your findings before attesting.`,
+    `Attest coverage for exactly these areas: ${areas.join(', ')}. Each coverage entry is {"area":"...","status":"clear"|"finding"|"not-inspected"} with one entry per area. Use "finding" for every area where you report findings, "clear" only after genuinely inspecting the area's complete scope at this head, and "not-inspected" only for an area you could not inspect after you read the change — a "not-inspected" attestation makes the lane inconclusive instead of approved, and a false "clear" is a contract violation. Establish your findings before attesting.`,
     'Blocker admissibility: a blocking finding must either name a violated acceptance criterion of the active issue with a concrete failing scenario, or demonstrate a correctness or security defect introduced by this diff with a concrete input and wrong outcome. Findings on pre-existing code adjacent to the diff, architecture preferences, and speculative hardening are advisory at most. Favor passed once the diff definitely improves the system and satisfies its acceptance criteria; a diff does not need to be perfect.',
     'Finding locations must prefer a tight destination-side span: set line to the first changed statement and endLine to at most line+9. Wider evidence belongs in the message, not in a 10-plus-line selection. When a safe one-hunk replacement exists, set suggestion to the exact replacement text for those anchored lines only, with the same line count as line..endLine. Set suggestion to null when the fix is prose, spans files, or cannot replace the anchored lines exactly. Never put English instructions in suggestion.',
     'When provider-visible lane feedback shows this lane already reviewed this pull request in an earlier round, verify whether the previously reported blockers are fixed and whether those fixes introduced new defects; do not re-open the full review surface or raise new blockers outside that fix delta.',
@@ -306,7 +315,10 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   const hasShell = routeHasShell(input);
   return [
     'You are an isolated read-only QUBE review lane runner.',
-    `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
+    reviewBudgetPromptLine(input.budget),
+    ...(input.continuation
+      ? [`Continuation run: an earlier run of this lane at this head read ${input.continuation.earlierInspectedFiles} other changed file(s) in scope. Review only the changed files listed below; QUBE merges your result with the earlier run.`]
+      : []),
     hasShell
       ? 'Prefer Git and Node.js for portable file inspection. If a PowerShell built-in module fails to load, continue with Git, Node.js, or cmd.exe read-only equivalents; do not retry the broken cmdlet or mistake its source text for a policy rejection.'
       : 'You have no shell on this route: do not run git, Node.js, or any terminal command. Use Read and Grep on the review input diff files and repository files listed below.',
@@ -506,11 +518,11 @@ interface RoutedLaneRejection {
 }
 
 type StrictRoutedLaneResult =
-  | { evidence: LaneEvidence; rejection: null; downgradeRule: string | null }
-  | { evidence: null; rejection: RoutedLaneRejection; downgradeRule: null };
+  | { evidence: LaneEvidence; rejection: null; downgradeRule: string | null; capacityAttested: boolean }
+  | { evidence: null; rejection: RoutedLaneRejection; downgradeRule: null; capacityAttested: false };
 
 function rejectedLane(rule: string, field: string, detail: string | null = null): StrictRoutedLaneResult {
-  return { evidence: null, rejection: { rule, field, detail }, downgradeRule: null };
+  return { evidence: null, rejection: { rule, field, detail }, downgradeRule: null, capacityAttested: false };
 }
 
 function routedLaneRejectionMessage(rejection: RoutedLaneRejection): string {
@@ -684,7 +696,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   if (unread.length > 0) {
     // A changed file the lane never read is not inspected. QUBE records its
     // own list in the structured field and fails closed to inconclusive so
-    // the gate can say to split the pull request.
+    // the gate continues the lane over those files.
     const note = `QUBE found changed files this lane did not read: ${unread.join(', ')}.`;
     if (typeof candidate.summary === 'string') candidate.summary = `${candidate.summary} ${note}`;
     if (typeof candidate.completeness === 'string') candidate.completeness = `${candidate.completeness} ${note}`;
@@ -696,7 +708,9 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   const normalized = normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha, input.repoRoot);
   if (!normalized) return rejectedLane('evidence-normalize-failed', 'result');
   const evidence: LaneEvidence = { ...normalized, notInspected: unread };
-  return { evidence, rejection: null, downgradeRule: coverageFindingsInconsistent ? 'coverage-findings-inconsistent' : null };
+  // The lane itself answered inconclusive with an area it did not inspect.
+  const capacityAttested = value.status === 'inconclusive' && anyNotInspected;
+  return { evidence, rejection: null, downgradeRule: coverageFindingsInconsistent ? 'coverage-findings-inconsistent' : null, capacityAttested };
 }
 
 function normalizeSchemaOptionals(value: unknown): unknown {
@@ -741,7 +755,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     model: input.plan.model,
     transportModel: input.transportModel,
     effort: input.plan.effort,
-    maxTurns: input.plan.maxTurns,
+    maxTurns: input.budget.maxTurns,
     prompt,
     promptPath,
     schemaPath,
@@ -755,7 +769,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     stdin: built.stdin,
     promptPath,
     schemaPath,
-    timeoutMs: input.plan.timeoutSeconds * 1000,
+    timeoutMs: input.budget.timeoutSeconds * 1000,
     progressLabel: `${input.lane} via ${input.plan.host}`,
     onProgress: input.onProgress,
   };
@@ -851,8 +865,12 @@ export function isolatedRawOutputPath(
   prNumber: number,
   headSha: string,
   lane: LocalReviewLaneId,
+  continuationPart = 0,
 ): string {
-  return join(store.path, 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, `${lane}.raw-output.json`);
+  // Each continuation run keeps its own raw output next to the first run's,
+  // so findings merged from every run can be re-checked.
+  const name = continuationPart > 0 ? `${lane}.part-${continuationPart}.raw-output.json` : `${lane}.raw-output.json`;
+  return join(store.path, 'model-route', 'raw', String(issueNumber), String(prNumber), headSha, name);
 }
 
 function writeRawOutput(
@@ -863,7 +881,7 @@ function writeRawOutput(
   error: string,
 ): string | null {
   try {
-    const path = isolatedRawOutputPath(store, input.issueNumber, input.prNumber, input.headSha, input.lane);
+    const path = isolatedRawOutputPath(store, input.issueNumber, input.prNumber, input.headSha, input.lane, input.continuation?.part ?? 0);
     mkdirTrustedStoreSync(dirname(path), store);
     writeReviewFileGuarded(path, `${JSON.stringify({
       version: 1,
@@ -994,7 +1012,9 @@ function inspectionPolicyBlocked(result: ModelRouteProcessResult): boolean {
 const UNREPORTED_TOOL_CALLS_NOTE = 'The host reported no successful tool call count, so the zero-tool-call check did not run.';
 const NO_INSPECTION_NEXT_STEP ='The lane is not passed (model-route-no-inspection): the result names no tool and no command that inspected the change. Rerun the lane so the reviewer reads the changed files with its tools.';
 
-const MAX_TURNS_ERROR = 'Model review route reached its configured turn limit (model-route-max-turns) before finishing the lane; the lane is not passed. Rerun the lane, make the change smaller, or split the pull request.';
+export const MAX_TURNS_ERROR = 'Model review route used its calculated turn budget (model-route-max-turns) before finishing the lane; the lane is not passed. The lane fails over to the configured second host when one is configured; otherwise rerun the lane.';
+const INCOMPLETE_RESULT_NEXT_STEP = 'The lane is not passed (model-route-incomplete-result). The lane fails over to the configured second host when one is configured; otherwise rerun the lane.';
+const CAPACITY_STOP_ERROR = 'The isolated review host returned inconclusive for capacity without inspecting the change (model-route-capacity-stop); the lane is not passed. This is a host fault: the lane fails over to the configured second host when one is configured; otherwise rerun the lane.';
 
 function hostEnvelopeFailure(failure: ReviewHostEnvelopeFailure): { reasonCode: string; error: string } {
   return failure.failureReasonCode === 'model-route-max-turns'
@@ -1290,13 +1310,14 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       isolation: 'read-only',
       invocationId,
       resultDecodeDiagnostic: parsedHostOutput.resultDecodeDiagnostic ?? null,
+      budget: input.budget,
     };
     if ('transientTexts' in parsedHostOutput) {
       const transientTexts = parsedHostOutput.transientTexts;
       if (!Array.isArray(transientTexts) || !transientTexts.every((text): text is string => typeof text === 'string')) {
         return captureRawOutput(store, input, result, 'model-route-output-envelope', 'Model review route returned invalid transient host messages.');
       }
-      if (transientTexts.length >= input.plan.maxTurns) {
+      if (transientTexts.length >= input.budget.maxTurns) {
         return captureRawOutput(store, input, result, 'model-route-max-turns', MAX_TURNS_ERROR);
       }
       for (const priorText of transientTexts) {
@@ -1309,7 +1330,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
           return captureRawOutput(store, input, result, 'model-route-multiple-terminal', 'Model review route returned more than one terminal result.');
         }
         if (priorResultStrict.rejection.rule === 'incomplete-result') {
-          return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
+          return captureRawOutput(store, input, result, 'model-route-incomplete-result', `Model review route returned an unfinished transient Review object: ${routedLaneRejectionMessage(priorResultStrict.rejection)} ${INCOMPLETE_RESULT_NEXT_STEP}`);
         }
         if (priorResultStrict.rejection.rule === 'no-inspection') {
           return captureRawOutput(store, input, result, 'model-route-no-inspection', `Model review route returned a transient Review object with no inspection behind it: ${routedLaneRejectionMessage(priorResultStrict.rejection)} ${NO_INSPECTION_NEXT_STEP}`);
@@ -1341,7 +1362,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         return captureRawOutput(store, input, result, 'model-route-artifact-digest', routedLaneRejectionMessage(rejection));
       }
       if (rejection.rule === 'incomplete-result') {
-        return captureRawOutput(store, input, result, 'model-route-incomplete-result', `${routedLaneRejectionMessage(rejection)} The lane is not passed (model-route-incomplete-result). Rerun the lane, make the change smaller, or split the pull request.`);
+        return captureRawOutput(store, input, result, 'model-route-incomplete-result', `${routedLaneRejectionMessage(rejection)} ${INCOMPLETE_RESULT_NEXT_STEP}`);
       }
       if (rejection.rule === 'no-inspection') {
         return captureRawOutput(store, input, result, 'model-route-no-inspection', `${routedLaneRejectionMessage(rejection)} ${NO_INSPECTION_NEXT_STEP}`);
@@ -1349,6 +1370,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       return captureRawOutput(store, input, result, 'model-route-contract-mismatch', routedLaneRejectionMessage(rejection));
     }
     const evidence = strictResult.evidence;
+    // An inconclusive answer for capacity with no inspection behind it is a
+    // host fault, not a review: the host reported no successful tool call,
+    // or a route without shell read none of its review input files.
+    const reviewInputCount = input.reviewInputFiles?.length ?? 0;
+    const readNothing = parsedHostOutput.successfulToolCalls === 0
+      || (reviewInputCount > 0 && evidence.notInspected.length >= reviewInputCount);
+    if (strictResult.capacityAttested && readNothing) {
+      return captureRawOutput(store, input, result, 'model-route-capacity-stop', CAPACITY_STOP_ERROR);
+    }
     const headChecked = checkFindingsAtHead(evidence, input.repoRoot, input.headSha);
     let finalEvidence = appendReviewNotes(headChecked.evidence, headChecked.withheld);
     let outcomeReasonCode: string | null = strictResult.downgradeRule ? `model-route-${strictResult.downgradeRule}` : null;

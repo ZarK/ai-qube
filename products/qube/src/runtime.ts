@@ -3211,7 +3211,7 @@ function projectAieHosts(input: {
   else if (reviewHost && input.reviewModel === null) delete reviewModels.review[reviewHost];
   const previousRoute = current.policy.reviews.route;
   const route = input.mode === "isolated" && input.reviewHarness
-    ? { ...(previousRoute ?? { tier: "review", timeoutSeconds: 600, maxTurns: 8 }), host: input.reviewHarness }
+    ? { ...(previousRoute ?? { tier: "review", timeoutSeconds: 900, maxTurns: 16 }), host: input.reviewHarness }
     : null;
   const lanes = current.policy.reviews.lanes.map(lane => (
     input.mode === "isolated" && input.reviewHarness && oldReviewHost && lane.route?.host === oldReviewHost
