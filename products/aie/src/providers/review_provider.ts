@@ -30,7 +30,7 @@ export interface ReviewLaneReviewPublishInput {
   /** Deterministic round grouping id for this head-level review pass; carried in the marker so round completeness is decidable from the provider record alone. */
   round: string;
   /** Cross-lane synthesis withheld counts for this lane; rendered in provider bodies and included in idempotency digests so stale accounting republishes. */
-  withheld?: { duplicates: number; offDiff: number; byCap: number };
+  withheld?: { duplicates: number; missingAtHead: number; offDiff: number; byCap: number };
 }
 
 export interface ReviewLaneReviewPublishResult {

@@ -40,6 +40,12 @@ export interface LanePublicationPlan {
   readonly published: ReviewFinding[];
   readonly withheldDuplicates: number;
   readonly withheldMissingAtHead: number;
+  /**
+   * True when the lane has blocking findings and every one of them, owned
+   * or duplicated, cites code missing at the reviewed head. Such a lane has
+   * no blocking basis at the head and cannot request changes.
+   */
+  readonly blockingMissingAtHead: boolean;
   readonly withheldOffDiff: number;
   readonly withheldByCap: number;
   readonly withheldBySuppress: number;
@@ -258,14 +264,20 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
     for (const finding of plan.published) publishedIdentities.add(findingIdentity(finding));
   }
 
+  const headLineCount = options.headLineCount;
+  const citesMissingCode = (finding: ReviewFinding): boolean => finding.location !== undefined && headLineCount !== undefined
+    && missingAtHeadReason(headLineCount(finding.location.path), finding.location) !== null;
+
   return lanes.map(lane => {
     const plan = publishedByLane.get(lane.laneId)!;
+    const blockingFindings = lane.findings.filter(finding => finding.severity === 'blocking');
     const hasVisibleObligation = lane.findings.some(finding => publishedIdentities.has(findingIdentity(finding)));
     return {
       laneId: lane.laneId,
       published: plan.published,
       withheldDuplicates: withheldDuplicatesByLane.get(lane.laneId) ?? 0,
       withheldMissingAtHead: withheldMissingAtHeadByLane.get(lane.laneId) ?? 0,
+      blockingMissingAtHead: blockingFindings.length > 0 && blockingFindings.every(citesMissingCode),
       withheldOffDiff: withheldOffDiffByLane.get(lane.laneId) ?? 0,
       withheldByCap: plan.withheldByCap,
       withheldBySuppress: withheldBySuppressByLane.get(lane.laneId) ?? 0,

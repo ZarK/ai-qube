@@ -391,9 +391,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const codeQualityInput = publishCalls.find(input => input.lane === 'code-quality');
     const finalGateInput = publishCalls.find(input => input.lane === 'final-gate');
     assert.equal(codeQualityInput.findings.some(finding => finding.message === gateCondition), true, 'the earlier canonical lane owns the finding');
-    assert.deepEqual(codeQualityInput.withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+    assert.deepEqual(codeQualityInput.withheld, { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 });
     assert.equal(finalGateInput.findings.some(finding => finding.message === gateCondition), false, 'final-gate never wins a cross-lane dedupe');
-    assert.deepEqual(finalGateInput.withheld, { duplicates: 1, offDiff: 0, byCap: 0 });
+    assert.deepEqual(finalGateInput.withheld, { duplicates: 1, missingAtHead: 0, offDiff: 0, byCap: 0 });
   });
 
   it('excludes forged sibling evidence from synthesis so it cannot suppress a real finding', async () => {
@@ -698,7 +698,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.equal(publishCalls.length, 1);
     assert.deepEqual(publishCalls[0].findings.map(finding => finding.message), ['Tighten the new parser export.'], 'a current-head finding must not be withheld because local HEAD is stale');
-    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 });
   });
 
   it('loads and validates trusted host provenance for gate and publish in a linked worktree', async t => {
@@ -1033,7 +1033,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.equal(publishCalls.length, 1);
     assert.deepEqual(publishCalls[0].findings.map(finding => finding.message), ['Prefer the shared parser helper.'], 'only the highest-confidence on-diff advisory survives cap 1');
-    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 1, byCap: 1 });
+    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, missingAtHead: 0, offDiff: 1, byCap: 1 });
   });
 
   it('rejects blocking lane publish evidence without structured findings', async () => {

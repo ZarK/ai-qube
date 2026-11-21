@@ -33,7 +33,7 @@ export interface RoundSummaryLaneInput {
   readonly carriedForwardFromHeadSha: string | null;
   readonly origin?: 'local' | 'trusted-provider';
   readonly notRunReason?: string | null;
-  readonly withheld: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
+  readonly withheld: { readonly duplicates: number; readonly missingAtHead: number; readonly offDiff: number; readonly byCap: number };
   readonly host?: string;
   readonly model?: string | null;
   readonly effort?: string | null;
@@ -357,7 +357,7 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
         evidenceHeadSha: input.headSha,
         carriedForwardFromHeadSha: null,
         notRunReason: 'no evidence at this head',
-        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
       });
   });
   const rendered = renderRoundReviewBody({

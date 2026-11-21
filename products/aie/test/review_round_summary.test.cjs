@@ -39,7 +39,7 @@ function lane(overrides = {}) {
     evidenceHeadSha: overrides.evidenceHeadSha ?? 'abc1234567890',
     carriedForwardFromHeadSha: overrides.carriedForwardFromHeadSha ?? null,
     origin: overrides.origin ?? 'local',
-    withheld: overrides.withheld ?? { duplicates: 0, offDiff: 0, byCap: 0 },
+    withheld: overrides.withheld ?? { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
   };
 }
 

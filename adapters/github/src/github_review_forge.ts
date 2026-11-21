@@ -392,7 +392,7 @@ export interface GitHubLaneReviewPublishInput {
   completeness: string | null;
   evidencePath: string | null;
   /** Cross-lane synthesis withheld counts for this lane; rendered in the body and part of the finding digest so stale accounting republishes. */
-  withheld?: { duplicates: number; offDiff: number; byCap: number };
+  withheld?: { duplicates: number; missingAtHead: number; offDiff: number; byCap: number };
 }
 
 export interface GitHubLaneReviewPublishResult {

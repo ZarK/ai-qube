@@ -3,7 +3,9 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { createGitHubReviewForgeProvider, makePrExec, basePr } = require('./support/pr_gate_fixture.cjs');
+const { createGitHubReviewForgeProvider, makePrExec, basePr, makeGitRepo, localEvidence, writeLocalEvidence } = require('./support/pr_gate_fixture.cjs');
+const { execFileSync } = require('node:child_process');
+const { runPrReviewPublishWithProvider } = require('../dist/app/pr_review_publish.js');
 const { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -41,7 +43,7 @@ function roundInput(overrides = {}) {
       preconditions: [],
       evidenceHeadSha: overrides.headSha ?? 'abc123',
       carriedForwardFromHeadSha: null,
-      withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
     }],
   };
 }
@@ -87,7 +89,7 @@ describe('reviewRepositoryFromPullRequestUrl', () => {
 describe('GitHub round summary publish', () => {
   it('does not post an inline comment for a line that is off the current diff', async () => {
     const offDiff = findingAnchor({ id: 'off-diff', location: { path: 'src/review.ts', line: 99, side: 'destination' } });
-    const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [offDiff.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });
+    const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [offDiff.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });
     const fixture = makePrExec({ prViews: [basePr()] });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
 
@@ -99,7 +101,7 @@ describe('GitHub round summary publish', () => {
 
   it('creates a formal pull request review with inline comments on first publish', async () => {
     const anchored = findingAnchor({ id: 'anchored-1' });
-    const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [anchored.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });
+    const render = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [anchored.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: { hasLine: () => true } });
     const fixture = makePrExec({ prViews: [basePr()] });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
 
@@ -181,7 +183,7 @@ describe('GitHub round summary publish', () => {
     const staleReview = { id: 555, author: { login: 'executor' }, body: approving.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
     const fixture = makePrExec({ prViews: [basePr({ reviews: [staleReview], latestReviews: [staleReview] })], pullReviews: [staleReview] });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
-    const blocking = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Now blocking.', findings: [{ id: 'b1', severity: 'blocking', message: 'New blocker.' }], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: null });
+    const blocking = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Now blocking.', findings: [{ id: 'b1', severity: 'blocking', message: 'New blocker.' }], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: null });
 
     const result = await provider.publishRoundReviewSummary(publishInputFromRender(blocking));
 
@@ -194,7 +196,7 @@ describe('GitHub round summary publish', () => {
     const current = findingAnchor();
     const commentBody = renderInlineCommentBody(current);
     const render = renderRoundSummaryBody(roundInput({
-      lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [current.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }],
+      lanes: [{ laneId: 'code-quality', status: 'passed', recommendation: 'approve', summary: 'ok', findings: [current.finding], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }],
     }), { diffIndex: { hasLine: () => true } });
     const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
     const fixture = makePrExec({
@@ -241,7 +243,7 @@ describe('GitHub round summary publish', () => {
     const fixture = makePrExec({ prViews: [basePr({ reviews: [existingReview], latestReviews: [existingReview] })], pullReviews: [existingReview] });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
 
-    const changedRender = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Now blocking.', findings: [{ id: 'b1', severity: 'blocking', message: 'New blocker.' }], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: null });
+    const changedRender = renderRoundSummaryBody(roundInput({ lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Now blocking.', findings: [{ id: 'b1', severity: 'blocking', message: 'New blocker.' }], preconditions: [], evidenceHeadSha: 'abc123', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }] }), { diffIndex: null });
 
     const result = await provider.publishRoundReviewSummary(publishInputFromRender(changedRender));
 
@@ -271,7 +273,7 @@ describe('GitHub round summary publish', () => {
     const priorRender = renderRoundSummaryBody(roundInput({
       headSha: 'prior111',
       round: 'round-prior',
-      lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Blocking defect found.', findings: [{ id: 'b1', severity: 'blocking', message: 'Round one blocker: the changed check accepts empty input.', location: { path: 'src/review.ts', line: 3, side: 'destination' } }], preconditions: [], evidenceHeadSha: 'prior111', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, offDiff: 0, byCap: 0 } }],
+      lanes: [{ laneId: 'code-quality', status: 'failed', recommendation: 'request-changes', summary: 'Blocking defect found.', findings: [{ id: 'b1', severity: 'blocking', message: 'Round one blocker: the changed check accepts empty input.', location: { path: 'src/review.ts', line: 3, side: 'destination' } }], preconditions: [], evidenceHeadSha: 'prior111', carriedForwardFromHeadSha: null, withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 } }],
     }), { diffIndex: null });
     assert.equal(priorRender.verdict, 'request-changes');
     assert.match(priorRender.body, /Round one blocker/);
@@ -359,7 +361,7 @@ describe('GitHub round summary publish', () => {
         preconditions: [],
         evidenceHeadSha: 'abc123',
         carriedForwardFromHeadSha: null,
-        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
       }],
     }), { diffIndex: { hasLine: () => true } });
     const fixture = makePrExec({ prViews: [basePr()], diff: manyLineDiff('src/a.ts', 21) });
@@ -396,7 +398,7 @@ describe('GitHub round summary publish', () => {
         preconditions: [],
         evidenceHeadSha: 'abc123',
         carriedForwardFromHeadSha: null,
-        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
       }],
     }), { diffIndex: { hasLine: () => true } });
     const fixture = makePrExec({ prViews: [basePr()], diff: manyLineDiff('src/a.ts', 21) });
@@ -542,7 +544,7 @@ describe('GitHub round summary publish', () => {
         preconditions: [],
         evidenceHeadSha: 'abc123',
         carriedForwardFromHeadSha: null,
-        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+        withheld: { duplicates: 0, missingAtHead: 0, offDiff: 0, byCap: 0 },
       }],
     }), { diffIndex: { hasLine: () => true } });
     const commentBody = renderInlineCommentBody(current);
@@ -798,5 +800,132 @@ describe('loadPriorRoundDelta', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe('publication of findings that cite code missing at the reviewed head', () => {
+  const expectedLanes = ['task-record-compliance', 'issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'];
+  const missingFinding = { severity: 'blocking', message: 'The parser drops the last record.', location: { path: 'src/missing.ts', line: 4 } };
+  const presentFinding = { severity: 'blocking', message: 'The counter resets on an empty array.', location: { path: 'src/real.ts', line: 3 } };
+
+  // A repository whose head holds src/real.ts, with code-quality lane
+  // evidence at that head that requests changes on the given findings.
+  function repoWithCodeQualityFindings(findings) {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'real.ts'), 'one\ntwo\nthree\nfour\nfive\n');
+    execFileSync('git', ['add', 'src/real.ts'], { cwd: repo });
+    execFileSync('git', ['commit', '-m', 'head file'], { cwd: repo });
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha });
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [{ kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' }],
+      toolsUsed: ['codex'],
+    })).map(lane => lane.id !== 'code-quality' ? lane : {
+      ...lane,
+      status: 'needs-work',
+      severity: 'high',
+      recommendation: 'request-changes',
+      blockers: findings.map(finding => finding.message),
+      findings,
+    });
+    writeLocalEvidence(repo, evidence);
+    return { repo, headSha };
+  }
+
+  function summaryProvider(calls) {
+    return {
+      id: 'github',
+      capabilities() {
+        return { publishRoundReviewSummary: true };
+      },
+      async publishRoundReviewSummary(input) {
+        calls.push(input);
+        return { status: 'planned', runId: input.round, marker: input.marker, body: input.body, url: null, failure: null, nextAction: 'planned' };
+      },
+    };
+  }
+
+  function laneMarker(body, laneId) {
+    for (const match of body.matchAll(/<!-- qube-pr-review:(\{.*?\}) -->/g)) {
+      const marker = JSON.parse(match[1]);
+      if (marker.lane === laneId) return marker;
+    }
+    return null;
+  }
+
+  function publishSummary(repo, headSha, calls) {
+    return runPrReviewSummaryPublishWithProvider(summaryProvider(calls), {
+      prNumber: 12,
+      issueNumber: 93,
+      headSha,
+      dryRun: true,
+      repoRoot: repo,
+      repository: { owner: 'example', name: 'repo' },
+      expectedLanes,
+      changedPaths: ['src/real.ts'],
+    });
+  }
+
+  it('does not request changes for a lane whose only blocking finding is missing at head', async () => {
+    const { repo, headSha } = repoWithCodeQualityFindings([missingFinding]);
+    const calls = [];
+    await publishSummary(repo, headSha, calls);
+
+    assert.equal(calls.length, 1);
+    const input = calls[0];
+    assert.notEqual(input.verdict, 'request-changes');
+    assert.equal(input.verdict, 'inconclusive');
+    assert.match(input.body, /code-quality: .*Synthesis withheld 1 finding\(s\): 0 duplicate, 1 missing at head, 0 off-diff, 0 beyond cap\./);
+    assert.doesNotMatch(input.body, /The parser drops the last record\./);
+    const marker = laneMarker(input.body, 'code-quality');
+    assert.equal(marker.recommendation, 'inconclusive');
+    assert.equal(marker.status, 'inconclusive');
+    assert.equal(marker.blockingFindingCount, 0);
+    assert.equal(marker.bodyFindingCount, 0);
+    const statusLane = input.lanes.find(lane => lane.laneId === 'code-quality');
+    assert.equal(statusLane.status, 'invalid');
+    assert.equal(statusLane.blockingFindingCount, 0);
+    assert.match(statusLane.reason, /Every blocking finding cites code missing at the reviewed head \(1 withheld\)/);
+  });
+
+  it('still requests changes and publishes a blocking finding that is present at head beside one that is missing', async () => {
+    const { repo, headSha } = repoWithCodeQualityFindings([missingFinding, presentFinding]);
+    const calls = [];
+    await publishSummary(repo, headSha, calls);
+
+    const input = calls[0];
+    assert.equal(input.verdict, 'request-changes');
+    assert.match(input.body, /The counter resets on an empty array\./);
+    assert.doesNotMatch(input.body, /The parser drops the last record\./);
+    assert.match(input.body, /1 missing at head/);
+    const marker = laneMarker(input.body, 'code-quality');
+    assert.equal(marker.recommendation, 'request-changes');
+    assert.equal(marker.status, 'needs-work');
+    assert.equal(marker.blockingFindingCount, 1);
+    assert.equal(marker.bodyFindingCount, 1);
+    const statusLane = input.lanes.find(lane => lane.laneId === 'code-quality');
+    assert.equal(statusLane.status, 'needs-work');
+    assert.equal(statusLane.blockingFindingCount, 1);
+  });
+
+  it('names the missing-at-head count and does not suggest nitCap when the per-lane publish has nothing to show', async () => {
+    const { repo, headSha } = repoWithCodeQualityFindings([missingFinding]);
+    const provider = {
+      async publishLaneReviewFeedback() {
+        throw new Error('a lane with no provider-visible obligation must not publish');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha, lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes, changedPaths: ['src/real.ts'] }),
+      error => {
+        assert.match(error.message, /1 missing at head/);
+        assert.match(error.message, /1 finding\(s\) cite code missing at the reviewed head/);
+        assert.doesNotMatch(error.message, /nitCap/);
+        return true;
+      },
+    );
   });
 });

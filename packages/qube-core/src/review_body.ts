@@ -56,7 +56,7 @@ export interface ReviewLaneRenderInput {
   readonly carriedForwardFromHeadSha: string | null;
   readonly origin?: "local" | "trusted-provider";
   readonly notRunReason?: string | null;
-  readonly withheld?: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
+  readonly withheld?: { readonly duplicates: number; readonly missingAtHead: number; readonly offDiff: number; readonly byCap: number };
   readonly host?: string;
   readonly model?: string | null;
   readonly effort?: string | null;
@@ -416,7 +416,16 @@ function laneNoteText(
     if (claim !== "" && claim !== message) summary = summary.split(claim).join("");
   }
   summary = summary.replace(/\s+/g, " ").trim();
-  return summary === "" ? laneChipLabel(lane) : summary;
+  const note = summary === "" ? laneChipLabel(lane) : summary;
+  const withheldNote = renderWithheldNote(lane.withheld);
+  return withheldNote ? `${note} ${withheldNote}` : note;
+}
+
+function renderWithheldNote(withheld: ReviewLaneRenderInput["withheld"]): string | null {
+  if (!withheld) return null;
+  const total = withheld.duplicates + withheld.missingAtHead + withheld.offDiff + withheld.byCap;
+  if (total === 0) return null;
+  return `Synthesis withheld ${total} finding(s): ${withheld.duplicates} duplicate, ${withheld.missingAtHead} missing at head, ${withheld.offDiff} off-diff, ${withheld.byCap} beyond cap.`;
 }
 
 function renderCollapsedNotes(
@@ -508,11 +517,7 @@ export function renderLaneReviewBody(
   });
   const verdict = renderVerdictBlock(profile, sentence, input.lane.recommendation, input.transport);
   const table = renderFindingTable(profile, rows, input.headSha, input.repository, input.transport);
-  const withheld = input.lane.withheld;
-  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
-  const withheldNote = withheldTotal > 0 && withheld
-    ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld.duplicates} duplicate, ${withheld.offDiff} off-diff, ${withheld.byCap} beyond cap.`
-    : null;
+  const withheldNote = renderWithheldNote(input.lane.withheld);
   const completeness = input.completeness && input.completeness.trim() !== ""
     ? sanitize(profile, input.completeness)
     : null;
