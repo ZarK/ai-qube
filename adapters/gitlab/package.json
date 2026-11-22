@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-gitlab",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "GitLab work provider adapter for QUBE issue reads, draft rendering, and unsupported lifecycle reporting.",
   "keywords": [
     "cli",
